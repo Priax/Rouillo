@@ -1,0 +1,55 @@
+/*fn main() {
+    let sdl_context = sdl2::init().unwrap();
+    let video_subsystem = sdl_context.video().unwrap();
+    let window = video_subsystem
+        .window("Puyo Puyo", 600, 600)
+        .position_centered()
+        .resizable()
+        .opengl()
+        .build()
+        .unwrap();
+
+    let mut canvas = window.into_canvas().build().unwrap();
+    let mut board = Board::new(6, 12);
+    let mut rng = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as u64;
+
+    let mut event_pump = sdl_context.event_pump().unwrap();
+
+    let ttf_context = sdl2::ttf::init().unwrap();
+    let font = ttf_context.load_font("./arcadeFont.ttf", FONT_SIZE).unwrap();
+
+    let colors = [MyColor::Red, MyColor::Blue, MyColor::Yellow, MyColor::Green];
+
+    'running: loop {
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit {..} => break 'running,
+                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => break 'running,
+                Event::KeyDown { keycode: Some(Keycode::Q), .. } => {
+                    board.move_active_puyos(-1);
+                },
+                Event::KeyDown { keycode: Some(Keycode::D), .. } => {
+                    board.move_active_puyos(1);
+                },
+                _ => {}
+            }
+        }
+        let falling = board.drop_active_puyos();
+        if !falling {
+            board.check_matches();
+            rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
+            let color1 = &colors[(rng as usize) % colors.len()];
+            let color2 = &colors[((rng >> 16) as usize) % colors.len()];
+            match board.add_puyos_from_top(3, color1.clone(), color2.clone()) {
+                true => (),
+                false => break,
+            }
+        }
+        canvas.set_draw_color(Color::RGB(0, 0, 0));
+        canvas.clear();
+        board.display_sdl2(&mut canvas, &font, 600, 600);
+        canvas.present();
+        std::thread::sleep(Duration::from_millis(1000));
+    }
+}*/
+
