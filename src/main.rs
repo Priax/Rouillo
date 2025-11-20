@@ -1,41 +1,90 @@
 extern crate sdl2;
+extern crate rand;
 
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 use std::collections::HashSet;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
+use sdl2::rect::{Point, Rect};
+use sdl2::render::Canvas;
+use sdl2::video::Window;
 use sdl2::ttf::Font;
+use rand::Rng;
 
-use sdl2::rect::Point;
+const CELL_SIZE: u32 = 40;
+const GRID_WIDTH: usize = 6;
+const GRID_HEIGHT: usize = 12;
+const FONT_SIZE: u16 = 24;
+const MAX_LOCK_TIME: u64 = 500; 
 
-const CELL_SIZE: usize = 32;
-const FONT_SIZE: u16 = 16;
-const SCORE_HEIGHT: i32 = 16;
-const SCORE_WIDTH: i32 = 16;
-
-struct Board {
-    width: usize,
-    height: usize,
-    cells: Vec<Vec<Option<MyColor>>>,
-    score: i32,
-    active_puyos: Option<ActivePuyo>,
-}
-
-#[derive(Clone, PartialEq)]
-#[allow(dead_code)]
-enum MyColor {
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Puyo {
     Red,
     Blue,
     Yellow,
     Green,
 }
 
-#[derive(Clone)]
+impl Puyo {
+    fn to_sdl_color(&self) -> Color {
+        match self {
+            Puyo::Red => Color::RGB(230, 50, 50),
+            Puyo::Blue => Color::RGB(50, 50, 230),
+            Puyo::Yellow => Color::RGB(230, 230, 50),
+            Puyo::Green => Color::RGB(50, 200, 50),
+        }
+    }
+    
+    fn random() -> Puyo {
+        let mut rng = rand::rng();
+        let colors = [Puyo::Red, Puyo::Blue, Puyo::Yellow, Puyo::Green];
+        colors[rng.random_range(0..colors.len())]
+    }
+}
+
 struct ActivePuyo {
-    positions: [(usize, usize); 2],
-    colors: [MyColor; 2],
+    row: i32,
+    col: i32,
+    rotation: usize,
+    axis_color: Puyo,
+    sat_color: Puyo,
+}
+
+impl ActivePuyo {
+    fn get_positions(&self) -> [(i32, i32); 2] {
+        let (dr, dc) = match self.rotation {
+            0 => (-1, 0),
+            1 => (0, 1),
+            2 => (1, 0),
+            3 => (0, -1),
+            _ => (-1, 0),
+        };
+        [
+            (self.row, self.col),
+            (self.row + dr, self.col + dc)
+        ]
+    }
+}
+
+#[derive(PartialEq)]
+enum GameState {
+    Playing,
+    ResolvingMatches,
+    GameOver,
+}
+
+struct Board {
+    width: usize,
+    height: usize,
+    cells: Vec<Vec<Option<Puyo>>>,
+    active_piece: Option<ActivePuyo>,
+    next_colors: (Puyo, Puyo), 
+    score: i32,
+    state: GameState,
+    lock_timer: Duration,
+    is_touching_ground: bool,
 }
 
 impl Board {
@@ -44,294 +93,422 @@ impl Board {
             width,
             height,
             cells: vec![vec![None; width]; height],
+            active_piece: None,
+            next_colors: (Puyo::random(), Puyo::random()), 
             score: 0,
-            active_puyos: None,
+            state: GameState::Playing,
+            lock_timer: Duration::from_millis(0),
+            is_touching_ground: false,
         }
     }
 
-    fn add_puyos_from_top(&mut self, column: usize, my_color1: MyColor, my_color2: MyColor) -> bool {
-        let mut row = 0;
+    fn spawn_piece(&mut self) {
+        let (c1, c2) = self.next_colors;
+        
+        self.next_colors = (Puyo::random(), Puyo::random());
 
-        while row < self.height && self.cells[row][column].is_some() {
-            row += 1;
-        }
+        let new_piece = ActivePuyo {
+            row: 1, 
+            col: 2, 
+            rotation: 0, 
+            axis_color: c1,
+            sat_color: c2,
+        };
 
-        if row < self.height - 1 {
-            self.cells[row][column] = Some(my_color1.clone());
-            self.cells[row + 1][column] = Some(my_color2.clone());
-            self.active_puyos = Some(ActivePuyo {
-                positions: [(row, column), (row + 1, column)],
-                colors: [my_color1, my_color2],
-            });
+        if self.check_collision(&new_piece) {
+            self.state = GameState::GameOver;
         } else {
-            print!("Temporary gameover\n");
-            return false;
+            self.active_piece = Some(new_piece);
+            self.lock_timer = Duration::from_millis(0);
+            self.is_touching_ground = false;
         }
-        return true;
     }
 
-    fn move_active_puyos(&mut self, direction: i32) {
-        if let Some(ref mut active) = self.active_puyos {
-            let mut new_positions = [(0, 0); 2];
-            for (i, &(row, col)) in active.positions.iter().enumerate() {
-                let new_col = (col as i32 + direction) as usize;
-                if new_col < self.width && self.cells[row][new_col].is_none() {
-                    new_positions[i] = (row, new_col);
+    fn check_collision(&self, piece: &ActivePuyo) -> bool {
+        for (r, c) in piece.get_positions().iter() {
+            if *c < 0 || *c >= self.width as i32 || *r >= self.height as i32 {
+                return true;
+            }
+            if *r >= 0 {
+                if self.cells[*r as usize][*c as usize].is_some() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn reset_lock_if_needed(&mut self) {
+        if self.is_touching_ground {
+            self.lock_timer = Duration::from_millis(0);
+        }
+    }
+
+    fn move_piece(&mut self, dx: i32) {
+        if let Some(mut piece) = self.active_piece.take() {
+            piece.col += dx;
+            if self.check_collision(&piece) {
+                piece.col -= dx;
+            } else {
+                self.active_piece = Some(piece);
+                self.reset_lock_if_needed();
+                return;
+            }
+            self.active_piece = Some(piece);
+        }
+    }
+
+    fn rotate_piece(&mut self) {
+        if let Some(mut piece) = self.active_piece.take() {
+            let old_rot = piece.rotation;
+            piece.rotation = (piece.rotation + 1) % 4;
+            
+            if self.check_collision(&piece) {
+                let old_col = piece.col;
+                piece.col -= 1;
+                if !self.check_collision(&piece) { 
+                    self.active_piece = Some(piece); 
+                    self.reset_lock_if_needed();
+                    return; 
+                }
+                piece.col = old_col + 1;
+                if !self.check_collision(&piece) { 
+                    self.active_piece = Some(piece); 
+                    self.reset_lock_if_needed();
+                    return; 
+                }
+                piece.col = old_col;
+                piece.rotation = old_rot;
+            } else {
+                self.reset_lock_if_needed();
+            }
+            self.active_piece = Some(piece);
+        }
+    }
+
+    fn hard_drop(&mut self) {
+        if let Some(mut piece) = self.active_piece.take() {
+            loop {
+                piece.row += 1;
+                if self.check_collision(&piece) {
+                    piece.row -= 1;
+                    break;
+                }
+            }
+            self.active_piece = Some(piece);
+            self.lock_piece();
+        }
+    }
+
+    fn update_logic(&mut self, delta_time: Duration) -> bool {
+        let mut locked = false;
+        if let Some(mut piece) = self.active_piece.take() {
+            piece.row += 1;
+            let collision = self.check_collision(&piece);
+            piece.row -= 1;
+
+            if collision {
+                self.is_touching_ground = true;
+                self.lock_timer += delta_time;
+                if self.lock_timer.as_millis() as u64 > MAX_LOCK_TIME {
+                    self.active_piece = Some(piece);
+                    self.lock_piece();
+                    locked = true;
                 } else {
+                    self.active_piece = Some(piece);
+                }
+            } else {
+                self.is_touching_ground = false;
+                self.lock_timer = Duration::from_millis(0);
+                self.active_piece = Some(piece);
+            }
+        }
+        locked
+    }
+
+    fn force_drop(&mut self) {
+         if let Some(mut piece) = self.active_piece.take() {
+            piece.row += 1;
+            if self.check_collision(&piece) {
+                piece.row -= 1;
+                self.is_touching_ground = true;
+            } else {
+                self.is_touching_ground = false;
+                self.lock_timer = Duration::from_millis(0);
+            }
+            self.active_piece = Some(piece);
+        }
+    }
+
+    fn lock_piece(&mut self) {
+        if let Some(piece) = self.active_piece.take() {
+            let positions = piece.get_positions();
+            for (r, _) in positions.iter() {
+                if *r < 0 {
+                    self.state = GameState::GameOver;
                     return;
                 }
             }
-            for &(row, col) in &active.positions {
-                self.cells[row][col] = None;
-            }
-            for (i, &(row, col)) in new_positions.iter().enumerate() {
-                self.cells[row][col] = Some(active.colors[i].clone());
-            }
-            active.positions = new_positions;
-        }
-    }
-    
-    // La garder pour plus tard
-    /*fn drop_active_puyos(&mut self) -> bool {
-        if let Some(ref mut active) = self.active_puyos {
-            let mut can_fall = true;
-            let mut any_fallen = false;
-            while can_fall {
-                can_fall = false;
-                let mut new_positions = [(0, 0); 2];
-                for (i, &(row, col)) in active.positions.iter().enumerate() {
-                    if row + 1 < self.height && self.cells[row + 1][col].is_none() {
-                        new_positions[i] = (row + 1, col);
-                        can_fall = true;
-                    } else {
-                        new_positions[i] = (row, col);
-                    }
-                }
-                if can_fall {
-                    for &(row, col) in &active.positions {
-                        self.cells[row][col] = None;
-                    }
-                    for (i, &(row, col)) in new_positions.iter().enumerate() {
-                        self.cells[row][col] = Some(active.colors[i].clone());
-                    }
-                    active.positions = new_positions;
-                    any_fallen = true;
-                }
-            }
-            return any_fallen;
-        }
-        false
-    }*/
-
-    fn find_connected(&self, row: usize, col: usize, my_color: &MyColor, group: &mut HashSet<(usize, usize)>, visited: &mut HashSet<(usize, usize)>) {
-        if visited.contains(&(row, col)) {
-            return;
-        }
-
-        if let Some(curr_my_color) = &self.cells[row][col] {
-            if curr_my_color == my_color {
-                visited.insert((row, col));
-                group.insert((row, col));
-
-                if row + 1 < self.height {
-                    self.find_connected(row + 1, col, my_color, group, visited);
-                }
-                if row > 0 {
-                    self.find_connected(row - 1, col, my_color, group, visited);
-                }
-                if col + 1 < self.width {
-                    self.find_connected(row, col + 1, my_color, group, visited);
-                }
-                if col > 0 {
-                    self.find_connected(row, col - 1, my_color, group, visited);
+            for (r, c) in positions.iter() {
+                if *r >= 0 && *r < self.height as i32 && *c >= 0 && *c < self.width as i32 {
+                    let color = if *r == piece.row && *c == piece.col { piece.axis_color } else { piece.sat_color };
+                    self.cells[*r as usize][*c as usize] = Some(color);
                 }
             }
         }
+        self.state = GameState::ResolvingMatches;
     }
 
-    fn apply_gravity(&mut self) {
+    fn apply_board_gravity(&mut self) -> bool {
+        let mut moved = false;
         for col in 0..self.width {
-            let mut empty_row = self.height;
-            for row in (0..self.height).rev() {
-                if self.cells[row][col].is_none() && empty_row == self.height {
-                    empty_row = row;
-                } else if self.cells[row][col].is_some() && empty_row != self.height {
-                    self.cells[empty_row][col] = self.cells[row][col].take();
-                    empty_row -= 1;
+            for row in (0..self.height - 1).rev() {
+                if self.cells[row][col].is_some() && self.cells[row + 1][col].is_none() {
+                    let mut drop_row = row;
+                    while drop_row + 1 < self.height && self.cells[drop_row + 1][col].is_none() {
+                        drop_row += 1;
+                    }
+                    self.cells[drop_row][col] = self.cells[row][col].take();
+                    moved = true;
                 }
             }
         }
+        moved
     }
 
-    fn check_matches(&mut self) {
-        let mut found_match = true;
+    fn check_matches(&mut self) -> bool {
+        let mut to_remove = HashSet::new();
+        let mut visited = HashSet::new();
 
-        while found_match {
-            found_match = false;
-            let mut visited: HashSet<(usize, usize)> = HashSet::new();
-
-            for row in 0..self.height {
-                for col in 0..self.width {
-                    if let Some(my_color) = &self.cells[row][col] {
-                        if !visited.contains(&(row, col)) {
-                            let mut group: HashSet<(usize, usize)> = HashSet::new();
-                            self.find_connected(row, col, my_color, &mut group, &mut visited);
-                            if group.len() >= 4 {
-                                found_match = true;
-                                for (r, c) in group {
-                                    self.cells[r][c] = None;
-                                    self.score += 100;
-                                }
+        for r in 0..self.height {
+            for c in 0..self.width {
+                if let Some(color) = self.cells[r][c] {
+                    if !visited.contains(&(r, c)) {
+                        let mut group = Vec::new();
+                        self.flood_fill(r, c, color, &mut group, &mut visited);
+                        if group.len() >= 4 {
+                            for pos in group {
+                                to_remove.insert(pos);
                             }
                         }
                     }
                 }
             }
+        }
 
-            if found_match {
-                self.apply_gravity();
+        if to_remove.is_empty() { return false; }
+
+        self.score += (to_remove.len() * 100) as i32;
+        for (r, c) in to_remove {
+            self.cells[r][c] = None;
+        }
+        true
+    }
+
+    fn flood_fill(&self, r: usize, c: usize, color: Puyo, group: &mut Vec<(usize, usize)>, visited: &mut HashSet<(usize, usize)>) {
+        if visited.contains(&(r, c)) { return; }
+        if let Some(cell_color) = self.cells[r][c] {
+            if cell_color == color {
+                visited.insert((r, c));
+                group.push((r, c));
+                if r > 0 { self.flood_fill(r - 1, c, color, group, visited); }
+                if r < self.height - 1 { self.flood_fill(r + 1, c, color, group, visited); }
+                if c > 0 { self.flood_fill(r, c - 1, color, group, visited); }
+                if c < self.width - 1 { self.flood_fill(r, c + 1, color, group, visited); }
             }
         }
     }
 
-        fn display_sdl2(&self, canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font: &Font, window_width: u32, window_height: u32) {
-            canvas.set_draw_color(Color::RGB(0, 0, 0));
-            canvas.clear();
-
-            let board_width = self.width * CELL_SIZE as usize;
-            let board_height = self.height * CELL_SIZE as usize;
-            let board_x = ((window_width as usize - board_width) / 2) as i32;
-            let board_y = ((window_height as usize - board_height) / 2) as i32;
-
-            for (y, row) in self.cells.iter().enumerate() {
-                for (x, cell) in row.iter().enumerate() {
-                    let cell_x = board_x + (x * CELL_SIZE) as i32;
-                    let cell_y = board_y + (y * CELL_SIZE) as i32;
-                    match cell {
-                        Some(my_color) => {
-                            let color = match my_color {
-                                MyColor::Red => Color::RGB(255, 0, 0),
-                                MyColor::Blue => Color::RGB(0, 0, 255),
-                                MyColor::Yellow => Color::RGB(255, 255, 0),
-                                MyColor::Green => Color::RGB(0, 255, 0),
-                            };
-                            canvas.set_draw_color(color);
-                            let _ = canvas.fill_rect(sdl2::rect::Rect::new(cell_x, cell_y, CELL_SIZE as u32, CELL_SIZE as u32));
-                        }
-                        None => {
-                            canvas.set_draw_color(Color::RGB(255, 255, 255));
-                            let _ = canvas.fill_rect(sdl2::rect::Rect::new(cell_x, cell_y, CELL_SIZE as u32, CELL_SIZE as u32));
-                        }
-                    }
+    fn resolve_step(&mut self) {
+        let fell = self.apply_board_gravity();
+        if !fell {
+            let matched = self.check_matches();
+            if !matched {
+                if self.state != GameState::GameOver {
+                    self.state = GameState::Playing;
+                    self.spawn_piece();
                 }
             }
+        }
+    }
+
+    fn draw(&self, canvas: &mut Canvas<Window>, font: &Font) {
+        canvas.set_draw_color(Color::RGB(20, 20, 20));
+        canvas.clear();
+
+        let (win_w, win_h) = canvas.output_size().unwrap();
+        let board_w = (self.width as u32 * CELL_SIZE) as i32;
+        let board_h = (self.height as u32 * CELL_SIZE) as i32;
+        let offset_x = (win_w as i32 - board_w) / 2;
+        let offset_y = (win_h as i32 - board_h) / 2;
+
+        canvas.set_draw_color(Color::RGB(30, 30, 30));
+        canvas.fill_rect(Rect::new(offset_x, offset_y, board_w as u32, board_h as u32)).unwrap();
+
+        for r in 0..self.height {
+            for c in 0..self.width {
+                self.draw_cell(canvas, r as i32, c as i32, self.cells[r][c], offset_x, offset_y);
+            }
+        }
+
+        if let Some(ref piece) = self.active_piece {
+            let positions = piece.get_positions();
+            self.draw_cell(canvas, positions[0].0, positions[0].1, Some(piece.axis_color), offset_x, offset_y);
+            self.draw_cell(canvas, positions[1].0, positions[1].1, Some(piece.sat_color), offset_x, offset_y);
+        }
+
+        canvas.set_draw_color(Color::RGB(60, 60, 60));
+        for i in 0..=self.width {
+            let x = offset_x + (i as u32 * CELL_SIZE) as i32;
+            canvas.draw_line(Point::new(x, offset_y), Point::new(x, offset_y + board_h)).unwrap();
+        }
+        for i in 0..=self.height {
+            let y = offset_y + (i as u32 * CELL_SIZE) as i32;
+            canvas.draw_line(Point::new(offset_x, y), Point::new(offset_x + board_w, y)).unwrap();
+        }
+        
+        let ui_x = offset_x + board_w + 20;
+        let ui_y = offset_y;
+
         let score_text = format!("Score: {}", self.score);
-        let score_position = Point::new(SCORE_WIDTH, SCORE_HEIGHT);
-        render_text(canvas, &font, &score_text, score_position, Color::RGB(255, 255, 255));
-    }
-}
+        let surface = font.render(&score_text).blended(Color::WHITE).unwrap();
+        let texture_creator = canvas.texture_creator();
+        let texture = texture_creator.create_texture_from_surface(&surface).unwrap();
+        let (w, h) = surface.size();
+        canvas.copy(&texture, None, Rect::new(ui_x, ui_y, w, h)).unwrap();
 
-impl Board {
-    fn step_fall_active_puyos(&mut self) -> bool {
-        if let Some(ref mut active) = self.active_puyos {
-            let mut can_fall = true;
-            let mut new_positions = [(0, 0); 2];
-            for (i, &(row, col)) in active.positions.iter().enumerate() {
-                if row + 1 < self.height && self.cells[row + 1][col].is_none() {
-                    new_positions[i] = (row + 1, col);
-                    can_fall = true;
-                } else {
-                    new_positions[i] = (row + 1, col);
-                    can_fall = false;
-                }
-            }
-            if can_fall {
-                for &(row, col) in &active.positions {
-                    self.cells[row][col] = None;
-                }
-                for (i, &(row, col)) in new_positions.iter().enumerate() {
-                    self.cells[row][col] = Some(active.colors[i].clone());
-                }
-                active.positions = new_positions;
-                return true;
+        let next_text_surface = font.render("Next:").blended(Color::RGB(200, 200, 200)).unwrap();
+        let next_tex = texture_creator.create_texture_from_surface(&next_text_surface).unwrap();
+        let (nw, nh) = next_text_surface.size();
+        canvas.copy(&next_tex, None, Rect::new(ui_x, ui_y + 40, nw, nh)).unwrap();
+
+        canvas.set_draw_color(Color::RGB(40, 40, 40));
+        canvas.fill_rect(Rect::new(ui_x, ui_y + 75, CELL_SIZE, CELL_SIZE * 2 + 5)).unwrap();
+
+        self.draw_cell(canvas, 0, 0, Some(self.next_colors.1), ui_x, ui_y + 75);
+        self.draw_cell(canvas, 1, 0, Some(self.next_colors.0), ui_x, ui_y + 75);
+
+        if self.is_touching_ground && self.state == GameState::Playing {
+            let ratio = 1.0 - (self.lock_timer.as_millis() as f32 / MAX_LOCK_TIME as f32);
+            let bar_width = (100.0 * ratio) as u32;
+            canvas.set_draw_color(Color::RGB(255, 165, 0));
+            canvas.fill_rect(Rect::new(ui_x, ui_y + 180, bar_width, 10)).unwrap();
+        }
+
+        if self.state == GameState::GameOver {
+             let go_surface = font.render("GAME OVER").blended(Color::RGB(255, 0, 0)).unwrap();
+             let go_tex = texture_creator.create_texture_from_surface(&go_surface).unwrap();
+             let (gw, gh) = go_surface.size();
+             canvas.copy(&go_tex, None, Rect::new((win_w as i32 - gw as i32)/2, (win_h as i32 - gh as i32)/2, gw, gh)).unwrap();
+        }
+    }
+
+    fn draw_cell(&self, canvas: &mut Canvas<Window>, row: i32, col: i32, color: Option<Puyo>, dx: i32, dy: i32) {
+        if let Some(c) = color {
+            if row >= -2 {
+                canvas.set_draw_color(c.to_sdl_color());
+                canvas.fill_rect(Rect::new(
+                    dx + col * CELL_SIZE as i32 + 1,
+                    dy + row * CELL_SIZE as i32 + 1,
+                    CELL_SIZE - 2,
+                    CELL_SIZE - 2
+                )).unwrap();
             }
         }
-        false
     }
-}
-
-fn render_text(canvas: &mut sdl2::render::Canvas<sdl2::video::Window>, font: &sdl2::ttf::Font, text: &str, position: Point, color: sdl2::pixels::Color) {
-    let surface = font.render(text)
-        .blended(color)
-        .map_err(|e| e.to_string())
-        .unwrap();
-
-    let texture_creator = canvas.texture_creator();
-    let texture = texture_creator.create_texture_from_surface(&surface).unwrap();
-
-    let (width, height) = surface.size();
-    let dest_rect = sdl2::rect::Rect::new(position.x, position.y, width as u32, height as u32);
-
-    canvas.copy(&texture, None, dest_rect).unwrap();
 }
 
 fn main() {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
-    let window = video_subsystem
-        .window("Puyo Puyo", 600, 600)
+    let ttf_context = sdl2::ttf::init().unwrap();
+
+    let font_path = "arcadeFont.ttf"; 
+    let font = match ttf_context.load_font(font_path, FONT_SIZE) {
+        Ok(f) => f,
+        Err(_) => {
+            eprintln!("Erreur: Police introuvable.");
+            return;
+        }
+    };
+
+    let window = video_subsystem.window("Puyo Rust", 800, 600)
         .position_centered()
-        .resizable()
-        .opengl()
         .build()
         .unwrap();
 
-    let mut canvas = window.into_canvas().build().unwrap();
-    let mut board = Board::new(6, 12);
-    let mut rng = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_micros() as u64;
-
+    let mut canvas = window.into_canvas().present_vsync().build().unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let ttf_context = sdl2::ttf::init().unwrap();
-    let font = ttf_context.load_font("./arcadeFont.ttf", FONT_SIZE).unwrap();
+    let mut board = Board::new(GRID_WIDTH, GRID_HEIGHT);
+    board.spawn_piece();
 
-    let colors = [MyColor::Red, MyColor::Blue, MyColor::Yellow, MyColor::Green];
-
-    let mut last_update = SystemTime::now();
-    let update_interval = Duration::from_millis(250); // Le modifier selon le score
+    let mut last_time = Instant::now();
+    let mut last_fall_time = Instant::now();
+    let mut last_resolve_time = Instant::now();
+    
+    let fall_interval = Duration::from_millis(600);
+    let resolve_interval = Duration::from_millis(200);
 
     'running: loop {
+        let now = Instant::now();
+        let delta = now.duration_since(last_time);
+        last_time = now;
+
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit {..} => break 'running,
-                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => break 'running,
-                Event::KeyDown { keycode: Some(Keycode::Q), .. } => {
-                    board.move_active_puyos(-1);
-                },
-                Event::KeyDown { keycode: Some(Keycode::D), .. } => {
-                    board.move_active_puyos(1);
-                },
+                Event::Quit {..} | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => break 'running,
+                Event::KeyDown { keycode: Some(key), .. } => {
+                    if board.state == GameState::Playing {
+                        match key {
+                            Keycode::Left | Keycode::Q => board.move_piece(-1),
+                            Keycode::Right | Keycode::D => board.move_piece(1),
+                            Keycode::Down | Keycode::S => { 
+                                board.force_drop(); 
+                                last_fall_time = Instant::now(); 
+                            },
+                            Keycode::Space | Keycode::Return => {
+                                board.hard_drop();
+                                last_fall_time = Instant::now();
+                            },
+                            Keycode::Up | Keycode::Z => board.rotate_piece(),
+                            _ => {}
+                        }
+                    } else if board.state == GameState::GameOver {
+                        if key == Keycode::R {
+                            board = Board::new(GRID_WIDTH, GRID_HEIGHT);
+                            board.spawn_piece();
+                        }
+                    }
+                }
                 _ => {}
             }
         }
 
-        if last_update.elapsed().unwrap() >= update_interval {
-            last_update = SystemTime::now();
-            let falling = board.step_fall_active_puyos();
-            if !falling {
-                board.check_matches();
-                rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
-                let color1 = &colors[(rng as usize) % colors.len()];
-                let color2 = &colors[((rng >> 16) as usize) % colors.len()];
-                if !board.add_puyos_from_top(3, color1.clone(), color2.clone()) {
-                    break;
+        match board.state {
+            GameState::Playing => {
+                let locked = board.update_logic(delta);
+                if locked {
+                    last_fall_time = Instant::now();
+                } else {
+                    if !board.is_touching_ground {
+                        if last_fall_time.elapsed() > fall_interval {
+                            board.force_drop();
+                            last_fall_time = Instant::now();
+                        }
+                    }
                 }
-            }
-
-            canvas.set_draw_color(Color::RGB(0, 0, 0));
-            canvas.clear();
-            board.display_sdl2(&mut canvas, &font, 600, 600);
-            canvas.present();
+            },
+            GameState::ResolvingMatches => {
+                if last_resolve_time.elapsed() > resolve_interval {
+                    board.resolve_step();
+                    last_resolve_time = Instant::now();
+                }
+            },
+            GameState::GameOver => {}
         }
+
+        board.draw(&mut canvas, &font);
+        canvas.present();
     }
 }

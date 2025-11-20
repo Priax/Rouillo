@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-crossterm = "0.27.0"
-rand = "0.7.2"
+crossterm = "0.29.0"
+rand = "0.9.1"
 
 [dependencies.sdl2]
-version = "0.35.2"
+version = "0.38.0"
 features = ["ttf"]
