@@ -5,8 +5,8 @@ use sdl2::event::Event;
 use sdl2::keyboard::{Keycode, Scancode};
 use sdl2::pixels::Color;
 use sdl2::rect::{Point, Rect};
-use sdl2::render::{Canvas, BlendMode};
-use sdl2::video::Window;
+use sdl2::render::{Canvas, BlendMode, Texture, TextureCreator};
+use sdl2::video::{Window, WindowContext};
 use sdl2::ttf::Font;
 use rand::Rng;
 
@@ -26,6 +26,12 @@ const SOFT_DROP_SPEED: u128 = 50;
 const CHAIN_POWERS: [u32; 20] = [0, 0, 8, 16, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512];
 const COLOR_BONUS: [u32; 6] = [0, 0, 3, 6, 12, 24];
 const GROUP_BONUS: [u32; 8] = [0, 2, 3, 4, 5, 6, 7, 10];
+
+struct GameTextures<'a> {
+    label_next: Texture<'a>,
+    label_game_over: Texture<'a>,
+    label_restart: Texture<'a>,
+}
 
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Hash)]
 enum Puyo {
@@ -207,6 +213,7 @@ impl Board {
             let old_row = piece.row;
 
             piece.rotation = (piece.rotation + direction) % 4;
+            
             if self.check_collision(&piece) {
                 piece.col -= 1;
                 if self.check_collision(&piece) {
@@ -369,7 +376,6 @@ impl Board {
         }
 
         if to_remove.is_empty() { 
-            if self.chain_count > 0 {}
             return false; 
         }
 
@@ -429,7 +435,14 @@ impl Board {
         }
     }
 
-    fn draw(&self, canvas: &mut Canvas<Window>, font: &Font, current_level: u32) {
+    fn draw<'a>(
+        &self, 
+        canvas: &mut Canvas<Window>, 
+        font: &Font, 
+        current_level: u32,
+        texture_creator: &'a TextureCreator<WindowContext>,
+        static_textures: &GameTextures<'a>
+    ) {
         canvas.set_draw_color(Color::RGB(20, 20, 20));
         canvas.clear();
 
@@ -486,7 +499,6 @@ impl Board {
 
         let score_text = format!("Score: {}", self.score);
         if let Ok(surface) = font.render(&score_text).blended(Color::WHITE) {
-            let texture_creator = canvas.texture_creator();
             let texture = texture_creator.create_texture_from_surface(&surface).unwrap();
             let (w, h) = surface.size();
             canvas.copy(&texture, None, Rect::new(ui_x, ui_y, w, h)).unwrap();
@@ -494,17 +506,13 @@ impl Board {
         
         let level_text = format!("Level: {}", current_level);
         if let Ok(surface) = font.render(&level_text).blended(Color::YELLOW) {
-            let texture_creator = canvas.texture_creator();
             let texture = texture_creator.create_texture_from_surface(&surface).unwrap();
             let (w, h) = surface.size();
             canvas.copy(&texture, None, Rect::new(ui_x, ui_y + 30, w, h)).unwrap();
         }
 
-        let next_text_surface = font.render("Next:").blended(Color::RGB(200, 200, 200)).unwrap();
-        let texture_creator = canvas.texture_creator();
-        let next_tex = texture_creator.create_texture_from_surface(&next_text_surface).unwrap();
-        let (nw, nh) = next_text_surface.size();
-        canvas.copy(&next_tex, None, Rect::new(ui_x, ui_y + 70, nw, nh)).unwrap();
+        let q_next = &static_textures.label_next.query();
+        canvas.copy(&static_textures.label_next, None, Rect::new(ui_x, ui_y + 70, q_next.width, q_next.height)).unwrap();
 
         canvas.set_draw_color(Color::RGB(40, 40, 40));
         canvas.fill_rect(Rect::new(ui_x, ui_y + 105, CELL_SIZE, CELL_SIZE * 2 + 5)).unwrap();
@@ -513,7 +521,6 @@ impl Board {
         self.draw_cell(canvas, 1, 0, Some(self.next_colors.0), ui_x, ui_y + 105, 255);
 
         let nn_y_start = ui_y + 210;
-        
         canvas.set_draw_color(Color::RGB(25, 25, 25));
         canvas.fill_rect(Rect::new(ui_x + 5, nn_y_start, (CELL_SIZE as f32 * 0.8) as u32, (CELL_SIZE as f32 * 1.6 + 5.0) as u32)).unwrap();
 
@@ -533,7 +540,6 @@ impl Board {
         if self.chain_count > 1 {
              let chain_text = format!("Chain: {}", self.chain_count);
              if let Ok(surface) = font.render(&chain_text).blended(Color::GREEN) {
-                let texture_creator = canvas.texture_creator();
                 let texture = texture_creator.create_texture_from_surface(&surface).unwrap();
                 let (w, h) = surface.size();
                 canvas.copy(&texture, None, Rect::new(ui_x, nn_y_start + 100, w, h)).unwrap();
@@ -558,18 +564,15 @@ impl Board {
         }
 
         if self.state == GameState::GameOver {
-             if let Ok(go_surface) = font.render("GAME OVER").blended(Color::RGB(255, 0, 0)) {
-                 let texture_creator = canvas.texture_creator();
-                 let go_tex = texture_creator.create_texture_from_surface(&go_surface).unwrap();
-                 let (gw, gh) = go_surface.size();
-                 canvas.copy(&go_tex, None, Rect::new((win_w as i32 - gw as i32)/2, (win_h as i32 - gh as i32)/2, gw, gh)).unwrap();
-             }
-             if let Ok(restart_surface) = font.render("Press R to Restart").blended(Color::RGB(255, 255, 255)) {
-                 let texture_creator = canvas.texture_creator();
-                 let res_tex = texture_creator.create_texture_from_surface(&restart_surface).unwrap();
-                 let (rw, rh) = restart_surface.size();
-                 canvas.copy(&res_tex, None, Rect::new((win_w as i32 - rw as i32)/2, (win_h as i32 - rh as i32)/2 + 50, rw, rh)).unwrap();
-             }
+             let q_go = static_textures.label_game_over.query();
+             let x_go = (win_w as i32 - q_go.width as i32)/2;
+             let y_go = (win_h as i32 - q_go.height as i32)/2;
+             canvas.copy(&static_textures.label_game_over, None, Rect::new(x_go, y_go, q_go.width, q_go.height)).unwrap();
+
+             let q_res = static_textures.label_restart.query();
+             let x_res = (win_w as i32 - q_res.width as i32)/2;
+             let y_res = y_go + 50;
+             canvas.copy(&static_textures.label_restart, None, Rect::new(x_res, y_res, q_res.width, q_res.height)).unwrap();
         }
     }
 
@@ -609,13 +612,30 @@ fn main() {
         }
     };
 
-    let window = video_subsystem.window("Puyo Rust - Ghost Row & Next Next", 800, 640)
+    let window = video_subsystem.window("Puyo Rust - Optimized", 800, 640)
         .position_centered()
         .build()
         .unwrap();
 
     let mut canvas = window.into_canvas().present_vsync().build().unwrap();
     canvas.set_blend_mode(BlendMode::Blend);
+
+    let texture_creator = canvas.texture_creator();
+
+    let surface_next = font.render("Next:").blended(Color::RGB(200, 200, 200)).unwrap();
+    let tex_next = texture_creator.create_texture_from_surface(&surface_next).unwrap();
+
+    let surface_go = font.render("GAME OVER").blended(Color::RGB(255, 0, 0)).unwrap();
+    let tex_go = texture_creator.create_texture_from_surface(&surface_go).unwrap();
+
+    let surface_res = font.render("Press R to Restart").blended(Color::RGB(255, 255, 255)).unwrap();
+    let tex_res = texture_creator.create_texture_from_surface(&surface_res).unwrap();
+
+    let game_textures = GameTextures {
+        label_next: tex_next,
+        label_game_over: tex_go,
+        label_restart: tex_res,
+    };
 
     let mut event_pump = sdl_context.event_pump().unwrap();
 
@@ -754,7 +774,7 @@ fn main() {
             GameState::GameOver => {}
         }
 
-        board.draw(&mut canvas, &font, level as u32);
+        board.draw(&mut canvas, &font, level as u32, &texture_creator, &game_textures);
         canvas.present();
     }
 }
