@@ -1,0 +1,10 @@
+[package]
+name = "puyorust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+macroquad = "0.4.14"
+
+getrandom = { version = "0.3", features = ["wasm_js"] }
+rand = "0.9.2"

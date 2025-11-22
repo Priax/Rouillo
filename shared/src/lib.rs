@@ -1,0 +1,330 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use rand::Rng;
+
+fn default_rng() -> rand::rngs::StdRng {
+    use rand::SeedableRng;
+    rand::rngs::StdRng::seed_from_u64(0)
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ClientMessage {
+    Join { name: String },
+    PieceLocked { col: i32, rot: usize, axis_color_idx: u8, sat_color_idx: u8 },
+    GameOver,
+    RequestRestart,
+    TogglePause, 
+    FullGameState { 
+        my_board: Board, 
+        opponent_board: Board, 
+        scores: (i32, i32),
+        requester_id: u8 
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ServerMessage {
+    Welcome { player_id: u8, random_seed: u64 },
+    GameStart,
+    OpponentAction { player_id: u8, col: i32, rot: usize, axis_color_idx: u8, sat_color_idx: u8 },
+    PlayerEliminated { player_id: u8 },
+    Restart { new_seed: u64 },
+    GameStateChange { paused: bool },
+    OpponentDisconnected,
+    RequestSnapshot { requester_id: u8 },
+    
+    SyncState { 
+        my_board: Board,       
+        opponent_board: Board, 
+        scores: (i32, i32),
+        target_player_id: u8 
+    }
+}
+
+pub const CELL_SIZE: f32 = 40.0; 
+pub const GRID_WIDTH: usize = 6;
+pub const GRID_HEIGHT: usize = 13;
+pub const VISIBLE_ROW_OFFSET: usize = 1;
+pub const MAX_LOCK_TIME: f32 = 0.5;
+pub const MAX_LOCK_DELAY_MOVES: u32 = 15;
+pub const MAX_TOTAL_GROUND_TIME: f32 = 2.0;
+pub const DAS_DELAY: f32 = 0.2;
+pub const DAS_SPEED: f32 = 0.05;
+pub const SOFT_DROP_SPEED: f32 = 0.05;
+
+const CHAIN_POWERS: [u32; 20] = [0, 0, 8, 16, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512];
+const COLOR_BONUS: [u32; 6] = [0, 0, 3, 6, 12, 24];
+const GROUP_BONUS: [u32; 8] = [0, 2, 3, 4, 5, 6, 7, 10];
+
+#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, Serialize, Deserialize)]
+pub enum PuyoType { Red, Blue, Yellow, Green, Purple }
+
+impl PuyoType {
+    pub fn random_with_seed<R: Rng>(rng: &mut R) -> PuyoType {
+        match rng.gen_range(0..5) { 0 => PuyoType::Red, 1 => PuyoType::Blue, 2 => PuyoType::Yellow, 3 => PuyoType::Green, _ => PuyoType::Purple }
+    }
+    pub fn to_u8(&self) -> u8 { match self { PuyoType::Red => 0, PuyoType::Blue => 1, PuyoType::Yellow => 2, PuyoType::Green => 3, PuyoType::Purple => 4 } }
+    pub fn from_u8(val: u8) -> PuyoType { match val { 0 => PuyoType::Red, 1 => PuyoType::Blue, 2 => PuyoType::Yellow, 3 => PuyoType::Green, _ => PuyoType::Purple } }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ActivePuyo {
+    pub row: i32, pub col: i32, pub rotation: usize, pub axis_type: PuyoType, pub sat_type: PuyoType,
+}
+
+impl ActivePuyo {
+    pub fn get_positions(&self) -> [(i32, i32); 2] {
+        let (dr, dc) = match self.rotation { 0 => (-1, 0), 1 => (0, 1), 2 => (1, 0), 3 => (0, -1), _ => (-1, 0) };
+        [(self.row, self.col), (self.row + dr, self.col + dc)]
+    }
+}
+
+#[derive(PartialEq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum GameState { Playing, ResolvingMatches, GameOver, Paused }
+
+#[derive(Serialize, Deserialize, Clone, Debug)] 
+pub struct Board {
+    pub width: usize, pub height: usize,
+    pub cells: Vec<Vec<Option<PuyoType>>>,
+    pub active_piece: Option<ActivePuyo>,
+    pub next_types: (PuyoType, PuyoType),
+    pub next_next_types: (PuyoType, PuyoType),
+    pub score: i32,
+    pub state: GameState,
+    #[serde(skip)] pub previous_state: Option<Box<GameState>>,
+    pub lock_timer: f32, pub total_ground_timer: f32, pub is_touching_ground: bool,
+    pub ground_move_count: u32, pub lowest_row_reached: i32, pub chain_count: u32,
+    #[serde(skip, default = "default_rng")] rng: rand::rngs::StdRng,
+}
+
+impl Board {
+    pub fn new(width: usize, height: usize, seed: u64) -> Board {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let n1 = (PuyoType::random_with_seed(&mut rng), PuyoType::random_with_seed(&mut rng));
+        let n2 = (PuyoType::random_with_seed(&mut rng), PuyoType::random_with_seed(&mut rng));
+
+        Board {
+            width, height, cells: vec![vec![None; width]; height], active_piece: None,
+            next_types: n1, next_next_types: n2, score: 0, state: GameState::Playing,
+            previous_state: None, lock_timer: 0.0, total_ground_timer: 0.0, is_touching_ground: false,
+            ground_move_count: 0, lowest_row_reached: -100, chain_count: 0, rng,
+        }
+    }
+
+    pub fn spawn_piece(&mut self) {
+        if self.cells[VISIBLE_ROW_OFFSET][2].is_some() { self.state = GameState::GameOver; return; }
+        let (c1, c2) = self.next_types;
+        self.next_types = self.next_next_types;
+        self.next_next_types = (PuyoType::random_with_seed(&mut self.rng), PuyoType::random_with_seed(&mut self.rng));
+        let new_piece = ActivePuyo { row: 1, col: 2, rotation: 0, axis_type: c1, sat_type: c2 };
+        if self.check_collision(&new_piece) { self.state = GameState::GameOver; } else {
+            self.lowest_row_reached = new_piece.row; self.active_piece = Some(new_piece);
+            self.lock_timer = 0.0; self.total_ground_timer = 0.0; self.is_touching_ground = false;
+            self.ground_move_count = 0; self.chain_count = 0;
+        }
+    }
+
+    pub fn get_ghost_piece(&self) -> Option<ActivePuyo> {
+        let mut ghost = self.active_piece.clone()?;
+        while !self.check_collision(&ghost) { ghost.row += 1; }
+        ghost.row -= 1; Some(ghost)
+    }
+
+    pub fn check_collision(&self, piece: &ActivePuyo) -> bool {
+        for (r, c) in piece.get_positions().iter() {
+            if *c < 0 || *c >= self.width as i32 || *r >= self.height as i32 { return true; }
+            if *r >= 0 && self.cells[*r as usize][*c as usize].is_some() { return true; }
+        }
+        false
+    }
+
+    fn reset_lock_if_needed(&mut self) {
+        if self.is_touching_ground && self.ground_move_count < MAX_LOCK_DELAY_MOVES {
+            self.lock_timer = 0.0; self.ground_move_count += 1;
+        }
+    }
+
+    pub fn move_piece(&mut self, dx: i32) {
+        if let Some(mut piece) = self.active_piece.take() {
+            piece.col += dx;
+            if self.check_collision(&piece) { piece.col -= dx; } else {
+                self.active_piece = Some(piece); self.reset_lock_if_needed(); return;
+            }
+            self.active_piece = Some(piece);
+        }
+    }
+
+    pub fn rotate_piece(&mut self, direction: usize) {
+        if let Some(mut piece) = self.active_piece.take() {
+            let (old_rot, old_col, old_row) = (piece.rotation, piece.col, piece.row);
+            piece.rotation = (piece.rotation + direction) % 4;
+            if self.check_collision(&piece) {
+                piece.col -= 1;
+                if self.check_collision(&piece) {
+                    piece.col = old_col + 1;
+                    if self.check_collision(&piece) {
+                        piece.col = old_col; piece.row -= 1;
+                        if self.check_collision(&piece) {
+                            piece.row = old_row; piece.col = old_col; piece.rotation = old_rot;
+                            let quick_rot = (old_rot + 2) % 4; piece.rotation = quick_rot;
+                            if self.check_collision(&piece) { piece.rotation = old_rot; }
+                        }
+                    }
+                }
+            }
+            if piece.rotation != old_rot || piece.col != old_col || piece.row != old_row { self.reset_lock_if_needed(); }
+            self.active_piece = Some(piece);
+        }
+    }
+
+    pub fn hard_drop(&mut self) {
+        if let Some(mut piece) = self.active_piece.take() {
+            loop {
+                piece.row += 1;
+                if self.check_collision(&piece) { piece.row -= 1; break; }
+            }
+            self.active_piece = Some(piece);
+            self.lock_piece();
+        }
+    }
+
+    pub fn force_drop(&mut self) {
+        if let Some(mut piece) = self.active_piece.take() {
+            piece.row += 1;
+            if self.check_collision(&piece) {
+                piece.row -= 1; self.is_touching_ground = true;
+            } else {
+                self.is_touching_ground = false; self.lock_timer = 0.0;
+            }
+            self.active_piece = Some(piece);
+        }
+    }
+
+    pub fn update_logic(&mut self, delta_time: f32) -> bool {
+        let mut locked = false;
+        if let Some(mut piece) = self.active_piece.take() {
+            if piece.row > self.lowest_row_reached {
+                self.lowest_row_reached = piece.row; self.total_ground_timer = 0.0; self.ground_move_count = 0;
+            }
+            piece.row += 1;
+            let collision = self.check_collision(&piece);
+            piece.row -= 1;
+            if collision {
+                self.is_touching_ground = true;
+                self.lock_timer += delta_time;
+                self.total_ground_timer += delta_time;
+                if self.lock_timer > MAX_LOCK_TIME || self.total_ground_timer > MAX_TOTAL_GROUND_TIME {
+                    self.active_piece = Some(piece); self.lock_piece(); locked = true;
+                } else { self.active_piece = Some(piece); }
+            } else {
+                self.is_touching_ground = false; self.lock_timer = 0.0; self.active_piece = Some(piece);
+            }
+        }
+        locked
+    }
+
+    fn lock_piece(&mut self) {
+        if let Some(piece) = self.active_piece.take() {
+            for (r, c) in piece.get_positions().iter() {
+                if *r >= 0 && *r < self.height as i32 && *c >= 0 && *c < self.width as i32 {
+                    let puyo_type = if *r == piece.row && *c == piece.col { piece.axis_type } else { piece.sat_type };
+                    self.cells[*r as usize][*c as usize] = Some(puyo_type);
+                }
+            }
+            self.state = GameState::ResolvingMatches;
+        }
+    }
+
+    pub fn apply_board_gravity(&mut self) -> bool {
+        let mut moved = false;
+        for col in 0..self.width {
+            for row in (0..self.height - 1).rev() {
+                if self.cells[row][col].is_some() && self.cells[row + 1][col].is_none() {
+                    let mut drop_row = row;
+                    while drop_row + 1 < self.height && self.cells[drop_row + 1][col].is_none() { drop_row += 1; }
+                    self.cells[drop_row][col] = self.cells[row][col].take();
+                    moved = true;
+                }
+            }
+        }
+        moved
+    }
+
+    pub fn check_matches(&mut self) -> bool {
+        let mut to_remove = HashSet::new();
+        let mut visited = HashSet::new();
+        let mut group_sizes = Vec::new();
+        let mut unique_colors = HashSet::new();
+        let mut total_puyos_cleared = 0;
+        for r in 0..self.height {
+            for c in 0..self.width {
+                if let Some(p_type) = self.cells[r][c] {
+                    if !visited.contains(&(r, c)) {
+                        let mut group = Vec::new();
+                        self.flood_fill(r, c, p_type, &mut group, &mut visited);
+                        if group.len() >= 4 {
+                            if group.iter().any(|(r, _)| *r >= VISIBLE_ROW_OFFSET) {
+                                unique_colors.insert(p_type);
+                                group_sizes.push(group.len() as u32);
+                                total_puyos_cleared += group.len() as u32;
+                                for pos in group { to_remove.insert(pos); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if to_remove.is_empty() { return false; }
+        self.chain_count += 1;
+        self.calculate_score(unique_colors.len(), total_puyos_cleared, &group_sizes);
+        for (r, c) in to_remove { self.cells[r][c] = None; }
+        true
+    }
+
+    fn calculate_score(&mut self, color_count_len: usize, total_cleared: u32, group_sizes: &[u32]) {
+        let chain_idx = (self.chain_count).min(19) as usize;
+        let cp = CHAIN_POWERS[chain_idx];
+        let cb = COLOR_BONUS[color_count_len.min(5) as usize];
+        let mut gb = 0;
+        for &size in group_sizes { gb += GROUP_BONUS[(size.saturating_sub(4)).min(7) as usize]; }
+        let mut multiplier = cp + cb + gb;
+        if multiplier == 0 { multiplier = 1; }
+        if multiplier > 999 { multiplier = 999; }
+        self.score += (10 * total_cleared) as i32 * multiplier as i32;
+    }
+
+    fn flood_fill(&self, r: usize, c: usize, target_type: PuyoType, group: &mut Vec<(usize, usize)>, visited: &mut HashSet<(usize, usize)>) {
+        if visited.contains(&(r, c)) { return; }
+        visited.insert((r, c)); group.push((r, c));
+        for (dr, dc) in [(-1, 0), (1, 0), (0, -1), (0, 1)].iter() {
+            let nr = r as i32 + dr; let nc = c as i32 + dc;
+            if nr >= 0 && nr < self.height as i32 && nc >= 0 && nc < self.width as i32 {
+                if let Some(cell_type) = self.cells[nr as usize][nc as usize] {
+                    if cell_type == target_type { self.flood_fill(nr as usize, nc as usize, target_type, group, visited); }
+                }
+            }
+        }
+    }
+
+    pub fn resolve_step(&mut self) {
+        let fell = self.apply_board_gravity();
+        if !fell {
+            let matched = self.check_matches();
+            if !matched && self.state != GameState::GameOver { self.state = GameState::Playing; self.spawn_piece(); }
+        }
+    }
+
+    pub fn toggle_pause(&mut self) {
+        match self.state {
+            GameState::Paused => {
+                if let Some(prev) = self.previous_state.take() { self.state = *prev; } else { self.state = GameState::Playing; }
+            }
+            GameState::GameOver => {},
+            _ => {
+                self.previous_state = Some(Box::new(self.state));
+                self.state = GameState::Paused;
+            }
+        }
+    }
+}
