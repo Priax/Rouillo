@@ -3,7 +3,7 @@ use tokio::sync::{broadcast};
 use warp::Filter;
 use std::sync::{Arc, Mutex};
 use rand::Rng;
-use shared::{ServerMessage, ClientMessage};
+use shared::{ClientMessage, ServerMessage, config};
 
 struct GameState {
     player_count: usize,
@@ -14,7 +14,7 @@ struct GameState {
 
 #[tokio::main]
 async fn main() {
-    let port = 8080;
+    let port = config::SERVER_PORT;
     println!("Serveur Puyo sur ws://0.0.0.0:{}", port);
 
     let mut rng = rand::rng();
@@ -27,7 +27,7 @@ async fn main() {
         is_paused: false, 
     }));
 
-    let (tx, _rx) = broadcast::channel(100);
+    let (tx, _rx) = broadcast::channel(config::CHANNEL_CAPACITY);
 
     let ws_route = warp::path("ws")
         .and(warp::ws())
@@ -37,7 +37,7 @@ async fn main() {
             ws.on_upgrade(move |socket| handle_connection(socket, tx, state))
         });
 
-    warp::serve(ws_route).run(([0, 0, 0, 0], port)).await;
+    warp::serve(ws_route).run((config::SERVER_BIND_ADDRESS, port)).await;
 }
 
 async fn handle_connection(

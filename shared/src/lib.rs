@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use rand::Rng;
 
+pub mod config; 
+use crate::config::*;
+
+#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, Serialize, Deserialize)]
+pub enum PuyoType { Red, Blue, Yellow, Green, Purple }
+
 fn default_rng() -> rand::rngs::StdRng {
     use rand::SeedableRng;
     rand::rngs::StdRng::seed_from_u64(0)
@@ -41,27 +47,9 @@ pub enum ServerMessage {
     }
 }
 
-pub const CELL_SIZE: f32 = 40.0; 
-pub const GRID_WIDTH: usize = 6;
-pub const GRID_HEIGHT: usize = 13;
-pub const VISIBLE_ROW_OFFSET: usize = 1;
-pub const MAX_LOCK_TIME: f32 = 0.5;
-pub const MAX_LOCK_DELAY_MOVES: u32 = 15;
-pub const MAX_TOTAL_GROUND_TIME: f32 = 2.0;
-pub const DAS_DELAY: f32 = 0.2;
-pub const DAS_SPEED: f32 = 0.05;
-pub const SOFT_DROP_SPEED: f32 = 0.05;
-
-const CHAIN_POWERS: [u32; 20] = [0, 0, 8, 16, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512];
-const COLOR_BONUS: [u32; 6] = [0, 0, 3, 6, 12, 24];
-const GROUP_BONUS: [u32; 8] = [0, 2, 3, 4, 5, 6, 7, 10];
-
-#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, Serialize, Deserialize)]
-pub enum PuyoType { Red, Blue, Yellow, Green, Purple }
-
 impl PuyoType {
     pub fn random_with_seed<R: Rng>(rng: &mut R) -> PuyoType {
-        match rng.gen_range(0..5) { 0 => PuyoType::Red, 1 => PuyoType::Blue, 2 => PuyoType::Yellow, 3 => PuyoType::Green, _ => PuyoType::Purple }
+        match rng.random_range(0..5) { 0 => PuyoType::Red, 1 => PuyoType::Blue, 2 => PuyoType::Yellow, 3 => PuyoType::Green, _ => PuyoType::Purple }
     }
     pub fn to_u8(&self) -> u8 { match self { PuyoType::Red => 0, PuyoType::Blue => 1, PuyoType::Yellow => 2, PuyoType::Green => 3, PuyoType::Purple => 4 } }
     pub fn from_u8(val: u8) -> PuyoType { match val { 0 => PuyoType::Red, 1 => PuyoType::Blue, 2 => PuyoType::Yellow, 3 => PuyoType::Green, _ => PuyoType::Purple } }
