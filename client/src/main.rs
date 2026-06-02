@@ -10,7 +10,7 @@ mod draw;
 use state::State;
 
 fn setup(app: &mut App, gfx: &mut Graphics) -> State {
-    let (ws_sender, ws_receiver) = ewebsock::connect(config::SERVER_URL).unwrap();
+    let (ws_sender, ws_receiver) = ewebsock::connect(config::SERVER_URL, ewebsock::Options::default()).unwrap();
     let font = gfx.create_font(include_bytes!("../../assets/arcadeFont.ttf")).unwrap();
     let now = app.timer.elapsed_f32();
 

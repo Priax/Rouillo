@@ -15,10 +15,10 @@ pub fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
     let board_h = (config::GRID_HEIGHT - config::VISIBLE_ROW_OFFSET) as f32 * config::CELL_SIZE;
     let gap = 250.0;
     let total_w = board_w * 2.0 + gap;
-    
+
     let start_x = (win_w - total_w) / 2.0;
     let offset_y = (win_h - board_h) / 2.0;
-    
+
     let ui_x = start_x + board_w + 30.0;
 
     draw_board(&mut draw, &state.board, start_x, offset_y, board_w, board_h);
@@ -54,7 +54,11 @@ pub fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         draw.rect((ui_x, offset_y + 350.0), (100.0 * ratio, 10.0)).color(col);
     }
 
-    if state.waiting_for_opponent {
+    if state.room_full {
+        draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.0, 0.0, 0.0, 0.9));
+        draw.text(&state.font, "SALLE PLEINE").position(win_w / 2.0, win_h / 2.0 - 20.0).size(60.0).h_align_center().v_align_middle().color(Color::RED);
+        draw.text(&state.font, "Une partie est deja en cours.").position(win_w / 2.0, win_h / 2.0 + 40.0).size(25.0).h_align_center().v_align_middle().color(Color::WHITE);
+    } else if state.waiting_for_opponent {
         draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.0, 0.0, 0.0, 0.8));
         draw.text(&state.font, "WAITING FOR PLAYER 2...").position(win_w / 2.0, win_h / 2.0).size(40.0).h_align_center().v_align_middle().color(Color::WHITE);
     }
@@ -140,15 +144,28 @@ fn draw_cell(draw: &mut Draw, row: f32, col: f32, puyo_type: Option<PuyoType>, d
         if row >= 0.0 {
             let mut color = get_puyo_color(pt);
             color.a = alpha;
-            draw.rect((dx + col * config::CELL_SIZE + 1.0, dy + row * config::CELL_SIZE + 1.0), (config::CELL_SIZE - 2.0, config::CELL_SIZE - 2.0)).color(color);
+
+            let x = dx + col * config::CELL_SIZE + 1.0;
+            let y = dy + row * config::CELL_SIZE + 1.0;
+            let size = config::CELL_SIZE - 2.0;
+
+            draw.rect((x, y), (size, size)).color(color);
+
+            if pt == PuyoType::Garbage {
+                 draw.rect((x + size * 0.25, y + size * 0.25), (size * 0.5, size * 0.5))
+                     .color(Color::BLACK);
+            }
         }
     }
 }
 
 fn get_puyo_color(puyo_type: PuyoType) -> Color {
     match puyo_type {
-        PuyoType::Red => Color::RED, PuyoType::Blue => Color::BLUE,
-        PuyoType::Yellow => Color::YELLOW, PuyoType::Green => Color::GREEN,
+        PuyoType::Red => Color::RED,
+        PuyoType::Blue => Color::BLUE,
+        PuyoType::Yellow => Color::YELLOW,
+        PuyoType::Green => Color::GREEN,
         PuyoType::Purple => Color::MAGENTA,
+        PuyoType::Garbage => Color::GRAY,
     }
 }

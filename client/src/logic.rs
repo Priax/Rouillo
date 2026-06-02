@@ -1,5 +1,5 @@
 use notan::prelude::*;
-use shared::*;
+use shared::{self, *};
 use crate::state::State;
 use ewebsock::WsMessage;
 use crate::config;
@@ -31,80 +31,97 @@ pub fn update(app: &mut App, state: &mut State) {
 }
 
 fn handle_global_input(app: &mut App, state: &mut State) {
-    if app.keyboard.was_pressed(KeyCode::R) && (state.board.state == GameState::GameOver || state.board.state == GameState::Paused) {
-        let msg = ClientMessage::RequestRestart;
-        if let Ok(json) = serde_json::to_string(&msg) { state.ws_sender.send(WsMessage::Text(json)); }
+    if app.keyboard.was_pressed(KeyCode::KeyR) && (state.board.state == GameState::GameOver || state.board.state == GameState::Paused) {
+        state.ws_sender.send(WsMessage::Binary(shared::encode(&ClientMessage::RequestRestart)));
     }
-    
-    if app.keyboard.was_pressed(KeyCode::Escape) { 
-        let msg = ClientMessage::TogglePause;
-        if let Ok(json) = serde_json::to_string(&msg) { state.ws_sender.send(WsMessage::Text(json)); }
+
+    if app.keyboard.was_pressed(KeyCode::Escape) {
+        state.ws_sender.send(WsMessage::Binary(shared::encode(&ClientMessage::TogglePause)));
     }
 
     if state.board.state == GameState::GameOver && !state.game_over_sent && !state.did_i_win {
-        let msg = ClientMessage::GameOver;
-        if let Ok(json) = serde_json::to_string(&msg) { state.ws_sender.send(WsMessage::Text(json)); }
+        state.ws_sender.send(WsMessage::Binary(shared::encode(&ClientMessage::GameOver)));
         state.game_over_sent = true;
     }
 }
 
 fn handle_game_input(app: &mut App, state: &mut State, delta_time: f32, time_now: f32) {
-    if app.keyboard.was_pressed(KeyCode::Up) || app.keyboard.was_pressed(KeyCode::Z) { state.board.rotate_piece(1); }
-    if app.keyboard.was_pressed(KeyCode::X) || app.keyboard.was_pressed(KeyCode::W) { state.board.rotate_piece(3); }
+    if app.keyboard.was_pressed(KeyCode::ArrowUp) || app.keyboard.was_pressed(KeyCode::KeyZ) { state.board.rotate_piece(1); }
+    if app.keyboard.was_pressed(KeyCode::KeyX) || app.keyboard.was_pressed(KeyCode::KeyW) { state.board.rotate_piece(3); }
 
-    let piece_locked_now = if app.keyboard.was_pressed(KeyCode::Space) || app.keyboard.was_pressed(KeyCode::Return) {
-        if let Some(piece) = &state.board.active_piece {
-            let action_msg = ClientMessage::PieceLocked { 
-                col: piece.col, rot: piece.rotation, 
-                axis_color_idx: piece.axis_type.to_u8(), sat_color_idx: piece.sat_type.to_u8() 
-            };
-            if let Ok(json) = serde_json::to_string(&action_msg) { state.ws_sender.send(WsMessage::Text(json)); }
+    let piece_locked_now = if app.keyboard.was_pressed(KeyCode::Space) || app.keyboard.was_pressed(KeyCode::Enter) {
+        if let Some(piece) = state.board.active_piece.clone() {
+            let (col, rot, axis_type, sat_type) = (piece.col, piece.rotation as u8, piece.axis_type, piece.sat_type);
+            state.board.hard_drop();
+            state.my_piece_seq += 1;
+            state.ws_sender.send(WsMessage::Binary(shared::encode(&ClientMessage::PieceLocked {
+                col, rot, axis_type, sat_type, seq: state.my_piece_seq,
+            })));
         }
-        state.board.hard_drop();
         state.last_fall_time = time_now;
         true
     } else { false };
 
     if !piece_locked_now {
-        if app.keyboard.is_down(KeyCode::Left) {
-            if state.key_timer_left == 0.0 { state.board.move_piece(-1); state.key_timer_left = 0.0001; }
-            else {
+        if app.keyboard.is_down(KeyCode::ArrowLeft) {
+            if state.key_timer_left == 0.0 {
+                state.board.move_piece(-1);
+                state.key_timer_left = 0.0001;
+            } else {
                 state.key_timer_left += delta_time;
-                if state.key_timer_left > config::DAS_DELAY { while state.key_timer_left > config::DAS_DELAY + config::DAS_SPEED { state.board.move_piece(-1); state.key_timer_left -= config::DAS_SPEED; } }
+                while state.key_timer_left > config::DAS_DELAY + config::DAS_SPEED {
+                    state.board.move_piece(-1);
+                    state.key_timer_left -= config::DAS_SPEED;
+                }
             }
-        } else { state.key_timer_left = 0.0; }
+        } else {
+            state.key_timer_left = 0.0;
+        }
 
-        if app.keyboard.is_down(KeyCode::Right) {
-            if state.key_timer_right == 0.0 { state.board.move_piece(1); state.key_timer_right = 0.0001; }
-            else {
+        if app.keyboard.is_down(KeyCode::ArrowRight) {
+            if state.key_timer_right == 0.0 {
+                state.board.move_piece(1);
+                state.key_timer_right = 0.0001;
+            } else {
                 state.key_timer_right += delta_time;
-                if state.key_timer_right > config::DAS_DELAY { while state.key_timer_right > config::DAS_DELAY + config::DAS_SPEED { state.board.move_piece(1); state.key_timer_right -= config::DAS_SPEED; } }
+                while state.key_timer_right > config::DAS_DELAY + config::DAS_SPEED {
+                    state.board.move_piece(1);
+                    state.key_timer_right -= config::DAS_SPEED;
+                }
             }
-        } else { state.key_timer_right = 0.0; }
+        } else {
+            state.key_timer_right = 0.0;
+        }
 
-        if app.keyboard.is_down(KeyCode::Down) {
+        if app.keyboard.is_down(KeyCode::ArrowDown) {
             state.key_timer_down += delta_time;
             if state.key_timer_down > config::SOFT_DROP_SPEED {
                 state.board.force_drop();
                 state.last_fall_time = time_now;
                 state.key_timer_down = 0.0;
             }
-        } else { state.key_timer_down = 0.0; }
+        } else {
+            state.key_timer_down = 0.0;
+        }
     }
 }
 
 fn update_physics(state: &mut State, delta_time: f32, time_now: f32, current_interval: f64) {
+    let prev_board_state = state.board.state;
     match state.board.state {
         GameState::Playing => {
-            let pending_lock_msg = if let Some(piece) = &state.board.active_piece {
-                Some(ClientMessage::PieceLocked { 
-                    col: piece.col, rot: piece.rotation, axis_color_idx: piece.axis_type.to_u8(), sat_color_idx: piece.sat_type.to_u8() 
-                })
+            let pending_lock_info = if let Some(piece) = &state.board.active_piece {
+                Some((piece.col, piece.rotation as u8, piece.axis_type, piece.sat_type))
             } else { None };
 
             let locked = state.board.update_logic(delta_time);
             if locked {
-                if let Some(msg) = pending_lock_msg { if let Ok(json) = serde_json::to_string(&msg) { state.ws_sender.send(WsMessage::Text(json)); } }
+                if let Some((col, rot, axis_type, sat_type)) = pending_lock_info {
+                    state.my_piece_seq += 1;
+                    state.ws_sender.send(WsMessage::Binary(shared::encode(&ClientMessage::PieceLocked {
+                        col, rot, axis_type, sat_type, seq: state.my_piece_seq,
+                    })));
+                }
                 state.last_fall_time = time_now;
             } else {
                 if !state.board.is_touching_ground && (time_now - state.last_fall_time > current_interval as f32) {
@@ -114,8 +131,52 @@ fn update_physics(state: &mut State, delta_time: f32, time_now: f32, current_int
             }
         },
         GameState::ResolvingMatches => {
-            if time_now - state.last_resolve_time > 0.15 { state.board.resolve_step(); state.last_resolve_time = time_now; }
+            if time_now - state.last_resolve_time > 0.10 { 
+                let garbage_sent = state.board.resolve_step(); 
+
+                if garbage_sent > 0 {
+                    state.ws_sender.send(WsMessage::Binary(shared::encode(&ClientMessage::GarbageSent { amount: garbage_sent })));
+                    state.last_server_msg = format!("Attaque ! {} blocs", garbage_sent);
+                }
+
+                state.last_resolve_time = time_now; 
+            }
+        },
+        GameState::DroppingGarbage => {
+            state.garbage_delay_timer += delta_time;
+
+            if state.garbage_delay_timer > 0.5 {
+                state.board.drop_garbage();
+                state.board.apply_board_gravity();
+
+                if state.board.state != GameState::GameOver {
+                    state.board.state = GameState::Playing;
+                    state.board.spawn_piece(); // pose GameOver en interne si la colonne de spawn est bloquée
+                    state.board.lock_timer = 0.0;
+                    state.board.total_ground_timer = 0.0;
+                    state.last_fall_time = time_now;
+                }
+
+                state.garbage_delay_timer = 0.0;
+            }
         },
         _ => {}
+    }
+
+    if prev_board_state != GameState::Playing && state.board.state == GameState::Playing {
+        // Les cellules ne sont envoyées qu'après un DroppingGarbage pour corriger les divergences
+        // de placement aléatoire. Après une résolution de chaîne, OpponentAction suffit.
+        let cells = if prev_board_state == GameState::DroppingGarbage {
+            Some(state.board.cells.clone())
+        } else {
+            None
+        };
+        state.ws_sender.send(WsMessage::Binary(shared::encode(&ClientMessage::BoardSync {
+            cells,
+            pending_garbage: state.board.pending_garbage,
+            score: state.board.score,
+            next_types: state.board.next_types,
+            next_next_types: state.board.next_next_types,
+        })));
     }
 }
