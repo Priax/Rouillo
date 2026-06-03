@@ -34,7 +34,7 @@ struct Slots {
 enum GameCommand {
     Join { player_id: u8 },
     Leave { player_id: u8 },
-    Input { player_id: u8, kind: InputKind },
+    Input { player_id: u8, kind: InputKind, seq: u32 },
     TogglePause,
     Restart,
 }
@@ -47,6 +47,7 @@ struct Sim {
     running: bool,   // une partie est en cours (ou finie mais encore affichée)
     paused: bool,
     finished: bool,  // un joueur a perdu : on gèle la simulation
+    last_seq: [u32; 2], // dernier seq d'input traité par joueur (ack renvoyé au client)
     last_restart: Option<Instant>,
 }
 
@@ -57,6 +58,7 @@ impl Sim {
             running: false,
             paused: false,
             finished: false,
+            last_seq: [0; 2],
             last_restart: None,
         }
     }
@@ -76,6 +78,7 @@ impl Sim {
         self.boards[1].spawn_piece();
         self.paused = false;
         self.finished = false;
+        self.last_seq = [0; 2]; // le client réinitialise aussi son compteur au restart
     }
 }
 
@@ -135,6 +138,8 @@ async fn game_loop(
                     broadcast_all(&tx, shared::encode(&ServerMessage::StateUpdate {
                         p1_board: sim.boards[0].clone(),
                         p2_board: sim.boards[1].clone(),
+                        p1_ack: sim.last_seq[0],
+                        p2_ack: sim.last_seq[1],
                     }));
                 }
             }
@@ -153,6 +158,7 @@ fn handle_command(
 ) {
     match cmd {
         GameCommand::Join { player_id } => {
+            sim.last_seq[(player_id - 1) as usize] = 0;
             let both = { let s = slots.lock().unwrap(); s.occupied[0] && s.occupied[1] };
             if both && !sim.running {
                 println!(">>> Lancement Partie !");
@@ -181,9 +187,11 @@ fn handle_command(
                 send_to_player(tx, present_id, shared::encode(&ServerMessage::OpponentDisconnected));
             }
         }
-        GameCommand::Input { player_id, kind } => {
+        GameCommand::Input { player_id, kind, seq } => {
+            let idx = (player_id - 1) as usize;
+            sim.last_seq[idx] = seq;
             if sim.running && !sim.paused && !sim.finished {
-                sim.boards[(player_id - 1) as usize].apply_input(kind);
+                sim.boards[idx].apply_input(kind);
             }
         }
         GameCommand::TogglePause => {
@@ -270,7 +278,7 @@ async fn handle_connection(
                 if msg.is_binary() {
                     if let Some(client_msg) = shared::decode::<ClientMessage>(msg.as_bytes()) {
                         let cmd = match client_msg {
-                            ClientMessage::Input { kind } => GameCommand::Input { player_id: my_id, kind },
+                            ClientMessage::Input { kind, seq } => GameCommand::Input { player_id: my_id, kind, seq },
                             ClientMessage::TogglePause => GameCommand::TogglePause,
                             ClientMessage::RequestRestart => GameCommand::Restart,
                         };
