@@ -36,56 +36,31 @@ fn default_rng() -> rand::rngs::StdRng {
     rand::rngs::StdRng::from_os_rng()
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputKind {
+    MoveLeft,
+    MoveRight,
+    RotateCW,
+    RotateCCW,
+    SoftDrop,
+    HardDrop,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClientMessage {
-    PieceLocked { col: i32, rot: u8, axis_type: PuyoType, sat_type: PuyoType, seq: u32 },
-    GarbageSent { amount: u32 },
-    GameOver,
-    RequestRestart,
+    Input { kind: InputKind },
     TogglePause,
-    RequestSync,
-    BoardSync {
-        cells: Option<Vec<Vec<Option<PuyoType>>>>,
-        pending_garbage: u32,
-        score: i32,
-        next_types: (PuyoType, PuyoType),
-        next_next_types: (PuyoType, PuyoType),
-    },
-    FullGameState {
-        my_board: Board,
-        opponent_board: Board,
-        requester_id: u8,
-        my_piece_seq: u32,
-    }
+    RequestRestart,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServerMessage {
     RoomFull,
-    Welcome { player_id: u8, random_seed: u64 },
+    Welcome { player_id: u8 },
     GameStart,
-    OpponentAction { player_id: u8, col: i32, rot: u8, axis_type: PuyoType, sat_type: PuyoType, seq: u32 },
-    GarbageAttack { attacker_id: u8, amount: u32 },
-    PlayerEliminated { player_id: u8 },
-    Restart { new_seed: u64 },
-    GameStateChange { paused: bool },
+    StateUpdate { p1_board: Board, p2_board: Board },
+    Restart,
     OpponentDisconnected,
-    RequestSnapshot { requester_id: u8 },
-    OpponentBoardSync {
-        player_id: u8,
-        cells: Option<Vec<Vec<Option<PuyoType>>>>,
-        pending_garbage: u32,
-        score: i32,
-        next_types: (PuyoType, PuyoType),
-        next_next_types: (PuyoType, PuyoType),
-    },
-
-    SyncState {
-        my_board: Board,
-        opponent_board: Board,
-        target_player_id: u8,
-        opponent_piece_seq: u32,
-    }
 }
 
 impl PuyoType {
@@ -150,6 +125,10 @@ pub struct Board {
     pub ground_move_count: u32,
     pub lowest_row_reached: i32,
     pub chain_count: u32,
+    #[serde(default)] pub played_time: f32,
+    #[serde(default)] pub fall_timer: f32,
+    #[serde(default)] pub resolve_timer: f32,
+    #[serde(default)] pub garbage_delay_timer: f32,
     #[serde(skip, default = "default_rng")] rng: rand::rngs::StdRng,
 }
 
@@ -178,6 +157,10 @@ impl Board {
             ground_move_count: 0,
             lowest_row_reached: -100,
             chain_count: 0,
+            played_time: 0.0,
+            fall_timer: 0.0,
+            resolve_timer: 0.0,
+            garbage_delay_timer: 0.0,
             rng,
         }
     }
@@ -368,7 +351,7 @@ impl Board {
                     if p_type == PuyoType::Garbage {
                         continue;
                     }
-                    
+
                     if !visited.contains(&(r, c)) {
                         let mut group = Vec::new();
                         self.flood_fill(r, c, p_type, &mut group, &mut visited);
@@ -419,10 +402,10 @@ impl Board {
         let mut multiplier = cp + cb + gb;
         if multiplier == 0 { multiplier = 1; }
         if multiplier > 999 { multiplier = 999; }
-        
+
         (10 * total_cleared) as i32 * multiplier as i32
     }
-    
+
     pub fn drop_garbage(&mut self) {
         if self.pending_garbage == 0 {
             return;
@@ -520,7 +503,6 @@ impl Board {
         }
     }
 
-    // Impose directement l'état de pause depuis le serveur (idempotent, résistant aux doublons).
     pub fn set_paused(&mut self, paused: bool) {
         if paused {
             if self.state != GameState::Paused && self.state != GameState::GameOver {
@@ -530,5 +512,72 @@ impl Board {
         } else if self.state == GameState::Paused {
             self.state = self.previous_state.take().unwrap_or(GameState::Playing);
         }
+    }
+
+    pub fn level(&self) -> u32 {
+        1 + (self.played_time / LEVEL_DURATION) as u32
+    }
+
+    pub fn apply_input(&mut self, input: InputKind) {
+        if self.state != GameState::Playing {
+            return;
+        }
+        match input {
+            InputKind::MoveLeft => self.move_piece(-1),
+            InputKind::MoveRight => self.move_piece(1),
+            InputKind::RotateCW => self.rotate_piece(1),
+            InputKind::RotateCCW => self.rotate_piece(3),
+            InputKind::SoftDrop => { self.force_drop(); self.fall_timer = 0.0; }
+            InputKind::HardDrop => self.hard_drop(),
+        }
+    }
+
+    pub fn tick(&mut self, dt: f32) -> u32 {
+        if self.state == GameState::Playing || self.state == GameState::ResolvingMatches {
+            self.played_time += dt;
+        }
+
+        let speed_decrease = (self.level() as f64 - 1.0) * FALL_SPEEDUP_PER_LEVEL;
+        let fall_interval = (BASE_FALL_INTERVAL - speed_decrease).max(MIN_FALL_INTERVAL) as f32;
+
+        let mut garbage_produced = 0;
+        match self.state {
+            GameState::Playing => {
+                let locked = self.update_logic(dt);
+                if locked {
+                    self.fall_timer = 0.0;
+                } else if !self.is_touching_ground {
+                    self.fall_timer += dt;
+                    if self.fall_timer > fall_interval {
+                        self.force_drop();
+                        self.fall_timer = 0.0;
+                    }
+                }
+            }
+            GameState::ResolvingMatches => {
+                self.resolve_timer += dt;
+                if self.resolve_timer > RESOLVE_STEP_INTERVAL {
+                    garbage_produced = self.resolve_step();
+                    self.resolve_timer = 0.0;
+                }
+            }
+            GameState::DroppingGarbage => {
+                self.garbage_delay_timer += dt;
+                if self.garbage_delay_timer > GARBAGE_DROP_DELAY {
+                    self.drop_garbage();
+                    self.apply_board_gravity();
+                    if self.state != GameState::GameOver {
+                        self.state = GameState::Playing;
+                        self.spawn_piece();
+                        self.lock_timer = 0.0;
+                        self.total_ground_timer = 0.0;
+                        self.fall_timer = 0.0;
+                    }
+                    self.garbage_delay_timer = 0.0;
+                }
+            }
+            _ => {}
+        }
+        garbage_produced
     }
 }

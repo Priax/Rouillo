@@ -265,6 +265,7 @@ dependencies = [
  "rand 0.9.4",
  "serde",
  "shared",
+ "web-sys",
 ]
 
 [[package]]

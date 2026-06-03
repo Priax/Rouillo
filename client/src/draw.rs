@@ -29,7 +29,7 @@ pub fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
     draw.text(&state.font, "OPPONENT").position(opponent_x, offset_y - 30.0).size(20.0).color(Color::GRAY);
 
     draw.text(&state.font, &format!("Score: {}", state.board.score)).position(ui_x, offset_y + 20.0).size(30.0).color(Color::WHITE);
-    draw.text(&state.font, &format!("Level: {}", 1 + (state.played_time / 15.0) as u32)).position(ui_x, offset_y + 60.0).size(30.0).color(Color::YELLOW);
+    draw.text(&state.font, &format!("Level: {}", state.board.level())).position(ui_x, offset_y + 60.0).size(30.0).color(Color::YELLOW);
 
     draw.text(&state.font, "Next:").position(ui_x, offset_y + 110.0).size(30.0).color(Color::GRAY);
     draw.rect((ui_x, offset_y + 140.0), (config::CELL_SIZE, config::CELL_SIZE * 2.1)).color(Color::from_rgb(0.2, 0.2, 0.2));
@@ -69,12 +69,14 @@ pub fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         draw.text(&state.font, "Waiting for reconnection...").position(win_w / 2.0, win_h / 2.0 + 30.0).size(20.0).h_align_center().v_align_middle().color(Color::WHITE);
     }
 
-    if state.board.state == GameState::GameOver {
+    let i_lost = state.board.state == GameState::GameOver;
+    let opponent_lost = state.other_board.state == GameState::GameOver;
+    if i_lost || opponent_lost {
         draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.0, 0.0, 0.0, 0.7));
-        if state.did_i_win {
-            draw.text(&state.font, "YOU WIN !").position(win_w / 2.0, win_h / 2.0 - 20.0).size(80.0).h_align_center().v_align_middle().color(Color::YELLOW);
-        } else {
+        if i_lost {
             draw.text(&state.font, "GAME OVER").position(win_w / 2.0, win_h / 2.0 - 20.0).size(60.0).h_align_center().v_align_middle().color(Color::RED);
+        } else {
+            draw.text(&state.font, "YOU WIN !").position(win_w / 2.0, win_h / 2.0 - 20.0).size(80.0).h_align_center().v_align_middle().color(Color::YELLOW);
         }
         draw.text(&state.font, "Press R to Restart").position(win_w / 2.0, win_h / 2.0 + 60.0).size(30.0).h_align_center().v_align_middle().color(Color::WHITE);
     }
@@ -100,7 +102,7 @@ pub fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
 
 fn draw_board(draw: &mut Draw, board: &Board, offset_x: f32, offset_y: f32, board_w: f32, board_h: f32) {
     draw.rect((offset_x, offset_y), (board_w, board_h)).color(Color::from_rgb(0.12, 0.12, 0.12));
-    
+
     let x_cross = offset_x + (2.0 * config::CELL_SIZE) + 10.0;
     let y_cross = offset_y + 10.0;
     draw.line((x_cross, y_cross), (x_cross + 20.0, y_cross + 20.0)).width(3.0).color(Color::RED);

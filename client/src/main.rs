@@ -9,12 +9,25 @@ mod draw;
 
 use state::State;
 
-fn setup(app: &mut App, gfx: &mut Graphics) -> State {
-    let (ws_sender, ws_receiver) = ewebsock::connect(config::SERVER_URL, ewebsock::Options::default()).unwrap();
-    let font = gfx.create_font(include_bytes!("../../assets/arcadeFont.ttf")).unwrap();
-    let now = app.timer.elapsed_f32();
+fn server_url() -> String {
+    #[cfg(all(target_arch = "wasm32", not(debug_assertions)))]
+    {
+        let loc = web_sys::window().expect("window").location();
+        let is_https = loc.protocol().map(|p| p == "https:").unwrap_or(false);
+        let proto = if is_https { "wss" } else { "ws" };
+        return format!("{}://{}/ws", proto, loc.host().expect("host"));
+    }
+    #[cfg(not(all(target_arch = "wasm32", not(debug_assertions))))]
+    {
+        config::SERVER_URL.to_string()
+    }
+}
 
-    State::new(ws_sender, ws_receiver, font, now)
+fn setup(gfx: &mut Graphics) -> State {
+    let (ws_sender, ws_receiver) = ewebsock::connect(&server_url(), ewebsock::Options::default()).unwrap();
+    let font = gfx.create_font(include_bytes!("../../assets/arcadeFont.ttf")).unwrap();
+
+    State::new(ws_sender, ws_receiver, font)
 }
 
 #[notan_main]
