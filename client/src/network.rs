@@ -26,26 +26,42 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             state.my_player_id = Some(player_id);
             state.waiting_for_opponent = true;
             state.opponent_disconnected = false;
+            reset_prediction(state);
         }
         ServerMessage::GameStart => {
             state.last_server_msg = "Game start".to_string();
             state.waiting_for_opponent = false;
             state.opponent_disconnected = false;
         }
-        ServerMessage::StateUpdate { p1_board, p2_board } => {
-            match state.my_player_id {
-                Some(1) => { state.board = p1_board; state.other_board = p2_board; }
-                Some(2) => { state.board = p2_board; state.other_board = p1_board; }
-                _ => {}
+        ServerMessage::StateUpdate { p1_board, p2_board, p1_ack, p2_ack } => {
+            let (my_auth, opp_auth, my_ack) = match state.my_player_id {
+                Some(1) => (p1_board, p2_board, p1_ack),
+                Some(2) => (p2_board, p1_board, p2_ack),
+                _ => return,
+            };
+            state.board = my_auth.clone();
+            state.other_board = opp_auth;
+            state.my_ack = my_ack;
+            state.pending_inputs.retain(|(seq, _)| *seq > my_ack);
+            state.predicted_board = my_auth;
+            for (_, kind) in state.pending_inputs.iter() {
+                state.predicted_board.apply_input(*kind);
             }
         }
         ServerMessage::Restart => {
             state.last_server_msg = "Redémarrage de la partie".to_string();
             state.opponent_disconnected = false;
+            reset_prediction(state);
         }
         ServerMessage::OpponentDisconnected => {
             state.last_server_msg = "Adversaire déconnecté !".to_string();
             state.opponent_disconnected = true;
         }
     }
+}
+
+fn reset_prediction(state: &mut State) {
+    state.input_seq = 0;
+    state.my_ack = 0;
+    state.pending_inputs.clear();
 }

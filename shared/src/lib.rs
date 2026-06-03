@@ -48,7 +48,8 @@ pub enum InputKind {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClientMessage {
-    Input { kind: InputKind },
+    // `seq` : numéro de séquence monotone, support de la réconciliation de la prédiction client.
+    Input { kind: InputKind, seq: u32 },
     TogglePause,
     RequestRestart,
 }
@@ -58,7 +59,8 @@ pub enum ServerMessage {
     RoomFull,
     Welcome { player_id: u8 },
     GameStart,
-    StateUpdate { p1_board: Board, p2_board: Board },
+    // p1_ack / p2_ack : dernier `seq` d'input traité par le serveur pour chaque joueur (réconciliation).
+    StateUpdate { p1_board: Board, p2_board: Board, p1_ack: u32, p2_ack: u32 },
     Restart,
     OpponentDisconnected,
 }

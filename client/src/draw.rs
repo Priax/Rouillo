@@ -21,36 +21,37 @@ pub fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
 
     let ui_x = start_x + board_w + 30.0;
 
-    draw_board(&mut draw, &state.board, start_x, offset_y, board_w, board_h);
+    let me = &state.predicted_board;
+    draw_board(&mut draw, me, start_x, offset_y, board_w, board_h);
     draw.text(&state.font, "YOU").position(start_x, offset_y - 30.0).size(20.0).color(Color::WHITE);
 
     let opponent_x = start_x + board_w + gap;
     draw_board(&mut draw, &state.other_board, opponent_x, offset_y, board_w, board_h);
     draw.text(&state.font, "OPPONENT").position(opponent_x, offset_y - 30.0).size(20.0).color(Color::GRAY);
 
-    draw.text(&state.font, &format!("Score: {}", state.board.score)).position(ui_x, offset_y + 20.0).size(30.0).color(Color::WHITE);
-    draw.text(&state.font, &format!("Level: {}", state.board.level())).position(ui_x, offset_y + 60.0).size(30.0).color(Color::YELLOW);
+    draw.text(&state.font, &format!("Score: {}", me.score)).position(ui_x, offset_y + 20.0).size(30.0).color(Color::WHITE);
+    draw.text(&state.font, &format!("Level: {}", me.level())).position(ui_x, offset_y + 60.0).size(30.0).color(Color::YELLOW);
 
     draw.text(&state.font, "Next:").position(ui_x, offset_y + 110.0).size(30.0).color(Color::GRAY);
     draw.rect((ui_x, offset_y + 140.0), (config::CELL_SIZE, config::CELL_SIZE * 2.1)).color(Color::from_rgb(0.2, 0.2, 0.2));
-    draw_cell(&mut draw, 0.0, 0.0, Some(state.board.next_types.1), ui_x, offset_y + 140.0, 1.0);
-    draw_cell(&mut draw, 1.0, 0.0, Some(state.board.next_types.0), ui_x, offset_y + 140.0, 1.0);
+    draw_cell(&mut draw, 0.0, 0.0, Some(me.next_types.1), ui_x, offset_y + 140.0, 1.0);
+    draw_cell(&mut draw, 1.0, 0.0, Some(me.next_types.0), ui_x, offset_y + 140.0, 1.0);
 
     let next_next_y = offset_y + 170.0 + (config::CELL_SIZE * 2.5);
     draw.text(&state.font, "Next Next:").position(ui_x, next_next_y - 25.0).size(20.0).color(Color::GRAY);
     draw.rect((ui_x, next_next_y), (config::CELL_SIZE, config::CELL_SIZE * 2.1)).color(Color::from_rgb(0.15, 0.15, 0.15));
-    draw_cell(&mut draw, 0.0, 0.0, Some(state.board.next_next_types.1), ui_x, next_next_y, 1.0);
-    draw_cell(&mut draw, 1.0, 0.0, Some(state.board.next_next_types.0), ui_x, next_next_y, 1.0);
+    draw_cell(&mut draw, 0.0, 0.0, Some(me.next_next_types.1), ui_x, next_next_y, 1.0);
+    draw_cell(&mut draw, 1.0, 0.0, Some(me.next_next_types.0), ui_x, next_next_y, 1.0);
 
-    if state.board.chain_count > 0 {
-        draw.text(&state.font, &format!("Chain: {}", state.board.chain_count)).position(ui_x, offset_y + 380.0).size(30.0).color(Color::GREEN);
+    if me.chain_count > 0 {
+        draw.text(&state.font, &format!("Chain: {}", me.chain_count)).position(ui_x, offset_y + 380.0).size(30.0).color(Color::GREEN);
     }
 
-    if state.board.is_touching_ground && state.board.state == GameState::Playing {
-        let ratio_std = 1.0 - (state.board.lock_timer / config::MAX_LOCK_TIME);
-        let ratio_hard = 1.0 - (state.board.total_ground_timer / config::MAX_TOTAL_GROUND_TIME);
+    if me.is_touching_ground && me.state == GameState::Playing {
+        let ratio_std = 1.0 - (me.lock_timer / config::MAX_LOCK_TIME);
+        let ratio_hard = 1.0 - (me.total_ground_timer / config::MAX_TOTAL_GROUND_TIME);
         let ratio = ratio_std.min(ratio_hard).max(0.0);
-        let col = if state.board.total_ground_timer > 1.5 { Color::RED } else { Color::ORANGE };
+        let col = if me.total_ground_timer > 1.5 { Color::RED } else { Color::ORANGE };
         draw.rect((ui_x, offset_y + 350.0), (100.0 * ratio, 10.0)).color(col);
     }
 

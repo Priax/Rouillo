@@ -15,7 +15,14 @@ pub fn update(app: &mut App, state: &mut State) {
 
     handle_global_input(app, state);
 
-    if state.board.state == GameState::Playing {
+    // Fin de partie : le gagnant garde un board `Playing` gelé côté serveur ; sans ce garde, sa pièce
+    // prédite bougerait derrière l'écran de victoire. On bloque donc les inputs dès qu'un board tombe.
+    let game_over = state.board.state == GameState::GameOver
+        || state.other_board.state == GameState::GameOver;
+
+    // On se base sur le board prédit (ce qu'on contrôle localement) : dès qu'on a prédit un
+    // verrouillage (hard-drop), on cesse d'émettre des inputs jusqu'au spawn de la pièce suivante.
+    if !game_over && state.predicted_board.state == GameState::Playing {
         handle_game_input(app, state, delta_time);
     } else {
         state.key_timer_left = 0.0;
@@ -24,8 +31,14 @@ pub fn update(app: &mut App, state: &mut State) {
     }
 }
 
+// Prédiction : on applique l'input localement tout de suite (contrôle instantané), on le bufferise
+// pour la réconciliation, et on l'envoie au serveur avec son numéro de séquence.
 fn send_input(state: &mut State, kind: InputKind) {
-    state.ws_sender.send(WsMessage::Binary(shared::encode(&ClientMessage::Input { kind })));
+    state.input_seq += 1;
+    let seq = state.input_seq;
+    state.predicted_board.apply_input(kind);
+    state.pending_inputs.push((seq, kind));
+    state.ws_sender.send(WsMessage::Binary(shared::encode(&ClientMessage::Input { kind, seq })));
 }
 
 fn handle_global_input(app: &mut App, state: &mut State) {
