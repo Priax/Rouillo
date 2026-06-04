@@ -111,7 +111,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 if same_piece {
                     if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.as_ref()) {
                         let off = &mut session.piece_visual_offset;
-                        off.0 = (off.0 + (prev.row - cur.row) as f32).clamp(-3.0, 3.0);
+                        off.0 = 0.0;
                         off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
                     }
                 } else {
