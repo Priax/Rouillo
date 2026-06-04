@@ -48,7 +48,6 @@ pub enum InputKind {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClientMessage {
-    // `seq` : numéro de séquence monotone, support de la réconciliation de la prédiction client.
     Input { kind: InputKind, seq: u32 },
     TogglePause,
     RequestRestart,
@@ -59,7 +58,6 @@ pub enum ServerMessage {
     RoomFull,
     Welcome { player_id: u8 },
     GameStart,
-    // p1_ack / p2_ack : dernier `seq` d'input traité par le serveur pour chaque joueur (réconciliation).
     StateUpdate { p1_board: Board, p2_board: Board, p1_ack: u32, p2_ack: u32 },
     Restart,
     OpponentDisconnected,
@@ -228,6 +226,12 @@ impl Board {
     pub fn rotate_piece(&mut self, direction: usize) {
         if let Some(mut piece) = self.active_piece.take() {
             let (old_rot, old_col, old_row) = (piece.rotation, piece.col, piece.row);
+            let orig_sat = piece.get_positions()[1];
+            let grounded = {
+                let mut below = piece.clone();
+                below.row += 1;
+                self.check_collision(&below)
+            };
             piece.rotation = (piece.rotation + direction) % 4;
             if self.check_collision(&piece) {
                 piece.col -= 1;
@@ -235,12 +239,15 @@ impl Board {
                     piece.col = old_col + 1;
                     if self.check_collision(&piece) {
                         piece.col = old_col;
+                        let floor_kick = grounded && piece.rotation == 2;
                         piece.row -= 1;
-                        if self.check_collision(&piece) {
-                            piece.row = old_row;
-                            piece.col = old_col;
+                        if !floor_kick || self.check_collision(&piece) {
+                            piece.row = orig_sat.0;
+                            piece.col = orig_sat.1;
                             piece.rotation = (old_rot + 2) % 4;
                             if self.check_collision(&piece) {
+                                piece.row = old_row;
+                                piece.col = old_col;
                                 piece.rotation = old_rot;
                             }
                         }
@@ -318,6 +325,7 @@ impl Board {
                     self.cells[*r as usize][*c as usize] = Some(puyo_type);
                 }
             }
+            self.apply_board_gravity();
             self.state = GameState::ResolvingMatches;
         }
     }
@@ -449,7 +457,6 @@ impl Board {
                 return;
             }
         }
-        // Colonne totalement pleine : le garbage ne peut pas être placé, game over.
         self.state = GameState::GameOver;
     }
 

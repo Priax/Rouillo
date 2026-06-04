@@ -6,10 +6,11 @@ mod state;
 mod network;
 mod logic;
 mod draw;
+mod menu;
 
-use state::State;
+use state::{State, Screen};
 
-fn server_url() -> String {
+pub fn server_url() -> String {
     #[cfg(all(target_arch = "wasm32", not(debug_assertions)))]
     {
         let loc = web_sys::window().expect("window").location();
@@ -24,23 +25,53 @@ fn server_url() -> String {
 }
 
 fn setup(gfx: &mut Graphics) -> State {
-    let (ws_sender, ws_receiver) = ewebsock::connect(&server_url(), ewebsock::Options::default()).unwrap();
     let font = gfx.create_font(include_bytes!("../../assets/arcadeFont.ttf")).unwrap();
+    State::new(font)
+}
 
-    State::new(ws_sender, ws_receiver, font)
+fn update(app: &mut App, state: &mut State) {
+    match state.screen {
+        Screen::Menu => menu::update_menu(app, state),
+        Screen::Settings => menu::update_settings(app, state),
+        Screen::Game => {
+            let back_to_menu = {
+                let State { session, settings, .. } = &mut *state;
+                match session {
+                    Some(session) => logic::update_game(app, session, settings),
+                    None => false,
+                }
+            };
+            if back_to_menu {
+                state.session = None;
+                state.screen = Screen::Menu;
+            }
+        }
+    }
+}
+
+fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
+    match state.screen {
+        Screen::Menu => menu::draw_menu(app, gfx, state),
+        Screen::Settings => menu::draw_settings(app, gfx, state),
+        Screen::Game => {
+            if let Some(session) = state.session.as_ref() {
+                draw::draw_game(app, gfx, session, &state.font);
+            }
+        }
+    }
 }
 
 #[notan_main]
 fn main() -> Result<(), String> {
     let win_config = WindowConfig::new()
-        .set_title("Puyorust")
+        .set_title("Rouillo")
         .set_size(1280, 800)
         .set_resizable(true);
 
     notan::init_with(setup)
         .add_config(DrawConfig)
         .add_config(win_config)
-        .update(logic::update)
-        .draw(draw::draw)
+        .update(update)
+        .draw(draw)
         .build()
 }

@@ -1,10 +1,11 @@
 use notan::prelude::*;
 use notan::draw::*;
 use shared::*;
-use crate::state::State;
+use crate::state::GameSession;
+use crate::Font;
 use crate::config;
 
-pub fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
+pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font: &Font) {
     let mut draw = gfx.create_draw();
     draw.clear(Color::from_rgb(0.05, 0.05, 0.05));
 
@@ -21,30 +22,30 @@ pub fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
 
     let ui_x = start_x + board_w + 30.0;
 
-    let me = &state.predicted_board;
+    let me = &session.predicted_board;
     draw_board(&mut draw, me, start_x, offset_y, board_w, board_h);
-    draw.text(&state.font, "YOU").position(start_x, offset_y - 30.0).size(20.0).color(Color::WHITE);
+    draw.text(font, "YOU").position(start_x, offset_y - 30.0).size(20.0).color(Color::WHITE);
 
     let opponent_x = start_x + board_w + gap;
-    draw_board(&mut draw, &state.other_board, opponent_x, offset_y, board_w, board_h);
-    draw.text(&state.font, "OPPONENT").position(opponent_x, offset_y - 30.0).size(20.0).color(Color::GRAY);
+    draw_board(&mut draw, &session.other_board, opponent_x, offset_y, board_w, board_h);
+    draw.text(font, "OPPONENT").position(opponent_x, offset_y - 30.0).size(20.0).color(Color::GRAY);
 
-    draw.text(&state.font, &format!("Score: {}", me.score)).position(ui_x, offset_y + 20.0).size(30.0).color(Color::WHITE);
-    draw.text(&state.font, &format!("Level: {}", me.level())).position(ui_x, offset_y + 60.0).size(30.0).color(Color::YELLOW);
+    draw.text(font, &format!("Score: {}", me.score)).position(ui_x, offset_y + 20.0).size(30.0).color(Color::WHITE);
+    draw.text(font, &format!("Level: {}", me.level())).position(ui_x, offset_y + 60.0).size(30.0).color(Color::YELLOW);
 
-    draw.text(&state.font, "Next:").position(ui_x, offset_y + 110.0).size(30.0).color(Color::GRAY);
+    draw.text(font, "Next:").position(ui_x, offset_y + 110.0).size(30.0).color(Color::GRAY);
     draw.rect((ui_x, offset_y + 140.0), (config::CELL_SIZE, config::CELL_SIZE * 2.1)).color(Color::from_rgb(0.2, 0.2, 0.2));
     draw_cell(&mut draw, 0.0, 0.0, Some(me.next_types.1), ui_x, offset_y + 140.0, 1.0);
     draw_cell(&mut draw, 1.0, 0.0, Some(me.next_types.0), ui_x, offset_y + 140.0, 1.0);
 
     let next_next_y = offset_y + 170.0 + (config::CELL_SIZE * 2.5);
-    draw.text(&state.font, "Next Next:").position(ui_x, next_next_y - 25.0).size(20.0).color(Color::GRAY);
+    draw.text(font, "Next Next:").position(ui_x, next_next_y - 25.0).size(20.0).color(Color::GRAY);
     draw.rect((ui_x, next_next_y), (config::CELL_SIZE, config::CELL_SIZE * 2.1)).color(Color::from_rgb(0.15, 0.15, 0.15));
     draw_cell(&mut draw, 0.0, 0.0, Some(me.next_next_types.1), ui_x, next_next_y, 1.0);
     draw_cell(&mut draw, 1.0, 0.0, Some(me.next_next_types.0), ui_x, next_next_y, 1.0);
 
     if me.chain_count > 0 {
-        draw.text(&state.font, &format!("Chain: {}", me.chain_count)).position(ui_x, offset_y + 380.0).size(30.0).color(Color::GREEN);
+        draw.text(font, &format!("Chain: {}", me.chain_count)).position(ui_x, offset_y + 380.0).size(30.0).color(Color::GREEN);
     }
 
     if me.is_touching_ground && me.state == GameState::Playing {
@@ -55,44 +56,48 @@ pub fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         draw.rect((ui_x, offset_y + 350.0), (100.0 * ratio, 10.0)).color(col);
     }
 
-    if state.room_full {
+    if session.room_full {
         draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.0, 0.0, 0.0, 0.9));
-        draw.text(&state.font, "SALLE PLEINE").position(win_w / 2.0, win_h / 2.0 - 20.0).size(60.0).h_align_center().v_align_middle().color(Color::RED);
-        draw.text(&state.font, "Une partie est deja en cours.").position(win_w / 2.0, win_h / 2.0 + 40.0).size(25.0).h_align_center().v_align_middle().color(Color::WHITE);
-    } else if state.waiting_for_opponent {
+        draw.text(font, "SALLE PLEINE").position(win_w / 2.0, win_h / 2.0 - 20.0).size(60.0).h_align_center().v_align_middle().color(Color::RED);
+        draw.text(font, "Une partie est deja en cours.").position(win_w / 2.0, win_h / 2.0 + 40.0).size(25.0).h_align_center().v_align_middle().color(Color::WHITE);
+    } else if session.waiting_for_opponent {
         draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.0, 0.0, 0.0, 0.8));
-        draw.text(&state.font, "WAITING FOR PLAYER 2...").position(win_w / 2.0, win_h / 2.0).size(40.0).h_align_center().v_align_middle().color(Color::WHITE);
+        draw.text(font, "WAITING FOR PLAYER 2...").position(win_w / 2.0, win_h / 2.0).size(40.0).h_align_center().v_align_middle().color(Color::WHITE);
+        crate::menu::back_to_menu_button(win_w, win_h).draw(&mut draw, app, font, "Back to Menu");
     }
 
-    if state.opponent_disconnected {
+    if session.opponent_disconnected {
         draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.5, 0.0, 0.0, 0.5));
-        draw.text(&state.font, "OPPONENT DISCONNECTED").position(win_w / 2.0, win_h / 2.0 - 20.0).size(40.0).h_align_center().v_align_middle().color(Color::RED);
-        draw.text(&state.font, "Waiting for reconnection...").position(win_w / 2.0, win_h / 2.0 + 30.0).size(20.0).h_align_center().v_align_middle().color(Color::WHITE);
+        draw.text(font, "OPPONENT DISCONNECTED").position(win_w / 2.0, win_h / 2.0 - 20.0).size(40.0).h_align_center().v_align_middle().color(Color::RED);
+        draw.text(font, "Waiting for reconnection...").position(win_w / 2.0, win_h / 2.0 + 30.0).size(20.0).h_align_center().v_align_middle().color(Color::WHITE);
+        crate::menu::back_to_menu_button(win_w, win_h).draw(&mut draw, app, font, "Back to Menu");
     }
 
-    let i_lost = state.board.state == GameState::GameOver;
-    let opponent_lost = state.other_board.state == GameState::GameOver;
+    let i_lost = session.board.state == GameState::GameOver;
+    let opponent_lost = session.other_board.state == GameState::GameOver;
     if i_lost || opponent_lost {
         draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.0, 0.0, 0.0, 0.7));
         if i_lost {
-            draw.text(&state.font, "GAME OVER").position(win_w / 2.0, win_h / 2.0 - 20.0).size(60.0).h_align_center().v_align_middle().color(Color::RED);
+            draw.text(font, "GAME OVER").position(win_w / 2.0, win_h / 2.0 - 20.0).size(60.0).h_align_center().v_align_middle().color(Color::RED);
         } else {
-            draw.text(&state.font, "YOU WIN !").position(win_w / 2.0, win_h / 2.0 - 20.0).size(80.0).h_align_center().v_align_middle().color(Color::YELLOW);
+            draw.text(font, "YOU WIN !").position(win_w / 2.0, win_h / 2.0 - 20.0).size(80.0).h_align_center().v_align_middle().color(Color::YELLOW);
         }
-        draw.text(&state.font, "Press R to Restart").position(win_w / 2.0, win_h / 2.0 + 60.0).size(30.0).h_align_center().v_align_middle().color(Color::WHITE);
+        draw.text(font, "Press R to Restart").position(win_w / 2.0, win_h / 2.0 + 60.0).size(30.0).h_align_center().v_align_middle().color(Color::WHITE);
+        crate::menu::back_to_menu_button(win_w, win_h).draw(&mut draw, app, font, "Back to Menu");
     }
 
-    if state.board.state == GameState::Paused && !state.opponent_disconnected {
+    if session.board.state == GameState::Paused && !session.opponent_disconnected {
         draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.0, 0.0, 0.0, 0.5));
         let alpha = (app.timer.elapsed_f32() * 2.0).sin().abs();
         let visible_alpha = 0.2 + (alpha * 0.8);
-        draw.text(&state.font, "PAUSED").position(win_w / 2.0, win_h / 2.0 - 40.0).size(60.0).h_align_center().v_align_middle().color(Color::from_rgba(1.0, 1.0, 1.0, visible_alpha));
-        draw.text(&state.font, "Press ESC to continue").position(win_w / 2.0, win_h / 2.0 + 40.0).size(30.0).h_align_center().v_align_middle().color(Color::from_rgba(1.0, 1.0, 1.0, visible_alpha));
+        draw.text(font, "PAUSED").position(win_w / 2.0, win_h / 2.0 - 40.0).size(60.0).h_align_center().v_align_middle().color(Color::from_rgba(1.0, 1.0, 1.0, visible_alpha));
+        draw.text(font, "Press ESC to continue").position(win_w / 2.0, win_h / 2.0 + 40.0).size(30.0).h_align_center().v_align_middle().color(Color::from_rgba(1.0, 1.0, 1.0, visible_alpha));
+        crate::menu::back_to_menu_button(win_w, win_h).draw(&mut draw, app, font, "Back to Menu");
     }
 
     #[cfg(debug_assertions)]
     {
-        draw.text(&state.font, &format!("DEBUG NET: {}", state.last_server_msg))
+        draw.text(font, &format!("DEBUG NET: {}", session.last_server_msg))
             .position(10.0, win_h - 30.0)
             .size(20.0)
             .color(Color::MAGENTA);

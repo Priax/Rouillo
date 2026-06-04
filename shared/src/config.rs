@@ -28,7 +28,7 @@ pub const SERVER_PORT: u16 = 8080;
 pub const CHANNEL_CAPACITY: usize = 256;
 
 pub const SERVER_TICK_HZ: u64 = 60;
-pub const STATE_BROADCAST_HZ: u64 = 30;
+pub const STATE_BROADCAST_HZ: u64 = 60;
 
 pub const SERVER_BIND_ADDRESS: [u8; 4] = [0, 0, 0, 0];
 

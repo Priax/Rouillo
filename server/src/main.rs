@@ -30,7 +30,6 @@ struct Slots {
     count: usize,
 }
 
-// Commandes envoyées par les connexions vers la boucle de jeu (autorité unique).
 enum GameCommand {
     Join { player_id: u8 },
     Leave { player_id: u8 },
@@ -39,9 +38,6 @@ enum GameCommand {
     Restart,
 }
 
-// Simulation autoritative, détenue uniquement par `game_loop`.
-// La présence des joueurs n'est PAS dupliquée ici : elle est lue depuis `Slots` (verrou) au besoin,
-// ce qui évite tout désaccord en cas de réordonnancement des commandes Join/Leave.
 struct Sim {
     boards: [Board; 2],
     running: bool,   // une partie est en cours (ou finie mais encore affichée)
@@ -78,7 +74,7 @@ impl Sim {
         self.boards[1].spawn_piece();
         self.paused = false;
         self.finished = false;
-        self.last_seq = [0; 2]; // le client réinitialise aussi son compteur au restart
+        self.last_seq = [0; 2];
     }
 }
 
