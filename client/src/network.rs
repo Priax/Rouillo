@@ -58,7 +58,9 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         }
         ServerMessage::GameStart => {
             let slot = state.lobby.as_ref().map(|l| l.your_slot).unwrap_or(1);
-            state.session = Some(GameSession::new(slot));
+            let mut session = GameSession::new(slot);
+            session.last_server_msg = "GameStart".to_string();
+            state.session = Some(session);
             state.screen = Screen::Game;
         }
         ServerMessage::StateUpdate { p1_board, p2_board, p1_ack, p2_ack } => {
@@ -74,6 +76,12 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.other_board = opp_auth;
                 session.my_ack = my_ack;
                 session.pending_inputs.retain(|(seq, _)| *seq > my_ack);
+                session.last_server_msg = format!(
+                    "StateUpdate ack={} pending={} seq={}",
+                    my_ack,
+                    session.pending_inputs.len(),
+                    session.input_seq,
+                );
 
                 let mut predicted = my_auth;
                 for (_, kind) in session.pending_inputs.iter() {
@@ -99,11 +107,13 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.input_seq = 0;
                 session.my_ack = 0;
                 session.pending_inputs.clear();
+                session.last_server_msg = "Restart".to_string();
             }
         }
         ServerMessage::OpponentDisconnected => {
             if let Some(session) = state.session.as_mut() {
                 session.opponent_disconnected = true;
+                session.last_server_msg = "OpponentDisconnected".to_string();
             }
         }
     }

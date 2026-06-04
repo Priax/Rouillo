@@ -26,7 +26,7 @@ jobs:
             asset: puyorust-windows-x86_64.exe
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -52,7 +52,7 @@ jobs:
         run: cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "${{ matrix.asset }}"
 
       - name: Attach binary to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.asset }}
           draft: true

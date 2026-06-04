@@ -102,6 +102,7 @@ pub struct GameSession {
     pub key_timer_right: f32,
     pub key_timer_down: f32,
 
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub last_server_msg: String,
 }
 
