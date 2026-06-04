@@ -1,67 +1,110 @@
 use shared::*;
-use crate::state::GameSession;
+use crate::state::{State, Screen, GameSession};
 use ewebsock::{WsEvent, WsMessage};
 
-pub fn handle_server_messages(session: &mut GameSession) {
-    while let Some(event) = session.ws_receiver.try_recv() {
-        match event {
-            WsEvent::Message(WsMessage::Binary(bytes)) => {
-                if let Some(server_msg) = shared::decode::<ServerMessage>(&bytes) {
-                    process_message(session, server_msg);
+pub fn handle_server_messages(state: &mut State) {
+    let mut msgs = Vec::new();
+    let mut lost = false;
+    let player_id = state.player_id.clone();
+    if let Some(net) = state.net.as_mut() {
+        while let Some(event) = net.ws_receiver.try_recv() {
+            match event {
+                WsEvent::Opened => {
+                    net.send(&ClientMessage::Hello { player_id: player_id.clone() });
                 }
+                WsEvent::Message(WsMessage::Binary(bytes)) => {
+                    if let Some(m) = shared::decode::<ServerMessage>(&bytes) {
+                        msgs.push(m);
+                    }
+                }
+                WsEvent::Closed | WsEvent::Error(_) => {
+                    lost = true;
+                }
+                _ => {}
             }
-            _ => {}
         }
+    }
+    if lost {
+        state.net = None;
+        state.session = None;
+        state.lobby = None;
+        state.rooms.clear();
+        state.screen = Screen::Menu;
+        state.notice = "Connexion au serveur perdue.".to_string();
+        return;
+    }
+    for m in msgs {
+        process_message(state, m);
     }
 }
 
-fn process_message(session: &mut GameSession, msg: ServerMessage) {
+fn process_message(state: &mut State, msg: ServerMessage) {
     match msg {
-        ServerMessage::RoomFull => {
-            session.room_full = true;
-            session.waiting_for_opponent = false;
+        ServerMessage::RoomList { rooms } => {
+            state.rooms = rooms;
+            if matches!(state.screen, Screen::RoomLobby | Screen::Game) {
+                state.screen = Screen::RoomBrowser;
+                state.session = None;
+                state.lobby = None;
+            }
         }
-        ServerMessage::Welcome { player_id } => {
-            session.last_server_msg = format!("Je suis Joueur {}", player_id);
-            session.my_player_id = Some(player_id);
-            session.waiting_for_opponent = true;
-            session.opponent_disconnected = false;
-            reset_prediction(session);
+        ServerMessage::Lobby { info } => {
+            state.lobby = Some(info);
+            state.session = None;
+            state.screen = Screen::RoomLobby;
+        }
+        ServerMessage::JoinFailed { reason } => {
+            state.notice = reason;
         }
         ServerMessage::GameStart => {
-            session.last_server_msg = "Game start".to_string();
-            session.waiting_for_opponent = false;
-            session.opponent_disconnected = false;
+            let slot = state.lobby.as_ref().map(|l| l.your_slot).unwrap_or(1);
+            state.session = Some(GameSession::new(slot));
+            state.screen = Screen::Game;
         }
         ServerMessage::StateUpdate { p1_board, p2_board, p1_ack, p2_ack } => {
-            let (my_auth, opp_auth, my_ack) = match session.my_player_id {
-                Some(1) => (p1_board, p2_board, p1_ack),
-                Some(2) => (p2_board, p1_board, p2_ack),
-                _ => return,
-            };
-            session.board = my_auth.clone();
-            session.other_board = opp_auth;
-            session.my_ack = my_ack;
-            session.pending_inputs.retain(|(seq, _)| *seq > my_ack);
-            session.predicted_board = my_auth;
-            for (_, kind) in session.pending_inputs.iter() {
-                session.predicted_board.apply_input(*kind);
+            if let Some(session) = state.session.as_mut() {
+                let (my_auth, opp_auth, my_ack) = match session.my_slot {
+                    1 => (p1_board, p2_board, p1_ack),
+                    2 => (p2_board, p1_board, p2_ack),
+                    _ => return,
+                };
+                let prev_row = session.predicted_board.active_piece.as_ref().map(|p| p.row);
+
+                session.board = my_auth.clone();
+                session.other_board = opp_auth;
+                session.my_ack = my_ack;
+                session.pending_inputs.retain(|(seq, _)| *seq > my_ack);
+
+                let mut predicted = my_auth;
+                for (_, kind) in session.pending_inputs.iter() {
+                    predicted.apply_input(*kind);
+                }
+                if let (Some(prev), Some(piece)) = (prev_row, predicted.active_piece.clone()) {
+                    if prev == piece.row + 1 {
+                        let mut lower = piece;
+                        lower.row += 1;
+                        if !predicted.check_collision(&lower) {
+                            if let Some(p) = predicted.active_piece.as_mut() {
+                                p.row += 1;
+                            }
+                        }
+                    }
+                }
+                session.predicted_board = predicted;
             }
         }
         ServerMessage::Restart => {
-            session.last_server_msg = "Redémarrage de la partie".to_string();
-            session.opponent_disconnected = false;
-            reset_prediction(session);
+            if let Some(session) = state.session.as_mut() {
+                session.opponent_disconnected = false;
+                session.input_seq = 0;
+                session.my_ack = 0;
+                session.pending_inputs.clear();
+            }
         }
         ServerMessage::OpponentDisconnected => {
-            session.last_server_msg = "Adversaire déconnecté !".to_string();
-            session.opponent_disconnected = true;
+            if let Some(session) = state.session.as_mut() {
+                session.opponent_disconnected = true;
+            }
         }
     }
-}
-
-fn reset_prediction(session: &mut GameSession) {
-    session.input_seq = 0;
-    session.my_ack = 0;
-    session.pending_inputs.clear();
 }

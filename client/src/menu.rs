@@ -1,6 +1,6 @@
 use notan::prelude::*;
 use notan::draw::*;
-use crate::state::{State, Screen, Settings, GameSession};
+use crate::state::{State, Screen, Settings, Net};
 
 #[derive(Clone, Copy)]
 pub struct Btn {
@@ -20,21 +20,33 @@ impl Btn {
     }
 
     pub fn draw(&self, draw: &mut Draw, app: &App, font: &crate::Font, label: &str) {
-        let hover = self.contains(app.mouse.x, app.mouse.y);
-        let bg = if hover { Color::from_rgb(0.28, 0.30, 0.42) } else { Color::from_rgb(0.18, 0.19, 0.26) };
+        self.draw_styled(draw, app, font, label, true);
+    }
+
+    pub fn draw_styled(&self, draw: &mut Draw, app: &App, font: &crate::Font, label: &str, enabled: bool) {
+        let hover = enabled && self.contains(app.mouse.x, app.mouse.y);
+        let bg = if !enabled {
+            Color::from_rgb(0.11, 0.11, 0.14)
+        } else if hover {
+            Color::from_rgb(0.28, 0.30, 0.42)
+        } else {
+            Color::from_rgb(0.18, 0.19, 0.26)
+        };
+        let border = if enabled { Color::from_rgb(0.45, 0.47, 0.6) } else { Color::from_rgb(0.28, 0.28, 0.33) };
+        let text = if enabled { Color::WHITE } else { Color::from_rgb(0.45, 0.45, 0.5) };
         draw.rect((self.x, self.y), (self.w, self.h)).color(bg);
-        draw.rect((self.x, self.y), (self.w, self.h)).stroke(2.0).color(Color::from_rgb(0.45, 0.47, 0.6));
+        draw.rect((self.x, self.y), (self.w, self.h)).stroke(2.0).color(border);
         draw.text(font, label)
             .position(self.x + self.w / 2.0, self.y + self.h / 2.0)
             .size(28.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::WHITE);
+            .color(text);
     }
 }
 
 struct MenuLayout {
-    play_1v1: Btn,
+    play: Btn,
     settings: Btn,
 }
 
@@ -44,15 +56,15 @@ fn menu_layout(win_w: f32, win_h: f32) -> MenuLayout {
     let x = (win_w - w) / 2.0;
     let cy = win_h / 2.0;
     MenuLayout {
-        play_1v1: Btn { x, y: cy - 20.0, w, h },
+        play: Btn { x, y: cy - 20.0, w, h },
         settings: Btn { x, y: cy + 70.0, w, h },
     }
 }
 
 pub fn update_menu(app: &mut App, state: &mut State) {
     let layout = menu_layout(win_w(app), win_h(app));
-    if layout.play_1v1.clicked(app) {
-        start_1v1(state);
+    if layout.play.clicked(app) {
+        start_play(state);
     } else if layout.settings.clicked(app) {
         state.screen = Screen::Settings;
     }
@@ -71,8 +83,17 @@ pub fn draw_menu(app: &mut App, gfx: &mut Graphics, state: &State) {
         .color(Color::from_rgb(0.9, 0.7, 1.0));
 
     let layout = menu_layout(ww, wh);
-    layout.play_1v1.draw(&mut draw, app, &state.font, "1 vs 1");
+    layout.play.draw(&mut draw, app, &state.font, "Play");
     layout.settings.draw(&mut draw, app, &state.font, "Settings");
+
+    if !state.notice.is_empty() {
+        draw.text(&state.font, &state.notice)
+            .position(ww / 2.0, wh - 60.0)
+            .size(22.0)
+            .h_align_center()
+            .v_align_middle()
+            .color(Color::from_rgb(0.9, 0.4, 0.4));
+    }
 
     gfx.render(&draw);
 }
@@ -158,17 +179,13 @@ pub fn draw_settings(app: &mut App, gfx: &mut Graphics, state: &State) {
     gfx.render(&draw);
 }
 
-pub fn back_to_menu_button(win_w: f32, win_h: f32) -> Btn {
-    let w = 240.0;
-    let h = 56.0;
-    Btn { x: (win_w - w) / 2.0, y: win_h / 2.0 + 130.0, w, h }
-}
-
-fn start_1v1(state: &mut State) {
+fn start_play(state: &mut State) {
     match ewebsock::connect(&crate::server_url(), ewebsock::Options::default()) {
         Ok((ws_sender, ws_receiver)) => {
-            state.session = Some(GameSession::new(ws_sender, ws_receiver));
-            state.screen = Screen::Game;
+            state.net = Some(Net { ws_sender, ws_receiver });
+            state.rooms.clear();
+            state.notice.clear();
+            state.screen = Screen::RoomBrowser;
         }
         Err(e) => {
             eprintln!("Connexion au serveur impossible : {e}");

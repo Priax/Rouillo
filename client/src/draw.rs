@@ -5,7 +5,7 @@ use crate::state::GameSession;
 use crate::Font;
 use crate::config;
 
-pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font: &Font) {
+pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font: &Font, is_host: bool) {
     let mut draw = gfx.create_draw();
     draw.clear(Color::from_rgb(0.05, 0.05, 0.05));
 
@@ -56,21 +56,10 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
         draw.rect((ui_x, offset_y + 350.0), (100.0 * ratio, 10.0)).color(col);
     }
 
-    if session.room_full {
-        draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.0, 0.0, 0.0, 0.9));
-        draw.text(font, "SALLE PLEINE").position(win_w / 2.0, win_h / 2.0 - 20.0).size(60.0).h_align_center().v_align_middle().color(Color::RED);
-        draw.text(font, "Une partie est deja en cours.").position(win_w / 2.0, win_h / 2.0 + 40.0).size(25.0).h_align_center().v_align_middle().color(Color::WHITE);
-    } else if session.waiting_for_opponent {
-        draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.0, 0.0, 0.0, 0.8));
-        draw.text(font, "WAITING FOR PLAYER 2...").position(win_w / 2.0, win_h / 2.0).size(40.0).h_align_center().v_align_middle().color(Color::WHITE);
-        crate::menu::back_to_menu_button(win_w, win_h).draw(&mut draw, app, font, "Back to Menu");
-    }
-
     if session.opponent_disconnected {
         draw.rect((0.0, 0.0), (win_w, win_h)).color(Color::from_rgba(0.5, 0.0, 0.0, 0.5));
         draw.text(font, "OPPONENT DISCONNECTED").position(win_w / 2.0, win_h / 2.0 - 20.0).size(40.0).h_align_center().v_align_middle().color(Color::RED);
-        draw.text(font, "Waiting for reconnection...").position(win_w / 2.0, win_h / 2.0 + 30.0).size(20.0).h_align_center().v_align_middle().color(Color::WHITE);
-        crate::menu::back_to_menu_button(win_w, win_h).draw(&mut draw, app, font, "Back to Menu");
+        draw_exit_buttons(&mut draw, app, font, win_w, win_h, is_host);
     }
 
     let i_lost = session.board.state == GameState::GameOver;
@@ -82,8 +71,8 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
         } else {
             draw.text(font, "YOU WIN !").position(win_w / 2.0, win_h / 2.0 - 20.0).size(80.0).h_align_center().v_align_middle().color(Color::YELLOW);
         }
-        draw.text(font, "Press R to Restart").position(win_w / 2.0, win_h / 2.0 + 60.0).size(30.0).h_align_center().v_align_middle().color(Color::WHITE);
-        crate::menu::back_to_menu_button(win_w, win_h).draw(&mut draw, app, font, "Back to Menu");
+        draw.text(font, "Press R to Restart").position(win_w / 2.0, win_h / 2.0 + 50.0).size(28.0).h_align_center().v_align_middle().color(Color::WHITE);
+        draw_exit_buttons(&mut draw, app, font, win_w, win_h, is_host);
     }
 
     if session.board.state == GameState::Paused && !session.opponent_disconnected {
@@ -91,8 +80,8 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
         let alpha = (app.timer.elapsed_f32() * 2.0).sin().abs();
         let visible_alpha = 0.2 + (alpha * 0.8);
         draw.text(font, "PAUSED").position(win_w / 2.0, win_h / 2.0 - 40.0).size(60.0).h_align_center().v_align_middle().color(Color::from_rgba(1.0, 1.0, 1.0, visible_alpha));
-        draw.text(font, "Press ESC to continue").position(win_w / 2.0, win_h / 2.0 + 40.0).size(30.0).h_align_center().v_align_middle().color(Color::from_rgba(1.0, 1.0, 1.0, visible_alpha));
-        crate::menu::back_to_menu_button(win_w, win_h).draw(&mut draw, app, font, "Back to Menu");
+        draw.text(font, "Press ESC to continue").position(win_w / 2.0, win_h / 2.0 + 30.0).size(28.0).h_align_center().v_align_middle().color(Color::from_rgba(1.0, 1.0, 1.0, visible_alpha));
+        draw_exit_buttons(&mut draw, app, font, win_w, win_h, is_host);
     }
 
     #[cfg(debug_assertions)]
@@ -104,6 +93,13 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
     }
 
     gfx.render(&draw);
+}
+
+fn draw_exit_buttons(draw: &mut Draw, app: &App, font: &Font, ww: f32, wh: f32, is_host: bool) {
+    crate::rooms::leave_room_button(ww, wh).draw(draw, app, font, "Leave Room");
+    if is_host {
+        crate::rooms::back_to_lobby_button(ww, wh).draw(draw, app, font, "Back to Lobby");
+    }
 }
 
 fn draw_board(draw: &mut Draw, board: &Board, offset_x: f32, offset_y: f32, board_w: f32, board_h: f32) {

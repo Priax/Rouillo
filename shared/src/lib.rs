@@ -7,17 +7,19 @@ use crate::config::*;
 
 pub fn encode<T: serde::Serialize>(msg: &T) -> Vec<u8> {
     use bincode::Options;
-    bincode::options()
+    let raw = bincode::options()
         .with_varint_encoding()
         .serialize(msg)
-        .expect("bincode serialize")
+        .expect("bincode serialize");
+    lz4_flex::compress_prepend_size(&raw)
 }
 
 pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
     use bincode::Options;
+    let raw = lz4_flex::decompress_size_prepended(bytes).ok()?;
     bincode::options()
         .with_varint_encoding()
-        .deserialize(bytes)
+        .deserialize(&raw)
         .ok()
 }
 
@@ -46,26 +48,95 @@ pub enum InputKind {
     HardDrop,
 }
 
+pub type RoomId = u32;
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+pub struct RoomSettings {
+    pub starting_level: u32,
+    pub colors: u32,
+}
+
+impl Default for RoomSettings {
+    fn default() -> Self {
+        Self { starting_level: 1, colors: 5 }
+    }
+}
+
+impl RoomSettings {
+    pub const COUNT: usize = 2;
+
+    pub fn label(i: usize) -> &'static str {
+        match i {
+            0 => "Starting level",
+            _ => "Colors",
+        }
+    }
+
+    pub fn value(&self, i: usize) -> String {
+        match i {
+            0 => self.starting_level.to_string(),
+            _ => self.colors.to_string(),
+        }
+    }
+
+    pub fn adjust(&mut self, i: usize, dir: i32) {
+        match i {
+            0 => self.starting_level = (self.starting_level as i32 + dir).clamp(1, 15) as u32,
+            _ => self.colors = (self.colors as i32 + dir).clamp(4, 5) as u32,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RoomInfo {
+    pub id: RoomId,
+    pub name: String,
+    pub players: u8,
+    pub max: u8,
+    pub in_game: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LobbyInfo {
+    pub id: RoomId,
+    pub name: String,
+    pub settings: RoomSettings,
+    pub players: u8,
+    pub your_slot: u8,
+    pub is_host: bool,
+    pub countdown: Option<u8>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClientMessage {
+    Hello { player_id: String },
     Input { kind: InputKind, seq: u32 },
     TogglePause,
     RequestRestart,
+    RequestRoomList,
+    CreateRoom { name: String },
+    JoinRoom { id: RoomId },
+    LeaveRoom,
+    SetRoomSetting { index: u8, dir: i32 },
+    ToggleCountdown,
+    ReturnToLobby,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServerMessage {
-    RoomFull,
-    Welcome { player_id: u8 },
     GameStart,
     StateUpdate { p1_board: Board, p2_board: Board, p1_ack: u32, p2_ack: u32 },
     Restart,
     OpponentDisconnected,
+    RoomList { rooms: Vec<RoomInfo> },
+    Lobby { info: LobbyInfo },
+    JoinFailed { reason: String },
 }
 
 impl PuyoType {
-    pub fn random_with_seed<R: Rng>(rng: &mut R) -> PuyoType {
-        match rng.random_range(0..5) {
+    pub fn random_with_seed<R: Rng>(rng: &mut R, colors: u32) -> PuyoType {
+        let n = colors.clamp(1, 5);
+        match rng.random_range(0..n) {
             0 => PuyoType::Red,
             1 => PuyoType::Blue,
             2 => PuyoType::Yellow,
@@ -110,6 +181,8 @@ pub enum GameState {
 pub struct Board {
     pub width: usize,
     pub height: usize,
+    pub start_level: u32,
+    pub colors: u32,
     pub cells: Vec<Vec<Option<PuyoType>>>,
     pub active_piece: Option<ActivePuyo>,
     pub next_types: (PuyoType, PuyoType),
@@ -133,15 +206,17 @@ pub struct Board {
 }
 
 impl Board {
-    pub fn new(width: usize, height: usize, seed: u64) -> Board {
+    pub fn new(width: usize, height: usize, seed: u64, start_level: u32, colors: u32) -> Board {
         use rand::SeedableRng;
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-        let n1 = (PuyoType::random_with_seed(&mut rng), PuyoType::random_with_seed(&mut rng));
-        let n2 = (PuyoType::random_with_seed(&mut rng), PuyoType::random_with_seed(&mut rng));
+        let n1 = (PuyoType::random_with_seed(&mut rng, colors), PuyoType::random_with_seed(&mut rng, colors));
+        let n2 = (PuyoType::random_with_seed(&mut rng, colors), PuyoType::random_with_seed(&mut rng, colors));
 
         Board {
             width,
             height,
+            start_level,
+            colors,
             cells: vec![vec![None; width]; height],
             active_piece: None,
             next_types: n1,
@@ -172,7 +247,7 @@ impl Board {
         }
         let (c1, c2) = self.next_types;
         self.next_types = self.next_next_types;
-        self.next_next_types = (PuyoType::random_with_seed(&mut self.rng), PuyoType::random_with_seed(&mut self.rng));
+        self.next_next_types = (PuyoType::random_with_seed(&mut self.rng, self.colors), PuyoType::random_with_seed(&mut self.rng, self.colors));
         let new_piece = ActivePuyo { row: 1, col: 2, rotation: 0, axis_type: c1, sat_type: c2 };
         if self.check_collision(&new_piece) {
             self.state = GameState::GameOver;
@@ -524,7 +599,7 @@ impl Board {
     }
 
     pub fn level(&self) -> u32 {
-        1 + (self.played_time / LEVEL_DURATION) as u32
+        self.start_level + (self.played_time / LEVEL_DURATION) as u32
     }
 
     pub fn apply_input(&mut self, input: InputKind) {
@@ -538,6 +613,30 @@ impl Board {
             InputKind::RotateCCW => self.rotate_piece(3),
             InputKind::SoftDrop => { self.force_drop(); self.fall_timer = 0.0; }
             InputKind::HardDrop => self.hard_drop(),
+        }
+    }
+
+    pub fn predict_fall(&mut self, dt: f32) {
+        if self.state != GameState::Playing {
+            return;
+        }
+        let can_fall = match &self.active_piece {
+            Some(p) => {
+                let mut below = p.clone();
+                below.row += 1;
+                !self.check_collision(&below)
+            }
+            None => false,
+        };
+        if !can_fall {
+            return;
+        }
+        let speed_decrease = (self.level() as f64 - 1.0) * FALL_SPEEDUP_PER_LEVEL;
+        let fall_interval = (BASE_FALL_INTERVAL - speed_decrease).max(MIN_FALL_INTERVAL) as f32;
+        self.fall_timer += dt;
+        if self.fall_timer > fall_interval {
+            self.force_drop();
+            self.fall_timer = 0.0;
         }
     }
 

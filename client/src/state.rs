@@ -1,12 +1,16 @@
 use notan::prelude::*;
-use shared::{Board, InputKind, config};
-use ewebsock::{WsReceiver, WsSender};
+use shared::{Board, InputKind, ClientMessage, RoomInfo, LobbyInfo, config};
+use ewebsock::{WsReceiver, WsSender, WsMessage};
 use crate::Font;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
     Menu,
     Settings,
+    RoomBrowser,
+    CreateRoom,
+    JoinById,
+    RoomLobby,
     Game,
 }
 
@@ -71,21 +75,28 @@ impl Settings {
     }
 }
 
+pub struct Net {
+    pub ws_sender: WsSender,
+    pub ws_receiver: WsReceiver,
+}
+
+impl Net {
+    pub fn send(&mut self, msg: &ClientMessage) {
+        self.ws_sender.send(WsMessage::Binary(shared::encode(msg)));
+    }
+}
+
 pub struct GameSession {
     pub board: Board,
     pub predicted_board: Board,
     pub other_board: Board,
-    pub my_player_id: Option<u8>,
-    pub ws_sender: WsSender,
-    pub ws_receiver: WsReceiver,
+    pub my_slot: u8,
 
-    pub waiting_for_opponent: bool,
     pub opponent_disconnected: bool,
-    pub room_full: bool,
 
-    pub input_seq: u32,                          // compteur d'inputs envoyés
-    pub my_ack: u32,                             // dernier seq acquitté par le serveur
-    pub pending_inputs: Vec<(u32, InputKind)>,   // inputs envoyés non encore acquittés
+    pub input_seq: u32,
+    pub my_ack: u32,
+    pub pending_inputs: Vec<(u32, InputKind)>,
 
     pub key_timer_left: f32,
     pub key_timer_right: f32,
@@ -95,29 +106,47 @@ pub struct GameSession {
 }
 
 impl GameSession {
-    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver) -> Self {
-        let board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 0);
-        let predicted_board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 0);
-        let other_board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 0);
-
+    pub fn new(my_slot: u8) -> Self {
+        let board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 0, 1, 5);
         Self {
+            predicted_board: board.clone(),
+            other_board: board.clone(),
             board,
-            predicted_board,
-            other_board,
-            my_player_id: None,
-            ws_sender,
-            ws_receiver,
-            waiting_for_opponent: true,
+            my_slot,
             opponent_disconnected: false,
-            room_full: false,
             input_seq: 0,
             my_ack: 0,
             pending_inputs: Vec::new(),
             key_timer_left: 0.0,
             key_timer_right: 0.0,
             key_timer_down: 0.0,
-            last_server_msg: String::from("Connexion..."),
+            last_server_msg: String::new(),
         }
+    }
+}
+
+fn gen_player_id() -> String {
+    format!("{:032x}", rand::random::<u128>())
+}
+
+pub fn load_or_create_player_id() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            if let Ok(Some(id)) = storage.get_item("puyorust_player_id") {
+                if !id.is_empty() {
+                    return id;
+                }
+            }
+            let id = gen_player_id();
+            let _ = storage.set_item("puyorust_player_id", &id);
+            return id;
+        }
+        gen_player_id()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        gen_player_id()
     }
 }
 
@@ -125,6 +154,12 @@ impl GameSession {
 pub struct State {
     pub screen: Screen,
     pub settings: Settings,
+    pub player_id: String,
+    pub net: Option<Net>,
+    pub rooms: Vec<RoomInfo>,
+    pub lobby: Option<LobbyInfo>,
+    pub text_input: String,
+    pub notice: String,
     pub session: Option<GameSession>,
     pub font: Font,
 }
@@ -134,6 +169,12 @@ impl State {
         Self {
             screen: Screen::Menu,
             settings: Settings::default(),
+            player_id: load_or_create_player_id(),
+            net: None,
+            rooms: Vec::new(),
+            lobby: None,
+            text_input: String::new(),
+            notice: String::new(),
             session: None,
             font,
         }
