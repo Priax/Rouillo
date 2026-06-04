@@ -185,6 +185,7 @@ pub struct Board {
     pub colors: u32,
     pub cells: Vec<Vec<Option<PuyoType>>>,
     pub active_piece: Option<ActivePuyo>,
+    #[serde(default)] pub piece_id: u32,
     pub next_types: (PuyoType, PuyoType),
     pub next_next_types: (PuyoType, PuyoType),
     pub score: i32,
@@ -219,6 +220,7 @@ impl Board {
             colors,
             cells: vec![vec![None; width]; height],
             active_piece: None,
+            piece_id: 0,
             next_types: n1,
             next_next_types: n2,
             score: 0,
@@ -252,6 +254,7 @@ impl Board {
         if self.check_collision(&new_piece) {
             self.state = GameState::GameOver;
         } else {
+            self.piece_id = self.piece_id.wrapping_add(1);
             self.lowest_row_reached = new_piece.row;
             self.active_piece = Some(new_piece);
             self.lock_timer = 0.0;

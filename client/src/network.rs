@@ -70,7 +70,9 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                     2 => (p2_board, p1_board, p2_ack),
                     _ => return,
                 };
-                let prev_row = session.predicted_board.active_piece.as_ref().map(|p| p.row);
+                let prev_piece = session.predicted_board.active_piece.clone();
+                let prev_piece_id = session.predicted_board.piece_id;
+                let prev_fall_timer = session.predicted_board.fall_timer;
 
                 session.board = my_auth.clone();
                 session.other_board = opp_auth;
@@ -84,20 +86,38 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 );
 
                 let mut predicted = my_auth;
+
+                let same_piece = predicted.piece_id == prev_piece_id;
+                if same_piece {
+                    if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.clone()) {
+                        if prev.row > cur.row {
+                            let mut p = cur;
+                            while p.row < prev.row {
+                                let mut next = p.clone();
+                                next.row += 1;
+                                if predicted.check_collision(&next) { break; }
+                                p.row += 1;
+                            }
+                            predicted.active_piece = Some(p);
+                        }
+                    }
+                    predicted.fall_timer = prev_fall_timer;
+                }
+
                 for (_, kind) in session.pending_inputs.iter() {
                     predicted.apply_input(*kind);
                 }
-                if let (Some(prev), Some(piece)) = (prev_row, predicted.active_piece.clone()) {
-                    if prev == piece.row + 1 {
-                        let mut lower = piece;
-                        lower.row += 1;
-                        if !predicted.check_collision(&lower) {
-                            if let Some(p) = predicted.active_piece.as_mut() {
-                                p.row += 1;
-                            }
-                        }
+
+                if same_piece {
+                    if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.as_ref()) {
+                        let off = &mut session.piece_visual_offset;
+                        off.0 = (off.0 + (prev.row - cur.row) as f32).clamp(-3.0, 3.0);
+                        off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
                     }
+                } else {
+                    session.piece_visual_offset = (0.0, 0.0);
                 }
+
                 session.predicted_board = predicted;
             }
         }

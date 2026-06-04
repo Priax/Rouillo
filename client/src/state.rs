@@ -102,6 +102,8 @@ pub struct GameSession {
     pub key_timer_right: f32,
     pub key_timer_down: f32,
 
+    pub piece_visual_offset: (f32, f32),
+
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub last_server_msg: String,
 }
@@ -121,6 +123,7 @@ impl GameSession {
             key_timer_left: 0.0,
             key_timer_right: 0.0,
             key_timer_down: 0.0,
+            piece_visual_offset: (0.0, 0.0),
             last_server_msg: String::new(),
         }
     }

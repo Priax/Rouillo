@@ -23,11 +23,11 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
     let ui_x = start_x + board_w + 30.0;
 
     let me = &session.predicted_board;
-    draw_board(&mut draw, me, start_x, offset_y, board_w, board_h);
+    draw_board(&mut draw, me, start_x, offset_y, board_w, board_h, session.piece_visual_offset);
     draw.text(font, "YOU").position(start_x, offset_y - 30.0).size(20.0).color(Color::WHITE);
 
     let opponent_x = start_x + board_w + gap;
-    draw_board(&mut draw, &session.other_board, opponent_x, offset_y, board_w, board_h);
+    draw_board(&mut draw, &session.other_board, opponent_x, offset_y, board_w, board_h, (0.0, 0.0));
     draw.text(font, "OPPONENT").position(opponent_x, offset_y - 30.0).size(20.0).color(Color::GRAY);
 
     draw.text(font, &format!("Score: {}", me.score)).position(ui_x, offset_y + 20.0).size(30.0).color(Color::WHITE);
@@ -102,7 +102,7 @@ fn draw_exit_buttons(draw: &mut Draw, app: &App, font: &Font, ww: f32, wh: f32, 
     }
 }
 
-fn draw_board(draw: &mut Draw, board: &Board, offset_x: f32, offset_y: f32, board_w: f32, board_h: f32) {
+fn draw_board(draw: &mut Draw, board: &Board, offset_x: f32, offset_y: f32, board_w: f32, board_h: f32, piece_offset: (f32, f32)) {
     draw.rect((offset_x, offset_y), (board_w, board_h)).color(Color::from_rgb(0.12, 0.12, 0.12));
 
     let x_cross = offset_x + (2.0 * config::CELL_SIZE) + 10.0;
@@ -127,7 +127,9 @@ fn draw_board(draw: &mut Draw, board: &Board, offset_x: f32, offset_y: f32, boar
         if let Some(ref piece) = board.active_piece {
             for pos in piece.get_positions().iter() {
                 let p_type = if pos.0 == piece.row && pos.1 == piece.col { piece.axis_type } else { piece.sat_type };
-                draw_cell(draw, pos.0 as f32 - config::VISIBLE_ROW_OFFSET as f32, pos.1 as f32, Some(p_type), offset_x, offset_y, 1.0);
+                let draw_r = pos.0 as f32 - config::VISIBLE_ROW_OFFSET as f32 + piece_offset.0;
+                let draw_c = pos.1 as f32 + piece_offset.1;
+                draw_cell(draw, draw_r, draw_c, Some(p_type), offset_x, offset_y, 1.0);
             }
         }
     }

@@ -28,13 +28,29 @@ pub fn update_game(app: &mut App, session: &mut GameSession, settings: &Settings
     let dt = app.timer.delta_f32();
     if !game_over && session.predicted_board.state == GameState::Playing {
         handle_game_input(app, session, settings, net, dt);
+        let row_before = session.predicted_board.active_piece.as_ref().map(|p| p.row);
         session.predicted_board.predict_fall(dt);
+        if let (Some(before), Some(after)) =
+            (row_before, session.predicted_board.active_piece.as_ref().map(|p| p.row))
+        {
+            if after > before {
+                session.piece_visual_offset.0 -= (after - before) as f32;
+            }
+        }
     } else {
         session.key_timer_left = 0.0;
         session.key_timer_right = 0.0;
         session.key_timer_down = 0.0;
     }
+
+    let decay = (-PIECE_SMOOTH_RATE * dt).exp();
+    session.piece_visual_offset.0 *= decay;
+    session.piece_visual_offset.1 *= decay;
+    if session.piece_visual_offset.0.abs() < 0.001 { session.piece_visual_offset.0 = 0.0; }
+    if session.piece_visual_offset.1.abs() < 0.001 { session.piece_visual_offset.1 = 0.0; }
 }
+
+const PIECE_SMOOTH_RATE: f32 = 22.0;
 
 fn send_input(session: &mut GameSession, net: &mut Net, kind: InputKind) {
     session.input_seq += 1;
