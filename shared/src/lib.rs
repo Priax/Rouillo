@@ -125,7 +125,7 @@ pub enum ClientMessage {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServerMessage {
     GameStart,
-    StateUpdate { p1_board: Board, p2_board: Board, p1_ack: u32, p2_ack: u32 },
+    StateUpdate { p1_board: Box<Board>, p2_board: Box<Board>, p1_ack: u32, p2_ack: u32 },
     Restart,
     OpponentDisconnected,
     RoomList { rooms: Vec<RoomInfo> },
@@ -302,41 +302,47 @@ impl Board {
     }
 
     pub fn rotate_piece(&mut self, direction: usize) {
-        if let Some(mut piece) = self.active_piece.take() {
-            let (old_rot, old_col, old_row) = (piece.rotation, piece.col, piece.row);
-            let orig_sat = piece.get_positions()[1];
-            let grounded = {
-                let mut below = piece.clone();
-                below.row += 1;
-                self.check_collision(&below)
-            };
-            piece.rotation = (piece.rotation + direction) % 4;
-            if self.check_collision(&piece) {
-                piece.col -= 1;
-                if self.check_collision(&piece) {
-                    piece.col = old_col + 1;
-                    if self.check_collision(&piece) {
-                        piece.col = old_col;
-                        let floor_kick = grounded && piece.rotation == 2;
-                        piece.row -= 1;
-                        if !floor_kick || self.check_collision(&piece) {
-                            piece.row = orig_sat.0;
-                            piece.col = orig_sat.1;
-                            piece.rotation = (old_rot + 2) % 4;
-                            if self.check_collision(&piece) {
-                                piece.row = old_row;
-                                piece.col = old_col;
-                                piece.rotation = old_rot;
-                            }
-                        }
-                    }
+        let Some(mut piece) = self.active_piece.take() else { return };
+        let (old_rot, old_col, old_row) = (piece.rotation, piece.col, piece.row);
+        let new_rot = (old_rot + direction) % 4;
+        let sat = piece.get_positions()[1];
+        let grounded = {
+            let mut below = piece.clone();
+            below.row += 1;
+            self.check_collision(&below)
+        };
+
+        // Kick candidates, tried in order; the first one that fits is applied.
+        // (row, col, rotation, enabled)
+        let candidates = [
+            (old_row,     old_col,     new_rot,           true),                     // in place
+            (old_row,     old_col - 1, new_rot,           true),                     // kick left
+            (old_row,     old_col + 1, new_rot,           true),                     // kick right
+            (old_row - 1, old_col,     new_rot,           grounded && new_rot == 2), // floor kick
+            (sat.0,       sat.1,       (old_rot + 2) % 4, true),                     // pivot on satellite
+        ];
+
+        for (row, col, rotation, enabled) in candidates {
+            if !enabled {
+                continue;
+            }
+            piece.row = row;
+            piece.col = col;
+            piece.rotation = rotation;
+            if !self.check_collision(&piece) {
+                if piece.rotation != old_rot || piece.col != old_col || piece.row != old_row {
+                    self.reset_lock_if_needed();
                 }
+                self.active_piece = Some(piece);
+                return;
             }
-            if piece.rotation != old_rot || piece.col != old_col || piece.row != old_row {
-                self.reset_lock_if_needed();
-            }
-            self.active_piece = Some(piece);
         }
+
+        // No candidate fit: keep the original orientation untouched.
+        piece.row = old_row;
+        piece.col = old_col;
+        piece.rotation = old_rot;
+        self.active_piece = Some(piece);
     }
 
     pub fn hard_drop(&mut self) {
@@ -484,7 +490,7 @@ impl Board {
     fn calculate_score(&self, color_count_len: usize, total_cleared: u32, group_sizes: &[u32]) -> i32 {
         let chain_idx = (self.chain_count).min(19) as usize;
         let cp = CHAIN_POWERS[chain_idx];
-        let cb = COLOR_BONUS[color_count_len.min(5) as usize];
+        let cb = COLOR_BONUS[color_count_len.min(5)];
         let mut gb = 0;
         for &size in group_sizes { gb += GROUP_BONUS[(size.saturating_sub(4)).min(7) as usize]; }
         let mut multiplier = cp + cb + gb;
@@ -519,8 +525,8 @@ impl Board {
                 let j = self.rng.random_range(i..self.width);
                 cols.swap(i, j);
             }
-            for i in 0..leftover as usize {
-                self.drop_one_garbage(cols[i]);
+            for &col in cols.iter().take(leftover as usize) {
+                self.drop_one_garbage(col);
                 if self.state == GameState::GameOver {
                     break;
                 }

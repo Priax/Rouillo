@@ -37,15 +37,11 @@ fn event(state: &mut State, evt: Event) {
             return;
         }
         match state.screen {
-            Screen::CreateRoom => {
-                if state.text_input.chars().count() < 24 {
-                    state.text_input.push(c);
-                }
+            Screen::CreateRoom if state.text_input.chars().count() < 24 => {
+                state.text_input.push(c);
             }
-            Screen::JoinById => {
-                if c.is_ascii_digit() && state.text_input.len() < 9 {
-                    state.text_input.push(c);
-                }
+            Screen::JoinById if c.is_ascii_digit() && state.text_input.len() < 9 => {
+                state.text_input.push(c);
             }
             _ => {}
         }

@@ -81,7 +81,7 @@ impl Room {
     }
 
     fn is_host_conn(&self, conn: ConnId) -> bool {
-        self.slot_of_conn(conn).map_or(false, |s| self.members[s].token == self.host)
+        self.slot_of_conn(conn).is_some_and(|s| self.members[s].token == self.host)
     }
 
     fn all_connected(&self) -> bool {
@@ -168,6 +168,12 @@ impl Manager {
         self.clients.get(&conn).copied().flatten()
     }
 
+    /// Run `f` on the room with the given id, returning its result, or `None` if
+    /// the room no longer exists.
+    fn with_room<R>(&mut self, id: RoomId, f: impl FnOnce(&mut Room) -> R) -> Option<R> {
+        self.rooms.get_mut(&id).map(f)
+    }
+
     fn deliver(&mut self, conn: ConnId, payload: Vec<u8>) {
         if let Some(sender) = self.senders.get(&conn) {
             if sender.try_send(payload).is_err() {
@@ -202,8 +208,8 @@ impl Manager {
     fn send_snapshot(&mut self, id: RoomId) {
         let payload = match self.rooms.get(&id) {
             Some(room) => shared::encode(&ServerMessage::StateUpdate {
-                p1_board: room.sim.boards[0].clone(),
-                p2_board: room.sim.boards[1].clone(),
+                p1_board: Box::new(room.sim.boards[0].clone()),
+                p2_board: Box::new(room.sim.boards[1].clone()),
                 p1_ack: room.sim.last_seq[0],
                 p2_ack: room.sim.last_seq[1],
             }),
@@ -293,16 +299,14 @@ impl Manager {
                     return;
                 }
                 self.leave_current(conn);
-                let pushed = if let Some(room) = self.rooms.get_mut(&id) {
+                let pushed = self.with_room(id, |room| {
                     if room.members.len() < 2 {
                         room.members.push(Member { token, conn: Some(conn), disconnect_at: None });
                         true
                     } else {
                         false
                     }
-                } else {
-                    false
-                };
+                }).unwrap_or(false);
                 if pushed {
                     self.clients.insert(conn, Some(id));
                     self.sync_after_attach(id, conn);
@@ -317,16 +321,14 @@ impl Manager {
             }
             Command::SetSetting { conn, index, dir } => {
                 if let Some(id) = self.room_of(conn) {
-                    let changed = if let Some(room) = self.rooms.get_mut(&id) {
+                    let changed = self.with_room(id, |room| {
                         if room.is_host_conn(conn) && matches!(room.phase, Phase::Lobby) {
                             room.settings.adjust(index as usize, dir);
                             true
                         } else {
                             false
                         }
-                    } else {
-                        false
-                    };
+                    }).unwrap_or(false);
                     if changed {
                         self.send_lobby(id);
                     }
@@ -334,7 +336,7 @@ impl Manager {
             }
             Command::ToggleCountdown { conn } => {
                 if let Some(id) = self.room_of(conn) {
-                    let toggled = if let Some(room) = self.rooms.get_mut(&id) {
+                    let toggled = self.with_room(id, |room| {
                         if room.is_host_conn(conn) {
                             room.phase = match room.phase {
                                 Phase::Lobby if room.members.len() >= 2 => Phase::CountingDown(3.0),
@@ -346,9 +348,7 @@ impl Manager {
                         } else {
                             false
                         }
-                    } else {
-                        false
-                    };
+                    }).unwrap_or(false);
                     if toggled {
                         self.send_lobby(id);
                         self.room_list_dirty = true;
@@ -357,7 +357,7 @@ impl Manager {
             }
             Command::ReturnToLobby { conn } => {
                 if let Some(id) = self.room_of(conn) {
-                    let done = if let Some(room) = self.rooms.get_mut(&id) {
+                    let done = self.with_room(id, |room| {
                         if room.is_host_conn(conn) {
                             room.phase = Phase::Lobby;
                             room.sim.finished = false;
@@ -366,9 +366,7 @@ impl Manager {
                         } else {
                             false
                         }
-                    } else {
-                        false
-                    };
+                    }).unwrap_or(false);
                     if done {
                         self.send_lobby(id);
                         self.room_list_dirty = true;
@@ -377,19 +375,19 @@ impl Manager {
             }
             Command::Input { conn, kind, seq } => {
                 if let Some(id) = self.room_of(conn) {
-                    if let Some(room) = self.rooms.get_mut(&id) {
+                    self.with_room(id, |room| {
                         if let Some(idx) = room.slot_of_conn(conn) {
                             room.sim.last_seq[idx] = seq;
                             if matches!(room.phase, Phase::Playing) && !room.sim.paused && !room.sim.finished {
                                 room.sim.boards[idx].apply_input(kind);
                             }
                         }
-                    }
+                    });
                 }
             }
             Command::TogglePause { conn } => {
                 if let Some(id) = self.room_of(conn) {
-                    let toggled = if let Some(room) = self.rooms.get_mut(&id) {
+                    let toggled = self.with_room(id, |room| {
                         if matches!(room.phase, Phase::Playing) && !room.sim.finished {
                             room.sim.paused = !room.sim.paused;
                             let p = room.sim.paused;
@@ -398,9 +396,7 @@ impl Manager {
                         } else {
                             false
                         }
-                    } else {
-                        false
-                    };
+                    }).unwrap_or(false);
                     if toggled {
                         self.send_snapshot(id);
                     }
@@ -409,11 +405,11 @@ impl Manager {
 
             Command::Restart { conn } => {
                 if let Some(id) = self.room_of(conn) {
-                    let restarted = if let Some(room) = self.rooms.get_mut(&id) {
+                    let restarted = self.with_room(id, |room| {
                         if matches!(room.phase, Phase::Playing) {
                             let now = Instant::now();
                             let in_cooldown = room.sim.last_restart
-                                .map_or(false, |t| now.duration_since(t) < Duration::from_secs(2));
+                                .is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
                             if !in_cooldown {
                                 room.sim.last_restart = Some(now);
                                 room.sim.reset_boards(&room.settings);
@@ -424,9 +420,7 @@ impl Manager {
                         } else {
                             false
                         }
-                    } else {
-                        false
-                    };
+                    }).unwrap_or(false);
                     if restarted {
                         self.send_room(id, shared::encode(&ServerMessage::Restart));
                     }
@@ -592,7 +586,7 @@ impl Manager {
         let now = Instant::now();
         let expired: Vec<(RoomId, Token)> = self.rooms.values()
             .flat_map(|r| r.members.iter()
-                .filter(|m| m.disconnect_at.map_or(false, |t| now.duration_since(t) >= GRACE))
+                .filter(|m| m.disconnect_at.is_some_and(|t| now.duration_since(t) >= GRACE))
                 .map(move |m| (r.id, m.token.clone())))
             .collect();
         for (id, token) in expired {
@@ -655,8 +649,8 @@ impl Manager {
                 }
                 if (do_broadcast && advanced) || just_finished {
                     let upd = shared::encode(&ServerMessage::StateUpdate {
-                        p1_board: room.sim.boards[0].clone(),
-                        p2_board: room.sim.boards[1].clone(),
+                        p1_board: Box::new(room.sim.boards[0].clone()),
+                        p2_board: Box::new(room.sim.boards[1].clone()),
                         p1_ack: room.sim.last_seq[0],
                         p2_ack: room.sim.last_seq[1],
                     });

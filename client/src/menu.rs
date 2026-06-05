@@ -180,7 +180,7 @@ pub fn draw_settings(app: &mut App, gfx: &mut Graphics, state: &State) {
 }
 
 fn start_play(state: &mut State) {
-    match ewebsock::connect(&crate::server_url(), ewebsock::Options::default()) {
+    match ewebsock::connect(crate::server_url(), ewebsock::Options::default()) {
         Ok((ws_sender, ws_receiver)) => {
             state.net = Some(Net { ws_sender, ws_receiver });
             state.rooms.clear();

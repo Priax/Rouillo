@@ -66,8 +66,8 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         ServerMessage::StateUpdate { p1_board, p2_board, p1_ack, p2_ack } => {
             if let Some(session) = state.session.as_mut() {
                 let (my_auth, opp_auth, my_ack) = match session.my_slot {
-                    1 => (p1_board, p2_board, p1_ack),
-                    2 => (p2_board, p1_board, p2_ack),
+                    1 => (*p1_board, *p2_board, p1_ack),
+                    2 => (*p2_board, *p1_board, p2_ack),
                     _ => return,
                 };
                 let prev_piece = session.predicted_board.active_piece.clone();
