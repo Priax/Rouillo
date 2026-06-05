@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use rand::Rng;
+use rand::RngExt; // rand 0.10 moved `random_range` to this trait
 
 pub mod config;
 use crate::config::*;
@@ -33,9 +34,11 @@ pub enum PuyoType {
     Garbage,
 }
 
-fn default_rng() -> rand::rngs::StdRng {
+fn default_rng() -> rand_chacha::ChaCha12Rng {
     use rand::SeedableRng;
-    rand::rngs::StdRng::from_os_rng()
+    // Only the serde default for the (skipped) rng field, filled in on the
+    // client, which never draws from it — a fixed seed is fine.
+    rand_chacha::ChaCha12Rng::seed_from_u64(0)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,13 +206,13 @@ pub struct Board {
     #[serde(default)] pub fall_timer: f32,
     #[serde(default)] pub resolve_timer: f32,
     #[serde(default)] pub garbage_delay_timer: f32,
-    #[serde(skip, default = "default_rng")] rng: rand::rngs::StdRng,
+    #[serde(skip, default = "default_rng")] rng: rand_chacha::ChaCha12Rng,
 }
 
 impl Board {
     pub fn new(width: usize, height: usize, seed: u64, start_level: u32, colors: u32) -> Board {
         use rand::SeedableRng;
-        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(seed);
         let n1 = (PuyoType::random_with_seed(&mut rng, colors), PuyoType::random_with_seed(&mut rng, colors));
         let n2 = (PuyoType::random_with_seed(&mut rng, colors), PuyoType::random_with_seed(&mut rng, colors));
 
@@ -698,3 +701,6 @@ impl Board {
         garbage_produced
     }
 }
+
+#[cfg(test)]
+mod tests;

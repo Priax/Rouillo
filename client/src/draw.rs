@@ -90,6 +90,10 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
             .position(10.0, win_h - 30.0)
             .size(20.0)
             .color(Color::MAGENTA);
+        draw.text(font, &format!("RTT input->ack: {:.0} ms", session.last_rtt_ms))
+            .position(10.0, win_h - 55.0)
+            .size(20.0)
+            .color(Color::MAGENTA);
     }
 
     gfx.render(&draw);

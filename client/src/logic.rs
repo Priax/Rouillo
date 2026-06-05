@@ -49,6 +49,7 @@ fn send_input(session: &mut GameSession, net: &mut Net, kind: InputKind) {
     let seq = session.input_seq;
     session.predicted_board.apply_input(kind);
     session.pending_inputs.push((seq, kind));
+    session.sent_at.push((seq, session.clock));
     net.send(&ClientMessage::Input { kind, seq });
 }
 

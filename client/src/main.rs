@@ -49,6 +49,12 @@ fn event(state: &mut State, evt: Event) {
 }
 
 fn update(app: &mut App, state: &mut State) {
+    // Advance the session clock once per frame so input sends (logic) and acks
+    // (network) below share the same monotonic timestamp.
+    if let Some(session) = state.session.as_mut() {
+        session.clock += app.timer.delta_f32() as f64;
+    }
+
     network::handle_server_messages(state);
 
     match state.screen {

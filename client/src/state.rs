@@ -104,8 +104,15 @@ pub struct GameSession {
 
     pub piece_visual_offset: (f32, f32),
 
+    // Network latency probe: monotonic frame clock + per-input send timestamps,
+    // used to measure the input->ack RTT actually felt by the player.
+    pub clock: f64,
+    pub sent_at: Vec<(u32, f64)>,
+
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub last_server_msg: String,
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub last_rtt_ms: f32,
 }
 
 impl GameSession {
@@ -124,7 +131,10 @@ impl GameSession {
             key_timer_right: 0.0,
             key_timer_down: 0.0,
             piece_visual_offset: (0.0, 0.0),
+            clock: 0.0,
+            sent_at: Vec::new(),
             last_server_msg: String::new(),
+            last_rtt_ms: 0.0,
         }
     }
 }

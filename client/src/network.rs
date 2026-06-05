@@ -78,6 +78,17 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.other_board = opp_auth;
                 session.my_ack = my_ack;
                 session.pending_inputs.retain(|(seq, _)| *seq > my_ack);
+
+                // input->ack RTT: time between sending the most recent acked
+                // input and seeing it confirmed here.
+                if let Some(&(_, sent)) = session.sent_at.iter()
+                    .filter(|(seq, _)| *seq <= my_ack)
+                    .max_by_key(|(seq, _)| *seq)
+                {
+                    session.last_rtt_ms = ((session.clock - sent) * 1000.0) as f32;
+                }
+                session.sent_at.retain(|(seq, _)| *seq > my_ack);
+
                 session.last_server_msg = format!(
                     "StateUpdate ack={} pending={} seq={}",
                     my_ack,
@@ -127,6 +138,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.input_seq = 0;
                 session.my_ack = 0;
                 session.pending_inputs.clear();
+                session.sent_at.clear();
                 session.last_server_msg = "Restart".to_string();
             }
         }

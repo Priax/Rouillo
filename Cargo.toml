@@ -10,3 +10,7 @@ resolver = "2"
 strip = true
 lto = true
 opt-level = 3
+
+[profile.bench]
+strip = false
+debug = true

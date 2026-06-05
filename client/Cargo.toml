@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 notan = "0.14.0"
-rand = "0.9.4"
+rand = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 ewebsock = "0.8"
 shared = { path = "../shared" }
@@ -14,5 +14,5 @@ shared = { path = "../shared" }
 search = ["assets"]
 
 [target.'wasm32-unknown-unknown'.dependencies]
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
 web-sys = { version = "0.3", features = ["Window", "Location", "Storage"] }

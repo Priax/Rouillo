@@ -5,7 +5,7 @@ use warp::Filter;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use rand::Rng;
+use rand::RngExt; // rand 0.10 moved `random()`/`random_range()` to this trait
 use shared::{Board, ClientMessage, ServerMessage, InputKind, GameState,
              RoomId, RoomSettings, RoomInfo, LobbyInfo, config};
 
@@ -672,19 +672,65 @@ impl Manager {
     }
 }
 
+struct TickProfile {
+    enabled: bool,
+    budget: Duration,
+    sum: Duration,
+    max: Duration,
+    count: u32,
+    since_report: Instant,
+}
+
+impl TickProfile {
+    fn new() -> TickProfile {
+        TickProfile {
+            enabled: std::env::var("PUYO_PROFILE").is_ok(),
+            budget: Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64),
+            sum: Duration::ZERO,
+            max: Duration::ZERO,
+            count: 0,
+            since_report: Instant::now(),
+        }
+    }
+
+    fn record(&mut self, elapsed: Duration, rooms: usize) {
+        self.sum += elapsed;
+        self.max = self.max.max(elapsed);
+        self.count += 1;
+        if self.since_report.elapsed() < Duration::from_secs(5) {
+            return;
+        }
+        if self.enabled {
+            let avg = self.sum / self.count.max(1);
+            let peak_load = self.max.as_secs_f64() / self.budget.as_secs_f64() * 100.0;
+            println!(
+                "[tick] rooms={} avg={:?} max={:?} budget={:?} peak_load={:.1}%",
+                rooms, avg, self.max, self.budget, peak_load
+            );
+        }
+        self.sum = Duration::ZERO;
+        self.max = Duration::ZERO;
+        self.count = 0;
+        self.since_report = Instant::now();
+    }
+}
+
 async fn manager_loop(mut cmd_rx: mpsc::UnboundedReceiver<Command>) {
     let tick_dt = 1.0 / config::SERVER_TICK_HZ as f32;
     let mut ticker = interval(Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64));
     let broadcast_period = Duration::from_secs_f64(1.0 / config::STATE_BROADCAST_HZ as f64);
     let mut mgr = Manager::new();
     let mut last_broadcast = Instant::now();
+    let mut profile = TickProfile::new();
 
     loop {
         tokio::select! {
             _ = ticker.tick() => {
                 let do_broadcast = last_broadcast.elapsed() >= broadcast_period;
                 if do_broadcast { last_broadcast = Instant::now(); }
+                let t0 = Instant::now();
                 mgr.tick(tick_dt, do_broadcast);
+                profile.record(t0.elapsed(), mgr.rooms.len());
                 mgr.reap_dead();
             }
             Some(cmd) = cmd_rx.recv() => {
@@ -697,8 +743,12 @@ async fn manager_loop(mut cmd_rx: mpsc::UnboundedReceiver<Command>) {
 
 #[tokio::main]
 async fn main() {
+    // tokio-console support (only with `--features console`, see Cargo.toml).
+    #[cfg(feature = "console")]
+    console_subscriber::init();
+
     let port = config::SERVER_PORT;
-    println!("Serveur Puyo (multi-rooms) sur ws://0.0.0.0:{}", port);
+    println!("Serveur Puyo sur ws://0.0.0.0:{}", port);
 
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
     tokio::spawn(manager_loop(cmd_rx));
@@ -768,3 +818,6 @@ async fn handle_connection(
     let _ = cmd_tx.send(Command::Unregister { conn });
     println!("Connexion {} fermée.", conn);
 }
+
+#[cfg(test)]
+mod tests;
