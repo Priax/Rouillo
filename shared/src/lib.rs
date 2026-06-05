@@ -7,21 +7,13 @@ pub mod config;
 use crate::config::*;
 
 pub fn encode<T: serde::Serialize>(msg: &T) -> Vec<u8> {
-    use bincode::Options;
-    let raw = bincode::options()
-        .with_varint_encoding()
-        .serialize(msg)
-        .expect("bincode serialize");
+    let raw = bitcode::serialize(msg).expect("bitcode serialize");
     lz4_flex::compress_prepend_size(&raw)
 }
 
 pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
-    use bincode::Options;
     let raw = lz4_flex::decompress_size_prepended(bytes).ok()?;
-    bincode::options()
-        .with_varint_encoding()
-        .deserialize(&raw)
-        .ok()
+    bitcode::deserialize(&raw).ok()
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, Serialize, Deserialize)]
