@@ -192,6 +192,26 @@ fn state_update_survives_encode_decode() {
 }
 
 #[test]
+fn rng_state_survives_encode_decode() {
+    let mut board = Board::new(GRID_WIDTH, GRID_HEIGHT, 42, 1, 5);
+    for _ in 0..10 {
+        board.spawn_piece();
+        board.active_piece = None;
+    }
+
+    let bytes = encode(&board);
+    let mut restored: Board = decode(&bytes).expect("decode");
+
+    for _ in 0..20 {
+        board.spawn_piece();
+        restored.spawn_piece();
+        let a = board.active_piece.take().expect("piece a");
+        let b = restored.active_piece.take().expect("piece b");
+        assert_eq!((a.axis_type, a.sat_type), (b.axis_type, b.sat_type));
+    }
+}
+
+#[test]
 fn decode_rejects_garbage_bytes() {
     assert!(decode::<ServerMessage>(&[0, 1, 2, 3]).is_none());
 }

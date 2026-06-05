@@ -79,8 +79,6 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.my_ack = my_ack;
                 session.pending_inputs.retain(|(seq, _)| *seq > my_ack);
 
-                // input->ack RTT: time between sending the most recent acked
-                // input and seeing it confirmed here.
                 if let Some(&(_, sent)) = session.sent_at.iter()
                     .filter(|(seq, _)| *seq <= my_ack)
                     .max_by_key(|(seq, _)| *seq)

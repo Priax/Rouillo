@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use rand::Rng;
-use rand::RngExt; // rand 0.10 moved `random_range` to this trait
+use rand::RngExt;
 
 pub mod config;
 use crate::config::*;
@@ -32,13 +32,6 @@ pub enum PuyoType {
     Green,
     Purple,
     Garbage,
-}
-
-fn default_rng() -> rand_chacha::ChaCha12Rng {
-    use rand::SeedableRng;
-    // Only the serde default for the (skipped) rng field, filled in on the
-    // client, which never draws from it — a fixed seed is fine.
-    rand_chacha::ChaCha12Rng::seed_from_u64(0)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,7 +199,7 @@ pub struct Board {
     #[serde(default)] pub fall_timer: f32,
     #[serde(default)] pub resolve_timer: f32,
     #[serde(default)] pub garbage_delay_timer: f32,
-    #[serde(skip, default = "default_rng")] rng: rand_chacha::ChaCha12Rng,
+    rng: rand_chacha::ChaCha12Rng,
 }
 
 impl Board {
@@ -315,8 +308,6 @@ impl Board {
             self.check_collision(&below)
         };
 
-        // Kick candidates, tried in order; the first one that fits is applied.
-        // (row, col, rotation, enabled)
         let candidates = [
             (old_row,     old_col,     new_rot,           true),                     // in place
             (old_row,     old_col - 1, new_rot,           true),                     // kick left
@@ -341,7 +332,6 @@ impl Board {
             }
         }
 
-        // No candidate fit: keep the original orientation untouched.
         piece.row = old_row;
         piece.col = old_col;
         piece.rotation = old_rot;
@@ -548,16 +538,18 @@ impl Board {
     }
 
     fn flood_fill(&self, r: usize, c: usize, target_type: PuyoType, group: &mut Vec<(usize, usize)>, visited: &mut HashSet<(usize, usize)>) {
-        if visited.contains(&(r, c)) { return; }
-        visited.insert((r, c));
-        group.push((r, c));
-        for (dr, dc) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
-            let nr = r as i32 + dr;
-            let nc = c as i32 + dc;
-            if nr >= 0 && nr < self.height as i32 && nc >= 0 && nc < self.width as i32 {
-                if let Some(cell_type) = self.cells[nr as usize][nc as usize] {
-                    if cell_type == target_type {
-                        self.flood_fill(nr as usize, nc as usize, target_type, group, visited);
+        let mut stack = vec![(r, c)];
+        while let Some((r, c)) = stack.pop() {
+            if !visited.insert((r, c)) { continue; }
+            group.push((r, c));
+            for (dr, dc) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
+                let nr = r as i32 + dr;
+                let nc = c as i32 + dc;
+                if nr >= 0 && nr < self.height as i32 && nc >= 0 && nc < self.width as i32 {
+                    if let Some(cell_type) = self.cells[nr as usize][nc as usize] {
+                        if cell_type == target_type {
+                            stack.push((nr as usize, nc as usize));
+                        }
                     }
                 }
             }

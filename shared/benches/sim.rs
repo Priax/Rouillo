@@ -2,7 +2,7 @@
 // HTML report lands in target/criterion/.
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use std::hint::black_box; // criterion::black_box is deprecated in 0.8
+use std::hint::black_box;
 use shared::config::{GRID_HEIGHT, GRID_WIDTH};
 use shared::{decode, encode, Board, PuyoType, ServerMessage};
 

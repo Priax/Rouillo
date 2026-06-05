@@ -1,4 +1,3 @@
-// --- CONFIGURATION DU JEU ---
 pub const CELL_SIZE: f32 = 40.0;
 pub const GRID_WIDTH: usize = 6;
 pub const GRID_HEIGHT: usize = 13;

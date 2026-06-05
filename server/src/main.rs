@@ -5,7 +5,7 @@ use warp::Filter;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use rand::RngExt; // rand 0.10 moved `random()`/`random_range()` to this trait
+use rand::RngExt;
 use shared::{Board, ClientMessage, ServerMessage, InputKind, GameState,
              RoomId, RoomSettings, RoomInfo, LobbyInfo, config};
 
@@ -168,8 +168,8 @@ impl Manager {
         self.clients.get(&conn).copied().flatten()
     }
 
-    /// Run `f` on the room with the given id, returning its result, or `None` if
-    /// the room no longer exists.
+    // Run `f` on the room with the given id, returning its result, or `None` if
+    // the room no longer exists.
     fn with_room<R>(&mut self, id: RoomId, f: impl FnOnce(&mut Room) -> R) -> Option<R> {
         self.rooms.get_mut(&id).map(f)
     }
