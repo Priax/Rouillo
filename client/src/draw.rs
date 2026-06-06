@@ -94,6 +94,21 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
             .position(10.0, win_h - 55.0)
             .size(20.0)
             .color(Color::MAGENTA);
+
+        let me = &session.predicted_board;
+        let opp = &session.other_board;
+        draw.text(font, &format!(
+            "ME  state={:?} pid={} pend_garb={} nuis={}",
+            me.state, me.piece_id, me.pending_garbage, me.nuisance_points))
+            .position(10.0, win_h - 80.0)
+            .size(20.0)
+            .color(Color::from_rgb(0.0, 1.0, 1.0));
+        draw.text(font, &format!(
+            "OPP state={:?} pid={} pend_garb={} nuis={}",
+            opp.state, opp.piece_id, opp.pending_garbage, opp.nuisance_points))
+            .position(10.0, win_h - 105.0)
+            .size(20.0)
+            .color(Color::from_rgb(0.0, 1.0, 1.0));
     }
 
     gfx.render(&draw);
@@ -124,8 +139,13 @@ fn draw_board(draw: &mut Draw, board: &Board, offset_x: f32, offset_y: f32, boar
     if board.state == GameState::Playing || board.state == GameState::Paused {
         if let Some(ghost) = board.get_ghost_piece() {
             for pos in ghost.get_positions().iter() {
+                if pos.0 >= 0 && (board.cells[pos.0 as usize][pos.1 as usize]).is_some() {
+                    continue;
+                }
                 let p_type = if pos.0 == ghost.row && pos.1 == ghost.col { ghost.axis_type } else { ghost.sat_type };
-                draw_cell(draw, pos.0 as f32 - config::VISIBLE_ROW_OFFSET as f32, pos.1 as f32, Some(p_type), offset_x, offset_y, 0.3);
+                let draw_r = pos.0 as f32 - config::VISIBLE_ROW_OFFSET as f32 + piece_offset.0;
+                let draw_c = pos.1 as f32 + piece_offset.1;
+                draw_cell(draw, draw_r, draw_c, Some(p_type), offset_x, offset_y, 0.3);
             }
         }
         if let Some(ref piece) = board.active_piece {
