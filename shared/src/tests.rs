@@ -1,12 +1,18 @@
 use super::*;
-use crate::config::{GRID_WIDTH, GRID_HEIGHT, MAX_LOCK_TIME, VISIBLE_ROW_OFFSET};
+use crate::config::{GRID_HEIGHT, GRID_WIDTH, MAX_LOCK_TIME, VISIBLE_ROW_OFFSET};
 
 fn empty_board() -> Board {
     Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 1, 5)
 }
 
 fn piece(row: i32, col: i32, rotation: usize) -> ActivePuyo {
-    ActivePuyo { row, col, rotation, axis_type: PuyoType::Red, sat_type: PuyoType::Blue }
+    ActivePuyo {
+        row,
+        col,
+        rotation,
+        axis_type: PuyoType::Red,
+        sat_type: PuyoType::Blue,
+    }
 }
 
 #[test]
@@ -27,18 +33,26 @@ fn same_seed_yields_identical_piece_sequence() {
 #[test]
 fn four_connected_same_color_clears() {
     let mut b = empty_board();
-    for r in 9..=12 { b.cells[r][0] = Some(PuyoType::Red); }
+    for r in 9..=12 {
+        b.cells[r][0] = Some(PuyoType::Red);
+    }
     assert_eq!(b.check_matches(), Some(40)); // chain 1, group of 4, no bonus -> 10*4*1
-    for r in 9..=12 { assert!(b.cells[r][0].is_none()); }
+    for r in 9..=12 {
+        assert!(b.cells[r][0].is_none());
+    }
     assert_eq!(b.chain_count, 1);
 }
 
 #[test]
 fn three_connected_does_not_clear() {
     let mut b = empty_board();
-    for r in 10..=12 { b.cells[r][0] = Some(PuyoType::Red); }
+    for r in 10..=12 {
+        b.cells[r][0] = Some(PuyoType::Red);
+    }
     assert_eq!(b.check_matches(), None);
-    for r in 10..=12 { assert!(b.cells[r][0].is_some()); }
+    for r in 10..=12 {
+        assert!(b.cells[r][0].is_some());
+    }
 }
 
 // A 4-group living entirely in the hidden buffer row must NOT pop: only
@@ -46,7 +60,9 @@ fn three_connected_does_not_clear() {
 #[test]
 fn group_only_in_hidden_row_does_not_clear() {
     let mut b = empty_board();
-    for c in 0..4 { b.cells[0][c] = Some(PuyoType::Red); }
+    for c in 0..4 {
+        b.cells[0][c] = Some(PuyoType::Red);
+    }
     assert_eq!(b.check_matches(), None);
 }
 
@@ -54,7 +70,9 @@ fn group_only_in_hidden_row_does_not_clear() {
 #[test]
 fn adjacent_garbage_is_cleared() {
     let mut b = empty_board();
-    for r in 9..=12 { b.cells[r][0] = Some(PuyoType::Red); }
+    for r in 9..=12 {
+        b.cells[r][0] = Some(PuyoType::Red);
+    }
     b.cells[9][1] = Some(PuyoType::Garbage); // touches the group
     b.cells[5][5] = Some(PuyoType::Garbage); // far away
     b.check_matches();
@@ -66,7 +84,9 @@ fn adjacent_garbage_is_cleared() {
 #[test]
 fn garbage_does_not_self_match() {
     let mut b = empty_board();
-    for r in 9..=12 { b.cells[r][0] = Some(PuyoType::Garbage); }
+    for r in 9..=12 {
+        b.cells[r][0] = Some(PuyoType::Garbage);
+    }
     assert_eq!(b.check_matches(), None);
 }
 
@@ -92,8 +112,10 @@ fn gravity_noop_when_settled() {
 #[test]
 fn resolve_step_converts_score_to_garbage_with_carry() {
     let mut b = empty_board();
-    for r in 8..=12 { b.cells[r][0] = Some(PuyoType::Red); } // group of 5 -> score 100
-    assert_eq!(b.resolve_step(), 1);   // floor(100 / 70)
+    for r in 8..=12 {
+        b.cells[r][0] = Some(PuyoType::Red);
+    } // group of 5 -> score 100
+    assert_eq!(b.resolve_step(), 1); // floor(100 / 70)
     assert_eq!(b.nuisance_points, 30); // 100 % 70 carried for the next clear
 }
 
@@ -140,7 +162,7 @@ fn piece_locks_after_lock_delay() {
     let locked = b.update_logic(MAX_LOCK_TIME + 0.1);
     assert!(locked);
     assert!(b.active_piece.is_none());
-    assert_eq!(b.cells[GRID_HEIGHT - 1][2], Some(PuyoType::Red));  // axis
+    assert_eq!(b.cells[GRID_HEIGHT - 1][2], Some(PuyoType::Red)); // axis
     assert_eq!(b.cells[GRID_HEIGHT - 2][2], Some(PuyoType::Blue)); // satellite
     assert_eq!(b.state, GameState::ResolvingMatches);
 }
@@ -152,7 +174,7 @@ fn moving_grounded_piece_resets_lock_timer() {
     let mut b = empty_board();
     b.active_piece = Some(piece((GRID_HEIGHT - 1) as i32, 2, 0));
     assert!(!b.update_logic(0.4)); // touching ground, timer at 0.4
-    b.move_piece(-1);              // resets timer to 0
+    b.move_piece(-1); // resets timer to 0
     assert!(!b.update_logic(0.4)); // 0.4 again < 0.5 -> still not locked
     assert!(b.active_piece.is_some());
 }
@@ -180,7 +202,12 @@ fn state_update_survives_encode_decode() {
     let bytes = encode(&msg);
     let back: ServerMessage = decode(&bytes).expect("decode");
     match back {
-        ServerMessage::StateUpdate { p1_board, p1_ack, p2_ack, .. } => {
+        ServerMessage::StateUpdate {
+            p1_board,
+            p1_ack,
+            p2_ack,
+            ..
+        } => {
             assert_eq!(p1_ack, 7);
             assert_eq!(p2_ack, 9);
             assert_eq!(p1_board.score, 1234);

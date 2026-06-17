@@ -1,17 +1,17 @@
-use notan::prelude::*;
-use notan::draw::*;
 use notan::app::Event;
+use notan::draw::*;
+use notan::prelude::*;
 use shared::config;
 
 mod audio;
-mod state;
-mod network;
-mod logic;
 mod draw;
+mod logic;
 mod menu;
+mod network;
 mod rooms;
+mod state;
 
-use state::{State, Screen};
+use state::{Screen, State};
 
 pub fn server_url() -> String {
     #[cfg(all(target_arch = "wasm32", not(debug_assertions)))]
@@ -71,7 +71,9 @@ fn update(app: &mut App, state: &mut State) {
         Screen::RoomLobby => rooms::update_lobby(app, state),
         Screen::Game => {
             let is_host = state.lobby.as_ref().map(|l| l.is_host).unwrap_or(false);
-            let State { session, settings, net, .. } = &mut *state;
+            let State {
+                session, settings, net, ..
+            } = &mut *state;
             if let (Some(session), Some(net)) = (session, net) {
                 logic::update_game(app, session, settings, net, is_host);
             }

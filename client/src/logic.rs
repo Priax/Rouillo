@@ -1,10 +1,10 @@
 use notan::prelude::*;
 use shared::*;
-use crate::state::{GameSession, Settings, Net};
+
+use crate::state::{GameSession, Net, Settings};
 
 pub fn update_game(app: &mut App, session: &mut GameSession, settings: &Settings, net: &mut Net, is_host: bool) {
-    let game_over = session.board.state == GameState::GameOver
-        || session.other_board.state == GameState::GameOver;
+    let game_over = session.board.state == GameState::GameOver || session.other_board.state == GameState::GameOver;
     let paused = session.board.state == GameState::Paused;
 
     if paused || game_over || session.opponent_disconnected {
@@ -36,19 +36,25 @@ pub fn update_game(app: &mut App, session: &mut GameSession, settings: &Settings
     }
 
     for (off, rate) in [
-        (&mut session.piece_visual_offset,   PIECE_SMOOTH_RATE),
+        (&mut session.piece_visual_offset, PIECE_SMOOTH_RATE),
         (&mut session.opponent_piece_offset, OPPONENT_SMOOTH_RATE),
     ] {
         let decay = (-rate * dt).exp();
         off.0 *= decay;
         off.1 *= decay;
-        if off.0.abs() < 0.001 { off.0 = 0.0; }
-        if off.1.abs() < 0.001 { off.1 = 0.0; }
+        if off.0.abs() < 0.001 {
+            off.0 = 0.0;
+        }
+        if off.1.abs() < 0.001 {
+            off.1 = 0.0;
+        }
     }
 
     if let Some((_, ref mut t)) = session.chain_display {
         *t -= dt;
-        if *t <= 0.0 { session.chain_display = None; }
+        if *t <= 0.0 {
+            session.chain_display = None;
+        }
     }
     if session.all_clear_timer > 0.0 {
         session.all_clear_timer -= dt;

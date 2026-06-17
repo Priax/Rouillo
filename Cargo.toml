@@ -14,3 +14,17 @@ opt-level = 3
 [profile.bench]
 strip = false
 debug = true
+
+[workspace.lints.rust]
+unused_imports = "warn"
+unused_variables = "warn"
+dead_code = "warn"
+
+[workspace.lints.clippy]
+clone_on_ref_ptr = "warn"
+explicit_iter_loop = "warn"
+flat_map_option = "warn"
+manual_let_else = "warn"
+match_wildcard_for_single_variants = "warn"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"

@@ -1,6 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 mod imp {
     use std::cell::RefCell;
+
     use web_sys::{AudioContext, OscillatorType};
 
     thread_local! {

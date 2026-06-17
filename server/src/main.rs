@@ -1,13 +1,15 @@
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
 use futures_util::{SinkExt, StreamExt};
+use rand::RngExt;
+use shared::{
+    config, Board, ClientMessage, GameState, InputKind, LobbyInfo, RoomId, RoomInfo, RoomSettings, ServerMessage,
+};
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration, Instant};
 use warp::Filter;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use rand::RngExt;
-use shared::{Board, ClientMessage, ServerMessage, InputKind, GameState,
-             RoomId, RoomSettings, RoomInfo, LobbyInfo, config};
 
 type ConnId = u64;
 type Token = String;
@@ -44,8 +46,20 @@ impl Sim {
     fn fresh_boards(s: &RoomSettings) -> [Board; 2] {
         let seed: u64 = rand::rng().random();
         [
-            Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, seed, s.starting_level, s.colors),
-            Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, seed, s.starting_level, s.colors),
+            Board::new(
+                config::GRID_WIDTH,
+                config::GRID_HEIGHT,
+                seed,
+                s.starting_level,
+                s.colors,
+            ),
+            Board::new(
+                config::GRID_WIDTH,
+                config::GRID_HEIGHT,
+                seed,
+                s.starting_level,
+                s.colors,
+            ),
         ]
     }
 
@@ -81,7 +95,8 @@ impl Room {
     }
 
     fn is_host_conn(&self, conn: ConnId) -> bool {
-        self.slot_of_conn(conn).is_some_and(|s| self.members[s].token == self.host)
+        self.slot_of_conn(conn)
+            .is_some_and(|s| self.members[s].token == self.host)
     }
 
     fn all_connected(&self) -> bool {
@@ -130,24 +145,62 @@ struct Manager {
 }
 
 enum Command {
-    Register { conn: ConnId, sender: mpsc::Sender<Vec<u8>> },
-    Unregister { conn: ConnId },
-    Hello { conn: ConnId, token: Token },
-    RequestRoomList { conn: ConnId },
-    CreateRoom { conn: ConnId, name: String },
-    JoinRoom { conn: ConnId, id: RoomId },
-    LeaveRoom { conn: ConnId },
-    SetSetting { conn: ConnId, index: u8, dir: i32 },
-    ToggleCountdown { conn: ConnId },
-    ReturnToLobby { conn: ConnId },
-    Input { conn: ConnId, kind: InputKind, seq: u32 },
-    TogglePause { conn: ConnId },
-    Restart { conn: ConnId },
+    Register {
+        conn: ConnId,
+        sender: mpsc::Sender<Vec<u8>>,
+    },
+    Unregister {
+        conn: ConnId,
+    },
+    Hello {
+        conn: ConnId,
+        token: Token,
+    },
+    RequestRoomList {
+        conn: ConnId,
+    },
+    CreateRoom {
+        conn: ConnId,
+        name: String,
+    },
+    JoinRoom {
+        conn: ConnId,
+        id: RoomId,
+    },
+    LeaveRoom {
+        conn: ConnId,
+    },
+    SetSetting {
+        conn: ConnId,
+        index: u8,
+        dir: i32,
+    },
+    ToggleCountdown {
+        conn: ConnId,
+    },
+    ReturnToLobby {
+        conn: ConnId,
+    },
+    Input {
+        conn: ConnId,
+        kind: InputKind,
+        seq: u32,
+    },
+    TogglePause {
+        conn: ConnId,
+    },
+    Restart {
+        conn: ConnId,
+    },
 }
 
 fn clean_name(name: String) -> String {
     let n = name.trim();
-    if n.is_empty() { "Room".to_string() } else { n.chars().take(24).collect() }
+    if n.is_empty() {
+        "Room".to_string()
+    } else {
+        n.chars().take(24).collect()
+    }
 }
 
 impl Manager {
@@ -194,9 +247,20 @@ impl Manager {
 
     fn send_lobby(&mut self, id: RoomId) {
         let msgs: Vec<(ConnId, Vec<u8>)> = match self.rooms.get(&id) {
-            Some(room) => room.members.iter().enumerate()
-                .filter_map(|(i, m)| m.conn.map(|c|
-                    (c, shared::encode(&ServerMessage::Lobby { info: room.lobby_info_for(i) }))))
+            Some(room) => room
+                .members
+                .iter()
+                .enumerate()
+                .filter_map(|(i, m)| {
+                    m.conn.map(|c| {
+                        (
+                            c,
+                            shared::encode(&ServerMessage::Lobby {
+                                info: room.lobby_info_for(i),
+                            }),
+                        )
+                    })
+                })
                 .collect(),
             None => return,
         };
@@ -223,8 +287,12 @@ impl Manager {
     }
 
     fn broadcast_room_list(&mut self) {
-        let payload = shared::encode(&ServerMessage::RoomList { rooms: self.room_list() });
-        let browsing: Vec<ConnId> = self.clients.iter()
+        let payload = shared::encode(&ServerMessage::RoomList {
+            rooms: self.room_list(),
+        });
+        let browsing: Vec<ConnId> = self
+            .clients
+            .iter()
             .filter_map(|(&c, loc)| loc.is_none().then_some(c))
             .collect();
         for c in browsing {
@@ -233,12 +301,15 @@ impl Manager {
     }
 
     fn send_room_list_to(&mut self, conn: ConnId) {
-        let payload = shared::encode(&ServerMessage::RoomList { rooms: self.room_list() });
+        let payload = shared::encode(&ServerMessage::RoomList {
+            rooms: self.room_list(),
+        });
         self.deliver(conn, payload);
     }
 
     fn room_of_token(&self, token: &str) -> Option<RoomId> {
-        self.rooms.values()
+        self.rooms
+            .values()
             .find(|r| r.members.iter().any(|m| m.token == token))
             .map(|r| r.id)
     }
@@ -276,7 +347,11 @@ impl Manager {
                     id,
                     name: clean_name(name),
                     host: token.clone(),
-                    members: vec![Member { token, conn: Some(conn), disconnect_at: None }],
+                    members: vec![Member {
+                        token,
+                        conn: Some(conn),
+                        disconnect_at: None,
+                    }],
                     settings,
                     phase: Phase::Lobby,
                     sim: Sim::new(&settings),
@@ -294,25 +369,39 @@ impl Manager {
                 };
                 let joinable = matches!(self.rooms.get(&id), Some(r) if r.members.len() < 2);
                 if !joinable {
-                    self.deliver(conn,
-                        shared::encode(&ServerMessage::JoinFailed { reason: "Room indisponible".into() }));
+                    self.deliver(
+                        conn,
+                        shared::encode(&ServerMessage::JoinFailed {
+                            reason: "Room indisponible".into(),
+                        }),
+                    );
                     return;
                 }
                 self.leave_current(conn);
-                let pushed = self.with_room(id, |room| {
-                    if room.members.len() < 2 {
-                        room.members.push(Member { token, conn: Some(conn), disconnect_at: None });
-                        true
-                    } else {
-                        false
-                    }
-                }).unwrap_or(false);
+                let pushed = self
+                    .with_room(id, |room| {
+                        if room.members.len() < 2 {
+                            room.members.push(Member {
+                                token,
+                                conn: Some(conn),
+                                disconnect_at: None,
+                            });
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
                 if pushed {
                     self.clients.insert(conn, Some(id));
                     self.sync_after_attach(id, conn);
                 } else {
-                    self.deliver(conn,
-                        shared::encode(&ServerMessage::JoinFailed { reason: "Room indisponible".into() }));
+                    self.deliver(
+                        conn,
+                        shared::encode(&ServerMessage::JoinFailed {
+                            reason: "Room indisponible".into(),
+                        }),
+                    );
                 }
             }
             Command::LeaveRoom { conn } => {
@@ -321,14 +410,16 @@ impl Manager {
             }
             Command::SetSetting { conn, index, dir } => {
                 if let Some(id) = self.room_of(conn) {
-                    let changed = self.with_room(id, |room| {
-                        if room.is_host_conn(conn) && matches!(room.phase, Phase::Lobby) {
-                            room.settings.adjust(index as usize, dir);
-                            true
-                        } else {
-                            false
-                        }
-                    }).unwrap_or(false);
+                    let changed = self
+                        .with_room(id, |room| {
+                            if room.is_host_conn(conn) && matches!(room.phase, Phase::Lobby) {
+                                room.settings.adjust(index as usize, dir);
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false);
                     if changed {
                         self.send_lobby(id);
                     }
@@ -336,19 +427,21 @@ impl Manager {
             }
             Command::ToggleCountdown { conn } => {
                 if let Some(id) = self.room_of(conn) {
-                    let toggled = self.with_room(id, |room| {
-                        if room.is_host_conn(conn) {
-                            room.phase = match room.phase {
-                                Phase::Lobby if room.members.len() >= 2 => Phase::CountingDown(3.0),
-                                Phase::Lobby => Phase::Lobby,
-                                Phase::CountingDown(_) => Phase::Lobby,
-                                Phase::Playing => Phase::Playing,
-                            };
-                            true
-                        } else {
-                            false
-                        }
-                    }).unwrap_or(false);
+                    let toggled = self
+                        .with_room(id, |room| {
+                            if room.is_host_conn(conn) {
+                                room.phase = match room.phase {
+                                    Phase::Lobby if room.members.len() >= 2 => Phase::CountingDown(3.0),
+                                    Phase::Lobby => Phase::Lobby,
+                                    Phase::CountingDown(_) => Phase::Lobby,
+                                    Phase::Playing => Phase::Playing,
+                                };
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false);
                     if toggled {
                         self.send_lobby(id);
                         self.room_list_dirty = true;
@@ -357,16 +450,18 @@ impl Manager {
             }
             Command::ReturnToLobby { conn } => {
                 if let Some(id) = self.room_of(conn) {
-                    let done = self.with_room(id, |room| {
-                        if room.is_host_conn(conn) {
-                            room.phase = Phase::Lobby;
-                            room.sim.finished = false;
-                            room.sim.paused = false;
-                            true
-                        } else {
-                            false
-                        }
-                    }).unwrap_or(false);
+                    let done = self
+                        .with_room(id, |room| {
+                            if room.is_host_conn(conn) {
+                                room.phase = Phase::Lobby;
+                                room.sim.finished = false;
+                                room.sim.paused = false;
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false);
                     if done {
                         self.send_lobby(id);
                         self.room_list_dirty = true;
@@ -387,16 +482,18 @@ impl Manager {
             }
             Command::TogglePause { conn } => {
                 if let Some(id) = self.room_of(conn) {
-                    let toggled = self.with_room(id, |room| {
-                        if matches!(room.phase, Phase::Playing) && !room.sim.finished {
-                            room.sim.paused = !room.sim.paused;
-                            let p = room.sim.paused;
-                            room.sim.boards.iter_mut().for_each(|b| b.set_paused(p));
-                            true
-                        } else {
-                            false
-                        }
-                    }).unwrap_or(false);
+                    let toggled = self
+                        .with_room(id, |room| {
+                            if matches!(room.phase, Phase::Playing) && !room.sim.finished {
+                                room.sim.paused = !room.sim.paused;
+                                let p = room.sim.paused;
+                                room.sim.boards.iter_mut().for_each(|b| b.set_paused(p));
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false);
                     if toggled {
                         self.send_snapshot(id);
                     }
@@ -405,22 +502,26 @@ impl Manager {
 
             Command::Restart { conn } => {
                 if let Some(id) = self.room_of(conn) {
-                    let restarted = self.with_room(id, |room| {
-                        if matches!(room.phase, Phase::Playing) {
-                            let now = Instant::now();
-                            let in_cooldown = room.sim.last_restart
-                                .is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
-                            if !in_cooldown {
-                                room.sim.last_restart = Some(now);
-                                room.sim.reset_boards(&room.settings);
-                                true
+                    let restarted = self
+                        .with_room(id, |room| {
+                            if matches!(room.phase, Phase::Playing) {
+                                let now = Instant::now();
+                                let in_cooldown = room
+                                    .sim
+                                    .last_restart
+                                    .is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
+                                if !in_cooldown {
+                                    room.sim.last_restart = Some(now);
+                                    room.sim.reset_boards(&room.settings);
+                                    true
+                                } else {
+                                    false
+                                }
                             } else {
                                 false
                             }
-                        } else {
-                            false
-                        }
-                    }).unwrap_or(false);
+                        })
+                        .unwrap_or(false);
                     if restarted {
                         self.send_room(id, shared::encode(&ServerMessage::Restart));
                     }
@@ -584,13 +685,22 @@ impl Manager {
         }
 
         let now = Instant::now();
-        let expired: Vec<(RoomId, Token)> = self.rooms.values()
-            .flat_map(|r| r.members.iter()
-                .filter(|m| m.disconnect_at.is_some_and(|t| now.duration_since(t) >= GRACE))
-                .map(move |m| (r.id, m.token.clone())))
+        let expired: Vec<(RoomId, Token)> = self
+            .rooms
+            .values()
+            .flat_map(|r| {
+                r.members
+                    .iter()
+                    .filter(|m| m.disconnect_at.is_some_and(|t| now.duration_since(t) >= GRACE))
+                    .map(move |m| (r.id, m.token.clone()))
+            })
             .collect();
         for (id, token) in expired {
-            if let Some(slot) = self.rooms.get(&id).and_then(|r| r.members.iter().position(|m| m.token == token)) {
+            if let Some(slot) = self
+                .rooms
+                .get(&id)
+                .and_then(|r| r.members.iter().position(|m| m.token == token))
+            {
                 println!(">>> Grâce expirée : retrait d'un membre de la room {}.", id);
                 self.remove_member(id, slot);
             }
@@ -628,7 +738,12 @@ impl Manager {
             } else if cd_changed {
                 for (i, m) in room.members.iter().enumerate() {
                     if let Some(c) = m.conn {
-                        outgoing.push((c, shared::encode(&ServerMessage::Lobby { info: room.lobby_info_for(i) })));
+                        outgoing.push((
+                            c,
+                            shared::encode(&ServerMessage::Lobby {
+                                info: room.lobby_info_for(i),
+                            }),
+                        ));
                     }
                 }
             }
@@ -642,7 +757,8 @@ impl Manager {
                     room.sim.boards[1].pending_garbage += g0;
                     room.sim.boards[0].pending_garbage += g1;
                     if room.sim.boards[0].state == GameState::GameOver
-                        || room.sim.boards[1].state == GameState::GameOver {
+                        || room.sim.boards[1].state == GameState::GameOver
+                    {
                         room.sim.finished = true;
                         just_finished = true;
                     }
@@ -766,16 +882,15 @@ async fn main() {
     warp::serve(ws_route).run((config::SERVER_BIND_ADDRESS, port)).await;
 }
 
-async fn handle_connection(
-    ws: warp::ws::WebSocket,
-    cmd_tx: mpsc::UnboundedSender<Command>,
-    conn: ConnId,
-) {
+async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::UnboundedSender<Command>, conn: ConnId) {
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
     let (to_client_tx, mut to_client_rx) = mpsc::channel::<Vec<u8>>(CLIENT_CHAN_CAP);
     println!("Connexion {} ouverte.", conn);
 
-    let _ = cmd_tx.send(Command::Register { conn, sender: to_client_tx });
+    let _ = cmd_tx.send(Command::Register {
+        conn,
+        sender: to_client_tx,
+    });
 
     let mut send_task = tokio::spawn(async move {
         while let Some(payload) = to_client_rx.recv().await {

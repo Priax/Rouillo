@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use rand::Rng;
-use rand::RngExt;
+
+use rand::{Rng, RngExt};
+use serde::{Deserialize, Serialize};
 
 pub mod config;
 use crate::config::*;
@@ -46,7 +46,10 @@ pub struct RoomSettings {
 
 impl Default for RoomSettings {
     fn default() -> Self {
-        Self { starting_level: 1, colors: 5 }
+        Self {
+            starting_level: 1,
+            colors: 5,
+        }
     }
 }
 
@@ -113,12 +116,23 @@ pub enum ClientMessage {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServerMessage {
     GameStart,
-    StateUpdate { p1_board: Box<Board>, p2_board: Box<Board>, p1_ack: u32, p2_ack: u32 },
+    StateUpdate {
+        p1_board: Box<Board>,
+        p2_board: Box<Board>,
+        p1_ack: u32,
+        p2_ack: u32,
+    },
     Restart,
     OpponentDisconnected,
-    RoomList { rooms: Vec<RoomInfo> },
-    Lobby { info: LobbyInfo },
-    JoinFailed { reason: String },
+    RoomList {
+        rooms: Vec<RoomInfo>,
+    },
+    Lobby {
+        info: LobbyInfo,
+    },
+    JoinFailed {
+        reason: String,
+    },
 }
 
 impl PuyoType {
@@ -173,12 +187,14 @@ pub struct Board {
     pub colors: u32,
     pub cells: Vec<Vec<Option<PuyoType>>>,
     pub active_piece: Option<ActivePuyo>,
-    #[serde(default)] pub piece_id: u32,
+    #[serde(default)]
+    pub piece_id: u32,
     pub next_types: (PuyoType, PuyoType),
     pub next_next_types: (PuyoType, PuyoType),
     pub score: i32,
     pub state: GameState,
-    #[serde(skip)] pub previous_state: Option<GameState>,
+    #[serde(skip)]
+    pub previous_state: Option<GameState>,
     pub pending_garbage: u32,
     pub nuisance_points: u32,
     pub lock_timer: f32,
@@ -187,11 +203,16 @@ pub struct Board {
     pub ground_move_count: u32,
     pub lowest_row_reached: i32,
     pub chain_count: u32,
-    #[serde(default)] pub last_was_all_clear: bool,
-    #[serde(default)] pub played_time: f32,
-    #[serde(default)] pub fall_timer: f32,
-    #[serde(default)] pub resolve_timer: f32,
-    #[serde(default)] pub garbage_delay_timer: f32,
+    #[serde(default)]
+    pub last_was_all_clear: bool,
+    #[serde(default)]
+    pub played_time: f32,
+    #[serde(default)]
+    pub fall_timer: f32,
+    #[serde(default)]
+    pub resolve_timer: f32,
+    #[serde(default)]
+    pub garbage_delay_timer: f32,
     rng: rand_chacha::ChaCha12Rng,
 }
 
@@ -199,8 +220,14 @@ impl Board {
     pub fn new(width: usize, height: usize, seed: u64, start_level: u32, colors: u32) -> Board {
         use rand::SeedableRng;
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(seed);
-        let n1 = (PuyoType::random_with_seed(&mut rng, colors), PuyoType::random_with_seed(&mut rng, colors));
-        let n2 = (PuyoType::random_with_seed(&mut rng, colors), PuyoType::random_with_seed(&mut rng, colors));
+        let n1 = (
+            PuyoType::random_with_seed(&mut rng, colors),
+            PuyoType::random_with_seed(&mut rng, colors),
+        );
+        let n2 = (
+            PuyoType::random_with_seed(&mut rng, colors),
+            PuyoType::random_with_seed(&mut rng, colors),
+        );
 
         Board {
             width,
@@ -239,8 +266,17 @@ impl Board {
         }
         let (c1, c2) = self.next_types;
         self.next_types = self.next_next_types;
-        self.next_next_types = (PuyoType::random_with_seed(&mut self.rng, self.colors), PuyoType::random_with_seed(&mut self.rng, self.colors));
-        let new_piece = ActivePuyo { row: 1, col: 2, rotation: 0, axis_type: c1, sat_type: c2 };
+        self.next_next_types = (
+            PuyoType::random_with_seed(&mut self.rng, self.colors),
+            PuyoType::random_with_seed(&mut self.rng, self.colors),
+        );
+        let new_piece = ActivePuyo {
+            row: 1,
+            col: 2,
+            rotation: 0,
+            axis_type: c1,
+            sat_type: c2,
+        };
         if self.check_collision(&new_piece) {
             self.state = GameState::GameOver;
         } else {
@@ -257,15 +293,21 @@ impl Board {
 
     pub fn get_ghost_piece(&self) -> Option<ActivePuyo> {
         let mut ghost = self.active_piece.clone()?;
-        while !self.check_collision(&ghost) { ghost.row += 1; }
+        while !self.check_collision(&ghost) {
+            ghost.row += 1;
+        }
         ghost.row -= 1;
         Some(ghost)
     }
 
     pub fn check_collision(&self, piece: &ActivePuyo) -> bool {
         for (r, c) in piece.get_positions().iter() {
-            if *c < 0 || *c >= self.width as i32 || *r >= self.height as i32 { return true; }
-            if *r >= 0 && self.cells[*r as usize][*c as usize].is_some() { return true; }
+            if *c < 0 || *c >= self.width as i32 || *r >= self.height as i32 {
+                return true;
+            }
+            if *r >= 0 && self.cells[*r as usize][*c as usize].is_some() {
+                return true;
+            }
         }
         false
     }
@@ -292,7 +334,9 @@ impl Board {
     }
 
     pub fn rotate_piece(&mut self, direction: usize) {
-        let Some(mut piece) = self.active_piece.take() else { return };
+        let Some(mut piece) = self.active_piece.take() else {
+            return;
+        };
         let (old_rot, old_col, old_row) = (piece.rotation, piece.col, piece.row);
         let new_rot = (old_rot + direction) % 4;
         let sat = piece.get_positions()[1];
@@ -303,11 +347,11 @@ impl Board {
         };
 
         let candidates = [
-            (old_row,     old_col,     new_rot,           true),                     // in place
-            (old_row,     old_col - 1, new_rot,           true),                     // kick left
-            (old_row,     old_col + 1, new_rot,           true),                     // kick right
-            (old_row - 1, old_col,     new_rot,           grounded && new_rot == 2), // floor kick
-            (sat.0,       sat.1,       (old_rot + 2) % 4, true),                     // pivot on satellite
+            (old_row, old_col, new_rot, true),                         // in place
+            (old_row, old_col - 1, new_rot, true),                     // kick left
+            (old_row, old_col + 1, new_rot, true),                     // kick right
+            (old_row - 1, old_col, new_rot, grounded && new_rot == 2), // floor kick
+            (sat.0, sat.1, (old_rot + 2) % 4, true),                   // pivot on satellite
         ];
 
         for (row, col, rotation, enabled) in candidates {
@@ -336,7 +380,10 @@ impl Board {
         if let Some(mut piece) = self.active_piece.take() {
             loop {
                 piece.row += 1;
-                if self.check_collision(&piece) { piece.row -= 1; break; }
+                if self.check_collision(&piece) {
+                    piece.row -= 1;
+                    break;
+                }
             }
             self.active_piece = Some(piece);
             self.lock_piece();
@@ -393,7 +440,11 @@ impl Board {
         if let Some(piece) = self.active_piece.take() {
             for (r, c) in piece.get_positions().iter() {
                 if *r >= 0 && *r < self.height as i32 && *c >= 0 && *c < self.width as i32 {
-                    let puyo_type = if *r == piece.row && *c == piece.col { piece.axis_type } else { piece.sat_type };
+                    let puyo_type = if *r == piece.row && *c == piece.col {
+                        piece.axis_type
+                    } else {
+                        piece.sat_type
+                    };
                     self.cells[*r as usize][*c as usize] = Some(puyo_type);
                 }
             }
@@ -429,7 +480,6 @@ impl Board {
         for r in 0..self.height {
             for c in 0..self.width {
                 if let Some(p_type) = self.cells[r][c] {
-
                     if p_type == PuyoType::Garbage {
                         continue;
                     }
@@ -450,12 +500,16 @@ impl Board {
                 }
             }
         }
-        if to_remove.is_empty() { return None; }
+        if to_remove.is_empty() {
+            return None;
+        }
         self.chain_count += 1;
         let score_gained = self.calculate_score(unique_colors.len(), total_puyos_cleared, &group_sizes);
         self.score += score_gained;
 
-        for (r, c) in to_remove { self.cells[r][c] = None; }
+        for (r, c) in to_remove {
+            self.cells[r][c] = None;
+        }
         Some(score_gained as u32)
     }
 
@@ -480,10 +534,16 @@ impl Board {
         let cp = CHAIN_POWERS[chain_idx];
         let cb = COLOR_BONUS[color_count_len.min(5)];
         let mut gb = 0;
-        for &size in group_sizes { gb += GROUP_BONUS[(size.saturating_sub(4)).min(7) as usize]; }
+        for &size in group_sizes {
+            gb += GROUP_BONUS[(size.saturating_sub(4)).min(7) as usize];
+        }
         let mut multiplier = cp + cb + gb;
-        if multiplier == 0 { multiplier = 1; }
-        if multiplier > 999 { multiplier = 999; }
+        if multiplier == 0 {
+            multiplier = 1;
+        }
+        if multiplier > 999 {
+            multiplier = 999;
+        }
 
         (10 * total_cleared) as i32 * multiplier as i32
     }
@@ -532,10 +592,19 @@ impl Board {
         self.state = GameState::GameOver;
     }
 
-    fn flood_fill(&self, r: usize, c: usize, target_type: PuyoType, group: &mut Vec<(usize, usize)>, visited: &mut HashSet<(usize, usize)>) {
+    fn flood_fill(
+        &self,
+        r: usize,
+        c: usize,
+        target_type: PuyoType,
+        group: &mut Vec<(usize, usize)>,
+        visited: &mut HashSet<(usize, usize)>,
+    ) {
         let mut stack = vec![(r, c)];
         while let Some((r, c)) = stack.pop() {
-            if !visited.insert((r, c)) { continue; }
+            if !visited.insert((r, c)) {
+                continue;
+            }
             group.push((r, c));
             for (dr, dc) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
                 let nr = r as i32 + dr;
@@ -570,7 +639,9 @@ impl Board {
                 self.last_was_all_clear = ac;
                 self.state = GameState::Playing;
                 self.spawn_piece();
-                if ac { return config::ALL_CLEAR_BONUS; }
+                if ac {
+                    return config::ALL_CLEAR_BONUS;
+                }
             }
         }
         0
@@ -617,7 +688,10 @@ impl Board {
             InputKind::MoveRight => self.move_piece(1),
             InputKind::RotateCW => self.rotate_piece(1),
             InputKind::RotateCCW => self.rotate_piece(3),
-            InputKind::SoftDrop => { self.force_drop(); self.fall_timer = 0.0; }
+            InputKind::SoftDrop => {
+                self.force_drop();
+                self.fall_timer = 0.0;
+            }
             InputKind::HardDrop => self.hard_drop(),
         }
     }

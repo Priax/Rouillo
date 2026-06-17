@@ -1,6 +1,7 @@
+use ewebsock::{WsMessage, WsReceiver, WsSender};
 use notan::prelude::*;
-use shared::{Board, InputKind, ClientMessage, RoomInfo, LobbyInfo, config};
-use ewebsock::{WsReceiver, WsSender, WsMessage};
+use shared::{config, Board, ClientMessage, InputKind, LobbyInfo, RoomInfo};
+
 use crate::Font;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -105,12 +106,9 @@ pub struct GameSession {
     pub piece_visual_offset: (f32, f32),
     pub opponent_piece_offset: (f32, f32),
 
-    // Animation state
-    pub chain_display: Option<(u32, f32)>,  // (chain_count, remaining_seconds)
+    pub chain_display: Option<(u32, f32)>,
     pub all_clear_timer: f32,
 
-    // Network latency probe: monotonic frame clock + per-input send timestamps,
-    // used to measure the input->ack RTT actually felt by the player.
     pub clock: f64,
     pub sent_at: Vec<(u32, f64)>,
 

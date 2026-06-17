@@ -1,6 +1,7 @@
-use notan::prelude::*;
 use notan::draw::*;
-use crate::state::{State, Screen, Settings, Net};
+use notan::prelude::*;
+
+use crate::state::{Net, Screen, Settings, State};
 
 #[derive(Clone, Copy)]
 pub struct Btn {
@@ -32,8 +33,16 @@ impl Btn {
         } else {
             Color::from_rgb(0.18, 0.19, 0.26)
         };
-        let border = if enabled { Color::from_rgb(0.45, 0.47, 0.6) } else { Color::from_rgb(0.28, 0.28, 0.33) };
-        let text = if enabled { Color::WHITE } else { Color::from_rgb(0.45, 0.45, 0.5) };
+        let border = if enabled {
+            Color::from_rgb(0.45, 0.47, 0.6)
+        } else {
+            Color::from_rgb(0.28, 0.28, 0.33)
+        };
+        let text = if enabled {
+            Color::WHITE
+        } else {
+            Color::from_rgb(0.45, 0.45, 0.5)
+        };
         draw.rect((self.x, self.y), (self.w, self.h)).color(bg);
         draw.rect((self.x, self.y), (self.w, self.h)).stroke(2.0).color(border);
         draw.text(font, label)
@@ -112,18 +121,38 @@ fn settings_layout(win_w: f32, win_h: f32) -> SettingsLayout {
     let minus_x = center_x + 60.0;
     let plus_x = center_x + 200.0;
 
-    let mut minus = [Btn { x: 0.0, y: 0.0, w: btn, h: btn }; Settings::COUNT];
+    let mut minus = [Btn {
+        x: 0.0,
+        y: 0.0,
+        w: btn,
+        h: btn,
+    }; Settings::COUNT];
     let mut plus = minus;
     for i in 0..Settings::COUNT {
         let y = first_y + i as f32 * row_h;
-        minus[i] = Btn { x: minus_x, y, w: btn, h: btn };
-        plus[i] = Btn { x: plus_x, y, w: btn, h: btn };
+        minus[i] = Btn {
+            x: minus_x,
+            y,
+            w: btn,
+            h: btn,
+        };
+        plus[i] = Btn {
+            x: plus_x,
+            y,
+            w: btn,
+            h: btn,
+        };
     }
 
     SettingsLayout {
         minus,
         plus,
-        back: Btn { x: center_x - 100.0, y: first_y + Settings::COUNT as f32 * row_h + 40.0, w: 200.0, h: 60.0 },
+        back: Btn {
+            x: center_x - 100.0,
+            y: first_y + Settings::COUNT as f32 * row_h + 40.0,
+            w: 200.0,
+            h: 60.0,
+        },
     }
 }
 

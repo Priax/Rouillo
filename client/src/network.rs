@@ -1,6 +1,7 @@
-use shared::*;
-use crate::state::{State, Screen, GameSession};
 use ewebsock::{WsEvent, WsMessage};
+use shared::*;
+
+use crate::state::{GameSession, Screen, State};
 
 pub fn handle_server_messages(state: &mut State) {
     let mut msgs = Vec::new();
@@ -10,7 +11,9 @@ pub fn handle_server_messages(state: &mut State) {
         while let Some(event) = net.ws_receiver.try_recv() {
             match event {
                 WsEvent::Opened => {
-                    net.send(&ClientMessage::Hello { player_id: player_id.clone() });
+                    net.send(&ClientMessage::Hello {
+                        player_id: player_id.clone(),
+                    });
                 }
                 WsEvent::Message(WsMessage::Binary(bytes)) => {
                     if let Some(m) = shared::decode::<ServerMessage>(&bytes) {
@@ -63,7 +66,12 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             state.session = Some(session);
             state.screen = Screen::Game;
         }
-        ServerMessage::StateUpdate { p1_board, p2_board, p1_ack, p2_ack } => {
+        ServerMessage::StateUpdate {
+            p1_board,
+            p2_board,
+            p1_ack,
+            p2_ack,
+        } => {
             if let Some(session) = state.session.as_mut() {
                 let (my_auth, opp_auth, my_ack) = match session.my_slot {
                     1 => (*p1_board, *p2_board, p1_ack),
@@ -79,13 +87,20 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 let prev_chain = session.board.chain_count;
                 let prev_all_clear = session.board.last_was_all_clear;
                 let prev_garbage = session.board.pending_garbage;
+                let prev_state = session.board.state;
+                let hard_drop_acked = session
+                    .pending_inputs
+                    .iter()
+                    .any(|(seq, kind)| *seq <= my_ack && *kind == InputKind::HardDrop);
 
                 session.board = my_auth.clone();
                 session.other_board = opp_auth;
                 session.my_ack = my_ack;
                 session.pending_inputs.retain(|(seq, _)| *seq > my_ack);
 
-                if let Some(&(_, sent)) = session.sent_at.iter()
+                if let Some(&(_, sent)) = session
+                    .sent_at
+                    .iter()
                     .filter(|(seq, _)| *seq <= my_ack)
                     .max_by_key(|(seq, _)| *seq)
                 {
@@ -110,7 +125,9 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                             while p.row < prev.row {
                                 let mut next = p.clone();
                                 next.row += 1;
-                                if predicted.check_collision(&next) { break; }
+                                if predicted.check_collision(&next) {
+                                    break;
+                                }
                                 p.row += 1;
                             }
                             predicted.active_piece = Some(p);
@@ -133,7 +150,6 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                     session.piece_visual_offset = (0.0, 0.0);
                 }
 
-                // Opponent piece smooth
                 if session.other_board.piece_id == prev_opp_piece_id {
                     if let (Some(prev), Some(cur)) = (&prev_opp_piece, session.other_board.active_piece.as_ref()) {
                         let off = &mut session.opponent_piece_offset;
@@ -146,7 +162,12 @@ fn process_message(state: &mut State, msg: ServerMessage) {
 
                 session.predicted_board = predicted;
 
-                // Sounds + animations triggered by authoritative state changes
+                if prev_state == GameState::Playing
+                    && session.board.state == GameState::ResolvingMatches
+                    && !hard_drop_acked
+                {
+                    crate::audio::play_lock();
+                }
                 let cc = session.board.chain_count;
                 if cc > prev_chain {
                     crate::audio::play_pop(cc);

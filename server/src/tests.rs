@@ -7,7 +7,10 @@ fn reg(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<Vec<u8>> {
 }
 
 fn hello(mgr: &mut Manager, conn: ConnId, token: &str) {
-    mgr.handle(Command::Hello { conn, token: token.to_string() });
+    mgr.handle(Command::Hello {
+        conn,
+        token: token.to_string(),
+    });
 }
 
 fn drain(rx: &mut mpsc::Receiver<Vec<u8>>) -> Vec<ServerMessage> {
@@ -35,7 +38,10 @@ fn has(msgs: &[ServerMessage], f: impl Fn(&ServerMessage) -> bool) -> bool {
 fn two_player_room(mgr: &mut Manager) -> (RoomId, mpsc::Receiver<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
     let rx1 = reg(mgr, 1);
     hello(mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    mgr.handle(Command::CreateRoom {
+        conn: 1,
+        name: "R".into(),
+    });
     let rx2 = reg(mgr, 2);
     hello(mgr, 2, "B");
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
@@ -47,7 +53,10 @@ fn create_room_lobbies_host() {
     let mut mgr = Manager::new();
     let mut rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "Room".into() });
+    mgr.handle(Command::CreateRoom {
+        conn: 1,
+        name: "Room".into(),
+    });
     let info = last_lobby(&drain(&mut rx1)).expect("host should get a Lobby");
     assert_eq!(info.players, 1);
     assert_eq!(info.your_slot, 1);
@@ -92,7 +101,10 @@ fn countdown_needs_two_players() {
     let mut mgr = Manager::new();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    mgr.handle(Command::CreateRoom {
+        conn: 1,
+        name: "R".into(),
+    });
     mgr.handle(Command::ToggleCountdown { conn: 1 }); // host is alone -> must be ignored
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby));
 }
@@ -141,7 +153,10 @@ fn last_member_leaving_closes_room() {
     let mut mgr = Manager::new();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    mgr.handle(Command::CreateRoom {
+        conn: 1,
+        name: "R".into(),
+    });
     assert!(mgr.rooms.contains_key(&1));
     mgr.handle(Command::LeaveRoom { conn: 1 });
     assert!(!mgr.rooms.contains_key(&1));
@@ -158,7 +173,10 @@ fn opponent_disconnect_pauses_running_game() {
 
     mgr.handle(Command::Unregister { conn: 2 }); // opponent drops mid-game
     assert!(mgr.rooms[&1].sim.paused, "game should pause when opponent drops");
-    assert!(has(&drain(&mut rx1), |m| matches!(m, ServerMessage::OpponentDisconnected)));
+    assert!(has(&drain(&mut rx1), |m| matches!(
+        m,
+        ServerMessage::OpponentDisconnected
+    )));
 }
 
 fn drain_all(rxs: &mut [mpsc::Receiver<Vec<u8>>]) {
@@ -193,7 +211,10 @@ fn load_many_rooms_tick_budget() {
         let member = (2 * i + 2) as ConnId;
         receivers.push(reg(&mut mgr, host));
         hello(&mut mgr, host, &format!("h{i}"));
-        mgr.handle(Command::CreateRoom { conn: host, name: "L".into() });
+        mgr.handle(Command::CreateRoom {
+            conn: host,
+            name: "L".into(),
+        });
         let id = (i + 1) as RoomId;
         receivers.push(reg(&mut mgr, member));
         hello(&mut mgr, member, &format!("m{i}"));
