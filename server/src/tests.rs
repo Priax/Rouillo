@@ -10,6 +10,7 @@ fn hello(mgr: &mut Manager, conn: ConnId, token: &str) {
     mgr.handle(Command::Hello {
         conn,
         token: token.to_string(),
+        user_id: None,
     });
 }
 

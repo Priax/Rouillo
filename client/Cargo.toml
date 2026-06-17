@@ -7,7 +7,9 @@ edition = "2021"
 notan = "0.14.0"
 rand = "0.10"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 ewebsock = "0.8"
+ehttp = "0.5"
 shared = { path = "../shared" }
 
 [package.metadata.notan.assets]

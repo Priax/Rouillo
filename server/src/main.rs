@@ -1,3 +1,6 @@
+mod auth;
+mod db;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -9,6 +12,8 @@ use shared::{
 };
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration, Instant};
+use tracing::{error, info, warn};
+use uuid::Uuid;
 use warp::Filter;
 
 type ConnId = u64;
@@ -30,6 +35,15 @@ struct Sim {
     finished: bool,
     last_seq: [u32; 2],
     last_restart: Option<Instant>,
+    start: Instant,
+    max_chain: [u32; 2],
+    total_chains: [u32; 2],
+    nuisance_sent: [u32; 2],
+    all_clears: [u32; 2],
+    pieces_placed: [u32; 2],
+    prev_chain: [u32; 2],
+    prev_all_clear: [bool; 2],
+    prev_piece_id: [u32; 2],
 }
 
 impl Sim {
@@ -40,6 +54,15 @@ impl Sim {
             finished: false,
             last_seq: [0; 2],
             last_restart: None,
+            start: Instant::now(),
+            max_chain: [0; 2],
+            total_chains: [0; 2],
+            nuisance_sent: [0; 2],
+            all_clears: [0; 2],
+            pieces_placed: [0; 2],
+            prev_chain: [0; 2],
+            prev_all_clear: [false; 2],
+            prev_piece_id: [0; 2],
         }
     }
 
@@ -70,6 +93,15 @@ impl Sim {
         self.paused = false;
         self.finished = false;
         self.last_seq = [0; 2];
+        self.start = Instant::now();
+        self.max_chain = [0; 2];
+        self.total_chains = [0; 2];
+        self.nuisance_sent = [0; 2];
+        self.all_clears = [0; 2];
+        self.pieces_placed = [0; 2];
+        self.prev_chain = [0; 2];
+        self.prev_all_clear = [false; 2];
+        self.prev_piece_id = [self.boards[0].piece_id, self.boards[1].piece_id];
     }
 }
 
@@ -77,6 +109,7 @@ struct Member {
     token: Token,
     conn: Option<ConnId>,
     disconnect_at: Option<Instant>,
+    user_id: Option<Uuid>,
 }
 
 struct Room {
@@ -137,6 +170,7 @@ struct Manager {
     rooms: HashMap<RoomId, Room>,
     clients: HashMap<ConnId, Option<RoomId>>,
     conn_token: HashMap<ConnId, Token>,
+    conn_user_id: HashMap<ConnId, Uuid>,
     senders: HashMap<ConnId, mpsc::Sender<Vec<u8>>>,
     dead: Vec<ConnId>,
     next_id: RoomId,
@@ -155,6 +189,7 @@ enum Command {
     Hello {
         conn: ConnId,
         token: Token,
+        user_id: Option<Uuid>,
     },
     RequestRoomList {
         conn: ConnId,
@@ -209,6 +244,7 @@ impl Manager {
             rooms: HashMap::new(),
             clients: HashMap::new(),
             conn_token: HashMap::new(),
+            conn_user_id: HashMap::new(),
             senders: HashMap::new(),
             dead: Vec::new(),
             next_id: 1,
@@ -221,8 +257,6 @@ impl Manager {
         self.clients.get(&conn).copied().flatten()
     }
 
-    // Run `f` on the room with the given id, returning its result, or `None` if
-    // the room no longer exists.
     fn with_room<R>(&mut self, id: RoomId, f: impl FnOnce(&mut Room) -> R) -> Option<R> {
         self.rooms.get_mut(&id).map(f)
     }
@@ -320,8 +354,11 @@ impl Manager {
                 self.senders.insert(conn, sender);
                 self.clients.insert(conn, None);
             }
-            Command::Hello { conn, token } => {
+            Command::Hello { conn, token, user_id } => {
                 self.conn_token.insert(conn, token.clone());
+                if let Some(uid) = user_id {
+                    self.conn_user_id.insert(conn, uid);
+                }
                 if let Some(id) = self.room_of_token(&token) {
                     self.rejoin(conn, id);
                 } else {
@@ -343,6 +380,7 @@ impl Manager {
                 let id = self.next_id;
                 self.next_id += 1;
                 let settings = RoomSettings::default();
+                let user_id = self.conn_user_id.get(&conn).copied();
                 let room = Room {
                     id,
                     name: clean_name(name),
@@ -351,6 +389,7 @@ impl Manager {
                         token,
                         conn: Some(conn),
                         disconnect_at: None,
+                        user_id,
                     }],
                     settings,
                     phase: Phase::Lobby,
@@ -360,7 +399,7 @@ impl Manager {
                 self.clients.insert(conn, Some(id));
                 self.send_lobby(id);
                 self.room_list_dirty = true;
-                println!(">>> Room {} créée par {}.", id, conn);
+                info!("Room #{id} créée (conn {conn})");
             }
             Command::JoinRoom { conn, id } => {
                 let token = match self.conn_token.get(&conn) {
@@ -378,6 +417,7 @@ impl Manager {
                     return;
                 }
                 self.leave_current(conn);
+                let join_user_id = self.conn_user_id.get(&conn).copied();
                 let pushed = self
                     .with_room(id, |room| {
                         if room.members.len() < 2 {
@@ -385,6 +425,7 @@ impl Manager {
                                 token,
                                 conn: Some(conn),
                                 disconnect_at: None,
+                                user_id: join_user_id,
                             });
                             true
                         } else {
@@ -547,10 +588,11 @@ impl Manager {
         if let Some(old) = replaced {
             self.clients.remove(&old);
             self.conn_token.remove(&old);
+            self.conn_user_id.remove(&old);
             self.senders.remove(&old);
         }
         self.sync_after_attach(id, conn);
-        println!(">>> Reconnexion sur room {} (conn {}).", id, conn);
+        info!("Reconnexion room #{id} (conn {conn})");
     }
 
     fn sync_after_attach(&mut self, id: RoomId, conn: ConnId) {
@@ -612,13 +654,14 @@ impl Manager {
         if !in_game {
             self.send_lobby(id);
         }
-        println!("Déconnexion conn {} (grâce {}s).", conn, GRACE.as_secs());
+        info!("WS {conn} déconnecté (grâce {}s)", GRACE.as_secs());
     }
 
     fn drop_connection(&mut self, conn: ConnId) {
         self.mark_disconnected(conn);
         self.clients.remove(&conn);
         self.conn_token.remove(&conn);
+        self.conn_user_id.remove(&conn);
         self.senders.remove(&conn);
     }
 
@@ -626,7 +669,7 @@ impl Manager {
         while !self.dead.is_empty() {
             for conn in std::mem::take(&mut self.dead) {
                 if self.senders.contains_key(&conn) {
-                    println!("Conn {} trop lente : fermeture.", conn);
+                    warn!("WS {conn} trop lente, fermeture");
                     self.drop_connection(conn);
                 }
             }
@@ -677,7 +720,7 @@ impl Manager {
         self.room_list_dirty = true;
     }
 
-    fn tick(&mut self, dt: f32, do_broadcast: bool) {
+    fn tick(&mut self, dt: f32, do_broadcast: bool) -> Vec<db::MatchRecord> {
         if self.room_list_dirty && self.last_room_list.elapsed() >= Duration::from_millis(200) {
             self.broadcast_room_list();
             self.room_list_dirty = false;
@@ -701,13 +744,14 @@ impl Manager {
                 .get(&id)
                 .and_then(|r| r.members.iter().position(|m| m.token == token))
             {
-                println!(">>> Grâce expirée : retrait d'un membre de la room {}.", id);
+                info!("Grâce expirée, retrait room #{id}");
                 self.remove_member(id, slot);
             }
         }
 
         let mut outgoing: Vec<(ConnId, Vec<u8>)> = Vec::new();
         let mut list_changed = false;
+        let mut finished_matches: Vec<db::MatchRecord> = Vec::new();
 
         for room in self.rooms.values_mut() {
             if matches!(room.phase, Phase::Lobby) {
@@ -756,11 +800,62 @@ impl Manager {
                     let g1 = room.sim.boards[1].tick(dt);
                     room.sim.boards[1].pending_garbage += g0;
                     room.sim.boards[0].pending_garbage += g1;
+
+                    room.sim.nuisance_sent[0] += g0;
+                    room.sim.nuisance_sent[1] += g1;
+
+                    for i in 0..2 {
+                        let cc = room.sim.boards[i].chain_count;
+                        if cc > 0 && room.sim.prev_chain[i] == 0 {
+                            room.sim.total_chains[i] += 1;
+                        }
+                        room.sim.max_chain[i] = room.sim.max_chain[i].max(cc);
+                        room.sim.prev_chain[i] = cc;
+
+                        let ac = room.sim.boards[i].last_was_all_clear;
+                        if ac && !room.sim.prev_all_clear[i] {
+                            room.sim.all_clears[i] += 1;
+                        }
+                        room.sim.prev_all_clear[i] = ac;
+
+                        let pid = room.sim.boards[i].piece_id;
+                        if pid != room.sim.prev_piece_id[i] {
+                            room.sim.pieces_placed[i] += 1;
+                            room.sim.prev_piece_id[i] = pid;
+                        }
+                    }
+
                     if room.sim.boards[0].state == GameState::GameOver
                         || room.sim.boards[1].state == GameState::GameOver
                     {
                         room.sim.finished = true;
                         just_finished = true;
+                        // If both die on the same tick, player 1 wins (conventional tiebreak).
+                        let winner_slot = if room.sim.boards[0].state == GameState::GameOver
+                            && room.sim.boards[1].state != GameState::GameOver
+                        {
+                            2u8
+                        } else {
+                            1u8
+                        };
+                        let duration_secs = room.sim.start.elapsed().as_secs_f64();
+                        info!(
+                            "Match terminé room #{} → slot {winner_slot} gagne ({:.0}s)",
+                            room.id, duration_secs
+                        );
+                        finished_matches.push(db::MatchRecord {
+                            duration_secs,
+                            winner_slot,
+                            user_ids: [
+                                room.members.first().and_then(|m| m.user_id),
+                                room.members.get(1).and_then(|m| m.user_id),
+                            ],
+                            max_chain: room.sim.max_chain,
+                            total_chains: room.sim.total_chains,
+                            nuisance_sent: room.sim.nuisance_sent,
+                            all_clears: room.sim.all_clears,
+                            pieces_placed: room.sim.pieces_placed,
+                        });
                     }
                 }
                 if (do_broadcast && advanced) || just_finished {
@@ -785,6 +880,7 @@ impl Manager {
         if list_changed {
             self.room_list_dirty = true;
         }
+        finished_matches
     }
 }
 
@@ -819,9 +915,9 @@ impl TickProfile {
         if self.enabled {
             let avg = self.sum / self.count.max(1);
             let peak_load = self.max.as_secs_f64() / self.budget.as_secs_f64() * 100.0;
-            println!(
-                "[tick] rooms={} avg={:?} max={:?} budget={:?} peak_load={:.1}%",
-                rooms, avg, self.max, self.budget, peak_load
+            info!(
+                "[tick] rooms={rooms} avg={avg:?} max={:?} peak={peak_load:.1}%",
+                self.max
             );
         }
         self.sum = Duration::ZERO;
@@ -831,7 +927,7 @@ impl TickProfile {
     }
 }
 
-async fn manager_loop(mut cmd_rx: mpsc::UnboundedReceiver<Command>) {
+async fn manager_loop(mut cmd_rx: mpsc::UnboundedReceiver<Command>, pool: db::DbPool) {
     let tick_dt = 1.0 / config::SERVER_TICK_HZ as f32;
     let mut ticker = interval(Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64));
     let broadcast_period = Duration::from_secs_f64(1.0 / config::STATE_BROADCAST_HZ as f64);
@@ -845,9 +941,17 @@ async fn manager_loop(mut cmd_rx: mpsc::UnboundedReceiver<Command>) {
                 let do_broadcast = last_broadcast.elapsed() >= broadcast_period;
                 if do_broadcast { last_broadcast = Instant::now(); }
                 let t0 = Instant::now();
-                mgr.tick(tick_dt, do_broadcast);
+                let finished = mgr.tick(tick_dt, do_broadcast);
                 profile.record(t0.elapsed(), mgr.rooms.len());
                 mgr.reap_dead();
+                for rec in finished {
+                    let pool = pool.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = db::record_match_result(&pool, rec).await {
+                            error!("Match save: {e}");
+                        }
+                    });
+                }
             }
             Some(cmd) = cmd_rx.recv() => {
                 mgr.handle(cmd);
@@ -859,33 +963,92 @@ async fn manager_loop(mut cmd_rx: mpsc::UnboundedReceiver<Command>) {
 
 #[tokio::main]
 async fn main() {
-    // tokio-console support (only with `--features console`, see Cargo.toml).
     #[cfg(feature = "console")]
     console_subscriber::init();
+    #[cfg(not(feature = "console"))]
+    {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .compact()
+            .init();
+    }
+
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = db::init_pool(&database_url)
+        .await
+        .expect("Failed to connect to database");
+    info!("DB connectée");
+    tokio::task::spawn_blocking(db::dummy_hash)
+        .await
+        .expect("dummy hash init failed");
 
     let port = config::SERVER_PORT;
-    println!("Serveur Puyo sur ws://0.0.0.0:{}", port);
+    info!("Écoute sur :{port}");
 
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
-    tokio::spawn(manager_loop(cmd_rx));
+    tokio::spawn(manager_loop(cmd_rx, pool.clone()));
+
+    let pool_cleanup = pool.clone();
+    tokio::spawn(async move {
+        let start = tokio::time::Instant::now() + Duration::from_secs(3600);
+        let mut ticker = tokio::time::interval_at(start, Duration::from_secs(3600));
+        loop {
+            ticker.tick().await;
+            match db::cleanup_expired_sessions(&pool_cleanup).await {
+                Ok(n) if n > 0 => info!("Sessions expirées : {n} supprimées"),
+                Err(e) => error!("Session cleanup: {e}"),
+                _ => {}
+            }
+        }
+    });
 
     let conn_counter = Arc::new(AtomicU64::new(1));
+    let pool_ws = pool.clone();
     let ws_route = warp::path("ws")
         .and(warp::ws())
         .and(warp::any().map(move || cmd_tx.clone()))
         .and(warp::any().map(move || conn_counter.clone()))
-        .map(|ws: warp::ws::Ws, cmd_tx, counter: Arc<AtomicU64>| {
+        .and(warp::any().map(move || pool_ws.clone()))
+        .map(|ws: warp::ws::Ws, cmd_tx, counter: Arc<AtomicU64>, pool: db::DbPool| {
             let conn = counter.fetch_add(1, Ordering::Relaxed);
-            ws.on_upgrade(move |socket| handle_connection(socket, cmd_tx, conn))
+            ws.on_upgrade(move |socket| handle_connection(socket, cmd_tx, conn, pool))
         });
 
-    warp::serve(ws_route).run((config::SERVER_BIND_ADDRESS, port)).await;
+    let routes = ws_route
+        .or(auth::routes(pool))
+        .recover(auth::handle_rejection)
+        .with(warp::log::custom(|info| {
+            if info.status() == warp::http::StatusCode::SWITCHING_PROTOCOLS {
+                return;
+            }
+            let ms = info.elapsed().as_millis();
+            let status = info.status();
+            let msg = format!("{} {} {} {}ms", info.method(), info.path(), status.as_u16(), ms);
+            if status.is_server_error() {
+                error!("{msg}");
+            } else if status.is_client_error() {
+                warn!("{msg}");
+            } else {
+                info!("{msg}");
+            }
+        }));
+
+    warp::serve(routes).run((config::SERVER_BIND_ADDRESS, port)).await;
 }
 
-async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::UnboundedSender<Command>, conn: ConnId) {
+async fn handle_connection(
+    ws: warp::ws::WebSocket,
+    cmd_tx: mpsc::UnboundedSender<Command>,
+    conn: ConnId,
+    pool: db::DbPool,
+) {
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
     let (to_client_tx, mut to_client_rx) = mpsc::channel::<Vec<u8>>(CLIENT_CHAN_CAP);
-    println!("Connexion {} ouverte.", conn);
+    info!("WS {conn} ouverture");
 
     let _ = cmd_tx.send(Command::Register {
         conn,
@@ -907,7 +1070,21 @@ async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::UnboundedSende
                 if msg.is_binary() {
                     if let Some(client_msg) = shared::decode::<ClientMessage>(msg.as_bytes()) {
                         let cmd = match client_msg {
-                            ClientMessage::Hello { player_id } => Command::Hello { conn, token: player_id },
+                            ClientMessage::Hello { player_id, auth_token } => {
+                                let user_id = match auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok()) {
+                                    Some(token_uuid) => db::find_user_by_token(&pool, token_uuid)
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                        .map(|u| u.id),
+                                    None => None,
+                                };
+                                Command::Hello {
+                                    conn,
+                                    token: player_id,
+                                    user_id,
+                                }
+                            }
                             ClientMessage::Input { kind, seq } => Command::Input { conn, kind, seq },
                             ClientMessage::TogglePause => Command::TogglePause { conn },
                             ClientMessage::RequestRestart => Command::Restart { conn },
@@ -931,7 +1108,7 @@ async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::UnboundedSende
     tokio::select! { _ = (&mut send_task) => recv_task.abort(), _ = (&mut recv_task) => send_task.abort() }
 
     let _ = cmd_tx.send(Command::Unregister { conn });
-    println!("Connexion {} fermée.", conn);
+    info!("WS {conn} fermeture");
 }
 
 #[cfg(test)]

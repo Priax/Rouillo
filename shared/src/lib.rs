@@ -7,8 +7,13 @@ pub mod config;
 use crate::config::*;
 
 pub fn encode<T: serde::Serialize>(msg: &T) -> Vec<u8> {
-    let raw = bitcode::serialize(msg).expect("bitcode serialize");
-    lz4_flex::compress_prepend_size(&raw)
+    match bitcode::serialize(msg) {
+        Ok(raw) => lz4_flex::compress_prepend_size(&raw),
+        Err(e) => {
+            eprintln!("[encode] serialization failed: {e}");
+            Vec::new()
+        }
+    }
 }
 
 pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
@@ -100,15 +105,28 @@ pub struct LobbyInfo {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClientMessage {
-    Hello { player_id: String },
-    Input { kind: InputKind, seq: u32 },
+    Hello {
+        player_id: String,
+        auth_token: Option<String>,
+    },
+    Input {
+        kind: InputKind,
+        seq: u32,
+    },
     TogglePause,
     RequestRestart,
     RequestRoomList,
-    CreateRoom { name: String },
-    JoinRoom { id: RoomId },
+    CreateRoom {
+        name: String,
+    },
+    JoinRoom {
+        id: RoomId,
+    },
     LeaveRoom,
-    SetRoomSetting { index: u8, dir: i32 },
+    SetRoomSetting {
+        index: u8,
+        dir: i32,
+    },
     ToggleCountdown,
     ReturnToLobby,
 }
@@ -260,7 +278,7 @@ impl Board {
     }
 
     pub fn spawn_piece(&mut self) {
-        if self.cells[VISIBLE_ROW_OFFSET][2].is_some() {
+        if self.cells[VISIBLE_ROW_OFFSET][SPAWN_COL].is_some() {
             self.state = GameState::GameOver;
             return;
         }
@@ -272,7 +290,7 @@ impl Board {
         );
         let new_piece = ActivePuyo {
             row: 1,
-            col: 2,
+            col: SPAWN_COL as i32,
             rotation: 0,
             axis_type: c1,
             sat_type: c2,
@@ -632,7 +650,7 @@ impl Board {
         if self.state != GameState::GameOver {
             if self.pending_garbage > 0 {
                 self.state = GameState::DroppingGarbage;
-            } else if self.cells[VISIBLE_ROW_OFFSET][2].is_some() {
+            } else if self.cells[VISIBLE_ROW_OFFSET][SPAWN_COL].is_some() {
                 self.state = GameState::GameOver;
             } else {
                 let ac = self.check_all_clear();

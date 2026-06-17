@@ -110,7 +110,7 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
         let ratio_std = 1.0 - (me.lock_timer / config::MAX_LOCK_TIME);
         let ratio_hard = 1.0 - (me.total_ground_timer / config::MAX_TOTAL_GROUND_TIME);
         let ratio = ratio_std.min(ratio_hard).max(0.0);
-        let col = if me.total_ground_timer > 1.5 {
+        let col = if me.total_ground_timer > config::MAX_TOTAL_GROUND_TIME * 0.75 {
             Color::RED
         } else {
             Color::ORANGE
@@ -246,7 +246,7 @@ fn draw_board(
     draw.rect((offset_x, offset_y), (board_w, board_h))
         .color(Color::from_rgb(0.12, 0.12, 0.12));
 
-    let x_cross = offset_x + (2.0 * config::CELL_SIZE) + 10.0;
+    let x_cross = offset_x + (config::SPAWN_COL as f32 * config::CELL_SIZE) + 10.0;
     let y_cross = offset_y + 10.0;
     draw.line((x_cross, y_cross), (x_cross + 20.0, y_cross + 20.0))
         .width(3.0)

@@ -1,0 +1,3 @@
+ALTER TABLE users
+    ALTER COLUMN bio          TYPE VARCHAR(500),
+    ALTER COLUMN favorite_music TYPE VARCHAR(200);

@@ -1,8 +1,9 @@
 // Run with:  cargo bench -p shared
 // HTML report lands in target/criterion/.
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use shared::config::{GRID_HEIGHT, GRID_WIDTH};
 use shared::{decode, encode, Board, PuyoType, ServerMessage};
 
@@ -45,12 +46,8 @@ fn bench_codec(c: &mut Criterion) {
     let empty_bytes = encode(&empty);
     let full_bytes = encode(&full);
 
-    c.bench_function("encode_state_update_empty", |b| {
-        b.iter(|| encode(black_box(&empty)))
-    });
-    c.bench_function("encode_state_update_full", |b| {
-        b.iter(|| encode(black_box(&full)))
-    });
+    c.bench_function("encode_state_update_empty", |b| b.iter(|| encode(black_box(&empty))));
+    c.bench_function("encode_state_update_full", |b| b.iter(|| encode(black_box(&full))));
 
     c.bench_function("decode_state_update_empty", |b| {
         b.iter(|| decode::<ServerMessage>(black_box(&empty_bytes)).unwrap())

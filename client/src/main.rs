@@ -5,9 +5,12 @@ use shared::config;
 
 mod audio;
 mod draw;
+mod http;
 mod logic;
+mod login;
 mod menu;
 mod network;
+mod profile;
 mod rooms;
 mod state;
 
@@ -35,7 +38,15 @@ pub fn server_url() -> String {
 
 fn setup(gfx: &mut Graphics) -> State {
     let font = gfx.create_font(include_bytes!("../../assets/arcadeFont.ttf")).unwrap();
-    State::new(font)
+    let mut state = State::new(font);
+
+    if let Some(token) = state::load_stored_token() {
+        let slot = http::new_slot();
+        http::get(http::api_url("me"), Some(token), slot.clone());
+        state.startup_check = Some(slot);
+    }
+
+    state
 }
 
 fn event(state: &mut State, evt: Event) {
@@ -44,6 +55,15 @@ fn event(state: &mut State, evt: Event) {
             return;
         }
         match state.screen {
+            Screen::Auth => match state.auth_form.focused {
+                state::AuthField::Username if state.auth_form.username.chars().count() < 24 => {
+                    state.auth_form.username.push(c);
+                }
+                state::AuthField::Password if state.auth_form.password.len() < 64 => {
+                    state.auth_form.password.push(c);
+                }
+                _ => {}
+            },
             Screen::CreateRoom if state.text_input.chars().count() < 24 => {
                 state.text_input.push(c);
             }
@@ -60,15 +80,21 @@ fn update(app: &mut App, state: &mut State) {
         session.clock += app.timer.delta_f32() as f64;
     }
 
+    if state.startup_check.is_some() {
+        login::poll_startup_check(state);
+    }
+
     network::handle_server_messages(state);
 
     match state.screen {
+        Screen::Auth => login::update_auth(app, state),
         Screen::Menu => menu::update_menu(app, state),
         Screen::Settings => menu::update_settings(app, state),
         Screen::RoomBrowser => rooms::update_browser(app, state),
         Screen::CreateRoom => rooms::update_create_room(app, state),
         Screen::JoinById => rooms::update_join_by_id(app, state),
         Screen::RoomLobby => rooms::update_lobby(app, state),
+        Screen::Profile => profile::update_profile(app, state),
         Screen::Game => {
             let is_host = state.lobby.as_ref().map(|l| l.is_host).unwrap_or(false);
             let State {
@@ -83,12 +109,14 @@ fn update(app: &mut App, state: &mut State) {
 
 fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
     match state.screen {
+        Screen::Auth => login::draw_auth(app, gfx, state),
         Screen::Menu => menu::draw_menu(app, gfx, state),
         Screen::Settings => menu::draw_settings(app, gfx, state),
         Screen::RoomBrowser => rooms::draw_browser(app, gfx, state),
         Screen::CreateRoom => rooms::draw_create_room(app, gfx, state),
         Screen::JoinById => rooms::draw_join_by_id(app, gfx, state),
         Screen::RoomLobby => rooms::draw_lobby(app, gfx, state),
+        Screen::Profile => profile::draw_profile(app, gfx, state),
         Screen::Game => {
             let is_host = state.lobby.as_ref().map(|l| l.is_host).unwrap_or(false);
             if let Some(session) = state.session.as_ref() {

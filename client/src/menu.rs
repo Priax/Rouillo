@@ -1,7 +1,7 @@
 use notan::draw::*;
 use notan::prelude::*;
 
-use crate::state::{Net, Screen, Settings, State};
+use crate::state::{AuthForm, Net, Screen, Settings, State};
 
 #[derive(Clone, Copy)]
 pub struct Btn {
@@ -57,25 +57,71 @@ impl Btn {
 struct MenuLayout {
     play: Btn,
     settings: Btn,
+    logout: Option<Btn>,
 }
 
-fn menu_layout(win_w: f32, win_h: f32) -> MenuLayout {
+fn menu_layout(win_w: f32, win_h: f32, logged_in: bool) -> MenuLayout {
     let w = 280.0;
     let h = 70.0;
     let x = (win_w - w) / 2.0;
     let cy = win_h / 2.0;
+    let logout = if logged_in {
+        Some(Btn {
+            x,
+            y: cy + 160.0,
+            w,
+            h: 56.0,
+        })
+    } else {
+        None
+    };
     MenuLayout {
         play: Btn { x, y: cy - 20.0, w, h },
         settings: Btn { x, y: cy + 70.0, w, h },
+        logout,
     }
 }
 
+fn avatar_pos(ww: f32) -> (f32, f32, f32) {
+    (ww - 70.0, 70.0, 38.0)
+}
+
+fn avatar_hovered(app: &App, cx: f32, cy: f32, r: f32) -> bool {
+    let dx = app.mouse.x - cx;
+    let dy = app.mouse.y - cy;
+    dx * dx + dy * dy <= r * r
+}
+
+fn avatar_clicked(app: &App, cx: f32, cy: f32, r: f32) -> bool {
+    avatar_hovered(app, cx, cy, r) && app.mouse.left_was_pressed()
+}
+
 pub fn update_menu(app: &mut App, state: &mut State) {
-    let layout = menu_layout(win_w(app), win_h(app));
+    let (ww, wh) = (win_w(app), win_h(app));
+    let logged_in = state.auth.is_some();
+    let layout = menu_layout(ww, wh, logged_in);
+
     if layout.play.clicked(app) {
         start_play(state);
     } else if layout.settings.clicked(app) {
         state.screen = Screen::Settings;
+    }
+
+    if let Some(btn) = layout.logout {
+        if btn.clicked(app) {
+            crate::state::clear_stored_token();
+            state.auth = None;
+            state.auth_form = AuthForm::default();
+            state.screen = Screen::Auth;
+        }
+    }
+
+    if logged_in {
+        let (acx, acy, ar) = avatar_pos(ww);
+        if avatar_clicked(app, acx, acy, ar) {
+            crate::profile::enter_profile(state);
+            state.screen = Screen::Profile;
+        }
     }
 }
 
@@ -91,9 +137,46 @@ pub fn draw_menu(app: &mut App, gfx: &mut Graphics, state: &State) {
         .v_align_middle()
         .color(Color::from_rgb(0.9, 0.7, 1.0));
 
-    let layout = menu_layout(ww, wh);
-    layout.play.draw(&mut draw, app, &state.font, "Play");
-    layout.settings.draw(&mut draw, app, &state.font, "Settings");
+    let logged_in = state.auth.is_some();
+    let layout = menu_layout(ww, wh, logged_in);
+    layout.play.draw(&mut draw, app, &state.font, "Jouer");
+    layout.settings.draw(&mut draw, app, &state.font, "Paramètres");
+    if let Some(btn) = layout.logout {
+        btn.draw(&mut draw, app, &state.font, "Déconnexion");
+    }
+
+    if let Some(auth) = &state.auth {
+        let (acx, acy, ar) = avatar_pos(ww);
+        let hover = avatar_hovered(app, acx, acy, ar);
+        let fill = if hover {
+            Color::from_rgb(0.38, 0.28, 0.55)
+        } else {
+            Color::from_rgb(0.25, 0.18, 0.40)
+        };
+        draw.circle(ar).position(acx, acy).color(fill);
+        draw.circle(ar)
+            .position(acx, acy)
+            .stroke(2.0)
+            .color(Color::from_rgb(0.65, 0.45, 0.85));
+        let initial: String = auth
+            .username
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().collect())
+            .unwrap_or_default();
+        draw.text(&state.font, &initial)
+            .position(acx, acy)
+            .size(30.0)
+            .h_align_center()
+            .v_align_middle()
+            .color(Color::WHITE);
+        draw.text(&state.font, &auth.username)
+            .position(acx, acy + ar + 16.0)
+            .size(17.0)
+            .h_align_center()
+            .v_align_middle()
+            .color(Color::from_rgb(0.65, 0.65, 0.80));
+    }
 
     if !state.notice.is_empty() {
         draw.text(&state.font, &state.notice)

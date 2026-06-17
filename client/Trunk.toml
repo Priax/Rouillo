@@ -1,0 +1,6 @@
+[serve]
+port = 8081
+open = false
+
+[[proxy]]
+backend = "http://127.0.0.1:8080/api"

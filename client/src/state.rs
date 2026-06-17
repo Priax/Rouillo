@@ -6,6 +6,7 @@ use crate::Font;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
+    Auth,
     Menu,
     Settings,
     RoomBrowser,
@@ -13,6 +14,140 @@ pub enum Screen {
     JoinById,
     RoomLobby,
     Game,
+    Profile,
+}
+
+pub use crate::http::HttpSlot;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AuthMode {
+    Login,
+    Register,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AuthField {
+    Username,
+    Password,
+}
+
+pub struct AuthForm {
+    pub username: String,
+    pub password: String,
+    pub focused: AuthField,
+    pub mode: AuthMode,
+    pub error: String,
+    pub pending: Option<HttpSlot>,
+}
+
+impl Default for AuthForm {
+    fn default() -> Self {
+        Self {
+            username: String::new(),
+            password: String::new(),
+            focused: AuthField::Username,
+            mode: AuthMode::Login,
+            error: String::new(),
+            pending: None,
+        }
+    }
+}
+
+pub struct AuthInfo {
+    pub token: String,
+    pub user_id: String,
+    pub username: String,
+    pub elo: i32,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiAuthResponse {
+    pub token: String,
+    pub user_id: String,
+    pub username: String,
+    pub elo: i32,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiMeResponse {
+    pub id: String,
+    pub username: String,
+    pub elo: i32,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiUserProfile {
+    pub username: String,
+    pub elo: i32,
+    pub total_matches: i64,
+    pub wins: i64,
+    pub all_time_max_chain: i32,
+    pub total_nuisance_sent: i64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiMatchPlayer {
+    pub user_id: Option<String>,
+    pub username: Option<String>,
+    pub max_chain: i16,
+    pub nuisance_sent: i32,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiMatchEntry {
+    pub winner_slot: i16,
+    pub duration_secs: f64,
+    pub player1: ApiMatchPlayer,
+    pub player2: ApiMatchPlayer,
+}
+
+pub struct ProfileData {
+    pub user_id: String,
+    pub username: String,
+    pub elo: i32,
+    pub total_matches: i64,
+    pub wins: i64,
+    pub all_time_max_chain: i32,
+    pub total_nuisance_sent: i64,
+    pub match_history: Vec<ApiMatchEntry>,
+    pub profile_slot: Option<HttpSlot>,
+    pub history_slot: Option<HttpSlot>,
+}
+
+pub fn load_stored_token() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+            .and_then(|s| s.get_item("puyorust_token").ok().flatten())
+            .filter(|t| !t.is_empty())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
+pub fn save_token(token: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            let _ = s.set_item("puyorust_token", token);
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = token;
+    }
+}
+
+pub fn clear_stored_token() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            let _ = s.remove_item("puyorust_token");
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -54,14 +189,16 @@ impl Settings {
     fn step(i: usize) -> f32 {
         match i {
             0 => 0.01,
-            _ => 0.005,
+            1 => 0.005,
+            _ => 0.01,
         }
     }
 
     fn range(i: usize) -> (f32, f32) {
         match i {
             0 => (0.05, 0.50),
-            _ => (0.005, 0.20),
+            1 => (0.005, 0.20),
+            _ => (0.05, 0.50),
         }
     }
 
@@ -182,12 +319,16 @@ pub struct State {
     pub notice: String,
     pub session: Option<GameSession>,
     pub font: Font,
+    pub auth: Option<AuthInfo>,
+    pub auth_form: AuthForm,
+    pub profile: Option<ProfileData>,
+    pub startup_check: Option<HttpSlot>,
 }
 
 impl State {
     pub fn new(font: Font) -> Self {
         Self {
-            screen: Screen::Menu,
+            screen: Screen::Auth,
             settings: Settings::default(),
             player_id: load_or_create_player_id(),
             net: None,
@@ -197,6 +338,10 @@ impl State {
             notice: String::new(),
             session: None,
             font,
+            auth: None,
+            auth_form: AuthForm::default(),
+            profile: None,
+            startup_check: None,
         }
     }
 }

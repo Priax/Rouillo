@@ -75,11 +75,11 @@ pub fn update_browser(app: &mut App, state: &mut State) {
     let (w, h) = (win_w(app), win_h(app));
     let b = browser_buttons(w, h);
 
-    let ids: Vec<u32> = state.rooms.iter().map(|r| r.id).collect();
-    for (i, id) in ids.iter().enumerate() {
+    for i in 0..state.rooms.len() {
+        let id = state.rooms[i].id;
         if room_row(i, w).clicked(app) {
             state.notice.clear();
-            send(state, &ClientMessage::JoinRoom { id: *id });
+            send(state, &ClientMessage::JoinRoom { id });
             return;
         }
     }
@@ -152,8 +152,7 @@ pub fn draw_browser(app: &mut App, gfx: &mut Graphics, state: &State) {
     gfx.render(&draw);
 }
 
-fn entry_buttons(w: f32, h: f32, confirm: &str) -> (Btn, Btn) {
-    let _ = confirm;
+fn entry_buttons(w: f32, h: f32) -> (Btn, Btn) {
     let bw = 200.0;
     let y = h / 2.0 + 60.0;
     (
@@ -177,7 +176,7 @@ pub fn update_create_room(app: &mut App, state: &mut State) {
         state.text_input.pop();
     }
     let (w, h) = (win_w(app), win_h(app));
-    let (confirm, back) = entry_buttons(w, h, "Create");
+    let (confirm, back) = entry_buttons(w, h);
     let submit = confirm.clicked(app) || app.keyboard.was_pressed(KeyCode::Enter);
     if submit {
         let name = state.text_input.trim().to_string();
@@ -195,7 +194,7 @@ pub fn update_join_by_id(app: &mut App, state: &mut State) {
         state.text_input.pop();
     }
     let (w, h) = (win_w(app), win_h(app));
-    let (confirm, back) = entry_buttons(w, h, "Join");
+    let (confirm, back) = entry_buttons(w, h);
     let submit = confirm.clicked(app) || app.keyboard.was_pressed(KeyCode::Enter);
     if submit {
         if let Ok(id) = state.text_input.trim().parse::<u32>() {
@@ -244,7 +243,7 @@ fn draw_entry(app: &mut App, gfx: &mut Graphics, state: &State, title: &str, con
         .v_align_middle()
         .color(col);
 
-    let (cbtn, back) = entry_buttons(w, h, confirm);
+    let (cbtn, back) = entry_buttons(w, h);
     cbtn.draw(&mut draw, app, &state.font, confirm);
     back.draw(&mut draw, app, &state.font, "Back");
 

@@ -2,6 +2,7 @@ pub const CELL_SIZE: f32 = 40.0;
 pub const GRID_WIDTH: usize = 6;
 pub const GRID_HEIGHT: usize = 13;
 pub const VISIBLE_ROW_OFFSET: usize = 1;
+pub const SPAWN_COL: usize = 2;
 
 pub const MAX_LOCK_TIME: f32 = 0.5;
 pub const MAX_LOCK_DELAY_MOVES: u32 = 15;
@@ -9,7 +10,7 @@ pub const MAX_TOTAL_GROUND_TIME: f32 = 2.0;
 
 pub const DAS_DELAY: f32 = 0.11;
 pub const DAS_SPEED: f32 = 0.05;
-pub const SOFT_DROP_SPEED: f32 = 0.03;
+pub const SOFT_DROP_SPEED: f32 = 0.15;
 
 pub const LEVEL_DURATION: f32 = 15.0;
 pub const BASE_FALL_INTERVAL: f64 = 0.8;

@@ -22,6 +22,9 @@ cargo install trunk
 # Dépendances système pour le client NATIF (Linux ; cf. CI release.yml)
 sudo apt-get install -y libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
     libgl1-mesa-dev libxkbcommon-dev libasound2-dev
+
+# Faire la migration pgsql
+DATABASE_URL=postgres://USER:PASSWORD@localhost/puyorust sqlx migrate run --source server/migrations
 ```
 
 ---

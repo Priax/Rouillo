@@ -7,12 +7,14 @@ pub fn handle_server_messages(state: &mut State) {
     let mut msgs = Vec::new();
     let mut lost = false;
     let player_id = state.player_id.clone();
+    let auth_token = state.auth.as_ref().map(|a| a.token.clone());
     if let Some(net) = state.net.as_mut() {
         while let Some(event) = net.ws_receiver.try_recv() {
             match event {
                 WsEvent::Opened => {
                     net.send(&ClientMessage::Hello {
                         player_id: player_id.clone(),
+                        auth_token: auth_token.clone(),
                     });
                 }
                 WsEvent::Message(WsMessage::Binary(bytes)) => {
