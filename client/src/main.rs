@@ -3,6 +3,7 @@ use notan::draw::*;
 use notan::app::Event;
 use shared::config;
 
+mod audio;
 mod state;
 mod network;
 mod logic;
@@ -22,7 +23,13 @@ pub fn server_url() -> String {
     }
     #[cfg(not(all(target_arch = "wasm32", not(debug_assertions))))]
     {
-        config::SERVER_URL.to_string()
+        std::env::var("PUYO_SERVER").unwrap_or_else(|_| {
+            if cfg!(debug_assertions) {
+                config::SERVER_URL.to_string()
+            } else {
+                config::SERVER_URL_RELEASE.to_string()
+            }
+        })
     }
 }
 

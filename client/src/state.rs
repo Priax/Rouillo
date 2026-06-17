@@ -103,6 +103,11 @@ pub struct GameSession {
     pub key_timer_down: f32,
 
     pub piece_visual_offset: (f32, f32),
+    pub opponent_piece_offset: (f32, f32),
+
+    // Animation state
+    pub chain_display: Option<(u32, f32)>,  // (chain_count, remaining_seconds)
+    pub all_clear_timer: f32,
 
     // Network latency probe: monotonic frame clock + per-input send timestamps,
     // used to measure the input->ack RTT actually felt by the player.
@@ -131,6 +136,9 @@ impl GameSession {
             key_timer_right: 0.0,
             key_timer_down: 0.0,
             piece_visual_offset: (0.0, 0.0),
+            opponent_piece_offset: (0.0, 0.0),
+            chain_display: None,
+            all_clear_timer: 0.0,
             clock: 0.0,
             sent_at: Vec::new(),
             last_server_msg: String::new(),

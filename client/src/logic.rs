@@ -35,16 +35,36 @@ pub fn update_game(app: &mut App, session: &mut GameSession, settings: &Settings
         session.key_timer_down = 0.0;
     }
 
-    let decay = (-PIECE_SMOOTH_RATE * dt).exp();
-    session.piece_visual_offset.0 *= decay;
-    session.piece_visual_offset.1 *= decay;
-    if session.piece_visual_offset.0.abs() < 0.001 { session.piece_visual_offset.0 = 0.0; }
-    if session.piece_visual_offset.1.abs() < 0.001 { session.piece_visual_offset.1 = 0.0; }
+    for (off, rate) in [
+        (&mut session.piece_visual_offset,   PIECE_SMOOTH_RATE),
+        (&mut session.opponent_piece_offset, OPPONENT_SMOOTH_RATE),
+    ] {
+        let decay = (-rate * dt).exp();
+        off.0 *= decay;
+        off.1 *= decay;
+        if off.0.abs() < 0.001 { off.0 = 0.0; }
+        if off.1.abs() < 0.001 { off.1 = 0.0; }
+    }
+
+    if let Some((_, ref mut t)) = session.chain_display {
+        *t -= dt;
+        if *t <= 0.0 { session.chain_display = None; }
+    }
+    if session.all_clear_timer > 0.0 {
+        session.all_clear_timer -= dt;
+    }
 }
 
 const PIECE_SMOOTH_RATE: f32 = 22.0;
+const OPPONENT_SMOOTH_RATE: f32 = 35.0;
 
 fn send_input(session: &mut GameSession, net: &mut Net, kind: InputKind) {
+    match kind {
+        InputKind::MoveLeft | InputKind::MoveRight => crate::audio::play_move(),
+        InputKind::RotateCW | InputKind::RotateCCW => crate::audio::play_rotate(),
+        InputKind::HardDrop => crate::audio::play_lock(),
+        _ => {}
+    }
     session.input_seq += 1;
     let seq = session.input_seq;
     session.predicted_board.apply_input(kind);

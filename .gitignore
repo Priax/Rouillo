@@ -6,3 +6,4 @@ dist/
 
 flamegraph*.svg
 perf.data*
+deploy/

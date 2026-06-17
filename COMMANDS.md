@@ -144,7 +144,7 @@ Ouvrir le `.svg` dans un navigateur (zoom interactif). Le profil `bench` garde l
 (`[profile.bench] strip=false, debug=true` dans le Cargo.toml racine).
 NB : profiler à travers Criterion ajoute du bruit de harnais (`serde_json`, `clap`) à ignorer.
 
-### tokio-console (la tâche async est-elle affamée ?)
+### tokio-console
 
 ```bash
 cargo install tokio-console   # une fois

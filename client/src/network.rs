@@ -73,6 +73,12 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 let prev_piece = session.predicted_board.active_piece.clone();
                 let prev_piece_id = session.predicted_board.piece_id;
                 let prev_fall_timer = session.predicted_board.fall_timer;
+                let prev_opp_piece = session.other_board.active_piece.clone();
+                let prev_opp_piece_id = session.other_board.piece_id;
+
+                let prev_chain = session.board.chain_count;
+                let prev_all_clear = session.board.last_was_all_clear;
+                let prev_garbage = session.board.pending_garbage;
 
                 session.board = my_auth.clone();
                 session.other_board = opp_auth;
@@ -120,14 +126,39 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 if same_piece {
                     if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.as_ref()) {
                         let off = &mut session.piece_visual_offset;
-                        off.0 = 0.0;
+                        off.0 = (off.0 + (prev.row - cur.row) as f32).clamp(-3.0, 3.0);
                         off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
                     }
                 } else {
                     session.piece_visual_offset = (0.0, 0.0);
                 }
 
+                // Opponent piece smooth
+                if session.other_board.piece_id == prev_opp_piece_id {
+                    if let (Some(prev), Some(cur)) = (&prev_opp_piece, session.other_board.active_piece.as_ref()) {
+                        let off = &mut session.opponent_piece_offset;
+                        off.0 = (off.0 + (prev.row - cur.row) as f32).clamp(-3.0, 3.0);
+                        off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
+                    }
+                } else {
+                    session.opponent_piece_offset = (0.0, 0.0);
+                }
+
                 session.predicted_board = predicted;
+
+                // Sounds + animations triggered by authoritative state changes
+                let cc = session.board.chain_count;
+                if cc > prev_chain {
+                    crate::audio::play_pop(cc);
+                    session.chain_display = Some((cc, 2.0));
+                }
+                if session.board.pending_garbage > prev_garbage {
+                    crate::audio::play_garbage();
+                }
+                if session.board.last_was_all_clear && !prev_all_clear {
+                    crate::audio::play_all_clear();
+                    session.all_clear_timer = 3.0;
+                }
             }
         }
         ServerMessage::Restart => {
@@ -137,6 +168,10 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.my_ack = 0;
                 session.pending_inputs.clear();
                 session.sent_at.clear();
+                session.chain_display = None;
+                session.all_clear_timer = 0.0;
+                session.piece_visual_offset = (0.0, 0.0);
+                session.opponent_piece_offset = (0.0, 0.0);
                 session.last_server_msg = "Restart".to_string();
             }
         }

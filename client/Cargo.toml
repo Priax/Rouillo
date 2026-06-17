@@ -15,4 +15,10 @@ search = ["assets"]
 
 [target.'wasm32-unknown-unknown'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
-web-sys = { version = "0.3", features = ["Window", "Location", "Storage"] }
+web-sys = { version = "0.3", features = [
+    "Window", "Location", "Storage",
+    "AudioContext", "BaseAudioContext",
+    "AudioNode", "AudioDestinationNode", "AudioScheduledSourceNode",
+    "OscillatorNode", "OscillatorType",
+    "GainNode", "AudioParam",
+] }

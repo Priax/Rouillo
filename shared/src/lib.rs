@@ -187,6 +187,7 @@ pub struct Board {
     pub ground_move_count: u32,
     pub lowest_row_reached: i32,
     pub chain_count: u32,
+    #[serde(default)] pub last_was_all_clear: bool,
     #[serde(default)] pub played_time: f32,
     #[serde(default)] pub fall_timer: f32,
     #[serde(default)] pub resolve_timer: f32,
@@ -222,6 +223,7 @@ impl Board {
             ground_move_count: 0,
             lowest_row_reached: -100,
             chain_count: 0,
+            last_was_all_clear: false,
             played_time: 0.0,
             fall_timer: 0.0,
             resolve_timer: 0.0,
@@ -387,6 +389,7 @@ impl Board {
     }
 
     fn lock_piece(&mut self) {
+        self.last_was_all_clear = false;
         if let Some(piece) = self.active_piece.take() {
             for (r, c) in piece.get_positions().iter() {
                 if *r >= 0 && *r < self.height as i32 && *c >= 0 && *c < self.width as i32 {
@@ -563,11 +566,18 @@ impl Board {
             } else if self.cells[VISIBLE_ROW_OFFSET][2].is_some() {
                 self.state = GameState::GameOver;
             } else {
+                let ac = self.check_all_clear();
+                self.last_was_all_clear = ac;
                 self.state = GameState::Playing;
                 self.spawn_piece();
+                if ac { return config::ALL_CLEAR_BONUS; }
             }
         }
         0
+    }
+
+    fn check_all_clear(&self) -> bool {
+        self.cells.iter().all(|row| row.iter().all(|c| c.is_none()))
     }
 
     pub fn toggle_pause(&mut self) {

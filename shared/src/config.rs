@@ -19,6 +19,8 @@ pub const FALL_SPEEDUP_PER_LEVEL: f64 = 0.05;
 pub const RESOLVE_STEP_INTERVAL: f32 = 0.10;
 pub const GARBAGE_DROP_DELAY: f32 = 0.5;
 
+pub const ALL_CLEAR_BONUS: u32 = 30;
+
 pub const CHAIN_POWERS: [u32; 20] = [0, 0, 8, 16, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512];
 pub const COLOR_BONUS: [u32; 6] = [0, 0, 3, 6, 12, 24];
 pub const GROUP_BONUS: [u32; 8] = [0, 2, 3, 4, 5, 6, 7, 10];
@@ -32,3 +34,6 @@ pub const STATE_BROADCAST_HZ: u64 = 60;
 pub const SERVER_BIND_ADDRESS: [u8; 4] = [0, 0, 0, 0];
 
 pub const SERVER_URL: &str = "ws://127.0.0.1:8080/ws";
+
+// à remplacer par mon vrai domaine
+pub const SERVER_URL_RELEASE: &str = "wss://puyo.duckdns.org/ws";
