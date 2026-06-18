@@ -47,6 +47,7 @@ pub type RoomId = u32;
 pub struct RoomSettings {
     pub starting_level: u32,
     pub colors: u32,
+    pub friends_only: bool,
 }
 
 impl Default for RoomSettings {
@@ -54,31 +55,35 @@ impl Default for RoomSettings {
         Self {
             starting_level: 1,
             colors: 5,
+            friends_only: false,
         }
     }
 }
 
 impl RoomSettings {
-    pub const COUNT: usize = 2;
+    pub const COUNT: usize = 3;
 
     pub fn label(i: usize) -> &'static str {
         match i {
             0 => "Starting level",
-            _ => "Colors",
+            1 => "Colors",
+            _ => "Amis seulement",
         }
     }
 
     pub fn value(&self, i: usize) -> String {
         match i {
             0 => self.starting_level.to_string(),
-            _ => self.colors.to_string(),
+            1 => self.colors.to_string(),
+            _ => if self.friends_only { "Oui".into() } else { "Non".into() },
         }
     }
 
     pub fn adjust(&mut self, i: usize, dir: i32) {
         match i {
             0 => self.starting_level = (self.starting_level as i32 + dir).clamp(1, 15) as u32,
-            _ => self.colors = (self.colors as i32 + dir).clamp(4, 5) as u32,
+            1 => self.colors = (self.colors as i32 + dir).clamp(4, 5) as u32,
+            _ => self.friends_only = !self.friends_only,
         }
     }
 }
@@ -90,6 +95,7 @@ pub struct RoomInfo {
     pub players: u8,
     pub max: u8,
     pub in_game: bool,
+    pub friends_only: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -108,6 +114,7 @@ pub enum ClientMessage {
     Hello {
         player_id: String,
         auth_token: Option<String>,
+        username: Option<String>,
     },
     Input {
         kind: InputKind,
@@ -129,6 +136,9 @@ pub enum ClientMessage {
     },
     ToggleCountdown,
     ReturnToLobby,
+    InviteFriend {
+        user_id: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -150,6 +160,11 @@ pub enum ServerMessage {
     },
     JoinFailed {
         reason: String,
+    },
+    FriendInvitation {
+        from_username: String,
+        room_id: RoomId,
+        room_name: String,
     },
 }
 

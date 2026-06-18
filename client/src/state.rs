@@ -1,6 +1,6 @@
 use ewebsock::{WsMessage, WsReceiver, WsSender};
 use notan::prelude::*;
-use shared::{config, Board, ClientMessage, InputKind, LobbyInfo, RoomInfo};
+use shared::{config, Board, ClientMessage, InputKind, LobbyInfo, RoomId, RoomInfo};
 
 use crate::Font;
 
@@ -15,6 +15,8 @@ pub enum Screen {
     RoomLobby,
     Game,
     Profile,
+    Friends,
+    OtherProfile,
 }
 
 pub use crate::http::HttpSlot;
@@ -79,10 +81,87 @@ pub struct ApiMeResponse {
 pub struct ApiUserProfile {
     pub username: String,
     pub elo: i32,
+    pub bio: Option<String>,
+    pub favorite_music: Option<String>,
     pub total_matches: i64,
     pub wins: i64,
     pub all_time_max_chain: i32,
     pub total_nuisance_sent: i64,
+}
+
+#[derive(serde::Deserialize, Clone)]
+pub struct FriendEntry {
+    pub user_id: String,
+    pub username: String,
+    pub elo: i32,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiFriendsResponse {
+    pub friends: Vec<FriendEntry>,
+    pub sent: Vec<FriendEntry>,
+    pub received: Vec<FriendEntry>,
+}
+
+#[derive(serde::Deserialize, Clone)]
+pub struct UserSearchEntry {
+    pub user_id: String,
+    pub username: String,
+    pub elo: i32,
+}
+
+pub struct FriendsData {
+    pub friends: Vec<FriendEntry>,
+    pub sent: Vec<FriendEntry>,
+    pub received: Vec<FriendEntry>,
+    pub list_slot: Option<HttpSlot>,
+    pub search_input: String,
+    pub search_results: Vec<UserSearchEntry>,
+    pub search_slot: Option<HttpSlot>,
+    pub search_error: String,
+    pub add_pending: Option<HttpSlot>,
+    pub add_error: String,
+    pub add_success: bool,
+    pub confirm_remove: Option<String>,
+    pub action_pending: Option<HttpSlot>,
+    pub action_error: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FriendshipStatus {
+    Unknown,
+    NotFriends,
+    Friends,
+    RequestSent,
+    RequestReceived,
+}
+
+pub struct OtherProfileData {
+    pub user_id: String,
+    pub username: String,
+    pub elo: i32,
+    pub bio: Option<String>,
+    pub favorite_music: Option<String>,
+    pub total_matches: i64,
+    pub wins: i64,
+    pub all_time_max_chain: i32,
+    pub total_nuisance_sent: i64,
+    pub match_history: Vec<ApiMatchEntry>,
+    pub profile_slot: Option<HttpSlot>,
+    pub history_slot: Option<HttpSlot>,
+    pub friendship_check_slot: Option<HttpSlot>,
+    pub load_failed: bool,
+    pub friendship: FriendshipStatus,
+    pub friend_slot: Option<HttpSlot>,
+    pub friend_msg: String,
+    pub friend_success: bool,
+    pub prev_screen: Screen,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ProfileEditField {
+    Bio,
+    Music,
 }
 
 #[derive(serde::Deserialize)]
@@ -105,6 +184,8 @@ pub struct ProfileData {
     pub user_id: String,
     pub username: String,
     pub elo: i32,
+    pub bio: Option<String>,
+    pub favorite_music: Option<String>,
     pub total_matches: i64,
     pub wins: i64,
     pub all_time_max_chain: i32,
@@ -112,6 +193,12 @@ pub struct ProfileData {
     pub match_history: Vec<ApiMatchEntry>,
     pub profile_slot: Option<HttpSlot>,
     pub history_slot: Option<HttpSlot>,
+    pub editing: bool,
+    pub edit_bio: String,
+    pub edit_music: String,
+    pub edit_focused: ProfileEditField,
+    pub edit_pending: Option<HttpSlot>,
+    pub edit_error: String,
 }
 
 pub fn load_stored_token() -> Option<String> {
@@ -319,14 +406,22 @@ pub struct State {
     pub notice: String,
     pub session: Option<GameSession>,
     pub font: Font,
+    pub ui_font: Font,
     pub auth: Option<AuthInfo>,
     pub auth_form: AuthForm,
     pub profile: Option<ProfileData>,
+    pub friends: Option<FriendsData>,
+    pub other_profile: Option<OtherProfileData>,
     pub startup_check: Option<HttpSlot>,
+    pub pending_invitation: Option<(String, RoomId, String)>,
+    pub pending_join: Option<RoomId>,
+    pub invite_overlay: bool,
+    pub invite_slot: Option<HttpSlot>,
+    pub invite_friends: Vec<FriendEntry>,
 }
 
 impl State {
-    pub fn new(font: Font) -> Self {
+    pub fn new(font: Font, ui_font: Font) -> Self {
         Self {
             screen: Screen::Auth,
             settings: Settings::default(),
@@ -338,10 +433,18 @@ impl State {
             notice: String::new(),
             session: None,
             font,
+            ui_font,
             auth: None,
             auth_form: AuthForm::default(),
             profile: None,
+            friends: None,
+            other_profile: None,
             startup_check: None,
+            pending_invitation: None,
+            pending_join: None,
+            invite_overlay: false,
+            invite_slot: None,
+            invite_friends: Vec::new(),
         }
     }
 }

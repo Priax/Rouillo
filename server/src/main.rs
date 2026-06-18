@@ -162,6 +162,7 @@ impl Room {
             players: self.members.len() as u8,
             max: 2,
             in_game: !matches!(self.phase, Phase::Lobby),
+            friends_only: self.settings.friends_only,
         }
     }
 }
@@ -171,11 +172,13 @@ struct Manager {
     clients: HashMap<ConnId, Option<RoomId>>,
     conn_token: HashMap<ConnId, Token>,
     conn_user_id: HashMap<ConnId, Uuid>,
+    conn_username: HashMap<ConnId, String>,
     senders: HashMap<ConnId, mpsc::Sender<Vec<u8>>>,
     dead: Vec<ConnId>,
     next_id: RoomId,
     room_list_dirty: bool,
     last_room_list: Instant,
+    pool: db::DbPool,
 }
 
 enum Command {
@@ -190,6 +193,7 @@ enum Command {
         conn: ConnId,
         token: Token,
         user_id: Option<Uuid>,
+        username: Option<String>,
     },
     RequestRoomList {
         conn: ConnId,
@@ -227,6 +231,10 @@ enum Command {
     Restart {
         conn: ConnId,
     },
+    InviteFriend {
+        conn: ConnId,
+        target_user_id: String,
+    },
 }
 
 fn clean_name(name: String) -> String {
@@ -239,17 +247,19 @@ fn clean_name(name: String) -> String {
 }
 
 impl Manager {
-    fn new() -> Manager {
+    fn new(pool: db::DbPool) -> Manager {
         Manager {
             rooms: HashMap::new(),
             clients: HashMap::new(),
             conn_token: HashMap::new(),
             conn_user_id: HashMap::new(),
+            conn_username: HashMap::new(),
             senders: HashMap::new(),
             dead: Vec::new(),
             next_id: 1,
             room_list_dirty: false,
             last_room_list: Instant::now(),
+            pool,
         }
     }
 
@@ -316,13 +326,17 @@ impl Manager {
         self.send_room(id, payload);
     }
 
-    fn room_list(&self) -> Vec<RoomInfo> {
-        self.rooms.values().map(|r| r.info()).collect()
+    fn public_room_list(&self) -> Vec<RoomInfo> {
+        self.rooms
+            .values()
+            .filter(|r| !r.settings.friends_only)
+            .map(|r| r.info())
+            .collect()
     }
 
     fn broadcast_room_list(&mut self) {
         let payload = shared::encode(&ServerMessage::RoomList {
-            rooms: self.room_list(),
+            rooms: self.public_room_list(),
         });
         let browsing: Vec<ConnId> = self
             .clients
@@ -336,7 +350,7 @@ impl Manager {
 
     fn send_room_list_to(&mut self, conn: ConnId) {
         let payload = shared::encode(&ServerMessage::RoomList {
-            rooms: self.room_list(),
+            rooms: self.public_room_list(),
         });
         self.deliver(conn, payload);
     }
@@ -354,10 +368,18 @@ impl Manager {
                 self.senders.insert(conn, sender);
                 self.clients.insert(conn, None);
             }
-            Command::Hello { conn, token, user_id } => {
+            Command::Hello {
+                conn,
+                token,
+                user_id,
+                username,
+            } => {
                 self.conn_token.insert(conn, token.clone());
                 if let Some(uid) = user_id {
                     self.conn_user_id.insert(conn, uid);
+                }
+                if let Some(name) = username {
+                    self.conn_username.insert(conn, name);
                 }
                 if let Some(id) = self.room_of_token(&token) {
                     self.rejoin(conn, id);
@@ -415,6 +437,29 @@ impl Manager {
                         }),
                     );
                     return;
+                }
+                if let Some(room) = self.rooms.get(&id) {
+                    if room.settings.friends_only {
+                        let host_uid = room.members.first().and_then(|m| m.user_id);
+                        let joiner_uid = self.conn_user_id.get(&conn).copied();
+                        let allowed = match (host_uid, joiner_uid) {
+                            (Some(h), Some(j)) => tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current()
+                                    .block_on(db::are_friends(&self.pool, h, j))
+                            })
+                            .unwrap_or(false),
+                            _ => false,
+                        };
+                        if !allowed {
+                            self.deliver(
+                                conn,
+                                shared::encode(&ServerMessage::JoinFailed {
+                                    reason: "Cette room est réservée aux amis de l'hôte.".into(),
+                                }),
+                            );
+                            return;
+                        }
+                    }
                 }
                 self.leave_current(conn);
                 let join_user_id = self.conn_user_id.get(&conn).copied();
@@ -568,6 +613,36 @@ impl Manager {
                     }
                 }
             }
+            Command::InviteFriend { conn, target_user_id } => {
+                let from_username = self
+                    .conn_username
+                    .get(&conn)
+                    .cloned()
+                    .unwrap_or_else(|| "Un joueur".to_string());
+                let room_info = self
+                    .room_of(conn)
+                    .and_then(|id| self.rooms.get(&id).map(|r| (id, r.name.clone())));
+                let Some((room_id, room_name)) = room_info else { return };
+                let target_uuid = match Uuid::parse_str(&target_user_id) {
+                    Ok(u) => u,
+                    Err(_) => return,
+                };
+                let target_conn = self
+                    .conn_user_id
+                    .iter()
+                    .find(|(_, uid)| **uid == target_uuid)
+                    .map(|(&c, _)| c);
+                if let Some(tc) = target_conn {
+                    self.deliver(
+                        tc,
+                        shared::encode(&ServerMessage::FriendInvitation {
+                            from_username,
+                            room_id,
+                            room_name,
+                        }),
+                    );
+                }
+            }
         }
     }
 
@@ -589,6 +664,7 @@ impl Manager {
             self.clients.remove(&old);
             self.conn_token.remove(&old);
             self.conn_user_id.remove(&old);
+            self.conn_username.remove(&old);
             self.senders.remove(&old);
         }
         self.sync_after_attach(id, conn);
@@ -662,6 +738,7 @@ impl Manager {
         self.clients.remove(&conn);
         self.conn_token.remove(&conn);
         self.conn_user_id.remove(&conn);
+        self.conn_username.remove(&conn);
         self.senders.remove(&conn);
     }
 
@@ -830,7 +907,6 @@ impl Manager {
                     {
                         room.sim.finished = true;
                         just_finished = true;
-                        // If both die on the same tick, player 1 wins (conventional tiebreak).
                         let winner_slot = if room.sim.boards[0].state == GameState::GameOver
                             && room.sim.boards[1].state != GameState::GameOver
                         {
@@ -931,7 +1007,7 @@ async fn manager_loop(mut cmd_rx: mpsc::UnboundedReceiver<Command>, pool: db::Db
     let tick_dt = 1.0 / config::SERVER_TICK_HZ as f32;
     let mut ticker = interval(Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64));
     let broadcast_period = Duration::from_secs_f64(1.0 / config::STATE_BROADCAST_HZ as f64);
-    let mut mgr = Manager::new();
+    let mut mgr = Manager::new(pool.clone());
     let mut last_broadcast = Instant::now();
     let mut profile = TickProfile::new();
 
@@ -1070,7 +1146,11 @@ async fn handle_connection(
                 if msg.is_binary() {
                     if let Some(client_msg) = shared::decode::<ClientMessage>(msg.as_bytes()) {
                         let cmd = match client_msg {
-                            ClientMessage::Hello { player_id, auth_token } => {
+                            ClientMessage::Hello {
+                                player_id,
+                                auth_token,
+                                username,
+                            } => {
                                 let user_id = match auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok()) {
                                     Some(token_uuid) => db::find_user_by_token(&pool, token_uuid)
                                         .await
@@ -1083,6 +1163,7 @@ async fn handle_connection(
                                     conn,
                                     token: player_id,
                                     user_id,
+                                    username,
                                 }
                             }
                             ClientMessage::Input { kind, seq } => Command::Input { conn, kind, seq },
@@ -1095,6 +1176,10 @@ async fn handle_connection(
                             ClientMessage::SetRoomSetting { index, dir } => Command::SetSetting { conn, index, dir },
                             ClientMessage::ToggleCountdown => Command::ToggleCountdown { conn },
                             ClientMessage::ReturnToLobby => Command::ReturnToLobby { conn },
+                            ClientMessage::InviteFriend { user_id } => Command::InviteFriend {
+                                conn,
+                                target_user_id: user_id,
+                            },
                         };
                         if cmd_tx_recv.send(cmd).is_err() {
                             break;

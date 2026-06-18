@@ -80,8 +80,7 @@ fn send_input(session: &mut GameSession, net: &mut Net, kind: InputKind) {
 }
 
 fn handle_global_input(app: &mut App, session: &mut GameSession, net: &mut Net) {
-    let can_restart = session.board.state == GameState::GameOver
-        || session.other_board.state == GameState::GameOver;
+    let can_restart = session.board.state == GameState::GameOver || session.other_board.state == GameState::GameOver;
     if app.keyboard.was_pressed(KeyCode::KeyR) && can_restart {
         net.send(&ClientMessage::RequestRestart);
     }

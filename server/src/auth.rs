@@ -90,6 +90,10 @@ type FriendLimit = RateMap;
 const MAX_FRIEND_REQS: u32 = 30;
 const FRIEND_WINDOW: Duration = Duration::from_secs(600);
 
+type SearchLimit = RateMap;
+const MAX_SEARCHES: u32 = 60;
+const SEARCH_WINDOW: Duration = Duration::from_secs(60);
+
 #[derive(Deserialize)]
 struct RegisterBody {
     username: String,
@@ -141,6 +145,12 @@ fn with_attempts(
 fn with_friend_limit(
     limit: FriendLimit,
 ) -> impl Filter<Extract = (FriendLimit,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || limit.clone())
+}
+
+fn with_search_limit(
+    limit: SearchLimit,
+) -> impl Filter<Extract = (SearchLimit,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || limit.clone())
 }
 
@@ -416,6 +426,37 @@ struct FriendListResponse {
     received: Vec<db::FriendEntry>,
 }
 
+#[derive(Deserialize)]
+struct UserSearchQuery {
+    q: Option<String>,
+}
+
+async fn handle_search_users(
+    token: Uuid,
+    query: UserSearchQuery,
+    pool: DbPool,
+    limit: SearchLimit,
+) -> Result<impl Reply, Rejection> {
+    let me = db::find_user_by_token(&pool, token)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| warp::reject::custom(Unauthorized))?;
+
+    let key = me.id.to_string();
+    if rate_check(&limit, &key, MAX_SEARCHES, SEARCH_WINDOW) {
+        return Err(warp::reject::custom(TooManyRequests));
+    }
+    rate_record(&limit, &key, SEARCH_WINDOW);
+
+    let q = query.q.as_deref().unwrap_or("").trim().to_owned();
+    if q.len() < 2 {
+        return Ok(warp::reply::json(&Vec::<db::UserSearchEntry>::new()));
+    }
+
+    let results = db::search_users(&pool, &q, me.id).await.map_err(internal)?;
+    Ok(warp::reply::json(&results))
+}
+
 async fn handle_list_friends(token: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
     let me = db::find_user_by_token(&pool, token)
         .await
@@ -531,6 +572,7 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
     let body_limit = warp::body::content_length_limit(16 * 1024);
     let attempts: LoginAttempts = new_rate_map();
     let friend_limit: FriendLimit = new_rate_map();
+    let search_limit: SearchLimit = new_rate_map();
 
     let register = api
         .and(warp::path("register"))
@@ -578,6 +620,17 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::body::json())
         .and(pool.clone())
         .and_then(handle_patch_me);
+
+    let users_search = api
+        .and(warp::path("users"))
+        .and(warp::path("search"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(bearer_token())
+        .and(warp::query::<UserSearchQuery>())
+        .and(pool.clone())
+        .and(with_search_limit(search_limit))
+        .and_then(handle_search_users);
 
     let user_profile = api
         .and(warp::path("users"))
@@ -640,6 +693,7 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .or(logout)
         .or(me_get)
         .or(me_patch)
+        .or(users_search)
         .or(user_profile)
         .or(match_history)
         .or(friends_get)

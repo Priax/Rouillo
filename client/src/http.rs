@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+
 #[cfg(not(target_arch = "wasm32"))]
 use shared::config;
 
@@ -23,8 +24,7 @@ fn api_base() -> String {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::env::var("PUYO_API")
-            .unwrap_or_else(|_| format!("http://127.0.0.1:{}", config::SERVER_PORT))
+        std::env::var("PUYO_API").unwrap_or_else(|_| format!("http://127.0.0.1:{}", config::SERVER_PORT))
     }
 }
 
@@ -53,3 +53,40 @@ pub fn post_json(url: String, body: String, token: Option<String>, slot: HttpSlo
     });
 }
 
+pub fn patch_json(url: String, body: String, token: Option<String>, slot: HttpSlot) {
+    let mut req = ehttp::Request {
+        method: "PATCH".to_owned(),
+        body: body.into_bytes(),
+        ..ehttp::Request::get(url)
+    };
+    push_header(&mut req, "content-type", "application/json".to_owned());
+    if let Some(t) = token {
+        push_header(&mut req, "authorization", format!("Bearer {t}"));
+    }
+    ehttp::fetch(req, move |r| {
+        *slot.lock().unwrap() = Some(r);
+    });
+}
+
+pub fn delete_req(url: String, token: Option<String>, slot: HttpSlot) {
+    let mut req = ehttp::Request {
+        method: "DELETE".to_owned(),
+        ..ehttp::Request::get(url)
+    };
+    if let Some(t) = token {
+        push_header(&mut req, "authorization", format!("Bearer {t}"));
+    }
+    ehttp::fetch(req, move |r| {
+        *slot.lock().unwrap() = Some(r);
+    });
+}
+
+pub fn post_empty(url: String, token: Option<String>, slot: HttpSlot) {
+    let mut req = ehttp::Request::post(url, vec![]);
+    if let Some(t) = token {
+        push_header(&mut req, "authorization", format!("Bearer {t}"));
+    }
+    ehttp::fetch(req, move |r| {
+        *slot.lock().unwrap() = Some(r);
+    });
+}

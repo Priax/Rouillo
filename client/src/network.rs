@@ -8,6 +8,8 @@ pub fn handle_server_messages(state: &mut State) {
     let mut lost = false;
     let player_id = state.player_id.clone();
     let auth_token = state.auth.as_ref().map(|a| a.token.clone());
+    let username = state.auth.as_ref().map(|a| a.username.clone());
+    let pending_join = state.pending_join.take();
     if let Some(net) = state.net.as_mut() {
         while let Some(event) = net.ws_receiver.try_recv() {
             match event {
@@ -15,7 +17,11 @@ pub fn handle_server_messages(state: &mut State) {
                     net.send(&ClientMessage::Hello {
                         player_id: player_id.clone(),
                         auth_token: auth_token.clone(),
+                        username: username.clone(),
                     });
+                    if let Some(id) = pending_join {
+                        net.send(&ClientMessage::JoinRoom { id });
+                    }
                 }
                 WsEvent::Message(WsMessage::Binary(bytes)) => {
                     if let Some(m) = shared::decode::<ServerMessage>(&bytes) {
@@ -203,6 +209,13 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.opponent_disconnected = true;
                 session.last_server_msg = "OpponentDisconnected".to_string();
             }
+        }
+        ServerMessage::FriendInvitation {
+            from_username,
+            room_id,
+            room_name,
+        } => {
+            state.pending_invitation = Some((from_username, room_id, room_name));
         }
     }
 }

@@ -12,6 +12,9 @@ ewebsock = "0.8"
 ehttp = "0.5"
 shared = { path = "../shared" }
 
+[build-dependencies]
+winres = "0.1"
+
 [package.metadata.notan.assets]
 search = ["assets"]
 

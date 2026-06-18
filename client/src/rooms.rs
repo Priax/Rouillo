@@ -2,8 +2,9 @@ use notan::draw::*;
 use notan::prelude::*;
 use shared::{ClientMessage, RoomSettings};
 
+use crate::http;
 use crate::menu::Btn;
-use crate::state::{Screen, State};
+use crate::state::{ApiFriendsResponse, Screen, State};
 
 fn win_w(app: &mut App) -> f32 {
     app.window().width() as f32
@@ -296,12 +297,68 @@ fn lobby_leave(w: f32) -> Btn {
     }
 }
 
+fn lobby_invite(w: f32) -> Btn {
+    let y = LOBBY_FIRST_Y + RoomSettings::COUNT as f32 * LOBBY_ROW_H + 220.0;
+    Btn {
+        x: w / 2.0 - 110.0,
+        y,
+        w: 220.0,
+        h: 44.0,
+    }
+}
+
 pub fn update_lobby(app: &mut App, state: &mut State) {
+    if let Some(result) = state.invite_slot.as_ref().and_then(http::poll) {
+        state.invite_slot = None;
+        if let Ok(resp) = result {
+            if let Some(text) = resp.text() {
+                if let Ok(data) = serde_json::from_str::<ApiFriendsResponse>(text) {
+                    state.invite_friends = data.friends;
+                }
+            }
+        }
+    }
+
     let info = match &state.lobby {
         Some(l) => l.clone(),
         None => return,
     };
-    let w = win_w(app);
+    let (w, h) = (win_w(app), win_h(app));
+
+    if state.invite_overlay {
+        let close_btn = Btn {
+            x: w - 70.0,
+            y: 10.0,
+            w: 60.0,
+            h: 40.0,
+        };
+        if close_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Escape) {
+            state.invite_overlay = false;
+            return;
+        }
+        let friends = state.invite_friends.clone();
+        let room_id = info.id;
+        for (i, friend) in friends.iter().enumerate() {
+            let btn = Btn {
+                x: w / 2.0 - 80.0,
+                y: 180.0 + i as f32 * 52.0,
+                w: 160.0,
+                h: 40.0,
+            };
+            if btn.clicked(app) {
+                send(
+                    state,
+                    &ClientMessage::InviteFriend {
+                        user_id: friend.user_id.clone(),
+                    },
+                );
+                let _ = room_id;
+                state.invite_overlay = false;
+                return;
+            }
+        }
+        return;
+    }
 
     if info.is_host && info.countdown.is_none() {
         for i in 0..RoomSettings::COUNT {
@@ -330,7 +387,23 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
 
     if lobby_leave(w).clicked(app) {
         send(state, &ClientMessage::LeaveRoom);
+        state.invite_friends.clear();
+        state.invite_slot = None;
+        state.invite_overlay = false;
+        return;
     }
+
+    if state.auth.is_some() && lobby_invite(w).clicked(app) {
+        state.invite_overlay = true;
+        if state.invite_friends.is_empty() && state.invite_slot.is_none() {
+            let token = state.auth.as_ref().map(|a| a.token.clone());
+            let slot = http::new_slot();
+            http::get(http::api_url("friends"), token, slot.clone());
+            state.invite_slot = Some(slot);
+        }
+    }
+
+    let _ = h;
 }
 
 pub fn draw_lobby(app: &mut App, gfx: &mut Graphics, state: &State) {
@@ -403,6 +476,10 @@ pub fn draw_lobby(app: &mut App, gfx: &mut Graphics, state: &State) {
     }
     lobby_leave(w).draw(&mut draw, app, &state.font, "Leave");
 
+    if state.auth.is_some() {
+        lobby_invite(w).draw_styled(&mut draw, app, &state.font, "Inviter un ami", true);
+    }
+
     if let Some(n) = info.countdown {
         draw.rect((0.0, 0.0), (w, h))
             .color(Color::from_rgba(0.0, 0.0, 0.0, 0.6));
@@ -412,6 +489,56 @@ pub fn draw_lobby(app: &mut App, gfx: &mut Graphics, state: &State) {
             .h_align_center()
             .v_align_middle()
             .color(Color::YELLOW);
+    }
+
+    if state.invite_overlay {
+        draw.rect((0.0, 0.0), (w, h))
+            .color(Color::from_rgba(0.0, 0.0, 0.08, 0.88));
+        draw.text(&state.font, "Inviter un ami")
+            .position(w / 2.0, 100.0)
+            .size(36.0)
+            .h_align_center()
+            .v_align_middle()
+            .color(Color::from_rgb(0.9, 0.7, 1.0));
+        let close_btn = Btn {
+            x: w - 70.0,
+            y: 10.0,
+            w: 60.0,
+            h: 40.0,
+        };
+        close_btn.draw(&mut draw, app, &state.font, "X");
+        if state.invite_slot.is_some() {
+            draw.text(&state.font, "Chargement...")
+                .position(w / 2.0, 200.0)
+                .size(22.0)
+                .h_align_center()
+                .v_align_middle()
+                .color(Color::GRAY);
+        } else if state.invite_friends.is_empty() {
+            draw.text(&state.font, "Aucun ami pour l'instant.")
+                .position(w / 2.0, 200.0)
+                .size(22.0)
+                .h_align_center()
+                .v_align_middle()
+                .color(Color::GRAY);
+        } else {
+            for (i, friend) in state.invite_friends.iter().enumerate() {
+                let fy = 180.0 + i as f32 * 52.0;
+                draw.text(&state.font, &friend.username)
+                    .position(w / 2.0 - 100.0, fy + 20.0)
+                    .size(20.0)
+                    .h_align_right()
+                    .v_align_middle()
+                    .color(Color::WHITE);
+                let btn = Btn {
+                    x: w / 2.0 - 80.0,
+                    y: fy,
+                    w: 160.0,
+                    h: 40.0,
+                };
+                btn.draw(&mut draw, app, &state.font, "Inviter");
+            }
+        }
     }
 
     gfx.render(&draw);

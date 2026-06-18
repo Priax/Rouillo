@@ -371,6 +371,27 @@ pub async fn remove_friend(pool: &DbPool, me: Uuid, other: Uuid) -> Result<bool,
     Ok(r.rows_affected() > 0)
 }
 
+#[derive(sqlx::FromRow, serde::Serialize)]
+pub struct UserSearchEntry {
+    pub user_id: Uuid,
+    pub username: String,
+    pub elo: i32,
+}
+
+pub async fn search_users(pool: &DbPool, query: &str, exclude_id: Uuid) -> Result<Vec<UserSearchEntry>, sqlx::Error> {
+    let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    let pattern = format!("%{escaped}%");
+    sqlx::query_as::<_, UserSearchEntry>(
+        "SELECT id AS user_id, username, elo FROM users \
+         WHERE username ILIKE $1 AND id != $2 \
+         ORDER BY elo DESC LIMIT 10",
+    )
+    .bind(pattern)
+    .bind(exclude_id)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn list_friends(pool: &DbPool, me: Uuid) -> Result<FriendList, sqlx::Error> {
     let friends = sqlx::query_as::<_, FriendEntry>(
         "SELECT u.id AS user_id, u.username, u.elo
@@ -407,6 +428,20 @@ pub async fn list_friends(pool: &DbPool, me: Uuid) -> Result<FriendList, sqlx::E
         sent,
         received,
     })
+}
+
+pub async fn are_friends(pool: &DbPool, user_a: Uuid, user_b: Uuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1 FROM friendships
+            WHERE ((user_id = $1 AND friend_id = $2) OR (user_id = $2 AND friend_id = $1))
+            AND status = 'accepted'
+         )",
+    )
+    .bind(user_a)
+    .bind(user_b)
+    .fetch_one(pool)
+    .await
 }
 
 pub async fn get_match_history(pool: &DbPool, user_id: Uuid, limit: i64) -> Result<Vec<MatchRow>, sqlx::Error> {

@@ -1,6 +1,7 @@
 use notan::draw::*;
 use notan::prelude::*;
 
+use crate::http;
 use crate::state::{AuthForm, Net, Screen, Settings, State};
 
 #[derive(Clone, Copy)]
@@ -45,18 +46,51 @@ impl Btn {
         };
         draw.rect((self.x, self.y), (self.w, self.h)).color(bg);
         draw.rect((self.x, self.y), (self.w, self.h)).stroke(2.0).color(border);
+        let n = label.chars().count().max(1) as f32;
+        let font_size = (28.0_f32 * (self.w - 20.0) / (n * 17.5)).min(28.0).max(11.0);
         draw.text(font, label)
             .position(self.x + self.w / 2.0, self.y + self.h / 2.0)
-            .size(28.0)
+            .size(font_size)
             .h_align_center()
             .v_align_middle()
             .color(text);
     }
 }
 
+pub fn draw_text_box(
+    draw: &mut Draw,
+    font: &crate::Font,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    placeholder: &str,
+    value: &str,
+    focused: bool,
+) {
+    let border = if focused {
+        Color::from_rgb(0.6, 0.5, 0.9)
+    } else {
+        Color::from_rgb(0.35, 0.37, 0.5)
+    };
+    draw.rect((x, y), (w, h)).color(Color::from_rgb(0.12, 0.13, 0.20));
+    draw.rect((x, y), (w, h)).stroke(2.0).color(border);
+    let (text, col) = if value.is_empty() {
+        (placeholder, Color::from_rgb(0.45, 0.45, 0.55))
+    } else {
+        (value, Color::WHITE)
+    };
+    draw.text(font, text)
+        .position(x + 12.0, y + h / 2.0)
+        .size(20.0)
+        .v_align_middle()
+        .color(col);
+}
+
 struct MenuLayout {
     play: Btn,
     settings: Btn,
+    friends: Option<Btn>,
     logout: Option<Btn>,
 }
 
@@ -65,19 +99,28 @@ fn menu_layout(win_w: f32, win_h: f32, logged_in: bool) -> MenuLayout {
     let h = 70.0;
     let x = (win_w - w) / 2.0;
     let cy = win_h / 2.0;
-    let logout = if logged_in {
-        Some(Btn {
-            x,
-            y: cy + 160.0,
-            w,
-            h: 56.0,
-        })
+    let (friends, logout) = if logged_in {
+        (
+            Some(Btn {
+                x,
+                y: cy + 160.0,
+                w,
+                h: 56.0,
+            }),
+            Some(Btn {
+                x,
+                y: cy + 240.0,
+                w,
+                h: 56.0,
+            }),
+        )
     } else {
-        None
+        (None, None)
     };
     MenuLayout {
         play: Btn { x, y: cy - 20.0, w, h },
         settings: Btn { x, y: cy + 70.0, w, h },
+        friends,
         logout,
     }
 }
@@ -107,12 +150,16 @@ pub fn update_menu(app: &mut App, state: &mut State) {
         state.screen = Screen::Settings;
     }
 
+    if let Some(btn) = layout.friends {
+        if btn.clicked(app) {
+            crate::friends::enter_friends(state);
+            state.screen = Screen::Friends;
+        }
+    }
+
     if let Some(btn) = layout.logout {
         if btn.clicked(app) {
-            crate::state::clear_stored_token();
-            state.auth = None;
-            state.auth_form = AuthForm::default();
-            state.screen = Screen::Auth;
+            do_logout(state);
         }
     }
 
@@ -123,6 +170,19 @@ pub fn update_menu(app: &mut App, state: &mut State) {
             state.screen = Screen::Profile;
         }
     }
+}
+
+pub fn do_logout(state: &mut State) {
+    if let Some(auth) = &state.auth {
+        http::post_empty(http::api_url("logout"), Some(auth.token.clone()), http::new_slot());
+    }
+    crate::state::clear_stored_token();
+    state.auth = None;
+    state.auth_form = AuthForm::default();
+    state.friends = None;
+    state.profile = None;
+    state.other_profile = None;
+    state.screen = Screen::Auth;
 }
 
 pub fn draw_menu(app: &mut App, gfx: &mut Graphics, state: &State) {
@@ -141,6 +201,9 @@ pub fn draw_menu(app: &mut App, gfx: &mut Graphics, state: &State) {
     let layout = menu_layout(ww, wh, logged_in);
     layout.play.draw(&mut draw, app, &state.font, "Jouer");
     layout.settings.draw(&mut draw, app, &state.font, "Paramètres");
+    if let Some(btn) = layout.friends {
+        btn.draw(&mut draw, app, &state.font, "Amis");
+    }
     if let Some(btn) = layout.logout {
         btn.draw(&mut draw, app, &state.font, "Déconnexion");
     }
@@ -280,7 +343,7 @@ pub fn draw_settings(app: &mut App, gfx: &mut Graphics, state: &State) {
         layout.minus[i].draw(&mut draw, app, &state.font, "-");
         layout.plus[i].draw(&mut draw, app, &state.font, "+");
         draw.text(&state.font, &format!("{:.0} ms", state.settings.value(i) * 1000.0))
-            .position(center_x + 175.0, mid)
+            .position(center_x + 130.0, mid)
             .size(22.0)
             .h_align_center()
             .v_align_middle()
