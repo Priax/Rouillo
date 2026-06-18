@@ -75,7 +75,13 @@ impl RoomSettings {
         match i {
             0 => self.starting_level.to_string(),
             1 => self.colors.to_string(),
-            _ => if self.friends_only { "Oui".into() } else { "Non".into() },
+            _ => {
+                if self.friends_only {
+                    "Oui".into()
+                } else {
+                    "Non".into()
+                }
+            }
         }
     }
 

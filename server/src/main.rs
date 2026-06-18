@@ -444,8 +444,7 @@ impl Manager {
                         let joiner_uid = self.conn_user_id.get(&conn).copied();
                         let allowed = match (host_uid, joiner_uid) {
                             (Some(h), Some(j)) => tokio::task::block_in_place(|| {
-                                tokio::runtime::Handle::current()
-                                    .block_on(db::are_friends(&self.pool, h, j))
+                                tokio::runtime::Handle::current().block_on(db::are_friends(&self.pool, h, j))
                             })
                             .unwrap_or(false),
                             _ => false,
