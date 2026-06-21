@@ -1,5 +1,20 @@
 use super::*;
 
+/// Build a Manager for tests. None of the tested paths touch the database
+/// (no friends-only joins, no match persistence), so a lazily-connected pool
+/// that never actually opens a socket is sufficient. `connect_lazy` still spawns
+/// the pool's maintenance task, so it must run inside a Tokio context: we keep a
+/// persistent runtime alive for the whole test binary and enter it just long
+/// enough to construct the pool.
+fn new_mgr() -> Manager {
+    use std::sync::OnceLock;
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    let rt = RT.get_or_init(|| tokio::runtime::Runtime::new().expect("test runtime"));
+    let _guard = rt.enter();
+    let pool = db::DbPool::connect_lazy("postgres://puyo:puyo@localhost/puyo_test").expect("lazy pool");
+    Manager::new(pool)
+}
+
 fn reg(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<Vec<u8>> {
     let (tx, rx) = mpsc::channel(CLIENT_CHAN_CAP);
     mgr.handle(Command::Register { conn, sender: tx });
@@ -11,6 +26,7 @@ fn hello(mgr: &mut Manager, conn: ConnId, token: &str) {
         conn,
         token: token.to_string(),
         user_id: None,
+        username: None,
     });
 }
 
@@ -51,7 +67,7 @@ fn two_player_room(mgr: &mut Manager) -> (RoomId, mpsc::Receiver<Vec<u8>>, mpsc:
 
 #[test]
 fn create_room_lobbies_host() {
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let mut rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
     mgr.handle(Command::CreateRoom {
@@ -67,7 +83,7 @@ fn create_room_lobbies_host() {
 
 #[test]
 fn second_player_join_updates_both() {
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let (_id, mut rx1, mut rx2) = two_player_room(&mut mgr);
     let joiner = last_lobby(&drain(&mut rx2)).expect("joiner Lobby");
     assert_eq!(joiner.players, 2);
@@ -79,7 +95,7 @@ fn second_player_join_updates_both() {
 
 #[test]
 fn join_missing_room_fails() {
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let mut rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
     mgr.handle(Command::JoinRoom { conn: 1, id: 999 });
@@ -88,7 +104,7 @@ fn join_missing_room_fails() {
 
 #[test]
 fn join_full_room_fails() {
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
     let mut rx3 = reg(&mut mgr, 3);
     hello(&mut mgr, 3, "C");
@@ -99,7 +115,7 @@ fn join_full_room_fails() {
 
 #[test]
 fn countdown_needs_two_players() {
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
     mgr.handle(Command::CreateRoom {
@@ -112,7 +128,7 @@ fn countdown_needs_two_players() {
 
 #[test]
 fn countdown_starts_game_after_delay() {
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let (_id, mut rx1, _rx2) = two_player_room(&mut mgr);
     mgr.handle(Command::ToggleCountdown { conn: 1 });
     assert!(matches!(mgr.rooms[&1].phase, Phase::CountingDown(_)));
@@ -125,7 +141,7 @@ fn countdown_starts_game_after_delay() {
 // token on a fresh connection re-attaches to that exact seat.
 #[test]
 fn disconnect_reserves_seat_then_reconnect_restores_it() {
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
 
     mgr.handle(Command::Unregister { conn: 2 }); // player B drops
@@ -141,7 +157,7 @@ fn disconnect_reserves_seat_then_reconnect_restores_it() {
 
 #[test]
 fn host_leaving_promotes_remaining_member() {
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
     mgr.handle(Command::LeaveRoom { conn: 1 }); // host A leaves voluntarily
     let room = &mgr.rooms[&1];
@@ -151,7 +167,7 @@ fn host_leaving_promotes_remaining_member() {
 
 #[test]
 fn last_member_leaving_closes_room() {
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
     mgr.handle(Command::CreateRoom {
@@ -165,7 +181,7 @@ fn last_member_leaving_closes_room() {
 
 #[test]
 fn opponent_disconnect_pauses_running_game() {
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let (_id, mut rx1, _rx2) = two_player_room(&mut mgr);
     mgr.handle(Command::ToggleCountdown { conn: 1 });
     mgr.tick(3.5, false);
@@ -205,7 +221,7 @@ fn load_many_rooms_tick_budget() {
     let dt = 1.0 / config::SERVER_TICK_HZ as f32;
     let budget = Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64);
 
-    let mut mgr = Manager::new();
+    let mut mgr = new_mgr();
     let mut receivers = Vec::with_capacity(rooms * 2);
     for i in 0..rooms {
         let host = (2 * i + 1) as ConnId;

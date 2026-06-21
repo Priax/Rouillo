@@ -307,7 +307,10 @@ pub struct Net {
 
 impl Net {
     pub fn send(&mut self, msg: &ClientMessage) {
-        self.ws_sender.send(WsMessage::Binary(shared::encode(msg)));
+        match shared::encode(msg) {
+            Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+            Err(e) => eprintln!("[send] encode failed: {e}"),
+        }
     }
 }
 

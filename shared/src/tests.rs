@@ -196,10 +196,12 @@ fn state_update_survives_encode_decode() {
     let msg = ServerMessage::StateUpdate {
         p1_board: Box::new(board.clone()),
         p2_board: Box::new(empty_board()),
+        p1_rng: None,
+        p2_rng: None,
         p1_ack: 7,
         p2_ack: 9,
     };
-    let bytes = encode(&msg);
+    let bytes = encode(&msg).expect("encode");
     let back: ServerMessage = decode(&bytes).expect("decode");
     match back {
         ServerMessage::StateUpdate {
@@ -220,14 +222,30 @@ fn state_update_survives_encode_decode() {
 
 #[test]
 fn rng_state_survives_encode_decode() {
+    // The RNG is no longer part of a Board's wire format; it rides on StateUpdate as an
+    // explicit field. This verifies that carrying it that way still round-trips and keeps
+    // piece generation deterministic across the wire.
     let mut board = Board::new(GRID_WIDTH, GRID_HEIGHT, 42, 1, 5);
     for _ in 0..10 {
         board.spawn_piece();
         board.active_piece = None;
     }
 
-    let bytes = encode(&board);
-    let mut restored: Board = decode(&bytes).expect("decode");
+    let msg = ServerMessage::StateUpdate {
+        p1_board: Box::new(board.clone()),
+        p2_board: Box::new(empty_board()),
+        p1_rng: Some(Box::new(board.rng_state())),
+        p2_rng: None,
+        p1_ack: 0,
+        p2_ack: 0,
+    };
+    let bytes = encode(&msg).expect("encode");
+    let back: ServerMessage = decode(&bytes).expect("decode");
+    let ServerMessage::StateUpdate { p1_board, p1_rng, .. } = back else {
+        panic!("wrong variant");
+    };
+    let mut restored = *p1_board;
+    restored.set_rng(*p1_rng.expect("rng present"));
 
     for _ in 0..20 {
         board.spawn_piece();
@@ -236,6 +254,29 @@ fn rng_state_survives_encode_decode() {
         let b = restored.active_piece.take().expect("piece b");
         assert_eq!((a.axis_type, a.sat_type), (b.axis_type, b.sat_type));
     }
+}
+
+#[test]
+fn state_update_omits_rng_when_none() {
+    // A routine (RNG-less) update must round-trip too: the board survives and the RNG
+    // field comes back as None so the client knows to keep the RNG it already holds.
+    let mut board = empty_board();
+    board.spawn_piece();
+    let msg = ServerMessage::StateUpdate {
+        p1_board: Box::new(board.clone()),
+        p2_board: Box::new(empty_board()),
+        p1_rng: None,
+        p2_rng: None,
+        p1_ack: 3,
+        p2_ack: 4,
+    };
+    let bytes = encode(&msg).expect("encode");
+    let back: ServerMessage = decode(&bytes).expect("decode");
+    let ServerMessage::StateUpdate { p1_board, p1_rng, .. } = back else {
+        panic!("wrong variant");
+    };
+    assert!(p1_rng.is_none());
+    assert_eq!(p1_board.cells, board.cells);
 }
 
 #[test]

@@ -44,6 +44,11 @@ struct Sim {
     prev_chain: [u32; 2],
     prev_all_clear: [bool; 2],
     prev_piece_id: [u32; 2],
+    // piece_id of each board as of the last broadcast. The board RNG only advances when a
+    // piece spawns (which always bumps piece_id), so an unchanged piece_id means we can
+    // omit the RNG from the next StateUpdate. `None` forces a full send (game start /
+    // first frame), guaranteeing the client has an RNG before any RNG-less update arrives.
+    last_sent_piece_id: Option<[u32; 2]>,
 }
 
 impl Sim {
@@ -63,6 +68,7 @@ impl Sim {
             prev_chain: [0; 2],
             prev_all_clear: [false; 2],
             prev_piece_id: [0; 2],
+            last_sent_piece_id: None,
         }
     }
 
@@ -102,6 +108,7 @@ impl Sim {
         self.prev_chain = [0; 2];
         self.prev_all_clear = [false; 2];
         self.prev_piece_id = [self.boards[0].piece_id, self.boards[1].piece_id];
+        self.last_sent_piece_id = None;
     }
 }
 
@@ -279,6 +286,23 @@ impl Manager {
         }
     }
 
+    /// Encode `msg` and deliver it to a single connection, dropping the message
+    /// (with a log line) rather than sending a corrupt payload if encoding fails.
+    fn deliver_msg(&mut self, conn: ConnId, msg: &ServerMessage) {
+        match shared::encode(msg) {
+            Ok(payload) => self.deliver(conn, payload),
+            Err(e) => error!("encode failed, dropping message: {e}"),
+        }
+    }
+
+    /// Encode `msg` once and deliver it to every connected member of a room.
+    fn send_room_msg(&mut self, id: RoomId, msg: &ServerMessage) {
+        match shared::encode(msg) {
+            Ok(payload) => self.send_room(id, payload),
+            Err(e) => error!("encode failed, dropping message: {e}"),
+        }
+    }
+
     fn send_room(&mut self, id: RoomId, payload: Vec<u8>) {
         let conns = match self.rooms.get(&id) {
             Some(room) => room.connected_conns(),
@@ -296,14 +320,17 @@ impl Manager {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, m)| {
-                    m.conn.map(|c| {
-                        (
-                            c,
-                            shared::encode(&ServerMessage::Lobby {
-                                info: room.lobby_info_for(i),
-                            }),
-                        )
-                    })
+                    let c = m.conn?;
+                    let msg = ServerMessage::Lobby {
+                        info: room.lobby_info_for(i),
+                    };
+                    match shared::encode(&msg) {
+                        Ok(payload) => Some((c, payload)),
+                        Err(e) => {
+                            error!("encode Lobby failed: {e}");
+                            None
+                        }
+                    }
                 })
                 .collect(),
             None => return,
@@ -314,16 +341,20 @@ impl Manager {
     }
 
     fn send_snapshot(&mut self, id: RoomId) {
-        let payload = match self.rooms.get(&id) {
-            Some(room) => shared::encode(&ServerMessage::StateUpdate {
+        let msg = match self.rooms.get(&id) {
+            // A snapshot is a fresh baseline (reconnect / resume), so it always carries the
+            // full RNG state so the receiver is fully in sync.
+            Some(room) => ServerMessage::StateUpdate {
                 p1_board: Box::new(room.sim.boards[0].clone()),
                 p2_board: Box::new(room.sim.boards[1].clone()),
+                p1_rng: Some(Box::new(room.sim.boards[0].rng_state())),
+                p2_rng: Some(Box::new(room.sim.boards[1].rng_state())),
                 p1_ack: room.sim.last_seq[0],
                 p2_ack: room.sim.last_seq[1],
-            }),
+            },
             None => return,
         };
-        self.send_room(id, payload);
+        self.send_room_msg(id, &msg);
     }
 
     fn public_room_list(&self) -> Vec<RoomInfo> {
@@ -335,9 +366,15 @@ impl Manager {
     }
 
     fn broadcast_room_list(&mut self) {
-        let payload = shared::encode(&ServerMessage::RoomList {
+        let payload = match shared::encode(&ServerMessage::RoomList {
             rooms: self.public_room_list(),
-        });
+        }) {
+            Ok(p) => p,
+            Err(e) => {
+                error!("encode RoomList failed: {e}");
+                return;
+            }
+        };
         let browsing: Vec<ConnId> = self
             .clients
             .iter()
@@ -349,10 +386,12 @@ impl Manager {
     }
 
     fn send_room_list_to(&mut self, conn: ConnId) {
-        let payload = shared::encode(&ServerMessage::RoomList {
-            rooms: self.public_room_list(),
-        });
-        self.deliver(conn, payload);
+        self.deliver_msg(
+            conn,
+            &ServerMessage::RoomList {
+                rooms: self.public_room_list(),
+            },
+        );
     }
 
     fn room_of_token(&self, token: &str) -> Option<RoomId> {
@@ -430,11 +469,11 @@ impl Manager {
                 };
                 let joinable = matches!(self.rooms.get(&id), Some(r) if r.members.len() < 2);
                 if !joinable {
-                    self.deliver(
+                    self.deliver_msg(
                         conn,
-                        shared::encode(&ServerMessage::JoinFailed {
+                        &ServerMessage::JoinFailed {
                             reason: "Room indisponible".into(),
-                        }),
+                        },
                     );
                     return;
                 }
@@ -450,11 +489,11 @@ impl Manager {
                             _ => false,
                         };
                         if !allowed {
-                            self.deliver(
+                            self.deliver_msg(
                                 conn,
-                                shared::encode(&ServerMessage::JoinFailed {
+                                &ServerMessage::JoinFailed {
                                     reason: "Cette room est réservée aux amis de l'hôte.".into(),
-                                }),
+                                },
                             );
                             return;
                         }
@@ -481,11 +520,11 @@ impl Manager {
                     self.clients.insert(conn, Some(id));
                     self.sync_after_attach(id, conn);
                 } else {
-                    self.deliver(
+                    self.deliver_msg(
                         conn,
-                        shared::encode(&ServerMessage::JoinFailed {
+                        &ServerMessage::JoinFailed {
                             reason: "Room indisponible".into(),
-                        }),
+                        },
                     );
                 }
             }
@@ -608,7 +647,7 @@ impl Manager {
                         })
                         .unwrap_or(false);
                     if restarted {
-                        self.send_room(id, shared::encode(&ServerMessage::Restart));
+                        self.send_room_msg(id, &ServerMessage::Restart);
                     }
                 }
             }
@@ -632,13 +671,13 @@ impl Manager {
                     .find(|(_, uid)| **uid == target_uuid)
                     .map(|(&c, _)| c);
                 if let Some(tc) = target_conn {
-                    self.deliver(
+                    self.deliver_msg(
                         tc,
-                        shared::encode(&ServerMessage::FriendInvitation {
+                        &ServerMessage::FriendInvitation {
                             from_username,
                             room_id,
                             room_name,
-                        }),
+                        },
                     );
                 }
             }
@@ -686,11 +725,11 @@ impl Manager {
         self.send_lobby(id);
         match resume {
             (true, true) => {
-                self.send_room(id, shared::encode(&ServerMessage::GameStart));
+                self.send_room_msg(id, &ServerMessage::GameStart);
             }
             (true, false) => {
-                self.deliver(conn, shared::encode(&ServerMessage::GameStart));
-                self.deliver(conn, shared::encode(&ServerMessage::OpponentDisconnected));
+                self.deliver_msg(conn, &ServerMessage::GameStart);
+                self.deliver_msg(conn, &ServerMessage::OpponentDisconnected);
             }
             _ => {}
         }
@@ -724,7 +763,7 @@ impl Manager {
         };
 
         if notify {
-            self.send_room(id, shared::encode(&ServerMessage::OpponentDisconnected));
+            self.send_room_msg(id, &ServerMessage::OpponentDisconnected);
         }
         if !in_game {
             self.send_lobby(id);
@@ -848,22 +887,27 @@ impl Manager {
             if start_now {
                 room.phase = Phase::Playing;
                 room.sim.reset_boards(&room.settings);
-                let payload = shared::encode(&ServerMessage::GameStart);
-                for m in &room.members {
-                    if let Some(c) = m.conn {
-                        outgoing.push((c, payload.clone()));
+                match shared::encode(&ServerMessage::GameStart) {
+                    Ok(payload) => {
+                        for m in &room.members {
+                            if let Some(c) = m.conn {
+                                outgoing.push((c, payload.clone()));
+                            }
+                        }
                     }
+                    Err(e) => error!("encode GameStart failed: {e}"),
                 }
                 list_changed = true;
             } else if cd_changed {
                 for (i, m) in room.members.iter().enumerate() {
                     if let Some(c) = m.conn {
-                        outgoing.push((
-                            c,
-                            shared::encode(&ServerMessage::Lobby {
-                                info: room.lobby_info_for(i),
-                            }),
-                        ));
+                        let msg = ServerMessage::Lobby {
+                            info: room.lobby_info_for(i),
+                        };
+                        match shared::encode(&msg) {
+                            Ok(payload) => outgoing.push((c, payload)),
+                            Err(e) => error!("encode Lobby failed: {e}"),
+                        }
                     }
                 }
             }
@@ -934,16 +978,37 @@ impl Manager {
                     }
                 }
                 if (do_broadcast && advanced) || just_finished {
-                    let upd = shared::encode(&ServerMessage::StateUpdate {
+                    // Include each board's RNG only if it advanced since the last broadcast
+                    // (piece_id changed) or there is no baseline yet; otherwise omit it and
+                    // let the client reuse the RNG it already has.
+                    let baseline = room.sim.last_sent_piece_id;
+                    let pid = [room.sim.boards[0].piece_id, room.sim.boards[1].piece_id];
+                    let rng_if_changed = |i: usize| {
+                        // `just_finished` forces a full RNG send: a garbage drop that ends
+                        // the game advances the RNG without bumping piece_id, so the normal
+                        // change detector would miss it and leave the final snapshot's RNG
+                        // one step stale.
+                        let changed = just_finished || baseline.is_none_or(|ids| ids[i] != pid[i]);
+                        changed.then(|| Box::new(room.sim.boards[i].rng_state()))
+                    };
+                    let msg = ServerMessage::StateUpdate {
                         p1_board: Box::new(room.sim.boards[0].clone()),
                         p2_board: Box::new(room.sim.boards[1].clone()),
+                        p1_rng: rng_if_changed(0),
+                        p2_rng: rng_if_changed(1),
                         p1_ack: room.sim.last_seq[0],
                         p2_ack: room.sim.last_seq[1],
-                    });
-                    for m in &room.members {
-                        if let Some(c) = m.conn {
-                            outgoing.push((c, upd.clone()));
+                    };
+                    room.sim.last_sent_piece_id = Some(pid);
+                    match shared::encode(&msg) {
+                        Ok(upd) => {
+                            for m in &room.members {
+                                if let Some(c) = m.conn {
+                                    outgoing.push((c, upd.clone()));
+                                }
+                            }
                         }
+                        Err(e) => error!("encode StateUpdate failed: {e}"),
                     }
                 }
             }

@@ -6,14 +6,9 @@ use serde::{Deserialize, Serialize};
 pub mod config;
 use crate::config::*;
 
-pub fn encode<T: serde::Serialize>(msg: &T) -> Vec<u8> {
-    match bitcode::serialize(msg) {
-        Ok(raw) => lz4_flex::compress_prepend_size(&raw),
-        Err(e) => {
-            eprintln!("[encode] serialization failed: {e}");
-            Vec::new()
-        }
-    }
+pub fn encode<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, bitcode::Error> {
+    let raw = bitcode::serialize(msg)?;
+    Ok(lz4_flex::compress_prepend_size(&raw))
 }
 
 pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
@@ -153,6 +148,13 @@ pub enum ServerMessage {
     StateUpdate {
         p1_board: Box<Board>,
         p2_board: Box<Board>,
+        // The board's RNG is excluded from its own wire format (see `Board::rng`) and
+        // carried here instead. It only changes when a new piece spawns, so it is sent
+        // as `Some` on snapshots and on the frames where it advanced, and `None` the rest
+        // of the time — the client keeps the RNG it already holds. This trims ~64% off a
+        // routine update. See `Board::rng_state` / `Board::set_rng`.
+        p1_rng: Option<Box<rand_chacha::ChaCha12Rng>>,
+        p2_rng: Option<Box<rand_chacha::ChaCha12Rng>>,
         p1_ack: u32,
         p2_ack: u32,
     },
@@ -252,7 +254,18 @@ pub struct Board {
     pub resolve_timer: f32,
     #[serde(default)]
     pub garbage_delay_timer: f32,
+    // Excluded from the wire format: the client never advances the RNG (it only replays
+    // inputs, which don't consume it), and sending its ~36-byte state every frame was the
+    // bulk of a board update. It travels separately and only when needed via
+    // `ServerMessage::StateUpdate::p1_rng`. On deserialize this is filled with a throwaway
+    // RNG; callers that need the real one restore it with `set_rng`.
+    #[serde(skip, default = "default_rng")]
     rng: rand_chacha::ChaCha12Rng,
+}
+
+fn default_rng() -> rand_chacha::ChaCha12Rng {
+    use rand::SeedableRng;
+    rand_chacha::ChaCha12Rng::seed_from_u64(0)
 }
 
 impl Board {
@@ -716,6 +729,17 @@ impl Board {
 
     pub fn level(&self) -> u32 {
         self.start_level + (self.played_time / LEVEL_DURATION) as u32
+    }
+
+    /// A copy of the current RNG state, for transmitting it alongside (but separately
+    /// from) the board see `ServerMessage::StateUpdate`.
+    pub fn rng_state(&self) -> rand_chacha::ChaCha12Rng {
+        self.rng.clone()
+    }
+
+    /// Restore the RNG state on a board deserialized from the wire (where it was skipped).
+    pub fn set_rng(&mut self, rng: rand_chacha::ChaCha12Rng) {
+        self.rng = rng;
     }
 
     pub fn apply_input(&mut self, input: InputKind) {
