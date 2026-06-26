@@ -593,6 +593,8 @@ fn draw_profile_view(
     logout_btn.draw(draw, app, font, "Déconnexion");
 }
 
+// Rendering helper: positional geometry/style args don't benefit from a struct here.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_match_row(
     draw: &mut Draw,
     app: &App,

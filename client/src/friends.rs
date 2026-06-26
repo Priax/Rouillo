@@ -708,6 +708,8 @@ pub fn draw_friends(app: &mut App, gfx: &mut Graphics, state: &State) {
     gfx.render(&draw);
 }
 
+// Rendering helper: positional geometry/style args don't benefit from a struct here.
+#[allow(clippy::too_many_arguments)]
 fn draw_col<F>(
     draw: &mut Draw,
     app: &App,

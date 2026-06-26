@@ -47,7 +47,7 @@ impl Btn {
         draw.rect((self.x, self.y), (self.w, self.h)).color(bg);
         draw.rect((self.x, self.y), (self.w, self.h)).stroke(2.0).color(border);
         let n = label.chars().count().max(1) as f32;
-        let font_size = (28.0_f32 * (self.w - 20.0) / (n * 17.5)).min(28.0).max(11.0);
+        let font_size = (28.0_f32 * (self.w - 20.0) / (n * 17.5)).clamp(11.0, 28.0);
         draw.text(font, label)
             .position(self.x + self.w / 2.0, self.y + self.h / 2.0)
             .size(font_size)
@@ -57,6 +57,9 @@ impl Btn {
     }
 }
 
+// Rendering helper: positional geometry args (x/y/w/h + style) don't benefit from
+// being bundled into a struct here.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_text_box(
     draw: &mut Draw,
     font: &crate::Font,

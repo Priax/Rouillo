@@ -35,6 +35,10 @@ fn state_update(p1: &Board, p2: &Board) -> ServerMessage {
     ServerMessage::StateUpdate {
         p1_board: Box::new(p1.clone()),
         p2_board: Box::new(p2.clone()),
+        // Snapshot-style update: RNG present (worst-case payload), matching the
+        // server's full-send path. Routine updates send `None` here.
+        p1_rng: Some(Box::new(p1.rng_state())),
+        p2_rng: Some(Box::new(p2.rng_state())),
         p1_ack: 0,
         p2_ack: 0,
     }
@@ -43,8 +47,8 @@ fn state_update(p1: &Board, p2: &Board) -> ServerMessage {
 fn bench_codec(c: &mut Criterion) {
     let empty = state_update(&empty_board(), &empty_board());
     let full = state_update(&full_board(), &full_board());
-    let empty_bytes = encode(&empty);
-    let full_bytes = encode(&full);
+    let empty_bytes = encode(&empty).expect("encode empty StateUpdate");
+    let full_bytes = encode(&full).expect("encode full StateUpdate");
 
     c.bench_function("encode_state_update_empty", |b| b.iter(|| encode(black_box(&empty))));
     c.bench_function("encode_state_update_full", |b| b.iter(|| encode(black_box(&full))));
