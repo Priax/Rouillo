@@ -24,7 +24,13 @@ fn api_base() -> String {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::env::var("PUYO_API").unwrap_or_else(|_| format!("http://127.0.0.1:{}", config::SERVER_PORT))
+        std::env::var("PUYO_API").unwrap_or_else(|_| {
+            if cfg!(debug_assertions) {
+                format!("http://127.0.0.1:{}", config::SERVER_PORT)
+            } else {
+                config::API_URL_RELEASE.to_string()
+            }
+        })
     }
 }
 

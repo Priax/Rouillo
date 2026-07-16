@@ -1121,6 +1121,10 @@ async fn main() {
     let pool = db::init_pool(&database_url)
         .await
         .expect("Failed to connect to database");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
     info!("DB connectée");
     tokio::task::spawn_blocking(db::dummy_hash)
         .await

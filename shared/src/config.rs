@@ -38,5 +38,5 @@ pub const SERVER_BIND_ADDRESS: [u8; 4] = [0, 0, 0, 0];
 
 pub const SERVER_URL: &str = "ws://127.0.0.1:8080/ws";
 
-// à remplacer par mon vrai domaine
-pub const SERVER_URL_RELEASE: &str = "wss://puyo.duckdns.org/ws";
+pub const SERVER_URL_RELEASE: &str = "wss://puyo.priax.org/ws";
+pub const API_URL_RELEASE: &str = "https://puyo.priax.org";
