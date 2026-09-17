@@ -8,7 +8,7 @@ notan = "0.14.0"
 rand = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-ewebsock = "0.8"
+ewebsock = { version = "0.8", features = ["tls"] }
 ehttp = "0.5"
 shared = { path = "../shared" }
 

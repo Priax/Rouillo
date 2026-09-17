@@ -34,7 +34,11 @@ fn api_base() -> String {
     }
 }
 
+// Replaces any existing header of the same name (case-insensitive): `ehttp::Request::post`
+// presets `Content-Type: text/plain`, and ureq only dedups exact-case names, so pushing
+// `content-type` would send both and warp's JSON filter rejects the request.
 fn push_header(req: &mut ehttp::Request, key: &str, value: String) {
+    req.headers.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(key));
     req.headers.headers.push((key.to_owned(), value));
 }
 
