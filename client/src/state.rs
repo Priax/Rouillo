@@ -1,7 +1,7 @@
-use ewebsock::{WsMessage, WsReceiver, WsSender};
 use notan::prelude::*;
-use shared::{config, Board, ClientMessage, InputKind, LobbyInfo, RoomId, RoomInfo};
+use shared::{config, Board, InputKind, LobbyInfo, RoomId, RoomInfo};
 
+use crate::connection::Connection;
 use crate::Font;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -17,6 +17,15 @@ pub enum Screen {
     Profile,
     Friends,
     OtherProfile,
+}
+
+impl Screen {
+    pub fn needs_connection(self) -> bool {
+        matches!(
+            self,
+            Screen::RoomBrowser | Screen::CreateRoom | Screen::JoinById | Screen::RoomLobby | Screen::Game
+        )
+    }
 }
 
 pub use crate::http::HttpSlot;
@@ -300,20 +309,6 @@ impl Settings {
     }
 }
 
-pub struct Net {
-    pub ws_sender: WsSender,
-    pub ws_receiver: WsReceiver,
-}
-
-impl Net {
-    pub fn send(&mut self, msg: &ClientMessage) {
-        match shared::encode(msg) {
-            Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-            Err(e) => eprintln!("[send] encode failed: {e}"),
-        }
-    }
-}
-
 pub struct GameSession {
     pub board: Board,
     pub predicted_board: Board,
@@ -402,7 +397,7 @@ pub struct State {
     pub screen: Screen,
     pub settings: Settings,
     pub player_id: String,
-    pub net: Option<Net>,
+    pub conn: Connection,
     pub rooms: Vec<RoomInfo>,
     pub lobby: Option<LobbyInfo>,
     pub text_input: String,
@@ -425,11 +420,12 @@ pub struct State {
 
 impl State {
     pub fn new(font: Font, ui_font: Font) -> Self {
+        let player_id = load_or_create_player_id();
         Self {
             screen: Screen::Auth,
             settings: Settings::default(),
-            player_id: load_or_create_player_id(),
-            net: None,
+            player_id: player_id.clone(),
+            conn: Connection::new(&player_id),
             rooms: Vec::new(),
             lobby: None,
             text_input: String::new(),

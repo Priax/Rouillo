@@ -19,7 +19,7 @@ use warp::Filter;
 type ConnId = u64;
 type Token = String;
 
-const GRACE: Duration = Duration::from_secs(120);
+const GRACE: Duration = Duration::from_secs(config::RECONNECT_GRACE_SECS);
 
 const CLIENT_CHAN_CAP: usize = 128;
 
@@ -44,10 +44,6 @@ struct Sim {
     prev_chain: [u32; 2],
     prev_all_clear: [bool; 2],
     prev_piece_id: [u32; 2],
-    // piece_id of each board as of the last broadcast. The board RNG only advances when a
-    // piece spawns (which always bumps piece_id), so an unchanged piece_id means we can
-    // omit the RNG from the next StateUpdate. `None` forces a full send (game start /
-    // first frame), guaranteeing the client has an RNG before any RNG-less update arrives.
     last_sent_piece_id: Option<[u32; 2]>,
 }
 
@@ -201,6 +197,7 @@ enum Command {
         token: Token,
         user_id: Option<Uuid>,
         username: Option<String>,
+        last_disconnect_reason: Option<String>,
     },
     RequestRoomList {
         conn: ConnId,
@@ -286,8 +283,6 @@ impl Manager {
         }
     }
 
-    /// Encode `msg` and deliver it to a single connection, dropping the message
-    /// (with a log line) rather than sending a corrupt payload if encoding fails.
     fn deliver_msg(&mut self, conn: ConnId, msg: &ServerMessage) {
         match shared::encode(msg) {
             Ok(payload) => self.deliver(conn, payload),
@@ -295,7 +290,6 @@ impl Manager {
         }
     }
 
-    /// Encode `msg` once and deliver it to every connected member of a room.
     fn send_room_msg(&mut self, id: RoomId, msg: &ServerMessage) {
         match shared::encode(msg) {
             Ok(payload) => self.send_room(id, payload),
@@ -342,8 +336,6 @@ impl Manager {
 
     fn send_snapshot(&mut self, id: RoomId) {
         let msg = match self.rooms.get(&id) {
-            // A snapshot is a fresh baseline (reconnect / resume), so it always carries the
-            // full RNG state so the receiver is fully in sync.
             Some(room) => ServerMessage::StateUpdate {
                 p1_board: Box::new(room.sim.boards[0].clone()),
                 p2_board: Box::new(room.sim.boards[1].clone()),
@@ -412,7 +404,11 @@ impl Manager {
                 token,
                 user_id,
                 username,
+                last_disconnect_reason,
             } => {
+                if let Some(reason) = last_disconnect_reason {
+                    warn!("WS {conn} reconnecte après coupure client : {reason}");
+                }
                 self.conn_token.insert(conn, token.clone());
                 if let Some(uid) = user_id {
                     self.conn_user_id.insert(conn, uid);
@@ -978,16 +974,9 @@ impl Manager {
                     }
                 }
                 if (do_broadcast && advanced) || just_finished {
-                    // Include each board's RNG only if it advanced since the last broadcast
-                    // (piece_id changed) or there is no baseline yet; otherwise omit it and
-                    // let the client reuse the RNG it already has.
                     let baseline = room.sim.last_sent_piece_id;
                     let pid = [room.sim.boards[0].piece_id, room.sim.boards[1].piece_id];
                     let rng_if_changed = |i: usize| {
-                        // `just_finished` forces a full RNG send: a garbage drop that ends
-                        // the game advances the RNG without bumping piece_id, so the normal
-                        // change detector would miss it and leave the final snapshot's RNG
-                        // one step stale.
                         let changed = just_finished || baseline.is_none_or(|ids| ids[i] != pid[i]);
                         changed.then(|| Box::new(room.sim.boards[i].rng_state()))
                     };
@@ -1218,6 +1207,7 @@ async fn handle_connection(
                                 player_id,
                                 auth_token,
                                 username,
+                                last_disconnect_reason,
                             } => {
                                 let user_id = match auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok()) {
                                     Some(token_uuid) => db::find_user_by_token(&pool, token_uuid)
@@ -1232,6 +1222,7 @@ async fn handle_connection(
                                     token: player_id,
                                     user_id,
                                     username,
+                                    last_disconnect_reason,
                                 }
                             }
                             ClientMessage::Input { kind, seq } => Command::Input { conn, kind, seq },

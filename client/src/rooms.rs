@@ -14,9 +14,7 @@ fn win_h(app: &mut App) -> f32 {
 }
 
 fn send(state: &mut State, msg: &ClientMessage) {
-    if let Some(net) = state.net.as_mut() {
-        net.send(msg);
-    }
+    state.conn.send(msg);
 }
 
 pub fn leave_room_button(w: f32, h: f32) -> Btn {
@@ -96,7 +94,7 @@ pub fn update_browser(app: &mut App, state: &mut State) {
     } else if b.refresh.clicked(app) {
         send(state, &ClientMessage::RequestRoomList);
     } else if b.back.clicked(app) {
-        state.net = None;
+        state.conn.disconnect();
         state.rooms.clear();
         state.screen = Screen::Menu;
     }

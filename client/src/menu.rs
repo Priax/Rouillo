@@ -2,7 +2,7 @@ use notan::draw::*;
 use notan::prelude::*;
 
 use crate::http;
-use crate::state::{AuthForm, Net, Screen, Settings, State};
+use crate::state::{AuthForm, Screen, Settings, State};
 
 #[derive(Clone, Copy)]
 pub struct Btn {
@@ -57,8 +57,6 @@ impl Btn {
     }
 }
 
-// Rendering helper: positional geometry args (x/y/w/h + style) don't benefit from
-// being bundled into a struct here.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_text_box(
     draw: &mut Draw,
@@ -358,17 +356,10 @@ pub fn draw_settings(app: &mut App, gfx: &mut Graphics, state: &State) {
 }
 
 fn start_play(state: &mut State) {
-    match ewebsock::connect(crate::server_url(), ewebsock::Options::default()) {
-        Ok((ws_sender, ws_receiver)) => {
-            state.net = Some(Net { ws_sender, ws_receiver });
-            state.rooms.clear();
-            state.notice.clear();
-            state.screen = Screen::RoomBrowser;
-        }
-        Err(e) => {
-            eprintln!("Connexion au serveur impossible : {e}");
-        }
-    }
+    state.conn.connect(crate::connection::now_secs());
+    state.rooms.clear();
+    state.notice.clear();
+    state.screen = Screen::RoomBrowser;
 }
 
 fn win_w(app: &mut App) -> f32 {

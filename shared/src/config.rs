@@ -34,6 +34,17 @@ pub const CHANNEL_CAPACITY: usize = 256;
 pub const SERVER_TICK_HZ: u64 = 60;
 pub const STATE_BROADCAST_HZ: u64 = 60;
 
+/// How long the server holds a disconnected player's slot before reaping it.
+///
+/// Shared because the client's reconnection window is derived from it: a client
+/// that kept retrying past this would reconnect into a slot that no longer
+/// exists. Changing this value moves both sides at once.
+pub const RECONNECT_GRACE_SECS: u64 = 120;
+
+/// Margin the client stops short of `RECONNECT_GRACE_SECS`, so its last attempt
+/// still lands inside the server's window.
+pub const RECONNECT_MARGIN_SECS: u64 = 5;
+
 pub const SERVER_BIND_ADDRESS: [u8; 4] = [0, 0, 0, 0];
 
 pub const SERVER_URL: &str = "ws://127.0.0.1:8080/ws";

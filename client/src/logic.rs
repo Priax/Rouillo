@@ -1,20 +1,31 @@
 use notan::prelude::*;
 use shared::*;
 
-use crate::state::{GameSession, Net, Settings};
+use crate::connection::Connection;
+use crate::state::{GameSession, Settings};
 
-pub fn update_game(app: &mut App, session: &mut GameSession, settings: &Settings, net: &mut Net, is_host: bool) {
+pub fn update_game(
+    app: &mut App,
+    session: &mut GameSession,
+    settings: &Settings,
+    conn: &mut Connection,
+    is_host: bool,
+) {
+    if !conn.is_live() {
+        return;
+    }
+
     let game_over = session.board.state == GameState::GameOver || session.other_board.state == GameState::GameOver;
     let paused = session.board.state == GameState::Paused;
 
     if paused || game_over || session.opponent_disconnected {
         let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
         if crate::rooms::leave_room_button(ww, wh).clicked(app) {
-            net.send(&ClientMessage::LeaveRoom);
+            conn.send(&ClientMessage::LeaveRoom);
             return;
         }
         if is_host && crate::rooms::back_to_lobby_button(ww, wh).clicked(app) {
-            net.send(&ClientMessage::ReturnToLobby);
+            conn.send(&ClientMessage::ReturnToLobby);
             return;
         }
     }
@@ -23,11 +34,11 @@ pub fn update_game(app: &mut App, session: &mut GameSession, settings: &Settings
         return;
     }
 
-    handle_global_input(app, session, net);
+    handle_global_input(app, session, conn);
 
     let dt = app.timer.delta_f32();
     if !game_over && session.predicted_board.state == GameState::Playing {
-        handle_game_input(app, session, settings, net, dt);
+        handle_game_input(app, session, settings, conn, dt);
         session.predicted_board.predict_fall(dt);
     } else {
         session.key_timer_left = 0.0;
@@ -64,7 +75,7 @@ pub fn update_game(app: &mut App, session: &mut GameSession, settings: &Settings
 const PIECE_SMOOTH_RATE: f32 = 22.0;
 const OPPONENT_SMOOTH_RATE: f32 = 35.0;
 
-fn send_input(session: &mut GameSession, net: &mut Net, kind: InputKind) {
+fn send_input(session: &mut GameSession, conn: &mut Connection, kind: InputKind) {
     match kind {
         InputKind::MoveLeft | InputKind::MoveRight => crate::audio::play_move(),
         InputKind::RotateCW | InputKind::RotateCCW => crate::audio::play_rotate(),
@@ -76,43 +87,49 @@ fn send_input(session: &mut GameSession, net: &mut Net, kind: InputKind) {
     session.predicted_board.apply_input(kind);
     session.pending_inputs.push((seq, kind));
     session.sent_at.push((seq, session.clock));
-    net.send(&ClientMessage::Input { kind, seq });
+    conn.send(&ClientMessage::Input { kind, seq });
 }
 
-fn handle_global_input(app: &mut App, session: &mut GameSession, net: &mut Net) {
+fn handle_global_input(app: &mut App, session: &mut GameSession, conn: &mut Connection) {
     let can_restart = session.board.state == GameState::GameOver || session.other_board.state == GameState::GameOver;
     if app.keyboard.was_pressed(KeyCode::KeyR) && can_restart {
-        net.send(&ClientMessage::RequestRestart);
+        conn.send(&ClientMessage::RequestRestart);
     }
 
     if app.keyboard.was_pressed(KeyCode::Escape) {
-        net.send(&ClientMessage::TogglePause);
+        conn.send(&ClientMessage::TogglePause);
     }
 
     let _ = session;
 }
 
-fn handle_game_input(app: &mut App, session: &mut GameSession, settings: &Settings, net: &mut Net, delta_time: f32) {
+fn handle_game_input(
+    app: &mut App,
+    session: &mut GameSession,
+    settings: &Settings,
+    conn: &mut Connection,
+    delta_time: f32,
+) {
     if app.keyboard.was_pressed(KeyCode::ArrowUp) || app.keyboard.was_pressed(KeyCode::KeyZ) {
-        send_input(session, net, InputKind::RotateCW);
+        send_input(session, conn, InputKind::RotateCW);
     }
     if app.keyboard.was_pressed(KeyCode::KeyX) || app.keyboard.was_pressed(KeyCode::KeyW) {
-        send_input(session, net, InputKind::RotateCCW);
+        send_input(session, conn, InputKind::RotateCCW);
     }
 
     if app.keyboard.was_pressed(KeyCode::Space) || app.keyboard.was_pressed(KeyCode::Enter) {
-        send_input(session, net, InputKind::HardDrop);
+        send_input(session, conn, InputKind::HardDrop);
         return;
     }
 
     if app.keyboard.is_down(KeyCode::ArrowLeft) {
         if session.key_timer_left == 0.0 {
-            send_input(session, net, InputKind::MoveLeft);
+            send_input(session, conn, InputKind::MoveLeft);
             session.key_timer_left = 0.0001;
         } else {
             session.key_timer_left += delta_time;
             while session.key_timer_left > settings.das_delay + settings.das_speed {
-                send_input(session, net, InputKind::MoveLeft);
+                send_input(session, conn, InputKind::MoveLeft);
                 session.key_timer_left -= settings.das_speed;
             }
         }
@@ -122,12 +139,12 @@ fn handle_game_input(app: &mut App, session: &mut GameSession, settings: &Settin
 
     if app.keyboard.is_down(KeyCode::ArrowRight) {
         if session.key_timer_right == 0.0 {
-            send_input(session, net, InputKind::MoveRight);
+            send_input(session, conn, InputKind::MoveRight);
             session.key_timer_right = 0.0001;
         } else {
             session.key_timer_right += delta_time;
             while session.key_timer_right > settings.das_delay + settings.das_speed {
-                send_input(session, net, InputKind::MoveRight);
+                send_input(session, conn, InputKind::MoveRight);
                 session.key_timer_right -= settings.das_speed;
             }
         }
@@ -138,7 +155,7 @@ fn handle_game_input(app: &mut App, session: &mut GameSession, settings: &Settin
     if app.keyboard.is_down(KeyCode::ArrowDown) {
         session.key_timer_down += delta_time;
         if session.key_timer_down > settings.soft_drop_speed {
-            send_input(session, net, InputKind::SoftDrop);
+            send_input(session, conn, InputKind::SoftDrop);
             session.key_timer_down = 0.0;
         }
     } else {

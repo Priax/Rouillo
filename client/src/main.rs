@@ -4,6 +4,7 @@ use notan::prelude::*;
 use shared::{config, ClientMessage};
 
 mod audio;
+mod connection;
 mod draw;
 mod friends;
 mod http;
@@ -17,7 +18,7 @@ mod rooms;
 mod state;
 
 use menu::Btn;
-use state::{Net, Screen, State};
+use state::{Screen, State};
 
 pub fn server_url() -> String {
     #[cfg(all(target_arch = "wasm32", not(debug_assertions)))]
@@ -121,15 +122,13 @@ fn update_invitation(app: &mut App, state: &mut State) {
     };
     if accept_btn.clicked(app) {
         if let Some((_, room_id, _)) = state.pending_invitation.take() {
-            if state.net.is_none() {
-                if let Ok((ws_sender, ws_receiver)) = ewebsock::connect(server_url(), ewebsock::Options::default()) {
-                    state.net = Some(Net { ws_sender, ws_receiver });
-                    state.rooms.clear();
-                    state.pending_join = Some(room_id);
-                    state.screen = Screen::RoomBrowser;
-                }
-            } else if let Some(net) = state.net.as_mut() {
-                net.send(&ClientMessage::JoinRoom { id: room_id });
+            if state.conn.is_live() {
+                state.conn.send(&ClientMessage::JoinRoom { id: room_id });
+                state.screen = Screen::RoomBrowser;
+            } else {
+                state.conn.connect(connection::now_secs());
+                state.rooms.clear();
+                state.pending_join = Some(room_id);
                 state.screen = Screen::RoomBrowser;
             }
         }
@@ -164,10 +163,13 @@ fn update(app: &mut App, state: &mut State) {
         Screen::Game => {
             let is_host = state.lobby.as_ref().map(|l| l.is_host).unwrap_or(false);
             let State {
-                session, settings, net, ..
+                session,
+                settings,
+                conn,
+                ..
             } = &mut *state;
-            if let (Some(session), Some(net)) = (session, net) {
-                logic::update_game(app, session, settings, net, is_host);
+            if let Some(session) = session {
+                logic::update_game(app, session, settings, conn, is_host);
             }
         }
     }
@@ -226,6 +228,27 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         }
     }
     draw_invitation_banner(app, gfx, state);
+    draw_reconnect_banner(app, gfx, state);
+}
+
+fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
+    let Some((attempts, secs_left)) = state.conn.recovering(connection::now_secs()) else {
+        return;
+    };
+    let ww = app.window().width() as f32;
+    let mut d = gfx.create_draw();
+    d.rect((0.0, 0.0), (ww, 44.0))
+        .color(Color::from_rgba(0.35, 0.18, 0.05, 0.96));
+    d.rect((0.0, 44.0), (ww, 2.0)).color(Color::from_rgb(0.9, 0.6, 0.2));
+    let dots = ".".repeat(1 + (app.timer.elapsed_f32() * 2.0) as usize % 3);
+    let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
+    d.text(&state.font, &msg)
+        .position(ww / 2.0, 22.0)
+        .size(20.0)
+        .h_align_center()
+        .v_align_middle()
+        .color(Color::from_rgb(1.0, 0.85, 0.6));
+    gfx.render(&d);
 }
 
 #[notan_main]

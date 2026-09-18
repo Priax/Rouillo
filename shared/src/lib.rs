@@ -116,6 +116,12 @@ pub enum ClientMessage {
         player_id: String,
         auth_token: Option<String>,
         username: Option<String>,
+        /// Why the previous connection ended, when this Hello follows a drop.
+        ///
+        /// Client-side stderr is unreachable for a player running a released
+        /// GUI binary, so the reason rides along here and is logged server-side
+        /// where it can actually be read.
+        last_disconnect_reason: Option<String>,
     },
     Input {
         kind: InputKind,

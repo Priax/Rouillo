@@ -1,52 +1,63 @@
-use ewebsock::{WsEvent, WsMessage};
 use shared::*;
 
+use crate::connection::ConnEvent;
 use crate::state::{GameSession, Screen, State};
 
+/// Polls the connection and applies what it reports to the UI state.
+///
+/// All transport concerns — backoff, dialling, deadlines — live in
+/// [`Connection`]; this function only decides what each outcome means for the
+/// screen the player is looking at.
 pub fn handle_server_messages(state: &mut State) {
-    let mut msgs = Vec::new();
-    let mut lost = false;
-    let player_id = state.player_id.clone();
-    let auth_token = state.auth.as_ref().map(|a| a.token.clone());
-    let username = state.auth.as_ref().map(|a| a.username.clone());
-    let pending_join = state.pending_join.take();
-    if let Some(net) = state.net.as_mut() {
-        while let Some(event) = net.ws_receiver.try_recv() {
-            match event {
-                WsEvent::Opened => {
-                    net.send(&ClientMessage::Hello {
-                        player_id: player_id.clone(),
-                        auth_token: auth_token.clone(),
-                        username: username.clone(),
-                    });
-                    if let Some(id) = pending_join {
-                        net.send(&ClientMessage::JoinRoom { id });
-                    }
+    let now = crate::connection::now_secs();
+    for event in state.conn.poll(now) {
+        match event {
+            ConnEvent::Opened { recovered } => on_opened(state, recovered),
+            ConnEvent::Message(msg) => process_message(state, *msg),
+            ConnEvent::Retrying => {
+                if !state.screen.needs_connection() {
+                    // Nothing on screen depends on the server; drop the attempt
+                    // rather than reconnect for a session that does not exist.
+                    state.conn.disconnect();
+                    reset_to_menu(state, "Connexion au serveur perdue.");
+                } else {
+                    state.notice = "Connexion perdue — reconnexion…".to_string();
                 }
-                WsEvent::Message(WsMessage::Binary(bytes)) => {
-                    if let Some(m) = shared::decode::<ServerMessage>(&bytes) {
-                        msgs.push(m);
-                    }
-                }
-                WsEvent::Closed | WsEvent::Error(_) => {
-                    lost = true;
-                }
-                _ => {}
             }
+            ConnEvent::GaveUp => reset_to_menu(state, "Connexion au serveur perdue."),
         }
     }
-    if lost {
-        state.net = None;
-        state.session = None;
-        state.lobby = None;
-        state.rooms.clear();
-        state.screen = Screen::Menu;
-        state.notice = "Connexion au serveur perdue.".to_string();
-        return;
+}
+
+/// The socket is open: identify ourselves. The server answers `Hello` with a
+/// `rejoin` and a fresh snapshot when it still holds a slot for this player, so
+/// nothing else is needed to recover a game.
+fn on_opened(state: &mut State, recovered: bool) {
+    let hello = ClientMessage::Hello {
+        player_id: state.player_id.clone(),
+        auth_token: state.auth.as_ref().map(|a| a.token.clone()),
+        username: state.auth.as_ref().map(|a| a.username.clone()),
+        last_disconnect_reason: state.conn.take_unreported_drop(),
+    };
+    state.conn.send(&hello);
+    // Only spend `pending_join` once we are actually open: the dial is
+    // asynchronous, so taking it earlier discarded it every time.
+    if let Some(id) = state.pending_join.take() {
+        state.conn.send(&ClientMessage::JoinRoom { id });
     }
-    for m in msgs {
-        process_message(state, m);
+    if recovered {
+        state.notice.clear();
     }
+}
+
+/// Tears everything down and returns to the menu. Only for when the connection
+/// is gone for good — a live reconnection leaves the session in place.
+fn reset_to_menu(state: &mut State, notice: &str) {
+    state.session = None;
+    state.lobby = None;
+    state.rooms.clear();
+    state.screen = Screen::Menu;
+    state.notice = notice.to_string();
 }
 
 fn process_message(state: &mut State, msg: ServerMessage) {

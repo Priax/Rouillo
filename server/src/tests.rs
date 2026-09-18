@@ -1,11 +1,5 @@
 use super::*;
 
-/// Build a Manager for tests. None of the tested paths touch the database
-/// (no friends-only joins, no match persistence), so a lazily-connected pool
-/// that never actually opens a socket is sufficient. `connect_lazy` still spawns
-/// the pool's maintenance task, so it must run inside a Tokio context: we keep a
-/// persistent runtime alive for the whole test binary and enter it just long
-/// enough to construct the pool.
 fn new_mgr() -> Manager {
     use std::sync::OnceLock;
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -23,6 +17,7 @@ fn reg(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<Vec<u8>> {
 
 fn hello(mgr: &mut Manager, conn: ConnId, token: &str) {
     mgr.handle(Command::Hello {
+        last_disconnect_reason: None,
         conn,
         token: token.to_string(),
         user_id: None,
@@ -137,8 +132,6 @@ fn countdown_starts_game_after_delay() {
     assert!(has(&drain(&mut rx1), |m| matches!(m, ServerMessage::GameStart)));
 }
 
-// A dropped player keeps their seat (grace period); reconnecting with the same
-// token on a fresh connection re-attaches to that exact seat.
 #[test]
 fn disconnect_reserves_seat_then_reconnect_restores_it() {
     let mut mgr = new_mgr();
