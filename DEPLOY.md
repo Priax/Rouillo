@@ -267,12 +267,21 @@ Sur la VM :
 
 ```bash
 cd ~/puyorust && git pull && cargo build --release -p server \
-  && sudo cp target/release/server /opt/puyorust/server \
+  && sudo cp target/release/server /opt/puyorust/server.new \
+  && sudo chmod +x /opt/puyorust/server.new \
+  && sudo mv /opt/puyorust/server.new /opt/puyorust/server \
   && sudo systemctl restart puyo \
   && journalctl -u puyo -n 5 --no-pager
 ```
 
-Si `shared/` a changé (protocole), republier aussi le client (tag `vX.Y.Z`).
+**Pas de `cp` direct sur `/opt/puyorust/server`** : le binaire est en cours d'exécution,
+`cp` échoue avec `Text file busy`. On copie à côté puis `mv` (renommage atomique : le
+processus en cours garde l'ancien fichier jusqu'au `restart`).
+
+Le redémarrage **coupe les parties en cours** (rooms en mémoire) : déployer quand personne ne joue.
+
+Si `shared/` a changé (protocole), republier aussi le client (tag `vX.Y.Z`) : un ancien
+client ne peut plus parler au nouveau serveur (bitcode n'est pas auto-descriptif).
 
 ## Pièges rencontrés
 
@@ -284,3 +293,4 @@ Si `shared/` a changé (protocole), republier aussi le client (tag `vX.Y.Z`).
 | Client natif : « connexion au serveur perdue » sur Play | ewebsock compilé sans TLS → pas de `wss://` | `ewebsock = { features = ["tls"] }` — v0.7.0 |
 | `ping puyo.priax.org` ne répond pas | ICMP echo bloqué par la Security List | Normal, tester avec `curl` (§9) |
 | Caddy n'obtient pas de certificat | DNS absent ou proxy Cloudflare orange | Enregistrement A en *DNS only* (§8) |
+| `cp: cannot create regular file '/opt/puyorust/server': Text file busy` | Binaire en cours d'exécution | Copier en `.new` puis `mv` (§12) |

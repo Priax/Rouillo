@@ -1,7 +1,7 @@
 mod auth;
 mod db;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -22,6 +22,122 @@ type Token = String;
 const GRACE: Duration = Duration::from_secs(config::RECONNECT_GRACE_SECS);
 
 const CLIENT_CHAN_CAP: usize = 128;
+
+/// Largest WebSocket message a client may send. Client messages are a few dozen
+/// bytes; the library default (64 MiB) would let any peer make the server buffer
+/// that much per message before our own decoding even runs.
+const MAX_CLIENT_MESSAGE: usize = 64 * 1024;
+
+/// Capacity of the queue feeding the manager loop. A safety net behind the
+/// per-connection rate limit: once full, a connection waits to enqueue, which
+/// pushes back on that client's socket instead of growing memory without bound.
+const CMD_CHAN_CAP: usize = 4096;
+
+/// Sustained message rate one client may send, and the burst it may save up.
+/// The fastest legitimate player (DAS speed 5 ms) sends about 200 moves/s. The
+/// burst is sized for a network stall: a client keeps sending while its link is
+/// stuck, then everything lands at once. 1200 covers ~5 s of the fastest play,
+/// so a real player is never cut; a flooder gains one small reserve at most.
+const CLIENT_MSG_RATE: f64 = 400.0;
+const CLIENT_MSG_BURST: f64 = 1200.0;
+
+/// Over-limit messages tolerated within one second before the client is treated
+/// as a flood and disconnected, rather than left to cost work indefinitely.
+const FLOOD_DROPS_PER_SEC: u32 = 1000;
+
+/// Minimum delay between two invitations sent by the same connection.
+const INVITE_COOLDOWN: Duration = Duration::from_secs(2);
+
+/// Token bucket bounding how fast one client's messages reach the manager loop.
+struct RateLimiter {
+    tokens: f64,
+    last: Instant,
+    window_start: Instant,
+    drops_in_window: u32,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Verdict {
+    Allow,
+    Drop,
+    Disconnect,
+}
+
+impl RateLimiter {
+    fn new(now: Instant) -> Self {
+        Self {
+            tokens: CLIENT_MSG_BURST,
+            last: now,
+            window_start: now,
+            drops_in_window: 0,
+        }
+    }
+
+    fn check(&mut self, now: Instant) -> Verdict {
+        let elapsed = now.duration_since(self.last).as_secs_f64();
+        self.last = now;
+        self.tokens = (self.tokens + elapsed * CLIENT_MSG_RATE).min(CLIENT_MSG_BURST);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            return Verdict::Allow;
+        }
+        if now.duration_since(self.window_start) >= Duration::from_secs(1) {
+            self.window_start = now;
+            self.drops_in_window = 0;
+        }
+        self.drops_in_window += 1;
+        if self.drops_in_window > FLOOD_DROPS_PER_SEC {
+            Verdict::Disconnect
+        } else {
+            Verdict::Drop
+        }
+    }
+}
+
+/// A friendship lookup the manager needs but must never wait for: the loop runs
+/// every room at 60 Hz, so blocking it on the database would freeze them all.
+/// Queued in `Manager::friend_checks`, run off the loop by `manager_loop`, and
+/// answered with `Command::FriendCheckDone`. Each variant records what the
+/// world looked like when it was asked, so the answer can be checked against
+/// what may have changed while it was pending.
+#[derive(Debug, Clone)]
+enum FriendCheck {
+    /// `conn` asked to join friends-only room `room`, hosted by `host`, while in
+    /// room `from`.
+    Join {
+        conn: ConnId,
+        room: RoomId,
+        host: Token,
+        from: Option<RoomId>,
+        joiner: Uuid,
+        host_user: Uuid,
+    },
+    /// `conn` invited user `target` into room `room`.
+    Invite {
+        conn: ConnId,
+        room: RoomId,
+        inviter: Uuid,
+        target: Uuid,
+    },
+}
+
+impl FriendCheck {
+    fn conn(&self) -> ConnId {
+        match self {
+            FriendCheck::Join { conn, .. } | FriendCheck::Invite { conn, .. } => *conn,
+        }
+    }
+
+    fn users(&self) -> (Uuid, Uuid) {
+        match self {
+            FriendCheck::Join { joiner, host_user, .. } => (*joiner, *host_user),
+            FriendCheck::Invite { inviter, target, .. } => (*inviter, *target),
+        }
+    }
+}
+
+const JOIN_UNAVAILABLE: &str = "Room indisponible";
+const JOIN_FRIENDS_ONLY: &str = "Cette room est réservée aux amis de l'hôte.";
 
 enum Phase {
     Lobby,
@@ -149,6 +265,7 @@ impl Room {
             name: self.name.clone(),
             settings: self.settings,
             players: self.members.len() as u8,
+            connected: self.members.iter().filter(|m| m.conn.is_some()).count() as u8,
             your_slot: (idx + 1) as u8,
             is_host: self.members[idx].token == self.host,
             countdown: match self.phase {
@@ -156,6 +273,49 @@ impl Room {
                 _ => None,
             },
         }
+    }
+
+    /// A game is under way and has not been decided yet.
+    fn game_running(&self) -> bool {
+        matches!(self.phase, Phase::Playing) && !self.sim.finished
+    }
+
+    /// The result of the current game, won by `winner_slot` (1 or 2).
+    fn match_record(&self, winner_slot: u8) -> db::MatchRecord {
+        db::MatchRecord {
+            duration_secs: self.sim.start.elapsed().as_secs_f64(),
+            winner_slot,
+            user_ids: [
+                self.members.first().and_then(|m| m.user_id),
+                self.members.get(1).and_then(|m| m.user_id),
+            ],
+            max_chain: self.sim.max_chain,
+            total_chains: self.sim.total_chains,
+            nuisance_sent: self.sim.nuisance_sent,
+            all_clears: self.sim.all_clears,
+            pieces_placed: self.sim.pieces_placed,
+        }
+    }
+
+    /// The player in `slot` walks away from a running game: settle it as their
+    /// loss. Must be called before that member is removed, while member and board
+    /// indices still line up.
+    ///
+    /// Returns `None` when there is nothing to settle: no game running, no
+    /// opponent, or an opponent who is disconnected themselves. That last case is
+    /// voided rather than awarded to either side — otherwise leaving during an
+    /// opponent's short network blip would hand them a loss they did nothing to
+    /// earn. An opponent who never comes back still loses, when their grace
+    /// period expires.
+    fn forfeit(&mut self, slot: usize) -> Option<db::MatchRecord> {
+        if !self.game_running() || self.members.len() != 2 || slot > 1 {
+            return None;
+        }
+        let winner = 1 - slot;
+        // Opponent disconnected themselves: void, see above.
+        self.members[winner].conn?;
+        self.sim.finished = true;
+        Some(self.match_record((winner + 1) as u8))
     }
 
     fn info(&self) -> RoomInfo {
@@ -181,7 +341,16 @@ struct Manager {
     next_id: RoomId,
     room_list_dirty: bool,
     last_room_list: Instant,
-    pool: db::DbPool,
+    /// Friendship lookups to run off the loop. See [`FriendCheck`].
+    friend_checks: Vec<FriendCheck>,
+    /// Connections with a lookup pending: at most one each, so a client cannot
+    /// turn repeated requests into a stream of database queries.
+    checks_in_flight: HashSet<ConnId>,
+    last_invite: HashMap<ConnId, Instant>,
+    /// Decided games waiting to be written to the database: natural game ends
+    /// from `tick`, and forfeits from commands or grace expiry. Drained by the
+    /// manager loop, which saves them off the game loop.
+    unsaved_matches: Vec<db::MatchRecord>,
 }
 
 enum Command {
@@ -239,6 +408,35 @@ enum Command {
         conn: ConnId,
         target_user_id: String,
     },
+    /// Answer to a queued [`FriendCheck`], sent back by the task that ran it.
+    FriendCheckDone {
+        check: FriendCheck,
+        friends: bool,
+    },
+}
+
+impl Command {
+    /// The client connection this command speaks for, or `None` for the ones that
+    /// open a connection or come from the server itself. Deliberately exhaustive:
+    /// a new command has to decide which it is.
+    fn client(&self) -> Option<ConnId> {
+        match self {
+            Command::Register { .. } | Command::FriendCheckDone { .. } => None,
+            Command::Unregister { conn }
+            | Command::Hello { conn, .. }
+            | Command::RequestRoomList { conn }
+            | Command::CreateRoom { conn, .. }
+            | Command::JoinRoom { conn, .. }
+            | Command::LeaveRoom { conn }
+            | Command::SetSetting { conn, .. }
+            | Command::ToggleCountdown { conn }
+            | Command::ReturnToLobby { conn }
+            | Command::Input { conn, .. }
+            | Command::TogglePause { conn }
+            | Command::Restart { conn }
+            | Command::InviteFriend { conn, .. } => Some(*conn),
+        }
+    }
 }
 
 fn clean_name(name: String) -> String {
@@ -251,7 +449,7 @@ fn clean_name(name: String) -> String {
 }
 
 impl Manager {
-    fn new(pool: db::DbPool) -> Manager {
+    fn new() -> Manager {
         Manager {
             rooms: HashMap::new(),
             clients: HashMap::new(),
@@ -263,12 +461,191 @@ impl Manager {
             next_id: 1,
             room_list_dirty: false,
             last_room_list: Instant::now(),
-            pool,
+            friend_checks: Vec::new(),
+            checks_in_flight: HashSet::new(),
+            last_invite: HashMap::new(),
+            unsaved_matches: Vec::new(),
         }
     }
 
     fn room_of(&self, conn: ConnId) -> Option<RoomId> {
         self.clients.get(&conn).copied().flatten()
+    }
+
+    /// Settles the running game in room `id` as a loss for `slot` and queues the
+    /// result for saving, if there is one to settle. See [`Room::forfeit`].
+    fn record_forfeit(&mut self, id: RoomId, slot: usize, why: &str) {
+        if let Some(rec) = self.rooms.get_mut(&id).and_then(|r| r.forfeit(slot)) {
+            info!("Forfait room #{id} : slot {} perd ({why})", slot + 1);
+            self.unsaved_matches.push(rec);
+        }
+    }
+
+    fn take_unsaved_matches(&mut self) -> Vec<db::MatchRecord> {
+        std::mem::take(&mut self.unsaved_matches)
+    }
+
+    fn take_friend_checks(&mut self) -> Vec<FriendCheck> {
+        std::mem::take(&mut self.friend_checks)
+    }
+
+    fn join_failed(&mut self, conn: ConnId, reason: &str) {
+        self.deliver_msg(
+            conn,
+            &ServerMessage::JoinFailed {
+                reason: reason.to_string(),
+            },
+        );
+    }
+
+    fn conn_of_user(&self, user: Uuid) -> Option<ConnId> {
+        self.conn_user_id.iter().find(|(_, u)| **u == user).map(|(&c, _)| c)
+    }
+
+    /// Validates a join and either completes it, or — for a friends-only room —
+    /// queues the friendship lookup and completes it when the answer comes back.
+    fn request_join(&mut self, conn: ConnId, id: RoomId) {
+        if !self.conn_token.contains_key(&conn) {
+            return;
+        }
+        // Already here. Going through `leave_current` would empty the room
+        // first — deleting it outright when we are its only member.
+        if self.room_of(conn) == Some(id) {
+            return;
+        }
+        let Some(room) = self.rooms.get(&id).filter(|r| r.members.len() < 2) else {
+            self.join_failed(conn, JOIN_UNAVAILABLE);
+            return;
+        };
+        if !room.settings.friends_only {
+            self.complete_join(conn, id);
+            return;
+        }
+        let host = room.host.clone();
+        let host_user = room.members.iter().find(|m| m.token == host).and_then(|m| m.user_id);
+        let (Some(host_user), Some(joiner)) = (host_user, self.conn_user_id.get(&conn).copied()) else {
+            // Guests have no friends to check against.
+            self.join_failed(conn, JOIN_FRIENDS_ONLY);
+            return;
+        };
+        if !self.checks_in_flight.insert(conn) {
+            return;
+        }
+        let from = self.room_of(conn);
+        self.friend_checks.push(FriendCheck::Join {
+            conn,
+            room: id,
+            host,
+            from,
+            joiner,
+            host_user,
+        });
+    }
+
+    /// Moves `conn` into room `id`, if it still has a free seat.
+    fn complete_join(&mut self, conn: ConnId, id: RoomId) {
+        let Some(token) = self.conn_token.get(&conn).cloned() else {
+            return;
+        };
+        if !self.rooms.get(&id).is_some_and(|r| r.members.len() < 2) {
+            self.join_failed(conn, JOIN_UNAVAILABLE);
+            return;
+        }
+        self.leave_current(conn);
+        let user_id = self.conn_user_id.get(&conn).copied();
+        // Leaving cannot close the target room: it is not the one we were in.
+        if let Some(room) = self.rooms.get_mut(&id) {
+            room.members.push(Member {
+                token,
+                conn: Some(conn),
+                disconnect_at: None,
+                user_id,
+            });
+        }
+        self.clients.insert(conn, Some(id));
+        self.sync_after_attach(id, conn);
+    }
+
+    fn finish_join_check(&mut self, conn: ConnId, room: RoomId, host: Token, from: Option<RoomId>, friends: bool) {
+        // Superseded: the player left, or went somewhere else while we waited.
+        if !self.senders.contains_key(&conn) || self.room_of(conn) != from {
+            return;
+        }
+        let Some(r) = self.rooms.get(&room) else {
+            self.join_failed(conn, JOIN_UNAVAILABLE);
+            return;
+        };
+        if r.settings.friends_only {
+            if r.host != host {
+                // The host changed while we waited: the answer is about the wrong
+                // person. Ask again about the current one.
+                self.request_join(conn, room);
+                return;
+            }
+            if !friends {
+                self.join_failed(conn, JOIN_FRIENDS_ONLY);
+                return;
+            }
+        }
+        self.complete_join(conn, room);
+    }
+
+    /// Invitations go to friends only, one per `INVITE_COOLDOWN` per connection:
+    /// otherwise anyone could push banners at any user id they have seen.
+    fn request_invite(&mut self, conn: ConnId, target: &str) {
+        let Some(inviter) = self.conn_user_id.get(&conn).copied() else {
+            return;
+        };
+        let Some(room) = self.room_of(conn) else { return };
+        let Ok(target) = Uuid::parse_str(target) else { return };
+        // Offline targets have nobody to deliver to: skip the lookup entirely.
+        if target == inviter || self.conn_of_user(target).is_none() {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .last_invite
+            .get(&conn)
+            .is_some_and(|&t| now.duration_since(t) < INVITE_COOLDOWN)
+        {
+            return;
+        }
+        if !self.checks_in_flight.insert(conn) {
+            return;
+        }
+        self.last_invite.insert(conn, now);
+        self.friend_checks.push(FriendCheck::Invite {
+            conn,
+            room,
+            inviter,
+            target,
+        });
+    }
+
+    fn finish_invite_check(&mut self, conn: ConnId, room: RoomId, target: Uuid, friends: bool) {
+        // Not friends, or the inviter has since left that room.
+        if !friends || self.room_of(conn) != Some(room) {
+            return;
+        }
+        let Some(target_conn) = self.conn_of_user(target) else {
+            return;
+        };
+        let Some(room_name) = self.rooms.get(&room).map(|r| r.name.clone()) else {
+            return;
+        };
+        let from_username = self
+            .conn_username
+            .get(&conn)
+            .cloned()
+            .unwrap_or_else(|| "Un joueur".to_string());
+        self.deliver_msg(
+            target_conn,
+            &ServerMessage::FriendInvitation {
+                from_username,
+                room_id: room,
+                room_name,
+            },
+        );
     }
 
     fn with_room<R>(&mut self, id: RoomId, f: impl FnOnce(&mut Room) -> R) -> Option<R> {
@@ -394,6 +771,14 @@ impl Manager {
     }
 
     fn handle(&mut self, cmd: Command) {
+        // A connection exists from its Register to its Unregister. A command from
+        // outside that window — one its socket queued just before dying, landing
+        // after the Unregister — must not bring it back: a late Hello would bind
+        // a seat to a dead connection, clear its grace timer and resume the game
+        // against nobody.
+        if cmd.client().is_some_and(|conn| !self.senders.contains_key(&conn)) {
+            return;
+        }
         match cmd {
             Command::Register { conn, sender } => {
                 self.senders.insert(conn, sender);
@@ -458,72 +843,7 @@ impl Manager {
                 self.room_list_dirty = true;
                 info!("Room #{id} créée (conn {conn})");
             }
-            Command::JoinRoom { conn, id } => {
-                let token = match self.conn_token.get(&conn) {
-                    Some(t) => t.clone(),
-                    None => return,
-                };
-                let joinable = matches!(self.rooms.get(&id), Some(r) if r.members.len() < 2);
-                if !joinable {
-                    self.deliver_msg(
-                        conn,
-                        &ServerMessage::JoinFailed {
-                            reason: "Room indisponible".into(),
-                        },
-                    );
-                    return;
-                }
-                if let Some(room) = self.rooms.get(&id) {
-                    if room.settings.friends_only {
-                        let host_uid = room.members.first().and_then(|m| m.user_id);
-                        let joiner_uid = self.conn_user_id.get(&conn).copied();
-                        let allowed = match (host_uid, joiner_uid) {
-                            (Some(h), Some(j)) => tokio::task::block_in_place(|| {
-                                tokio::runtime::Handle::current().block_on(db::are_friends(&self.pool, h, j))
-                            })
-                            .unwrap_or(false),
-                            _ => false,
-                        };
-                        if !allowed {
-                            self.deliver_msg(
-                                conn,
-                                &ServerMessage::JoinFailed {
-                                    reason: "Cette room est réservée aux amis de l'hôte.".into(),
-                                },
-                            );
-                            return;
-                        }
-                    }
-                }
-                self.leave_current(conn);
-                let join_user_id = self.conn_user_id.get(&conn).copied();
-                let pushed = self
-                    .with_room(id, |room| {
-                        if room.members.len() < 2 {
-                            room.members.push(Member {
-                                token,
-                                conn: Some(conn),
-                                disconnect_at: None,
-                                user_id: join_user_id,
-                            });
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false);
-                if pushed {
-                    self.clients.insert(conn, Some(id));
-                    self.sync_after_attach(id, conn);
-                } else {
-                    self.deliver_msg(
-                        conn,
-                        &ServerMessage::JoinFailed {
-                            reason: "Room indisponible".into(),
-                        },
-                    );
-                }
-            }
+            Command::JoinRoom { conn, id } => self.request_join(conn, id),
             Command::LeaveRoom { conn } => {
                 self.leave_current(conn);
                 self.send_room_list_to(conn);
@@ -551,7 +871,13 @@ impl Manager {
                         .with_room(id, |room| {
                             if room.is_host_conn(conn) {
                                 room.phase = match room.phase {
-                                    Phase::Lobby if room.members.len() >= 2 => Phase::CountingDown(3.0),
+                                    // A seat held for a disconnected player counts
+                                    // towards `members`, so check connections too:
+                                    // otherwise the game starts without them and
+                                    // their board runs out into a recorded loss.
+                                    Phase::Lobby if room.members.len() >= 2 && room.all_connected() => {
+                                        Phase::CountingDown(3.0)
+                                    }
                                     Phase::Lobby => Phase::Lobby,
                                     Phase::CountingDown(_) => Phase::Lobby,
                                     Phase::Playing => Phase::Playing,
@@ -569,24 +895,22 @@ impl Manager {
                 }
             }
             Command::ReturnToLobby { conn } => {
-                if let Some(id) = self.room_of(conn) {
-                    let done = self
-                        .with_room(id, |room| {
-                            if room.is_host_conn(conn) {
-                                room.phase = Phase::Lobby;
-                                room.sim.finished = false;
-                                room.sim.paused = false;
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if done {
-                        self.send_lobby(id);
-                        self.room_list_dirty = true;
-                    }
+                let Some(id) = self.room_of(conn) else { return };
+                let host_slot = self
+                    .rooms
+                    .get(&id)
+                    .filter(|room| room.is_host_conn(conn))
+                    .and_then(|room| room.slot_of_conn(conn));
+                let Some(slot) = host_slot else { return };
+                // Pulling everyone out of an undecided game is the host abandoning it.
+                self.record_forfeit(id, slot, "l'hôte a interrompu la partie");
+                if let Some(room) = self.rooms.get_mut(&id) {
+                    room.phase = Phase::Lobby;
+                    room.sim.finished = false;
+                    room.sim.paused = false;
                 }
+                self.send_lobby(id);
+                self.room_list_dirty = true;
             }
             Command::Input { conn, kind, seq } => {
                 if let Some(id) = self.room_of(conn) {
@@ -604,7 +928,13 @@ impl Manager {
                 if let Some(id) = self.room_of(conn) {
                     let toggled = self
                         .with_room(id, |room| {
-                            if matches!(room.phase, Phase::Playing) && !room.sim.finished {
+                            // A disconnect pause ends when the player comes back.
+                            // Letting the other one lift it would run the absent
+                            // player's board out into a loss.
+                            let allowed = room.game_running()
+                                && room.all_connected()
+                                && room.settings.pause.allows(room.is_host_conn(conn));
+                            if allowed {
                                 room.sim.paused = !room.sim.paused;
                                 let p = room.sim.paused;
                                 room.sim.boards.iter_mut().for_each(|b| b.set_paused(p));
@@ -624,7 +954,11 @@ impl Manager {
                 if let Some(id) = self.room_of(conn) {
                     let restarted = self
                         .with_room(id, |room| {
-                            if matches!(room.phase, Phase::Playing) {
+                            // Only a decided game may be restarted: restarting a
+                            // running one would discard it without a result. And
+                            // only with both players here, like the countdown:
+                            // otherwise the new game runs against an absent player.
+                            if matches!(room.phase, Phase::Playing) && room.sim.finished && room.all_connected() {
                                 let now = Instant::now();
                                 let in_cooldown = room
                                     .sim
@@ -647,34 +981,16 @@ impl Manager {
                     }
                 }
             }
-            Command::InviteFriend { conn, target_user_id } => {
-                let from_username = self
-                    .conn_username
-                    .get(&conn)
-                    .cloned()
-                    .unwrap_or_else(|| "Un joueur".to_string());
-                let room_info = self
-                    .room_of(conn)
-                    .and_then(|id| self.rooms.get(&id).map(|r| (id, r.name.clone())));
-                let Some((room_id, room_name)) = room_info else { return };
-                let target_uuid = match Uuid::parse_str(&target_user_id) {
-                    Ok(u) => u,
-                    Err(_) => return,
-                };
-                let target_conn = self
-                    .conn_user_id
-                    .iter()
-                    .find(|(_, uid)| **uid == target_uuid)
-                    .map(|(&c, _)| c);
-                if let Some(tc) = target_conn {
-                    self.deliver_msg(
-                        tc,
-                        &ServerMessage::FriendInvitation {
-                            from_username,
-                            room_id,
-                            room_name,
-                        },
-                    );
+            Command::InviteFriend { conn, target_user_id } => self.request_invite(conn, &target_user_id),
+            Command::FriendCheckDone { check, friends } => {
+                self.checks_in_flight.remove(&check.conn());
+                match check {
+                    FriendCheck::Join {
+                        conn, room, host, from, ..
+                    } => self.finish_join_check(conn, room, host, from, friends),
+                    FriendCheck::Invite { conn, room, target, .. } => {
+                        self.finish_invite_check(conn, room, target, friends)
+                    }
                 }
             }
         }
@@ -747,6 +1063,11 @@ impl Manager {
             };
             room.members[slot].conn = None;
             room.members[slot].disconnect_at = Some(Instant::now());
+            if matches!(room.phase, Phase::CountingDown(_)) {
+                // Otherwise the game starts without them (see ToggleCountdown).
+                room.phase = Phase::Lobby;
+                self.room_list_dirty = true;
+            }
             let playing = matches!(room.phase, Phase::Playing);
             let notify = playing && !room.sim.finished;
             if notify {
@@ -774,6 +1095,8 @@ impl Manager {
         self.conn_user_id.remove(&conn);
         self.conn_username.remove(&conn);
         self.senders.remove(&conn);
+        self.checks_in_flight.remove(&conn);
+        self.last_invite.remove(&conn);
     }
 
     fn reap_dead(&mut self) {
@@ -797,6 +1120,7 @@ impl Manager {
             Some(s) => s,
             None => return,
         };
+        self.record_forfeit(id, slot, "a quitté la partie");
         self.remove_member(id, slot);
     }
 
@@ -806,7 +1130,11 @@ impl Manager {
                 return;
             }
             let removed = room.members.remove(slot);
-            if room.members.is_empty() {
+            // Only seats held for disconnected players remain: nobody here can
+            // play or host, yet the room would stay listed and joinable, leaving a
+            // newcomer stuck under a ghost host until the grace ran out. Close it;
+            // those players land on the room list if they reconnect.
+            if room.members.iter().all(|m| m.conn.is_none()) {
                 true
             } else {
                 if removed.token == room.host {
@@ -831,7 +1159,7 @@ impl Manager {
         self.room_list_dirty = true;
     }
 
-    fn tick(&mut self, dt: f32, do_broadcast: bool) -> Vec<db::MatchRecord> {
+    fn tick(&mut self, dt: f32, do_broadcast: bool) {
         if self.room_list_dirty && self.last_room_list.elapsed() >= Duration::from_millis(200) {
             self.broadcast_room_list();
             self.room_list_dirty = false;
@@ -856,13 +1184,13 @@ impl Manager {
                 .and_then(|r| r.members.iter().position(|m| m.token == token))
             {
                 info!("Grâce expirée, retrait room #{id}");
+                self.record_forfeit(id, slot, "jamais revenu après sa déconnexion");
                 self.remove_member(id, slot);
             }
         }
 
         let mut outgoing: Vec<(ConnId, Vec<u8>)> = Vec::new();
         let mut list_changed = false;
-        let mut finished_matches: Vec<db::MatchRecord> = Vec::new();
 
         for room in self.rooms.values_mut() {
             if matches!(room.phase, Phase::Lobby) {
@@ -953,24 +1281,12 @@ impl Manager {
                         } else {
                             1u8
                         };
-                        let duration_secs = room.sim.start.elapsed().as_secs_f64();
+                        let rec = room.match_record(winner_slot);
                         info!(
                             "Match terminé room #{} → slot {winner_slot} gagne ({:.0}s)",
-                            room.id, duration_secs
+                            room.id, rec.duration_secs
                         );
-                        finished_matches.push(db::MatchRecord {
-                            duration_secs,
-                            winner_slot,
-                            user_ids: [
-                                room.members.first().and_then(|m| m.user_id),
-                                room.members.get(1).and_then(|m| m.user_id),
-                            ],
-                            max_chain: room.sim.max_chain,
-                            total_chains: room.sim.total_chains,
-                            nuisance_sent: room.sim.nuisance_sent,
-                            all_clears: room.sim.all_clears,
-                            pieces_placed: room.sim.pieces_placed,
-                        });
+                        self.unsaved_matches.push(rec);
                     }
                 }
                 if (do_broadcast && advanced) || just_finished {
@@ -1009,7 +1325,6 @@ impl Manager {
         if list_changed {
             self.room_list_dirty = true;
         }
-        finished_matches
     }
 }
 
@@ -1056,11 +1371,36 @@ impl TickProfile {
     }
 }
 
-async fn manager_loop(mut cmd_rx: mpsc::UnboundedReceiver<Command>, pool: db::DbPool) {
+/// Runs everything the manager queued that needs the database, off the game
+/// loop: the manager itself holds no pool, so it cannot stall a tick on I/O.
+fn run_side_effects(mgr: &mut Manager, pool: &db::DbPool, cmd_tx: &mpsc::Sender<Command>) {
+    for rec in mgr.take_unsaved_matches() {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db::record_match_result(&pool, rec).await {
+                error!("Match save: {e}");
+            }
+        });
+    }
+    for check in mgr.take_friend_checks() {
+        let (pool, cmd_tx) = (pool.clone(), cmd_tx.clone());
+        tokio::spawn(async move {
+            let (a, b) = check.users();
+            let friends = db::are_friends(&pool, a, b).await.unwrap_or_else(|e| {
+                error!("Friend check: {e}");
+                false
+            });
+            // Only fails if the manager is gone, i.e. the server is shutting down.
+            let _ = cmd_tx.send(Command::FriendCheckDone { check, friends }).await;
+        });
+    }
+}
+
+async fn manager_loop(mut cmd_rx: mpsc::Receiver<Command>, cmd_tx: mpsc::Sender<Command>, pool: db::DbPool) {
     let tick_dt = 1.0 / config::SERVER_TICK_HZ as f32;
     let mut ticker = interval(Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64));
     let broadcast_period = Duration::from_secs_f64(1.0 / config::STATE_BROADCAST_HZ as f64);
-    let mut mgr = Manager::new(pool.clone());
+    let mut mgr = Manager::new();
     let mut last_broadcast = Instant::now();
     let mut profile = TickProfile::new();
 
@@ -1070,21 +1410,16 @@ async fn manager_loop(mut cmd_rx: mpsc::UnboundedReceiver<Command>, pool: db::Db
                 let do_broadcast = last_broadcast.elapsed() >= broadcast_period;
                 if do_broadcast { last_broadcast = Instant::now(); }
                 let t0 = Instant::now();
-                let finished = mgr.tick(tick_dt, do_broadcast);
+                mgr.tick(tick_dt, do_broadcast);
                 profile.record(t0.elapsed(), mgr.rooms.len());
                 mgr.reap_dead();
-                for rec in finished {
-                    let pool = pool.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = db::record_match_result(&pool, rec).await {
-                            error!("Match save: {e}");
-                        }
-                    });
-                }
+                run_side_effects(&mut mgr, &pool, &cmd_tx);
             }
             Some(cmd) = cmd_rx.recv() => {
+                // Commands queue work too: a forfeit to save, a friendship to check.
                 mgr.handle(cmd);
                 mgr.reap_dead();
+                run_side_effects(&mut mgr, &pool, &cmd_tx);
             }
         }
     }
@@ -1122,8 +1457,8 @@ async fn main() {
     let port = config::SERVER_PORT;
     info!("Écoute sur :{port}");
 
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
-    tokio::spawn(manager_loop(cmd_rx, pool.clone()));
+    let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(CMD_CHAN_CAP);
+    tokio::spawn(manager_loop(cmd_rx, cmd_tx.clone(), pool.clone()));
 
     let pool_cleanup = pool.clone();
     tokio::spawn(async move {
@@ -1139,19 +1474,7 @@ async fn main() {
         }
     });
 
-    let conn_counter = Arc::new(AtomicU64::new(1));
-    let pool_ws = pool.clone();
-    let ws_route = warp::path("ws")
-        .and(warp::ws())
-        .and(warp::any().map(move || cmd_tx.clone()))
-        .and(warp::any().map(move || conn_counter.clone()))
-        .and(warp::any().map(move || pool_ws.clone()))
-        .map(|ws: warp::ws::Ws, cmd_tx, counter: Arc<AtomicU64>, pool: db::DbPool| {
-            let conn = counter.fetch_add(1, Ordering::Relaxed);
-            ws.on_upgrade(move |socket| handle_connection(socket, cmd_tx, conn, pool))
-        });
-
-    let routes = ws_route
+    let routes = ws_route(cmd_tx, pool.clone())
         .or(auth::routes(pool))
         .recover(auth::handle_rejection)
         .with(warp::log::custom(|info| {
@@ -1173,20 +1496,36 @@ async fn main() {
     warp::serve(routes).run((config::SERVER_BIND_ADDRESS, port)).await;
 }
 
-async fn handle_connection(
-    ws: warp::ws::WebSocket,
-    cmd_tx: mpsc::UnboundedSender<Command>,
-    conn: ConnId,
+/// The `/ws` endpoint. Split out of `main` so tests can drive it in-process.
+fn ws_route(
+    cmd_tx: mpsc::Sender<Command>,
     pool: db::DbPool,
-) {
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    let conn_counter = Arc::new(AtomicU64::new(1));
+    warp::path("ws")
+        .and(warp::ws())
+        .and(warp::any().map(move || cmd_tx.clone()))
+        .and(warp::any().map(move || conn_counter.clone()))
+        .and(warp::any().map(move || pool.clone()))
+        .map(|ws: warp::ws::Ws, cmd_tx, counter: Arc<AtomicU64>, pool: db::DbPool| {
+            let conn = counter.fetch_add(1, Ordering::Relaxed);
+            ws.max_message_size(MAX_CLIENT_MESSAGE)
+                .max_frame_size(MAX_CLIENT_MESSAGE)
+                .on_upgrade(move |socket| handle_connection(socket, cmd_tx, conn, pool))
+        })
+}
+
+async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::Sender<Command>, conn: ConnId, pool: db::DbPool) {
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
     let (to_client_tx, mut to_client_rx) = mpsc::channel::<Vec<u8>>(CLIENT_CHAN_CAP);
     info!("WS {conn} ouverture");
 
-    let _ = cmd_tx.send(Command::Register {
-        conn,
-        sender: to_client_tx,
-    });
+    let _ = cmd_tx
+        .send(Command::Register {
+            conn,
+            sender: to_client_tx,
+        })
+        .await;
 
     let mut send_task = tokio::spawn(async move {
         while let Some(payload) = to_client_rx.recv().await {
@@ -1198,17 +1537,32 @@ async fn handle_connection(
 
     let cmd_tx_recv = cmd_tx.clone();
     let mut recv_task = tokio::spawn(async move {
+        let mut limiter = RateLimiter::new(Instant::now());
+        // Hello does a database lookup and the client sends it once per socket:
+        // later ones are ignored, so they cannot become a query stream.
+        let mut greeted = false;
         while let Some(result) = user_ws_rx.next().await {
+            // Counted before any decoding, so over-limit frames cost nothing more.
+            match limiter.check(Instant::now()) {
+                Verdict::Allow => {}
+                Verdict::Drop => continue,
+                Verdict::Disconnect => {
+                    warn!("WS {conn} flood, fermeture");
+                    break;
+                }
+            }
             if let Ok(msg) = result {
                 if msg.is_binary() {
                     if let Some(client_msg) = shared::decode::<ClientMessage>(msg.as_bytes()) {
                         let cmd = match client_msg {
+                            ClientMessage::Hello { .. } if greeted => continue,
                             ClientMessage::Hello {
                                 player_id,
                                 auth_token,
                                 username,
                                 last_disconnect_reason,
                             } => {
+                                greeted = true;
                                 let user_id = match auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok()) {
                                     Some(token_uuid) => db::find_user_by_token(&pool, token_uuid)
                                         .await
@@ -1240,7 +1594,9 @@ async fn handle_connection(
                                 target_user_id: user_id,
                             },
                         };
-                        if cmd_tx_recv.send(cmd).is_err() {
+                        // Awaits when the queue is full: back-pressure lands on this
+                        // client's socket, not on memory.
+                        if cmd_tx_recv.send(cmd).await.is_err() {
                             break;
                         }
                     }
@@ -1251,7 +1607,9 @@ async fn handle_connection(
 
     tokio::select! { _ = (&mut send_task) => recv_task.abort(), _ = (&mut recv_task) => send_task.abort() }
 
-    let _ = cmd_tx.send(Command::Unregister { conn });
+    // Awaited, never dropped: a lost Unregister would leave the seat bound to a
+    // dead connection forever.
+    let _ = cmd_tx.send(Command::Unregister { conn }).await;
     info!("WS {conn} fermeture");
 }
 

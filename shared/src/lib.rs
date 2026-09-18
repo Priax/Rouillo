@@ -11,7 +11,24 @@ pub fn encode<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, bitcode::Error> {
     Ok(lz4_flex::compress_prepend_size(&raw))
 }
 
+/// Largest decompressed payload `decode` will accept.
+///
+/// The real messages are tiny (a StateUpdate is ~100 B, a long RoomList a few KB),
+/// so this is a sanity bound, not a tuning knob.
+pub const MAX_DECODED_SIZE: usize = 1 << 20;
+
+/// Decodes a message produced by [`encode`], or `None` if it is malformed.
+///
+/// The first 4 bytes carry the decompressed size, and they come straight from the
+/// peer. `lz4_flex` allocates that size up front, before reading anything else, so
+/// an unchecked prefix lets a 5-byte message request 4 GiB — and an allocation
+/// failure aborts the whole process, not just one connection. The prefix is
+/// therefore bounded before any decompression happens.
 pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+    let size = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
+    if size > MAX_DECODED_SIZE {
+        return None;
+    }
     let raw = lz4_flex::decompress_size_prepended(bytes).ok()?;
     bitcode::deserialize(&raw).ok()
 }
@@ -38,11 +55,49 @@ pub enum InputKind {
 
 pub type RoomId = u32;
 
+/// Who may pause a running game. The automatic pause on disconnect is separate
+/// and always applies.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PausePolicy {
+    Everyone,
+    HostOnly,
+    Nobody,
+}
+
+impl PausePolicy {
+    const ALL: [PausePolicy; 3] = [PausePolicy::Everyone, PausePolicy::HostOnly, PausePolicy::Nobody];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PausePolicy::Everyone => "Tous",
+            PausePolicy::HostOnly => "Hôte",
+            PausePolicy::Nobody => "Personne",
+        }
+    }
+
+    /// Whether a player may toggle the pause, given whether they host the room.
+    pub fn allows(self, is_host: bool) -> bool {
+        match self {
+            PausePolicy::Everyone => true,
+            PausePolicy::HostOnly => is_host,
+            PausePolicy::Nobody => false,
+        }
+    }
+
+    /// Steps through the policies, wrapping around, in the direction of `dir`.
+    fn step(self, dir: i32) -> Self {
+        let n = Self::ALL.len() as i32;
+        let i = Self::ALL.iter().position(|&p| p == self).unwrap_or(0) as i32;
+        Self::ALL[(i + dir.signum()).rem_euclid(n) as usize]
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct RoomSettings {
     pub starting_level: u32,
     pub colors: u32,
     pub friends_only: bool,
+    pub pause: PausePolicy,
 }
 
 impl Default for RoomSettings {
@@ -51,18 +106,21 @@ impl Default for RoomSettings {
             starting_level: 1,
             colors: 5,
             friends_only: false,
+            // Matches the behaviour before this setting existed.
+            pause: PausePolicy::Everyone,
         }
     }
 }
 
 impl RoomSettings {
-    pub const COUNT: usize = 3;
+    pub const COUNT: usize = 4;
 
     pub fn label(i: usize) -> &'static str {
         match i {
             0 => "Starting level",
             1 => "Colors",
-            _ => "Amis seulement",
+            2 => "Amis seulement",
+            _ => "Pause",
         }
     }
 
@@ -70,13 +128,14 @@ impl RoomSettings {
         match i {
             0 => self.starting_level.to_string(),
             1 => self.colors.to_string(),
-            _ => {
+            2 => {
                 if self.friends_only {
                     "Oui".into()
                 } else {
                     "Non".into()
                 }
             }
+            _ => self.pause.label().into(),
         }
     }
 
@@ -84,7 +143,11 @@ impl RoomSettings {
         match i {
             0 => self.starting_level = (self.starting_level as i32 + dir).clamp(1, 15) as u32,
             1 => self.colors = (self.colors as i32 + dir).clamp(4, 5) as u32,
-            _ => self.friends_only = !self.friends_only,
+            2 => self.friends_only = !self.friends_only,
+            3 => self.pause = self.pause.step(dir),
+            // The index comes from the client: an unknown one must not touch
+            // anything, rather than falling through to the last setting.
+            _ => {}
         }
     }
 }
@@ -105,6 +168,10 @@ pub struct LobbyInfo {
     pub name: String,
     pub settings: RoomSettings,
     pub players: u8,
+    /// Seats whose player is connected right now. Lower than `players` while a
+    /// disconnected player's seat is being held for them, during which the game
+    /// cannot be launched.
+    pub connected: u8,
     pub your_slot: u8,
     pub is_host: bool,
     pub countdown: Option<u8>,
@@ -595,13 +662,7 @@ impl Board {
         for &size in group_sizes {
             gb += GROUP_BONUS[(size.saturating_sub(4)).min(7) as usize];
         }
-        let mut multiplier = cp + cb + gb;
-        if multiplier == 0 {
-            multiplier = 1;
-        }
-        if multiplier > 999 {
-            multiplier = 999;
-        }
+        let multiplier = (cp + cb + gb).clamp(1, 999);
 
         (10 * total_cleared) as i32 * multiplier as i32
     }

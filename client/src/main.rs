@@ -222,8 +222,9 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         Screen::OtherProfile => other_profile::draw_other_profile(app, gfx, state),
         Screen::Game => {
             let is_host = state.lobby.as_ref().map(|l| l.is_host).unwrap_or(false);
+            let can_pause = state.lobby.as_ref().is_some_and(|l| l.settings.pause.allows(l.is_host));
             if let Some(session) = state.session.as_ref() {
-                draw::draw_game(app, gfx, session, &state.font, is_host);
+                draw::draw_game(app, gfx, session, &state.font, is_host, can_pause);
             }
         }
     }

@@ -1,5 +1,47 @@
+use std::alloc::{GlobalAlloc, Layout, System};
+
 use super::*;
 use crate::config::{GRID_HEIGHT, GRID_WIDTH, MAX_LOCK_TIME, VISIBLE_ROW_OFFSET};
+
+/// Refuses any single allocation above 64 MiB for this whole test binary.
+///
+/// Linux overcommits lazily, so an oversized allocation normally "succeeds" and
+/// a test cannot see it happen. Capping it turns a regression in `decode`'s size
+/// bound into a hard abort of the test run instead of a silent pass. Nothing
+/// legitimate in these tests comes close to the cap.
+struct CappedAlloc;
+
+const ALLOC_CAP: usize = 64 << 20;
+
+unsafe impl GlobalAlloc for CappedAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if layout.size() > ALLOC_CAP {
+            return std::ptr::null_mut();
+        }
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        if layout.size() > ALLOC_CAP {
+            return std::ptr::null_mut();
+        }
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        if new_size > ALLOC_CAP {
+            return std::ptr::null_mut();
+        }
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static GLOBAL: CappedAlloc = CappedAlloc;
 
 fn empty_board() -> Board {
     Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 1, 5)
@@ -282,4 +324,124 @@ fn state_update_omits_rng_when_none() {
 #[test]
 fn decode_rejects_garbage_bytes() {
     assert!(decode::<ServerMessage>(&[0, 1, 2, 3]).is_none());
+}
+
+/// Regression: the size prefix is attacker-controlled and lz4_flex allocates it
+/// before reading anything else. A 2 GiB prefix used to make the server request
+/// 2 GiB, and a failed allocation aborts the whole process. With `CappedAlloc`
+/// above, the old code aborts this test binary; the bound now rejects the
+/// message before any allocation.
+#[test]
+fn decode_rejects_oversized_prefix_without_allocating() {
+    for size in [u32::MAX, 0x7fff_ffff, MAX_DECODED_SIZE as u32 + 1] {
+        let mut evil = size.to_le_bytes().to_vec();
+        evil.push(0);
+        assert!(decode::<ClientMessage>(&evil).is_none(), "size {size} accepted");
+    }
+}
+
+#[test]
+fn decode_rejects_input_shorter_than_its_prefix() {
+    assert!(decode::<ClientMessage>(&[]).is_none());
+    assert!(decode::<ClientMessage>(&[1, 0]).is_none());
+}
+
+/// The bound must not reject real traffic: a room list far bigger than anything
+/// the server will send still round-trips.
+#[test]
+fn decode_accepts_large_legitimate_message() {
+    let rooms: Vec<RoomInfo> = (0..2_000)
+        .map(|id| RoomInfo {
+            id,
+            name: "x".repeat(24),
+            players: 1,
+            max: 2,
+            in_game: false,
+            friends_only: false,
+        })
+        .collect();
+    let bytes = encode(&ServerMessage::RoomList { rooms }).expect("encode");
+    match decode::<ServerMessage>(&bytes) {
+        Some(ServerMessage::RoomList { rooms }) => assert_eq!(rooms.len(), 2_000),
+        _ => panic!("large room list rejected"),
+    }
+}
+
+#[test]
+fn pause_policy_cycles_both_ways() {
+    let mut s = RoomSettings::default();
+    assert_eq!(s.pause, PausePolicy::Everyone);
+    s.adjust(3, 1);
+    assert_eq!(s.pause, PausePolicy::HostOnly);
+    s.adjust(3, 1);
+    assert_eq!(s.pause, PausePolicy::Nobody);
+    s.adjust(3, 1);
+    assert_eq!(s.pause, PausePolicy::Everyone, "wraps forward");
+    s.adjust(3, -1);
+    assert_eq!(s.pause, PausePolicy::Nobody, "wraps backward");
+}
+
+#[test]
+fn pause_policy_permissions() {
+    assert!(PausePolicy::Everyone.allows(false));
+    assert!(PausePolicy::HostOnly.allows(true));
+    assert!(!PausePolicy::HostOnly.allows(false));
+    assert!(!PausePolicy::Nobody.allows(true));
+}
+
+/// Setting indices come from the client. An out-of-range one used to fall
+/// through to the last arm and toggle "friends only".
+#[test]
+fn unknown_setting_index_changes_nothing() {
+    let mut s = RoomSettings::default();
+    s.adjust(200, 1);
+    assert!(!s.friends_only);
+    assert_eq!(s.pause, PausePolicy::Everyone);
+}
+
+/// Corrupted but well-framed messages must be rejected or decoded, never allowed
+/// to allocate wildly. The size prefix is bounded by `decode` itself; this covers
+/// what comes after it — lengths inside the bitcode payload. `CappedAlloc` turns
+/// any runaway allocation into an abort. (Measured once over 200k iterations: the
+/// largest allocation was 26 KB.)
+#[test]
+fn decode_survives_corrupted_messages() {
+    use rand::SeedableRng;
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+    let samples = [
+        bitcode::serialize(&ClientMessage::Hello {
+            player_id: "p".repeat(32),
+            auth_token: Some("t".repeat(36)),
+            username: Some("name".into()),
+            last_disconnect_reason: Some("read: boom".into()),
+        })
+        .unwrap(),
+        bitcode::serialize(&ClientMessage::CreateRoom { name: "room".into() }).unwrap(),
+        bitcode::serialize(&ServerMessage::RoomList {
+            rooms: (0..20)
+                .map(|id| RoomInfo {
+                    id,
+                    name: "r".into(),
+                    players: 1,
+                    max: 2,
+                    in_game: false,
+                    friends_only: false,
+                })
+                .collect(),
+        })
+        .unwrap(),
+    ];
+    for i in 0..5_000 {
+        let mut raw = samples[i % samples.len()].clone();
+        for _ in 0..rng.random_range(1..6) {
+            let at = rng.random_range(0..raw.len());
+            raw[at] = rng.random();
+        }
+        if rng.random_bool(0.2) {
+            raw.extend((0..rng.random_range(1..16)).map(|_| rng.random::<u8>()));
+        }
+        let bytes = lz4_flex::compress_prepend_size(&raw);
+        let _ = decode::<ClientMessage>(&bytes);
+        let _ = decode::<ServerMessage>(&bytes);
+    }
 }

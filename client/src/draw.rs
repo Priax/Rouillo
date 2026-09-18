@@ -5,7 +5,20 @@ use shared::*;
 use crate::state::GameSession;
 use crate::{config, Font};
 
-pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font: &Font, is_host: bool) {
+/// `can_pause`: whether the room's pause policy lets this player toggle the pause.
+pub fn draw_game(
+    app: &mut App,
+    gfx: &mut Graphics,
+    session: &GameSession,
+    font: &Font,
+    is_host: bool,
+    can_pause: bool,
+) {
+    // Leaving costs the game only while it is undecided and the opponent is here:
+    // a finished game is already settled, and leaving an absent opponent voids it.
+    let game_over = session.board.state == GameState::GameOver || session.other_board.state == GameState::GameOver;
+    let leaving_forfeits = !game_over && !session.opponent_disconnected;
+
     let mut draw = gfx.create_draw();
     draw.clear(Color::from_rgb(0.05, 0.05, 0.05));
 
@@ -127,7 +140,7 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
             .h_align_center()
             .v_align_middle()
             .color(Color::RED);
-        draw_exit_buttons(&mut draw, app, font, win_w, win_h, is_host);
+        draw_exit_buttons(&mut draw, app, font, win_w, win_h, is_host, leaving_forfeits);
     }
 
     let i_lost = session.board.state == GameState::GameOver;
@@ -156,7 +169,7 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
             .h_align_center()
             .v_align_middle()
             .color(Color::WHITE);
-        draw_exit_buttons(&mut draw, app, font, win_w, win_h, is_host);
+        draw_exit_buttons(&mut draw, app, font, win_w, win_h, is_host, leaving_forfeits);
     }
 
     if session.board.state == GameState::Paused && !session.opponent_disconnected {
@@ -170,13 +183,18 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
             .h_align_center()
             .v_align_middle()
             .color(Color::from_rgba(1.0, 1.0, 1.0, visible_alpha));
-        draw.text(font, "Press ESC to continue")
+        let hint = if can_pause {
+            "Press ESC to continue"
+        } else {
+            "Seul l'hôte peut reprendre"
+        };
+        draw.text(font, hint)
             .position(win_w / 2.0, win_h / 2.0 + 30.0)
             .size(28.0)
             .h_align_center()
             .v_align_middle()
             .color(Color::from_rgba(1.0, 1.0, 1.0, visible_alpha));
-        draw_exit_buttons(&mut draw, app, font, win_w, win_h, is_host);
+        draw_exit_buttons(&mut draw, app, font, win_w, win_h, is_host, leaving_forfeits);
     }
 
     if session.all_clear_timer > 0.0 {
@@ -227,10 +245,16 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, font:
     gfx.render(&draw);
 }
 
-fn draw_exit_buttons(draw: &mut Draw, app: &App, font: &Font, ww: f32, wh: f32, is_host: bool) {
-    crate::rooms::leave_room_button(ww, wh).draw(draw, app, font, "Leave Room");
+fn draw_exit_buttons(draw: &mut Draw, app: &App, font: &Font, ww: f32, wh: f32, is_host: bool, forfeits: bool) {
+    // Say so when walking away is recorded as a loss (see Room::forfeit).
+    let (leave, back) = if forfeits {
+        ("Abandonner (défaite)", "Lobby (défaite)")
+    } else {
+        ("Leave Room", "Back to Lobby")
+    };
+    crate::rooms::leave_room_button(ww, wh).draw(draw, app, font, leave);
     if is_host {
-        crate::rooms::back_to_lobby_button(ww, wh).draw(draw, app, font, "Back to Lobby");
+        crate::rooms::back_to_lobby_button(ww, wh).draw(draw, app, font, back);
     }
 }
 

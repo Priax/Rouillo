@@ -1,6 +1,6 @@
 use notan::draw::*;
 use notan::prelude::*;
-use shared::{ClientMessage, RoomSettings};
+use shared::{ClientMessage, LobbyInfo, RoomSettings};
 
 use crate::http;
 use crate::menu::Btn;
@@ -257,6 +257,22 @@ pub fn draw_join_by_id(app: &mut App, gfx: &mut Graphics, state: &State) {
     draw_entry(app, gfx, state, "Join by ID", "Join", "Room ID...");
 }
 
+/// Both seats taken and both players connected: the server only accepts a
+/// launch in that state (a held seat for a disconnected player does not count).
+fn lobby_ready(info: &LobbyInfo) -> bool {
+    info.players >= 2 && info.connected >= info.players
+}
+
+fn lobby_headline(info: &LobbyInfo) -> String {
+    let away = info.players.saturating_sub(info.connected);
+    let away = if away > 0 {
+        format!(" ({away} déconnecté)")
+    } else {
+        String::new()
+    };
+    format!("Room #{}   -   {}/2 joueurs{away}", info.id, info.players)
+}
+
 const LOBBY_FIRST_Y: f32 = 230.0;
 const LOBBY_ROW_H: f32 = 64.0;
 
@@ -377,7 +393,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         }
     }
 
-    let launch_enabled = info.players >= 2 || info.countdown.is_some();
+    let launch_enabled = lobby_ready(&info) || info.countdown.is_some();
     if info.is_host && launch_enabled && lobby_launch(w).clicked(app) {
         send(state, &ClientMessage::ToggleCountdown);
         return;
@@ -419,15 +435,12 @@ pub fn draw_lobby(app: &mut App, gfx: &mut Graphics, state: &State) {
         .h_align_center()
         .v_align_middle()
         .color(Color::from_rgb(0.9, 0.7, 1.0));
-    draw.text(
-        &state.font,
-        &format!("Room #{}   -   {}/2 joueurs", info.id, info.players),
-    )
-    .position(w / 2.0, 120.0)
-    .size(22.0)
-    .h_align_center()
-    .v_align_middle()
-    .color(Color::GRAY);
+    draw.text(&state.font, &lobby_headline(info))
+        .position(w / 2.0, 120.0)
+        .size(22.0)
+        .h_align_center()
+        .v_align_middle()
+        .color(Color::GRAY);
 
     for i in 0..RoomSettings::COUNT {
         let y = LOBBY_FIRST_Y + i as f32 * LOBBY_ROW_H + 25.0;
@@ -450,13 +463,19 @@ pub fn draw_lobby(app: &mut App, gfx: &mut Graphics, state: &State) {
     }
 
     if info.is_host {
-        let full = info.players >= 2;
-        let enabled = full || info.countdown.is_some();
+        let enabled = lobby_ready(info) || info.countdown.is_some();
         let label = if info.countdown.is_some() { "Cancel" } else { "Launch" };
         lobby_launch(w).draw_styled(&mut draw, app, &state.font, label, enabled);
-        if !full && info.countdown.is_none() {
+        let waiting = if info.players < 2 {
+            Some("En attente d'un 2e joueur...")
+        } else if info.connected < info.players {
+            Some("Adversaire déconnecté, en attente de son retour...")
+        } else {
+            None
+        };
+        if let (Some(msg), None) = (waiting, info.countdown) {
             let y = LOBBY_FIRST_Y + RoomSettings::COUNT as f32 * LOBBY_ROW_H + 165.0;
-            draw.text(&state.font, "En attente d'un 2e joueur...")
+            draw.text(&state.font, msg)
                 .position(w / 2.0, y)
                 .size(20.0)
                 .h_align_center()

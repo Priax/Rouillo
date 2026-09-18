@@ -21,6 +21,10 @@ chrono = { version = "0.4", features = ["serde"] }
 
 shared = { path = "../shared" }
 
+[dev-dependencies]
+# In-process WebSocket client, to test `handle_connection` end to end.
+warp = { version = "0.4.3", features = ["websocket", "server", "test"] }
+
 [features]
 # tokio-console support. Build with:
 #   RUSTFLAGS="--cfg tokio_unstable" cargo run -p server --features console
