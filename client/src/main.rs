@@ -12,7 +12,6 @@ mod logic;
 mod login;
 mod menu;
 mod network;
-mod other_profile;
 mod profile;
 mod rooms;
 mod state;
@@ -108,18 +107,8 @@ fn update_invitation(app: &mut App, state: &mut State) {
         return;
     }
     let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
-    let accept_btn = Btn {
-        x: ww - 270.0,
-        y: wh - 70.0,
-        w: 120.0,
-        h: 50.0,
-    };
-    let decline_btn = Btn {
-        x: ww - 140.0,
-        y: wh - 70.0,
-        w: 110.0,
-        h: 50.0,
-    };
+    let accept_btn = Btn::at(ww - 270.0, wh - 70.0, 120.0, 50.0);
+    let decline_btn = Btn::at(ww - 140.0, wh - 70.0, 110.0, 50.0);
     if accept_btn.clicked(app) {
         if let Some((_, room_id, _)) = state.pending_invitation.take() {
             if state.conn.is_live() {
@@ -161,7 +150,7 @@ fn update(app: &mut App, state: &mut State) {
         Screen::RoomLobby => rooms::update_lobby(app, state),
         Screen::Profile => profile::update_profile(app, state),
         Screen::Friends => friends::update_friends(app, state),
-        Screen::OtherProfile => other_profile::update_other_profile(app, state),
+        Screen::OtherProfile => profile::update_other_profile(app, state),
         Screen::Game => {
             let is_host = state.lobby.as_ref().map(|l| l.is_host).unwrap_or(false);
             let State {
@@ -193,18 +182,8 @@ fn draw_invitation_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
         .size(20.0)
         .v_align_middle()
         .color(Color::WHITE);
-    let accept_btn = Btn {
-        x: ww - 270.0,
-        y: banner_y + 15.0,
-        w: 120.0,
-        h: 50.0,
-    };
-    let decline_btn = Btn {
-        x: ww - 140.0,
-        y: banner_y + 15.0,
-        w: 110.0,
-        h: 50.0,
-    };
+    let accept_btn = Btn::at(ww - 270.0, banner_y + 15.0, 120.0, 50.0);
+    let decline_btn = Btn::at(ww - 140.0, banner_y + 15.0, 110.0, 50.0);
     accept_btn.draw_styled(&mut d, app, &state.font, "Rejoindre", true);
     decline_btn.draw(&mut d, app, &state.font, "Ignorer");
     gfx.render(&d);
@@ -221,7 +200,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         Screen::RoomLobby => rooms::draw_lobby(app, gfx, state),
         Screen::Profile => profile::draw_profile(app, gfx, state),
         Screen::Friends => friends::draw_friends(app, gfx, state),
-        Screen::OtherProfile => other_profile::draw_other_profile(app, gfx, state),
+        Screen::OtherProfile => profile::draw_other_profile(app, gfx, state),
         Screen::Game => {
             let is_host = state.lobby.as_ref().map(|l| l.is_host).unwrap_or(false);
             let can_pause = state.lobby.as_ref().is_some_and(|l| l.settings.pause.allows(l.is_host));

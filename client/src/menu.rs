@@ -13,6 +13,10 @@ pub struct Btn {
 }
 
 impl Btn {
+    pub fn at(x: f32, y: f32, w: f32, h: f32) -> Btn {
+        Btn { x, y, w, h }
+    }
+
     pub fn contains(&self, mx: f32, my: f32) -> bool {
         mx >= self.x && mx <= self.x + self.w && my >= self.y && my <= self.y + self.h
     }
@@ -102,25 +106,15 @@ fn menu_layout(win_w: f32, win_h: f32, logged_in: bool) -> MenuLayout {
     let cy = win_h / 2.0;
     let (friends, logout) = if logged_in {
         (
-            Some(Btn {
-                x,
-                y: cy + 160.0,
-                w,
-                h: 56.0,
-            }),
-            Some(Btn {
-                x,
-                y: cy + 240.0,
-                w,
-                h: 56.0,
-            }),
+            Some(Btn::at(x, cy + 160.0, w, 56.0)),
+            Some(Btn::at(x, cy + 240.0, w, 56.0)),
         )
     } else {
         (None, None)
     };
     MenuLayout {
-        play: Btn { x, y: cy - 20.0, w, h },
-        settings: Btn { x, y: cy + 70.0, w, h },
+        play: Btn::at(x, cy - 20.0, w, h),
+        settings: Btn::at(x, cy + 70.0, w, h),
         friends,
         logout,
     }
@@ -268,38 +262,23 @@ fn settings_layout(win_w: f32, win_h: f32) -> SettingsLayout {
     let minus_x = center_x + 60.0;
     let plus_x = center_x + 200.0;
 
-    let mut minus = [Btn {
-        x: 0.0,
-        y: 0.0,
-        w: btn,
-        h: btn,
-    }; Settings::COUNT];
+    let mut minus = [Btn::at(0.0, 0.0, btn, btn); Settings::COUNT];
     let mut plus = minus;
     for i in 0..Settings::COUNT {
         let y = first_y + i as f32 * row_h;
-        minus[i] = Btn {
-            x: minus_x,
-            y,
-            w: btn,
-            h: btn,
-        };
-        plus[i] = Btn {
-            x: plus_x,
-            y,
-            w: btn,
-            h: btn,
-        };
+        minus[i] = Btn::at(minus_x, y, btn, btn);
+        plus[i] = Btn::at(plus_x, y, btn, btn);
     }
 
     SettingsLayout {
         minus,
         plus,
-        back: Btn {
-            x: center_x - 100.0,
-            y: first_y + Settings::COUNT as f32 * row_h + 40.0,
-            w: 200.0,
-            h: 60.0,
-        },
+        back: Btn::at(
+            center_x - 100.0,
+            first_y + Settings::COUNT as f32 * row_h + 40.0,
+            200.0,
+            60.0,
+        ),
     }
 }
 

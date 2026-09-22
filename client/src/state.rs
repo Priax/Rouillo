@@ -146,18 +146,7 @@ pub enum FriendshipStatus {
 }
 
 pub struct OtherProfileData {
-    pub user_id: String,
-    pub username: String,
-    pub elo: i32,
-    pub bio: Option<String>,
-    pub favorite_music: Option<String>,
-    pub total_matches: i64,
-    pub wins: i64,
-    pub all_time_max_chain: i32,
-    pub total_nuisance_sent: i64,
-    pub match_history: Vec<ApiMatchEntry>,
-    pub profile_slot: Option<HttpSlot>,
-    pub history_slot: Option<HttpSlot>,
+    pub core: ProfileCore,
     pub friendship_check_slot: Option<HttpSlot>,
     pub load_failed: bool,
     pub friendship: FriendshipStatus,
@@ -189,7 +178,7 @@ pub struct ApiMatchEntry {
     pub player2: ApiMatchPlayer,
 }
 
-pub struct ProfileData {
+pub struct ProfileCore {
     pub user_id: String,
     pub username: String,
     pub elo: i32,
@@ -202,6 +191,35 @@ pub struct ProfileData {
     pub match_history: Vec<ApiMatchEntry>,
     pub profile_slot: Option<HttpSlot>,
     pub history_slot: Option<HttpSlot>,
+}
+
+impl ProfileCore {
+    pub fn loading(
+        user_id: String,
+        username: String,
+        elo: i32,
+        profile_slot: HttpSlot,
+        history_slot: HttpSlot,
+    ) -> Self {
+        Self {
+            user_id,
+            username,
+            elo,
+            bio: None,
+            favorite_music: None,
+            total_matches: 0,
+            wins: 0,
+            all_time_max_chain: 0,
+            total_nuisance_sent: 0,
+            match_history: Vec::new(),
+            profile_slot: Some(profile_slot),
+            history_slot: Some(history_slot),
+        }
+    }
+}
+
+pub struct ProfileData {
+    pub core: ProfileCore,
     pub editing: bool,
     pub edit_bio: String,
     pub edit_music: String,

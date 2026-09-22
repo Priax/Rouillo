@@ -132,26 +132,8 @@ struct UserProfile {
     created_at: DateTime<Utc>,
 }
 
-fn with_pool(pool: DbPool) -> impl Filter<Extract = (DbPool,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || pool.clone())
-}
-
-fn with_attempts(
-    attempts: LoginAttempts,
-) -> impl Filter<Extract = (LoginAttempts,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || attempts.clone())
-}
-
-fn with_friend_limit(
-    limit: FriendLimit,
-) -> impl Filter<Extract = (FriendLimit,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || limit.clone())
-}
-
-fn with_search_limit(
-    limit: SearchLimit,
-) -> impl Filter<Extract = (SearchLimit,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || limit.clone())
+fn with<T: Clone + Send + 'static>(value: T) -> impl Filter<Extract = (T,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || value.clone())
 }
 
 fn bearer_token() -> impl Filter<Extract = (Uuid,), Error = Rejection> + Clone {
@@ -161,6 +143,17 @@ fn bearer_token() -> impl Filter<Extract = (Uuid,), Error = Rejection> + Clone {
             .and_then(|t| Uuid::parse_str(t).ok())
             .ok_or_else(|| warp::reject::custom(Unauthorized))
     })
+}
+
+fn authed(pool: DbPool) -> impl Filter<Extract = (db::User,), Error = Rejection> + Clone {
+    bearer_token()
+        .and(with(pool))
+        .and_then(|token: Uuid, pool: DbPool| async move {
+            db::find_user_by_token(&pool, token)
+                .await
+                .map_err(internal)?
+                .ok_or_else(|| warp::reject::custom(Unauthorized))
+        })
 }
 
 fn validate_username(u: &str) -> bool {
@@ -249,12 +242,7 @@ async fn handle_logout(token: Uuid, pool: DbPool) -> Result<impl Reply, Rejectio
     Ok(warp::reply::json(&serde_json::json!({})))
 }
 
-async fn handle_me(token: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
-    let user = db::find_user_by_token(&pool, token)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| warp::reject::custom(Unauthorized))?;
-
+async fn handle_me(user: db::User) -> Result<impl Reply, Rejection> {
     Ok(warp::reply::json(&UserProfile {
         id: user.id,
         username: user.username,
@@ -267,7 +255,7 @@ async fn handle_me(token: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
     }))
 }
 
-async fn handle_patch_me(token: Uuid, body: PatchMeBody, pool: DbPool) -> Result<impl Reply, Rejection> {
+async fn handle_patch_me(user: db::User, body: PatchMeBody, pool: DbPool) -> Result<impl Reply, Rejection> {
     if body.bio.as_deref().is_some_and(|s| s.chars().count() > 500) {
         return Err(warp::reject::custom(BadRequest(
             "Bio must be 500 characters or less".into(),
@@ -278,11 +266,6 @@ async fn handle_patch_me(token: Uuid, body: PatchMeBody, pool: DbPool) -> Result
             "Favorite music must be 200 characters or less".into(),
         )));
     }
-
-    let user = db::find_user_by_token(&pool, token)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| warp::reject::custom(Unauthorized))?;
 
     let updated = db::update_profile(&pool, user.id, body.bio, body.favorite_music)
         .await
@@ -432,16 +415,11 @@ struct UserSearchQuery {
 }
 
 async fn handle_search_users(
-    token: Uuid,
+    me: db::User,
     query: UserSearchQuery,
     pool: DbPool,
     limit: SearchLimit,
 ) -> Result<impl Reply, Rejection> {
-    let me = db::find_user_by_token(&pool, token)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| warp::reject::custom(Unauthorized))?;
-
     let key = me.id.to_string();
     if rate_check(&limit, &key, MAX_SEARCHES, SEARCH_WINDOW) {
         return Err(warp::reject::custom(TooManyRequests));
@@ -457,12 +435,7 @@ async fn handle_search_users(
     Ok(warp::reply::json(&results))
 }
 
-async fn handle_list_friends(token: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
-    let me = db::find_user_by_token(&pool, token)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| warp::reject::custom(Unauthorized))?;
-
+async fn handle_list_friends(me: db::User, pool: DbPool) -> Result<impl Reply, Rejection> {
     let list = db::list_friends(&pool, me.id).await.map_err(internal)?;
 
     Ok(warp::reply::json(&FriendListResponse {
@@ -473,16 +446,11 @@ async fn handle_list_friends(token: Uuid, pool: DbPool) -> Result<impl Reply, Re
 }
 
 async fn handle_send_friend_request(
-    token: Uuid,
+    me: db::User,
     body: SendFriendRequestBody,
     pool: DbPool,
     limit: FriendLimit,
 ) -> Result<impl Reply, Rejection> {
-    let me = db::find_user_by_token(&pool, token)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| warp::reject::custom(Unauthorized))?;
-
     let key = me.id.to_string();
     if rate_check(&limit, &key, MAX_FRIEND_REQS, FRIEND_WINDOW) {
         return Err(warp::reject::custom(TooManyRequests));
@@ -505,12 +473,7 @@ async fn handle_send_friend_request(
     }
 }
 
-async fn handle_accept_friend(requester_id: Uuid, token: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
-    let me = db::find_user_by_token(&pool, token)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| warp::reject::custom(Unauthorized))?;
-
+async fn handle_accept_friend(requester_id: Uuid, me: db::User, pool: DbPool) -> Result<impl Reply, Rejection> {
     let found = db::accept_friend_request(&pool, me.id, requester_id)
         .await
         .map_err(internal)?;
@@ -522,12 +485,7 @@ async fn handle_accept_friend(requester_id: Uuid, token: Uuid, pool: DbPool) -> 
     }
 }
 
-async fn handle_remove_friend(other_id: Uuid, token: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
-    let me = db::find_user_by_token(&pool, token)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| warp::reject::custom(Unauthorized))?;
-
+async fn handle_remove_friend(other_id: Uuid, me: db::User, pool: DbPool) -> Result<impl Reply, Rejection> {
     let found = db::remove_friend(&pool, me.id, other_id).await.map_err(internal)?;
 
     if found {
@@ -568,7 +526,8 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, std::convert
 
 pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let api = warp::path("api");
-    let pool = with_pool(pool);
+    let db = pool.clone();
+    let pool = with(pool);
     let body_limit = warp::body::content_length_limit(16 * 1024);
     let attempts: LoginAttempts = new_rate_map();
     let friend_limit: FriendLimit = new_rate_map();
@@ -590,10 +549,10 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(body_limit)
         .and(warp::body::json())
         .and(pool.clone())
-        .and(with_attempts(attempts))
+        .and(with(attempts))
         .and_then(handle_login);
 
-    let friend_limit = with_friend_limit(friend_limit);
+    let friend_limit = with(friend_limit);
 
     let logout = api
         .and(warp::path("logout"))
@@ -607,15 +566,14 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::path("me"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(bearer_token())
-        .and(pool.clone())
+        .and(authed(db.clone()))
         .and_then(handle_me);
 
     let me_patch = api
         .and(warp::path("me"))
         .and(warp::path::end())
         .and(warp::patch())
-        .and(bearer_token())
+        .and(authed(db.clone()))
         .and(body_limit)
         .and(warp::body::json())
         .and(pool.clone())
@@ -626,10 +584,10 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::path("search"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(bearer_token())
+        .and(authed(db.clone()))
         .and(warp::query::<UserSearchQuery>())
         .and(pool.clone())
-        .and(with_search_limit(search_limit))
+        .and(with(search_limit))
         .and_then(handle_search_users);
 
     let user_profile = api
@@ -654,7 +612,7 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::path("friends"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(bearer_token())
+        .and(authed(db.clone()))
         .and(pool.clone())
         .and_then(handle_list_friends);
 
@@ -662,7 +620,7 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::path("friends"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(bearer_token())
+        .and(authed(db.clone()))
         .and(body_limit)
         .and(warp::body::json())
         .and(pool.clone())
@@ -675,7 +633,7 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::path("accept"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(bearer_token())
+        .and(authed(db.clone()))
         .and(pool.clone())
         .and_then(handle_accept_friend);
 
@@ -684,7 +642,7 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::path::param::<Uuid>())
         .and(warp::path::end())
         .and(warp::delete())
-        .and(bearer_token())
+        .and(authed(db.clone()))
         .and(pool.clone())
         .and_then(handle_remove_friend);
 

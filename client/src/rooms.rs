@@ -18,30 +18,15 @@ fn send(state: &mut State, msg: &ClientMessage) {
 }
 
 pub fn leave_room_button(w: f32, h: f32) -> Btn {
-    Btn {
-        x: w / 2.0 - 130.0,
-        y: h / 2.0 + 110.0,
-        w: 260.0,
-        h: 50.0,
-    }
+    Btn::at(w / 2.0 - 130.0, h / 2.0 + 110.0, 260.0, 50.0)
 }
 
 pub fn back_to_lobby_button(w: f32, h: f32) -> Btn {
-    Btn {
-        x: w / 2.0 - 130.0,
-        y: h / 2.0 + 175.0,
-        w: 260.0,
-        h: 50.0,
-    }
+    Btn::at(w / 2.0 - 130.0, h / 2.0 + 175.0, 260.0, 50.0)
 }
 
 fn room_row(i: usize, w: f32) -> Btn {
-    Btn {
-        x: w / 2.0 - 250.0,
-        y: 150.0 + i as f32 * 56.0,
-        w: 500.0,
-        h: 48.0,
-    }
+    Btn::at(w / 2.0 - 250.0, 150.0 + i as f32 * 56.0, 500.0, 48.0)
 }
 
 struct BrowserButtons {
@@ -56,12 +41,7 @@ fn browser_buttons(w: f32, h: f32) -> BrowserButtons {
     let gap = 15.0;
     let start = w / 2.0 - (4.0 * bw + 3.0 * gap) / 2.0;
     let y = h - 90.0;
-    let at = |i: f32| Btn {
-        x: start + i * (bw + gap),
-        y,
-        w: bw,
-        h: 50.0,
-    };
+    let at = |i: f32| Btn::at(start + i * (bw + gap), y, bw, 50.0);
     BrowserButtons {
         create: at(0.0),
         join_id: at(1.0),
@@ -155,18 +135,8 @@ fn entry_buttons(w: f32, h: f32) -> (Btn, Btn) {
     let bw = 200.0;
     let y = h / 2.0 + 60.0;
     (
-        Btn {
-            x: w / 2.0 - bw - 10.0,
-            y,
-            w: bw,
-            h: 56.0,
-        },
-        Btn {
-            x: w / 2.0 + 10.0,
-            y,
-            w: bw,
-            h: 56.0,
-        },
+        Btn::at(w / 2.0 - bw - 10.0, y, bw, 56.0),
+        Btn::at(w / 2.0 + 10.0, y, bw, 56.0),
     )
 }
 
@@ -275,59 +245,29 @@ const LOBBY_FIRST_Y: f32 = 230.0;
 const LOBBY_ROW_H: f32 = 64.0;
 
 fn lobby_minus(i: usize, w: f32) -> Btn {
-    Btn {
-        x: w / 2.0 + 60.0,
-        y: LOBBY_FIRST_Y + i as f32 * LOBBY_ROW_H,
-        w: 50.0,
-        h: 50.0,
-    }
+    Btn::at(w / 2.0 + 60.0, LOBBY_FIRST_Y + i as f32 * LOBBY_ROW_H, 50.0, 50.0)
 }
 fn lobby_plus(i: usize, w: f32) -> Btn {
-    Btn {
-        x: w / 2.0 + 200.0,
-        y: LOBBY_FIRST_Y + i as f32 * LOBBY_ROW_H,
-        w: 50.0,
-        h: 50.0,
-    }
+    Btn::at(w / 2.0 + 200.0, LOBBY_FIRST_Y + i as f32 * LOBBY_ROW_H, 50.0, 50.0)
 }
 fn lobby_launch(w: f32) -> Btn {
     let y = LOBBY_FIRST_Y + RoomSettings::COUNT as f32 * LOBBY_ROW_H + 30.0;
-    Btn {
-        x: w / 2.0 - 110.0,
-        y,
-        w: 220.0,
-        h: 56.0,
-    }
+    Btn::at(w / 2.0 - 110.0, y, 220.0, 56.0)
 }
 fn lobby_leave(w: f32) -> Btn {
     let y = LOBBY_FIRST_Y + RoomSettings::COUNT as f32 * LOBBY_ROW_H + 100.0;
-    Btn {
-        x: w / 2.0 - 110.0,
-        y,
-        w: 220.0,
-        h: 50.0,
-    }
+    Btn::at(w / 2.0 - 110.0, y, 220.0, 50.0)
 }
 
 fn lobby_invite(w: f32) -> Btn {
     let y = LOBBY_FIRST_Y + RoomSettings::COUNT as f32 * LOBBY_ROW_H + 220.0;
-    Btn {
-        x: w / 2.0 - 110.0,
-        y,
-        w: 220.0,
-        h: 44.0,
-    }
+    Btn::at(w / 2.0 - 110.0, y, 220.0, 44.0)
 }
 
 pub fn update_lobby(app: &mut App, state: &mut State) {
-    if let Some(result) = state.invite_slot.as_ref().and_then(http::poll) {
-        state.invite_slot = None;
-        if let Ok(resp) = result {
-            if let Some(text) = resp.text() {
-                if let Ok(data) = serde_json::from_str::<ApiFriendsResponse>(text) {
-                    state.invite_friends = data.friends;
-                }
-            }
+    if let Some(Ok(resp)) = http::take(&mut state.invite_slot) {
+        if let Some(data) = http::json::<ApiFriendsResponse>(&resp) {
+            state.invite_friends = data.friends;
         }
     }
 
@@ -338,12 +278,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
     let (w, h) = (win_w(app), win_h(app));
 
     if state.invite_overlay {
-        let close_btn = Btn {
-            x: w - 70.0,
-            y: 10.0,
-            w: 60.0,
-            h: 40.0,
-        };
+        let close_btn = Btn::at(w - 70.0, 10.0, 60.0, 40.0);
         if close_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Escape) {
             state.invite_overlay = false;
             return;
@@ -351,12 +286,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         let friends = state.invite_friends.clone();
         let room_id = info.id;
         for (i, friend) in friends.iter().enumerate() {
-            let btn = Btn {
-                x: w / 2.0 - 80.0,
-                y: 180.0 + i as f32 * 52.0,
-                w: 160.0,
-                h: 40.0,
-            };
+            let btn = Btn::at(w / 2.0 - 80.0, 180.0 + i as f32 * 52.0, 160.0, 40.0);
             if btn.clicked(app) {
                 send(
                     state,
@@ -515,12 +445,7 @@ pub fn draw_lobby(app: &mut App, gfx: &mut Graphics, state: &State) {
             .h_align_center()
             .v_align_middle()
             .color(Color::from_rgb(0.9, 0.7, 1.0));
-        let close_btn = Btn {
-            x: w - 70.0,
-            y: 10.0,
-            w: 60.0,
-            h: 40.0,
-        };
+        let close_btn = Btn::at(w - 70.0, 10.0, 60.0, 40.0);
         close_btn.draw(&mut draw, app, &state.font, "X");
         if state.invite_slot.is_some() {
             draw.text(&state.font, "Chargement...")
@@ -545,12 +470,7 @@ pub fn draw_lobby(app: &mut App, gfx: &mut Graphics, state: &State) {
                     .h_align_right()
                     .v_align_middle()
                     .color(Color::WHITE);
-                let btn = Btn {
-                    x: w / 2.0 - 80.0,
-                    y: fy,
-                    w: 160.0,
-                    h: 40.0,
-                };
+                let btn = Btn::at(w / 2.0 - 80.0, fy, 160.0, 40.0);
                 btn.draw(&mut draw, app, &state.font, "Inviter");
             }
         }

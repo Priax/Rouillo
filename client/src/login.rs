@@ -40,19 +40,17 @@ fn submit(form: &mut AuthForm) {
 }
 
 fn poll_auth(state: &mut State) {
-    let result = state.auth_form.pending.as_ref().and_then(http::poll);
-    let Some(result) = result else { return };
-    state.auth_form.pending = None;
-
+    let Some(result) = http::take(&mut state.auth_form.pending) else {
+        return;
+    };
     match result {
         Err(e) => {
             state.auth_form.error = format!("Erreur réseau: {e}");
         }
         Ok(resp) => {
-            let text = resp.text().unwrap_or_default();
             if resp.status == 200 || resp.status == 201 {
-                match serde_json::from_str::<ApiAuthResponse>(text) {
-                    Ok(r) => {
+                match http::json::<ApiAuthResponse>(&resp) {
+                    Some(r) => {
                         crate::state::save_token(&r.token);
                         state.auth = Some(AuthInfo {
                             token: r.token,
@@ -63,30 +61,24 @@ fn poll_auth(state: &mut State) {
                         state.auth_form = AuthForm::default();
                         state.screen = Screen::Menu;
                     }
-                    Err(_) => {
+                    None => {
                         state.auth_form.error = "Réponse serveur invalide.".to_owned();
                     }
                 }
             } else {
-                let msg = serde_json::from_str::<serde_json::Value>(text)
-                    .ok()
-                    .and_then(|v| v["error"].as_str().map(str::to_owned))
-                    .unwrap_or_else(|| format!("Erreur {}", resp.status));
-                state.auth_form.error = msg;
+                state.auth_form.error = http::error_message(&resp);
             }
         }
     }
 }
 
 pub fn poll_startup_check(state: &mut State) {
-    let result = state.startup_check.as_ref().and_then(http::poll);
-    let Some(result) = result else { return };
-    state.startup_check = None;
-
+    let Some(result) = http::take(&mut state.startup_check) else {
+        return;
+    };
     match result {
         Ok(resp) if resp.status == 200 => {
-            let text = resp.text().unwrap_or_default();
-            if let Ok(me) = serde_json::from_str::<ApiMeResponse>(text) {
+            if let Some(me) = http::json::<ApiMeResponse>(&resp) {
                 if let Some(token) = crate::state::load_stored_token() {
                     state.auth = Some(AuthInfo {
                         token,
@@ -129,18 +121,8 @@ pub fn update_auth(app: &mut App, state: &mut State) {
         };
     }
 
-    let login_tab = Btn {
-        x: cx - 230.0,
-        y: base_y - 10.0,
-        w: 220.0,
-        h: 50.0,
-    };
-    let register_tab = Btn {
-        x: cx + 10.0,
-        y: base_y - 10.0,
-        w: 220.0,
-        h: 50.0,
-    };
+    let login_tab = Btn::at(cx - 230.0, base_y - 10.0, 220.0, 50.0);
+    let register_tab = Btn::at(cx + 10.0, base_y - 10.0, 220.0, 50.0);
     if login_tab.clicked(app) {
         state.auth_form.mode = AuthMode::Login;
         state.auth_form.error.clear();
@@ -151,43 +133,23 @@ pub fn update_auth(app: &mut App, state: &mut State) {
     }
 
     let (ux, uy, uw, uh) = input_box(cx, base_y + 60.0);
-    let username_box = Btn {
-        x: ux,
-        y: uy,
-        w: uw,
-        h: uh,
-    };
+    let username_box = Btn::at(ux, uy, uw, uh);
     if username_box.clicked(app) {
         state.auth_form.focused = AuthField::Username;
     }
 
     let (px, py, pw, ph) = input_box(cx, base_y + 140.0);
-    let password_box = Btn {
-        x: px,
-        y: py,
-        w: pw,
-        h: ph,
-    };
+    let password_box = Btn::at(px, py, pw, ph);
     if password_box.clicked(app) {
         state.auth_form.focused = AuthField::Password;
     }
 
-    let submit_btn = Btn {
-        x: cx - 180.0,
-        y: base_y + 220.0,
-        w: 360.0,
-        h: 56.0,
-    };
+    let submit_btn = Btn::at(cx - 180.0, base_y + 220.0, 360.0, 56.0);
     if (submit_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Enter)) && state.auth_form.pending.is_none() {
         submit(&mut state.auth_form);
     }
 
-    let guest_btn = Btn {
-        x: cx - 180.0,
-        y: base_y + 296.0,
-        w: 360.0,
-        h: 50.0,
-    };
+    let guest_btn = Btn::at(cx - 180.0, base_y + 296.0, 360.0, 50.0);
     if guest_btn.clicked(app) {
         state.auth = None;
         state.auth_form = AuthForm::default();
@@ -264,20 +226,10 @@ pub fn draw_auth(app: &mut App, gfx: &mut Graphics, state: &State) {
             AuthMode::Register => "S'inscrire",
         }
     };
-    let submit_btn = Btn {
-        x: cx - 180.0,
-        y: base_y + 220.0,
-        w: 360.0,
-        h: 56.0,
-    };
+    let submit_btn = Btn::at(cx - 180.0, base_y + 220.0, 360.0, 56.0);
     submit_btn.draw_styled(&mut draw, app, &state.font, submit_label, !loading);
 
-    let guest_btn = Btn {
-        x: cx - 180.0,
-        y: base_y + 296.0,
-        w: 360.0,
-        h: 50.0,
-    };
+    let guest_btn = Btn::at(cx - 180.0, base_y + 296.0, 360.0, 50.0);
     guest_btn.draw(&mut draw, app, &state.font, "Jouer en invité");
 
     if !state.auth_form.error.is_empty() {

@@ -26,93 +26,78 @@ fn col_x(ww: f32, col: usize) -> f32 {
 }
 
 fn search_submit_btn(ww: f32) -> Btn {
-    Btn {
-        x: ww / 2.0 + 155.0,
-        y: SEARCH_Y,
-        w: 160.0,
-        h: 44.0,
-    }
+    Btn::at(ww / 2.0 + 155.0, SEARCH_Y, 160.0, 44.0)
 }
 
 fn result_add_btn(ww: f32, row: usize) -> Btn {
-    Btn {
-        x: ww / 2.0 + 110.0,
-        y: SEARCH_RESULT_Y + row as f32 * RESULT_ROW_H + 5.0,
-        w: 120.0,
-        h: 34.0,
-    }
+    Btn::at(
+        ww / 2.0 + 110.0,
+        SEARCH_RESULT_Y + row as f32 * RESULT_ROW_H + 5.0,
+        120.0,
+        34.0,
+    )
 }
 
 fn result_view_btn(ww: f32, row: usize) -> Btn {
-    Btn {
-        x: ww / 2.0 + 235.0,
-        y: SEARCH_RESULT_Y + row as f32 * RESULT_ROW_H + 5.0,
-        w: 115.0,
-        h: 34.0,
-    }
+    Btn::at(
+        ww / 2.0 + 235.0,
+        SEARCH_RESULT_Y + row as f32 * RESULT_ROW_H + 5.0,
+        115.0,
+        34.0,
+    )
 }
 
 fn remove_btn(ww: f32, col: usize, row: usize) -> Btn {
-    Btn {
-        x: col_x(ww, col) + COL_W - 114.0,
-        y: LIST_Y + row as f32 * ROW_H + 8.0,
-        w: 110.0,
-        h: 34.0,
-    }
+    Btn::at(
+        col_x(ww, col) + COL_W - 114.0,
+        LIST_Y + row as f32 * ROW_H + 8.0,
+        110.0,
+        34.0,
+    )
 }
 
 fn accept_btn(ww: f32, row: usize) -> Btn {
-    Btn {
-        x: col_x(ww, 1) + COL_W - 238.0,
-        y: LIST_Y + row as f32 * ROW_H + 8.0,
-        w: 120.0,
-        h: 34.0,
-    }
+    Btn::at(
+        col_x(ww, 1) + COL_W - 238.0,
+        LIST_Y + row as f32 * ROW_H + 8.0,
+        120.0,
+        34.0,
+    )
 }
 
 fn reject_btn(ww: f32, row: usize) -> Btn {
-    Btn {
-        x: col_x(ww, 1) + COL_W - 114.0,
-        y: LIST_Y + row as f32 * ROW_H + 8.0,
-        w: 110.0,
-        h: 34.0,
-    }
+    Btn::at(
+        col_x(ww, 1) + COL_W - 114.0,
+        LIST_Y + row as f32 * ROW_H + 8.0,
+        110.0,
+        34.0,
+    )
 }
 
 fn confirm_yes_btn(ww: f32, row: usize) -> Btn {
-    Btn {
-        x: col_x(ww, 0) + COL_W - 112.0,
-        y: LIST_Y + row as f32 * ROW_H + 8.0,
-        w: 52.0,
-        h: 34.0,
-    }
+    Btn::at(
+        col_x(ww, 0) + COL_W - 112.0,
+        LIST_Y + row as f32 * ROW_H + 8.0,
+        52.0,
+        34.0,
+    )
 }
 
 fn confirm_no_btn(ww: f32, row: usize) -> Btn {
-    Btn {
-        x: col_x(ww, 0) + COL_W - 56.0,
-        y: LIST_Y + row as f32 * ROW_H + 8.0,
-        w: 52.0,
-        h: 34.0,
-    }
+    Btn::at(
+        col_x(ww, 0) + COL_W - 56.0,
+        LIST_Y + row as f32 * ROW_H + 8.0,
+        52.0,
+        34.0,
+    )
 }
 
 fn back_btn(wh: f32) -> Btn {
-    Btn {
-        x: 40.0,
-        y: wh - 80.0,
-        w: 200.0,
-        h: 54.0,
-    }
+    Btn::at(40.0, wh - 80.0, 200.0, 54.0)
 }
 
 fn refresh_btn(wh: f32) -> Btn {
-    Btn {
-        x: 254.0,
-        y: wh - 80.0,
-        w: 160.0,
-        h: 54.0,
-    }
+    Btn::at(254.0, wh - 80.0, 160.0, 54.0)
 }
 
 pub fn enter_friends(state: &mut State) {
@@ -206,133 +191,85 @@ fn send_add_request(state: &mut State, user_id: &str) {
 }
 
 fn poll_list(state: &mut State) {
-    let result = state
-        .friends
-        .as_ref()
-        .and_then(|f| f.list_slot.as_ref())
-        .and_then(http::poll);
-    let Some(result) = result else { return };
-    if let Some(f) = state.friends.as_mut() {
-        f.list_slot = None;
-    }
-    if let Ok(resp) = result {
-        if let Some(text) = resp.text() {
-            if let Ok(data) = serde_json::from_str::<ApiFriendsResponse>(text) {
-                if let Some(f) = state.friends.as_mut() {
-                    f.friends = data.friends;
-                    f.sent = data.sent;
-                    f.received = data.received;
-                }
-            }
-        }
-    }
+    let Some(f) = state.friends.as_mut() else { return };
+    let Some(Ok(resp)) = http::take(&mut f.list_slot) else {
+        return;
+    };
+    let Some(data) = http::json::<ApiFriendsResponse>(&resp) else {
+        return;
+    };
+    f.friends = data.friends;
+    f.sent = data.sent;
+    f.received = data.received;
 }
 
 fn poll_search(state: &mut State) {
-    let result = state
-        .friends
-        .as_ref()
-        .and_then(|f| f.search_slot.as_ref())
-        .and_then(http::poll);
-    let Some(result) = result else { return };
-    if let Some(f) = state.friends.as_mut() {
-        f.search_slot = None;
-    }
+    let Some(f) = state.friends.as_mut() else { return };
+    let Some(result) = http::take(&mut f.search_slot) else {
+        return;
+    };
     match result {
         Ok(resp) if resp.status == 200 => {
-            if let Some(text) = resp.text() {
-                if let Ok(entries) = serde_json::from_str::<Vec<UserSearchEntry>>(text) {
-                    if let Some(f) = state.friends.as_mut() {
-                        if entries.is_empty() {
-                            f.search_error = "Aucun résultat.".to_owned();
-                        }
-                        f.search_results = entries;
-                    }
+            if let Some(entries) = http::json::<Vec<UserSearchEntry>>(&resp) {
+                if entries.is_empty() {
+                    f.search_error = "Aucun résultat.".to_owned();
                 }
+                f.search_results = entries;
             }
         }
-        Ok(resp) => {
-            if let Some(f) = state.friends.as_mut() {
-                f.search_error = format!("Erreur {}", resp.status);
-            }
-        }
-        Err(e) => {
-            if let Some(f) = state.friends.as_mut() {
-                f.search_error = format!("Erreur réseau: {e}");
-            }
-        }
+        Ok(resp) => f.search_error = format!("Erreur {}", resp.status),
+        Err(e) => f.search_error = format!("Erreur réseau: {e}"),
     }
 }
 
 fn poll_add(state: &mut State) {
-    let result = state
-        .friends
-        .as_ref()
-        .and_then(|f| f.add_pending.as_ref())
-        .and_then(http::poll);
-    let Some(result) = result else { return };
-    if let Some(f) = state.friends.as_mut() {
-        f.add_pending = None;
-    }
-    match result {
+    let Some(f) = state.friends.as_mut() else { return };
+    let Some(result) = http::take(&mut f.add_pending) else {
+        return;
+    };
+    let refresh = match result {
         Ok(resp) if resp.status == 201 => {
-            if let Some(f) = state.friends.as_mut() {
-                f.add_error = "Demande envoyée !".to_owned();
-                f.add_success = true;
-            }
-            refresh_list(state);
+            f.add_error = "Demande envoyée !".to_owned();
+            f.add_success = true;
+            true
         }
         Ok(resp) => {
-            let msg = serde_json::from_str::<serde_json::Value>(resp.text().unwrap_or_default())
-                .ok()
-                .and_then(|v| v["error"].as_str().map(str::to_owned))
-                .unwrap_or_else(|| format!("Erreur {}", resp.status));
-            if let Some(f) = state.friends.as_mut() {
-                f.add_error = msg;
-                f.add_success = false;
-            }
+            f.add_error = http::error_message(&resp);
+            f.add_success = false;
+            false
         }
         Err(e) => {
-            if let Some(f) = state.friends.as_mut() {
-                f.add_error = format!("Erreur réseau: {e}");
-                f.add_success = false;
-            }
+            f.add_error = format!("Erreur réseau: {e}");
+            f.add_success = false;
+            false
         }
+    };
+    if refresh {
+        refresh_list(state);
     }
 }
 
 fn poll_action(state: &mut State) {
-    let result = state
-        .friends
-        .as_ref()
-        .and_then(|f| f.action_pending.as_ref())
-        .and_then(http::poll);
-    let Some(result) = result else { return };
-    if let Some(f) = state.friends.as_mut() {
-        f.action_pending = None;
-    }
-    match result {
+    let Some(f) = state.friends.as_mut() else { return };
+    let Some(result) = http::take(&mut f.action_pending) else {
+        return;
+    };
+    let refresh = match result {
         Ok(resp) if resp.status < 300 => {
-            if let Some(f) = state.friends.as_mut() {
-                f.action_error.clear();
-            }
-            refresh_list(state);
+            f.action_error.clear();
+            true
         }
         Ok(resp) => {
-            let msg = serde_json::from_str::<serde_json::Value>(resp.text().unwrap_or_default())
-                .ok()
-                .and_then(|v| v["error"].as_str().map(str::to_owned))
-                .unwrap_or_else(|| format!("Erreur {}", resp.status));
-            if let Some(f) = state.friends.as_mut() {
-                f.action_error = msg;
-            }
-            refresh_list(state);
+            f.action_error = http::error_message(&resp);
+            true
         }
         Err(e) => {
-            if let Some(f) = state.friends.as_mut() {
-                f.action_error = format!("Erreur réseau: {e}");
-            }
+            f.action_error = format!("Erreur réseau: {e}");
+            false
         }
+    };
+    if refresh {
+        refresh_list(state);
     }
 }
 
@@ -367,7 +304,7 @@ pub fn update_friends(app: &mut App, state: &mut State) {
             .map(|f| f.search_input.trim().to_owned())
             .unwrap_or_default();
         if looks_like_uuid(&q) {
-            crate::other_profile::enter_other_profile(state, q, "...".to_owned(), Screen::Friends);
+            crate::profile::enter_other_profile(state, q, "...".to_owned(), Screen::Friends);
             state.screen = Screen::OtherProfile;
             return;
         }
@@ -401,7 +338,7 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         None
     };
     if let Some((uid, uname)) = view_target {
-        crate::other_profile::enter_other_profile(state, uid, uname, Screen::Friends);
+        crate::profile::enter_other_profile(state, uid, uname, Screen::Friends);
         state.screen = Screen::OtherProfile;
         return;
     }
