@@ -20,9 +20,6 @@ fn hash_semaphore() -> &'static Semaphore {
     HASH_SEMAPHORE.get_or_init(|| Semaphore::new(MAX_CONCURRENT_HASH_OPS))
 }
 
-/// Acquires a hash permit then runs `f` on a blocking thread.
-/// At most `MAX_CONCURRENT_HASH_OPS` argon2 operations run in parallel across
-/// both registration and login.
 pub async fn run_hash<F, T>(f: F) -> Result<T, sqlx::Error>
 where
     F: FnOnce() -> T + Send + 'static,

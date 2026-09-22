@@ -311,7 +311,6 @@ pub fn update_profile(app: &mut App, state: &mut State) {
             return;
         }
 
-        // Click on opponent name in match history
         let my_id = state.profile.as_ref().map(|p| p.user_id.clone()).unwrap_or_default();
         let (_, _, right_x, right_w) = panels(ww);
         const HISTORY_Y: f32 = 175.0;
@@ -593,7 +592,6 @@ fn draw_profile_view(
     logout_btn.draw(draw, app, font, "Déconnexion");
 }
 
-// Rendering helper: positional geometry/style args don't benefit from a struct here.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_match_row(
     draw: &mut Draw,

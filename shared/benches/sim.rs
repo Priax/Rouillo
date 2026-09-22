@@ -35,12 +35,11 @@ fn state_update(p1: &Board, p2: &Board) -> ServerMessage {
     ServerMessage::StateUpdate {
         p1_board: Box::new(p1.clone()),
         p2_board: Box::new(p2.clone()),
-        // Snapshot-style update: RNG present (worst-case payload), matching the
-        // server's full-send path. Routine updates send `None` here.
         p1_rng: Some(Box::new(p1.rng_state())),
         p2_rng: Some(Box::new(p2.rng_state())),
         p1_ack: 0,
         p2_ack: 0,
+        tick: 0,
     }
 }
 

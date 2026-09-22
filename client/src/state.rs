@@ -334,10 +334,18 @@ pub struct GameSession {
     pub clock: f64,
     pub sent_at: Vec<(u32, f64)>,
 
+    pub sim_accumulator: f32,
+
+    pub server_tick: u32,
+
+    pub ticks_since_update: u32,
+
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub last_server_msg: String,
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub last_rtt_ms: f32,
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub ping_rtt_ms: Option<f32>,
 }
 
 impl GameSession {
@@ -361,8 +369,12 @@ impl GameSession {
             all_clear_timer: 0.0,
             clock: 0.0,
             sent_at: Vec::new(),
+            sim_accumulator: 0.0,
+            server_tick: 0,
+            ticks_since_update: 0,
             last_server_msg: String::new(),
             last_rtt_ms: 0.0,
+            ping_rtt_ms: None,
         }
     }
 }

@@ -257,8 +257,6 @@ pub fn draw_join_by_id(app: &mut App, gfx: &mut Graphics, state: &State) {
     draw_entry(app, gfx, state, "Join by ID", "Join", "Room ID...");
 }
 
-/// Both seats taken and both players connected: the server only accepts a
-/// launch in that state (a held seat for a disconnected player does not count).
 fn lobby_ready(info: &LobbyInfo) -> bool {
     info.players >= 2 && info.connected >= info.players
 }

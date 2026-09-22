@@ -3,11 +3,6 @@ use shared::*;
 use crate::connection::ConnEvent;
 use crate::state::{GameSession, Screen, State};
 
-/// Polls the connection and applies what it reports to the UI state.
-///
-/// All transport concerns — backoff, dialling, deadlines — live in
-/// [`Connection`]; this function only decides what each outcome means for the
-/// screen the player is looking at.
 pub fn handle_server_messages(state: &mut State) {
     let now = crate::connection::now_secs();
     for event in state.conn.poll(now) {
@@ -16,8 +11,6 @@ pub fn handle_server_messages(state: &mut State) {
             ConnEvent::Message(msg) => process_message(state, *msg),
             ConnEvent::Retrying => {
                 if !state.screen.needs_connection() {
-                    // Nothing on screen depends on the server; drop the attempt
-                    // rather than reconnect for a session that does not exist.
                     state.conn.disconnect();
                     reset_to_menu(state, "Connexion au serveur perdue.");
                 } else {
@@ -29,9 +22,6 @@ pub fn handle_server_messages(state: &mut State) {
     }
 }
 
-/// The socket is open: identify ourselves. The server answers `Hello` with a
-/// `rejoin` and a fresh snapshot when it still holds a slot for this player, so
-/// nothing else is needed to recover a game.
 fn on_opened(state: &mut State, recovered: bool) {
     let hello = ClientMessage::Hello {
         player_id: state.player_id.clone(),
@@ -40,8 +30,6 @@ fn on_opened(state: &mut State, recovered: bool) {
         last_disconnect_reason: state.conn.take_unreported_drop(),
     };
     state.conn.send(&hello);
-    // Only spend `pending_join` once we are actually open: the dial is
-    // asynchronous, so taking it earlier discarded it every time.
     if let Some(id) = state.pending_join.take() {
         state.conn.send(&ClientMessage::JoinRoom { id });
     }
@@ -50,14 +38,26 @@ fn on_opened(state: &mut State, recovered: bool) {
     }
 }
 
-/// Tears everything down and returns to the menu. Only for when the connection
-/// is gone for good — a live reconnection leaves the session in place.
 fn reset_to_menu(state: &mut State, notice: &str) {
     state.session = None;
     state.lobby = None;
     state.rooms.clear();
     state.screen = Screen::Menu;
     state.notice = notice.to_string();
+}
+
+pub fn input_tick(session: &GameSession) -> u32 {
+    session
+        .server_tick
+        .saturating_add(lead_ticks(session.ping_rtt_ms))
+        .saturating_add(session.ticks_since_update)
+}
+
+fn lead_ticks(rtt_ms: Option<f32>) -> u32 {
+    let one_way = rtt_ms.map_or(0, |ms| (ms / 2.0 / 1000.0 / config::CLIENT_SIM_DT).ceil() as u32);
+    one_way
+        .saturating_add(config::INPUT_LEAD_MARGIN_TICKS)
+        .min(config::MAX_INPUT_LEAD_TICKS)
 }
 
 fn process_message(state: &mut State, msg: ServerMessage) {
@@ -92,20 +92,15 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             p2_rng,
             p1_ack,
             p2_ack,
+            tick,
         } => {
             if let Some(session) = state.session.as_mut() {
-                // The server sends both boards every update; pick which one is "us"
-                // based on our slot. `my_ack` is the highest input seq the server has
-                // already folded into our authoritative board.
                 let (mut my_auth, mut opp_auth, my_ack, my_rng, opp_rng) = match session.my_slot {
                     1 => (*p1_board, *p2_board, p1_ack, p1_rng, p2_rng),
                     2 => (*p2_board, *p1_board, p2_ack, p2_rng, p1_rng),
                     _ => return,
                 };
 
-                // Boards arrive without their RNG (skipped on the wire). Restore it from the
-                // message when the server sent it (it advanced), otherwise carry forward the
-                // RNG we already hold for that board — it hasn't changed.
                 match my_rng {
                     Some(r) => my_auth.set_rng(*r),
                     None => my_auth.set_rng(session.board.rng_state()),
@@ -115,40 +110,28 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                     None => opp_auth.set_rng(session.other_board.rng_state()),
                 }
 
-                // Snapshot the locally *predicted* piece before we overwrite anything.
-                // We need it to (a) keep our prediction from snapping backwards and
-                // (b) compute a visual smoothing offset between old and new positions.
                 let prev_piece = session.predicted_board.active_piece.clone();
                 let prev_piece_id = session.predicted_board.piece_id;
                 let prev_fall_timer = session.predicted_board.fall_timer;
                 let prev_opp_piece = session.other_board.active_piece.clone();
                 let prev_opp_piece_id = session.other_board.piece_id;
 
-                // Snapshot fields of the *previous authoritative* board so we can detect
-                // edge transitions (new chain, all-clear, incoming garbage, lock) and
-                // fire the matching sound effects exactly once below.
                 let prev_chain = session.board.chain_count;
                 let prev_all_clear = session.board.last_was_all_clear;
                 let prev_garbage = session.board.pending_garbage;
                 let prev_state = session.board.state;
-                // Did the server already process a HardDrop we sent? If so, the lock it
-                // produced is "our" hard drop, we suppress the lock sound for it because
-                // send_input() already played one locally when the key was pressed.
                 let hard_drop_acked = session
                     .pending_inputs
                     .iter()
                     .any(|(seq, kind)| *seq <= my_ack && *kind == InputKind::HardDrop);
 
-                // Adopt the authoritative state, and drop every pending input the server
-                // has already acknowledged (seq <= my_ack); only unacked inputs remain to
-                // be re-applied on top of the prediction.
                 session.board = my_auth.clone();
                 session.other_board = opp_auth;
                 session.my_ack = my_ack;
+                session.server_tick = tick;
+                session.ticks_since_update = 0;
                 session.pending_inputs.retain(|(seq, _)| *seq > my_ack);
 
-                // RTT = time elapsed since we sent the most recent acked input. We take
-                // the highest acked seq so the measurement reflects the freshest round trip.
                 if let Some(&(_, sent)) = session
                     .sent_at
                     .iter()
@@ -166,20 +149,10 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                     session.input_seq,
                 );
 
-                // Rebuild the predicted board: start from the fresh authoritative state,
-                // then replay the inputs the server hasn't seen yet.
                 let mut predicted = my_auth;
 
-                // `piece_id` increments on every spawn. If it's unchanged, the server and
-                // client are still talking about the *same* falling piece, so we can carry
-                // our local prediction forward. If it changed, a new piece spawned and we
-                // simply accept the authoritative position (no re-projection).
                 let same_piece = predicted.piece_id == prev_piece_id;
                 if same_piece {
-                    // The server's snapshot is slightly stale (older than our local view by
-                    // ~RTT), so its piece sits higher than where we'd already predicted it.
-                    // Re-drop the piece down to the row we had locally but never *through*
-                    // landed puyos so the piece doesn't visibly snap upward each update.
                     if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.clone()) {
                         if prev.row > cur.row {
                             let mut p = cur;
@@ -194,20 +167,13 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                             predicted.active_piece = Some(p);
                         }
                     }
-                    // Keep our local gravity accumulator so the next fall step is timed
-                    // from where we were, not reset by the server snapshot.
                     predicted.fall_timer = prev_fall_timer;
                 }
 
-                // Replay the still-unacked inputs to reach the present predicted state.
                 for (_, kind) in session.pending_inputs.iter() {
                     predicted.apply_input(*kind);
                 }
 
-                // Any residual gap between the old and reconciled piece position is pushed
-                // into a visual offset (in cells) that the renderer eases back to zero each
-                // frame, turning a correction into a smooth slide instead of a teleport.
-                // Clamped to ±3 cells so a big desync can't fling the sprite off-screen.
                 if same_piece {
                     if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.as_ref()) {
                         let off = &mut session.piece_visual_offset;
@@ -215,13 +181,9 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                         off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
                     }
                 } else {
-                    // New piece: nothing to smooth, snap the offset to zero.
                     session.piece_visual_offset = (0.0, 0.0);
                 }
 
-                // Same smoothing for the opponent's piece. We don't predict the opponent at
-                // all (no inputs to replay), so this purely interpolates between the discrete
-                // server snapshots to hide the broadcast cadence.
                 if session.other_board.piece_id == prev_opp_piece_id {
                     if let (Some(prev), Some(cur)) = (&prev_opp_piece, session.other_board.active_piece.as_ref()) {
                         let off = &mut session.opponent_piece_offset;
@@ -234,26 +196,20 @@ fn process_message(state: &mut State, msg: ServerMessage) {
 
                 session.predicted_board = predicted;
 
-                // Edge-triggered sound effects, driven by transitions in the authoritative
-                // board. A piece that just locked moves Playing -> ResolvingMatches; we skip
-                // it when it was our own acked hard drop (sound already played locally).
                 if prev_state == GameState::Playing
                     && session.board.state == GameState::ResolvingMatches
                     && !hard_drop_acked
                 {
                     crate::audio::play_lock();
                 }
-                // chain_count rising means another link resolved: pop sound + on-screen badge.
                 let cc = session.board.chain_count;
                 if cc > prev_chain {
                     crate::audio::play_pop(cc);
                     session.chain_display = Some((cc, 2.0));
                 }
-                // More pending garbage than last frame => the opponent just sent some.
                 if session.board.pending_garbage > prev_garbage {
                     crate::audio::play_garbage();
                 }
-                // Rising edge of the all-clear flag: jingle + timed celebratory overlay.
                 if session.board.last_was_all_clear && !prev_all_clear {
                     crate::audio::play_all_clear();
                     session.all_clear_timer = 3.0;
@@ -271,6 +227,9 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.all_clear_timer = 0.0;
                 session.piece_visual_offset = (0.0, 0.0);
                 session.opponent_piece_offset = (0.0, 0.0);
+                session.sim_accumulator = 0.0;
+                session.server_tick = 0;
+                session.ticks_since_update = 0;
                 session.last_server_msg = "Restart".to_string();
             }
         }
@@ -280,12 +239,63 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.last_server_msg = "OpponentDisconnected".to_string();
             }
         }
+        ServerMessage::Pong { .. } => {}
         ServerMessage::FriendInvitation {
             from_username,
             room_id,
             room_name,
         } => {
             state.pending_invitation = Some((from_username, room_id, room_name));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lead_without_a_measurement_is_just_the_margin() {
+        assert_eq!(lead_ticks(None), config::INPUT_LEAD_MARGIN_TICKS);
+        assert_eq!(lead_ticks(Some(0.0)), config::INPUT_LEAD_MARGIN_TICKS);
+    }
+
+    #[test]
+    fn lead_covers_half_the_round_trip() {
+        let lead = lead_ticks(Some(200.0));
+        assert!((7..=9).contains(&lead), "200 ms round trip gave a lead of {lead}");
+
+        assert!(lead_ticks(Some(200.0)) > lead_ticks(Some(20.0)));
+    }
+
+    #[test]
+    fn lead_is_capped() {
+        assert_eq!(lead_ticks(Some(10_000.0)), config::MAX_INPUT_LEAD_TICKS);
+        assert_eq!(lead_ticks(Some(f32::INFINITY)), config::MAX_INPUT_LEAD_TICKS);
+    }
+
+    fn session_at(server_tick: u32, rtt_ms: f32, since: u32) -> GameSession {
+        let mut session = GameSession::new(1);
+        session.server_tick = server_tick;
+        session.ping_rtt_ms = Some(rtt_ms);
+        session.ticks_since_update = since;
+        session
+    }
+
+    #[test]
+    fn the_stamp_is_pinned_to_the_last_update() {
+        let stamp = |t, rtt, since| input_tick(&session_at(t, rtt, since));
+
+        assert_eq!(stamp(1_000, 60.0, 0), stamp(1_000, 60.0, 0));
+        assert!(stamp(1_100, 60.0, 0) > stamp(1_000, 60.0, 0));
+        assert_eq!(stamp(1_000, 60.0, 3), stamp(1_000, 60.0, 0) + 3);
+        assert!(stamp(1_000, 20.0, 0) < stamp(1_000, 200.0, 0));
+    }
+
+    #[test]
+    fn a_nonsense_sample_falls_back_to_the_margin() {
+        for bad in [f32::NAN, -1.0, f32::NEG_INFINITY] {
+            assert_eq!(lead_ticks(Some(bad)), config::INPUT_LEAD_MARGIN_TICKS, "sample {bad}");
         }
     }
 }

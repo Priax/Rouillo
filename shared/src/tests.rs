@@ -3,12 +3,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use super::*;
 use crate::config::{GRID_HEIGHT, GRID_WIDTH, MAX_LOCK_TIME, VISIBLE_ROW_OFFSET};
 
-/// Refuses any single allocation above 64 MiB for this whole test binary.
-///
-/// Linux overcommits lazily, so an oversized allocation normally "succeeds" and
-/// a test cannot see it happen. Capping it turns a regression in `decode`'s size
-/// bound into a hard abort of the test run instead of a silent pass. Nothing
-/// legitimate in these tests comes close to the cap.
 struct CappedAlloc;
 
 const ALLOC_CAP: usize = 64 << 20;
@@ -97,8 +91,6 @@ fn three_connected_does_not_clear() {
     }
 }
 
-// A 4-group living entirely in the hidden buffer row must NOT pop: only
-// groups with at least one cell in the visible field count.
 #[test]
 fn group_only_in_hidden_row_does_not_clear() {
     let mut b = empty_board();
@@ -108,7 +100,6 @@ fn group_only_in_hidden_row_does_not_clear() {
     assert_eq!(b.check_matches(), None);
 }
 
-// Garbage touching a popping group is cleared with it; distant garbage stays.
 #[test]
 fn adjacent_garbage_is_cleared() {
     let mut b = empty_board();
@@ -122,7 +113,6 @@ fn adjacent_garbage_is_cleared() {
     assert_eq!(b.cells[5][5], Some(PuyoType::Garbage), "distant garbage should remain");
 }
 
-// Garbage never forms a match on its own.
 #[test]
 fn garbage_does_not_self_match() {
     let mut b = empty_board();
@@ -174,7 +164,7 @@ fn rotation_in_open_space_just_turns() {
 fn rotation_against_right_wall_kicks_left() {
     let mut b = empty_board();
     b.active_piece = Some(piece(6, (GRID_WIDTH - 1) as i32, 0));
-    b.rotate_piece(1); // satellite would land out of bounds on the right
+    b.rotate_piece(1);
     let p = b.active_piece.unwrap();
     assert_eq!((p.col, p.rotation), ((GRID_WIDTH - 2) as i32, 1));
 }
@@ -183,7 +173,7 @@ fn rotation_against_right_wall_kicks_left() {
 fn rotation_against_left_wall_kicks_right() {
     let mut b = empty_board();
     b.active_piece = Some(piece(6, 0, 0));
-    b.rotate_piece(3); // satellite would land out of bounds on the left
+    b.rotate_piece(3);
     let p = b.active_piece.unwrap();
     assert_eq!((p.col, p.rotation), (1, 3));
 }
@@ -242,6 +232,7 @@ fn state_update_survives_encode_decode() {
         p2_rng: None,
         p1_ack: 7,
         p2_ack: 9,
+        tick: 4_242,
     };
     let bytes = encode(&msg).expect("encode");
     let back: ServerMessage = decode(&bytes).expect("decode");
@@ -250,10 +241,12 @@ fn state_update_survives_encode_decode() {
             p1_board,
             p1_ack,
             p2_ack,
+            tick,
             ..
         } => {
             assert_eq!(p1_ack, 7);
             assert_eq!(p2_ack, 9);
+            assert_eq!(tick, 4_242);
             assert_eq!(p1_board.score, 1234);
             assert_eq!(p1_board.cells, board.cells);
             assert!(p1_board.active_piece.is_some());
@@ -280,6 +273,7 @@ fn rng_state_survives_encode_decode() {
         p2_rng: None,
         p1_ack: 0,
         p2_ack: 0,
+        tick: 0,
     };
     let bytes = encode(&msg).expect("encode");
     let back: ServerMessage = decode(&bytes).expect("decode");
@@ -311,6 +305,7 @@ fn state_update_omits_rng_when_none() {
         p2_rng: None,
         p1_ack: 3,
         p2_ack: 4,
+        tick: 0,
     };
     let bytes = encode(&msg).expect("encode");
     let back: ServerMessage = decode(&bytes).expect("decode");
@@ -444,4 +439,181 @@ fn decode_survives_corrupted_messages() {
         let _ = decode::<ClientMessage>(&bytes);
         let _ = decode::<ServerMessage>(&bytes);
     }
+}
+
+// ---- Determinism ---------------------------------------------------------
+//
+// The whole point of the digest: a board replayed elsewhere from the same seed
+// and the same inputs must land on the same state, tick for tick. Everything a
+// tick-stamped protocol could later be built on rests on that holding.
+
+/// A deterministic input schedule. Not random play — just enough variety to
+/// reach locks, chains, garbage drops and game overs.
+fn scripted_input(step: u64) -> Option<InputKind> {
+    // SplitMix64, so the schedule depends only on `step` and never on a
+    // sequence of calls: a caller can jump anywhere in the script.
+    let mut z = step.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0x1234_5678);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    match (z ^ (z >> 31)) % 12 {
+        0 => Some(InputKind::MoveLeft),
+        1 => Some(InputKind::MoveRight),
+        2 => Some(InputKind::RotateCW),
+        3 => Some(InputKind::RotateCCW),
+        4 => Some(InputKind::SoftDrop),
+        5 => Some(InputKind::HardDrop),
+        _ => None,
+    }
+}
+
+struct Run {
+    /// One digest per tick, so a divergence is located rather than just seen.
+    hashes: Vec<u64>,
+    boards: u32,
+    max_chain: u32,
+    garbage_dropped: u32,
+}
+
+/// Plays `ticks` fixed steps of the script. A board that tops out is replaced
+/// with a fresh one from a derived seed, so the run keeps exercising spawning,
+/// locking, chains and garbage instead of freezing on the first game over.
+fn run_script(seed: u64, ticks: u64, skip_input_at: Option<u64>) -> Run {
+    let fresh = |s: u64| {
+        let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, s, 1, 5);
+        b.spawn_piece();
+        b
+    };
+    let mut board = fresh(seed);
+    let mut run = Run {
+        hashes: Vec::with_capacity(ticks as usize),
+        boards: 1,
+        max_chain: 0,
+        garbage_dropped: 0,
+    };
+
+    for step in 0..ticks {
+        if board.state == GameState::GameOver {
+            board = fresh(seed.wrapping_add(run.boards as u64));
+            run.boards += 1;
+        }
+        if Some(step) != skip_input_at {
+            if let Some(input) = scripted_input(step) {
+                board.apply_input(input);
+            }
+        }
+        // Hand it nuisance regularly: `drop_garbage` draws from the RNG too, so
+        // a script that never took that path would not prove much about it.
+        if step % 240 == 239 {
+            board.pending_garbage += 9;
+            run.garbage_dropped += 9;
+        }
+        board.tick(config::CLIENT_SIM_DT);
+        run.max_chain = run.max_chain.max(board.chain_count);
+        run.hashes.push(board.state_hash());
+    }
+    run
+}
+
+fn first_divergence(a: &[u64], b: &[u64]) -> Option<usize> {
+    a.iter().zip(b).position(|(x, y)| x != y)
+}
+
+/// The core guarantee. Running the identical script twice must produce the
+/// identical sequence of states.
+///
+/// Less tautological than it looks: each run builds its own `HashSet`s inside
+/// `check_matches` and `flood_fill`, and `RandomState` seeds every instance
+/// differently. If clearing order ever leaked into the result — through the
+/// score, the RNG draw order, anything — the two runs would part company here.
+#[test]
+fn the_same_script_replays_to_the_same_states() {
+    let a = run_script(0xDEAD_BEEF, 6_000, None);
+    let b = run_script(0xDEAD_BEEF, 6_000, None);
+    assert_eq!(
+        first_divergence(&a.hashes, &b.hashes),
+        None,
+        "two identical runs diverged"
+    );
+}
+
+/// The script has to actually reach the interesting code, or the test above
+/// proves only that an idle board stays idle.
+#[test]
+fn the_script_exercises_the_whole_simulation() {
+    let run = run_script(0xDEAD_BEEF, 6_000, None);
+    assert!(run.max_chain >= 2, "no chain longer than {} occurred", run.max_chain);
+    assert!(run.garbage_dropped > 0, "garbage was never dropped");
+    assert!(run.boards >= 2, "no board ever topped out, spawning is under-covered");
+    let distinct = run.hashes.iter().collect::<HashSet<_>>().len();
+    assert!(distinct > 1_000, "only {distinct} distinct states in 6000 ticks");
+}
+
+/// The detector has to be able to fail: dropping a single input, once, must
+/// show up — and must not be silently absorbed.
+#[test]
+fn one_dropped_input_diverges() {
+    // Skipping a step the schedule leaves empty would prove nothing, so pick a
+    // real one — a hard drop, which cannot fail to change the board.
+    let at = (0..100)
+        .find(|s| scripted_input(*s) == Some(InputKind::HardDrop))
+        .expect("the schedule never hard drops");
+    let base = run_script(0xDEAD_BEEF, 6_000, None);
+    let altered = run_script(0xDEAD_BEEF, 6_000, Some(at));
+    let diverged = first_divergence(&base.hashes, &altered.hashes).expect("a dropped input went unnoticed");
+    assert_eq!(
+        diverged as u64, at,
+        "the divergence should surface on the very tick it was caused"
+    );
+}
+
+/// Pins the script's outcome to a literal.
+///
+/// The two tests above compare a run against another run in the same process,
+/// which cannot see a difference between *machines*. This one can: the server
+/// is aarch64 and the clients are x86-64 and wasm32, and the tick-stamped
+/// protocol this is all groundwork for assumes those three agree bit for bit.
+/// Run `cargo test -p shared` on each to confirm it.
+///
+/// It therefore fails whenever the simulation changes, deliberately or not. If
+/// the change was intended, re-read the diff, then paste the new value in.
+const GOLDEN_FINAL_HASH: u64 = 17_688_842_506_210_853_224;
+
+#[test]
+fn scripted_run_matches_its_recorded_outcome() {
+    let run = run_script(0xDEAD_BEEF, 6_000, None);
+    assert_eq!(
+        run.hashes.last().copied(),
+        Some(GOLDEN_FINAL_HASH),
+        "the simulation's behaviour changed (or this platform disagrees)"
+    );
+}
+
+/// The scripted run never pauses and never sets an all clear, so a few fields
+/// hold one value throughout it and the tests above say nothing about them. The
+/// compiler guarantees each is *hashed*; this checks each actually moves the
+/// digest.
+#[test]
+fn the_digest_notices_fields_the_script_never_varies() {
+    let base = empty_board();
+
+    let mut paused = base.clone();
+    paused.set_paused(true);
+    assert_ne!(paused.state_hash(), base.state_hash(), "state");
+
+    // `previous_state` is skipped on the wire but decides what unpausing
+    // restores, so two boards differing only there really are different.
+    let mut restores_elsewhere = paused.clone();
+    restores_elsewhere.previous_state = Some(GameState::DroppingGarbage);
+    assert_ne!(restores_elsewhere.state_hash(), paused.state_hash(), "previous_state");
+
+    let mut all_clear = base.clone();
+    all_clear.last_was_all_clear = true;
+    assert_ne!(all_clear.state_hash(), base.state_hash(), "last_was_all_clear");
+
+    // Room settings reach the simulation through the fall speed and the piece
+    // palette, so two boards set up differently must not look alike either.
+    let faster = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 4, 5);
+    assert_ne!(faster.state_hash(), base.state_hash(), "start_level");
+    let four_colours = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 1, 4);
+    assert_ne!(four_colours.state_hash(), base.state_hash(), "colors");
 }

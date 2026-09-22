@@ -1,12 +1,3 @@
-//! Owns the WebSocket lifecycle: dialling, the live link, and reconnection.
-//!
-//! The rest of the client holds a single `Connection` rather than a socket plus
-//! a set of side flags, so states like "reconnecting while a healthy socket is
-//! open" cannot be represented and no caller has to remember to clear anything.
-//!
-//! `Connection` reports what happened through [`ConnEvent`] and never touches
-//! screens, sessions or notices — deciding what those mean is the UI's job.
-
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use shared::{config, ClientMessage, ServerMessage};
 
@@ -36,17 +27,8 @@ const RECOVER_WINDOW: f64 = (config::RECONNECT_GRACE_SECS - config::RECONNECT_MA
 const _: () =
     assert!(config::RECONNECT_MARGIN_SECS > 0 && config::RECONNECT_MARGIN_SECS < config::RECONNECT_GRACE_SECS);
 
-/// A first connection fails fast instead — there is no session to recover, and
-/// the player is better told the server is unreachable than left waiting.
 const INITIAL_WINDOW: f64 = 10.0;
 
-/// Per-client jitter source, so two clients dropped by one server restart do not
-/// dial back in lockstep.
-///
-/// Seeded from the player id rather than the clock: `performance.now()` is
-/// deliberately coarsened on the web (often to the millisecond), so a
-/// clock-derived fraction would be identical on every wasm client — no jitter at
-/// all, and a delay biased permanently low.
 fn seed_from(player_id: &str) -> u64 {
     // FNV-1a. `| 1` because xorshift degenerates on a zero state.
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -57,8 +39,8 @@ fn seed_from(player_id: &str) -> u64 {
     h | 1
 }
 
-/// xorshift64, returning a fraction in `[0, 1)`. Small and dependency-free;
-/// retry spacing does not need statistical quality.
+// xorshift64, returning a fraction in `[0, 1)`. Small and dependency-free;
+// retry spacing does not need statistical quality.
 fn next_frac(state: &mut u64) -> f64 {
     let mut x = *state;
     x ^= x << 13;
@@ -68,8 +50,8 @@ fn next_frac(state: &mut u64) -> f64 {
     (x >> 11) as f64 / (1u64 << 53) as f64
 }
 
-/// Schedule for a sequence of dials: when the next is due, and when to stop.
-/// Times are absolute readings of [`now_secs`], never accumulated deltas.
+// Schedule for a sequence of dials: when the next is due, and when to stop.
+// Times are absolute readings of [`now_secs`], never accumulated deltas.
 #[derive(Clone)]
 struct Retry {
     attempts: u32,
@@ -108,8 +90,8 @@ impl Retry {
         now >= self.next_dial_at
     }
 
-    /// Records that a dial just fired and arms the delay for the one after it.
-    /// `frac` is a jitter fraction in `[0, 1)`, supplied by the connection.
+    // Records that a dial just fired and arms the delay for the one after it.
+    // `frac` is a jitter fraction in `[0, 1)`, supplied by the connection.
     fn record_dial(&mut self, now: f64, frac: f64) {
         self.attempts += 1;
         self.next_dial_at = now + self.backoff * (1.0 - JITTER + 2.0 * JITTER * frac);
@@ -117,13 +99,62 @@ impl Retry {
     }
 }
 
-/// An open socket. Private: nothing outside this module should hold one.
+// An open socket. Private: nothing outside this module should hold one.
 struct Net {
     ws_sender: WsSender,
     ws_receiver: WsReceiver,
 }
 
-/// The four states a connection can be in. Exactly one is true at a time.
+impl Net {
+    fn send(&mut self, msg: &ClientMessage) {
+        match shared::encode(msg) {
+            Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+            Err(e) => eprintln!("[ws] encode failed: {e}"),
+        }
+    }
+}
+
+struct Heartbeat {
+    next_ping_at: f64,
+    inflight: Option<(u32, f64)>,
+    seq: u32,
+    rtt_ms: Option<f32>,
+}
+
+impl Heartbeat {
+    fn new(now: f64) -> Self {
+        Self {
+            next_ping_at: now,
+            inflight: None,
+            seq: 0,
+            rtt_ms: None,
+        }
+    }
+
+    fn due(&mut self, now: f64) -> Option<ClientMessage> {
+        if now < self.next_ping_at {
+            return None;
+        }
+        self.next_ping_at = now + config::PING_INTERVAL_SECS;
+        self.seq = self.seq.wrapping_add(1);
+        self.inflight.get_or_insert((self.seq, now));
+        Some(ClientMessage::Ping { id: self.seq })
+    }
+
+    fn on_pong(&mut self, id: u32, now: f64) {
+        if let Some((pending, sent)) = self.inflight {
+            if pending == id {
+                self.rtt_ms = Some(((now - sent) * 1000.0) as f32);
+            }
+        }
+        self.inflight = None;
+    }
+
+    fn timed_out(&self, now: f64) -> bool {
+        matches!(self.inflight, Some((_, sent)) if now - sent >= config::PING_TIMEOUT_SECS)
+    }
+}
+
 enum Link {
     Offline,
     Dialing { net: Net, retry: Retry },
@@ -131,7 +162,6 @@ enum Link {
     Waiting { retry: Retry },
 }
 
-/// What happened since the last poll.
 pub enum ConnEvent {
     Opened { recovered: bool },
     Message(Box<ServerMessage>),
@@ -143,6 +173,7 @@ pub struct Connection {
     link: Link,
     unreported_drop: Option<String>,
     jitter: u64,
+    heartbeat: Heartbeat,
 }
 
 impl Connection {
@@ -151,7 +182,12 @@ impl Connection {
             link: Link::Offline,
             unreported_drop: None,
             jitter: seed_from(player_id),
+            heartbeat: Heartbeat::new(0.0),
         }
+    }
+
+    pub fn rtt_ms(&self) -> Option<f32> {
+        self.heartbeat.rtt_ms
     }
 
     pub fn is_live(&self) -> bool {
@@ -167,6 +203,7 @@ impl Connection {
     pub fn disconnect(&mut self) {
         self.link = Link::Offline;
         self.unreported_drop = None;
+        self.heartbeat = Heartbeat::new(0.0);
     }
 
     pub fn recovering(&self, now: f64) -> Option<(u32, f64)> {
@@ -184,12 +221,8 @@ impl Connection {
     }
 
     pub fn send(&mut self, msg: &ClientMessage) {
-        let Link::Live { net } = &mut self.link else {
-            return;
-        };
-        match shared::encode(msg) {
-            Ok(bytes) => net.ws_sender.send(WsMessage::Binary(bytes)),
-            Err(e) => eprintln!("[ws] encode failed: {e}"),
+        if let Link::Live { net } = &mut self.link {
+            net.send(msg);
         }
     }
 
@@ -226,11 +259,12 @@ impl Connection {
             }
 
             Link::Dialing { mut net, retry } => {
-                let outcome = drain(&mut net, events);
+                let outcome = drain(&mut net, now, &mut self.heartbeat, events);
                 match dial_decision(&retry, outcome, now) {
                     DialOutcome::Drop(reason) => self.drop_link(reason, retry, now, events),
                     DialOutcome::GoLive { recovered } => {
                         events.push(ConnEvent::Opened { recovered });
+                        self.heartbeat = Heartbeat::new(now);
                         Link::Live { net }
                     }
                     DialOutcome::GiveUp => {
@@ -241,10 +275,19 @@ impl Connection {
                 }
             }
 
-            Link::Live { mut net } => match drain(&mut net, events) {
-                Drained::Dropped(reason) => self.drop_link(reason, Retry::recovering(now), now, events),
-                _ => Link::Live { net },
-            },
+            Link::Live { mut net } => {
+                if let Drained::Dropped(reason) = drain(&mut net, now, &mut self.heartbeat, events) {
+                    return self.drop_link(reason, Retry::recovering(now), now, events);
+                }
+                if self.heartbeat.timed_out(now) {
+                    let reason = format!("silence du serveur pendant {:.0}s", config::PING_TIMEOUT_SECS);
+                    return self.drop_link(reason, Retry::recovering(now), now, events);
+                }
+                if let Some(ping) = self.heartbeat.due(now) {
+                    net.send(&ping);
+                }
+                Link::Live { net }
+            }
         }
     }
 
@@ -261,10 +304,6 @@ impl Connection {
     }
 }
 
-/// What a dialing link should do next, given what its socket reported.
-/// Split out from [`Connection::step`] as a pure function so it can be tested
-/// without a real socket — the two rules below both shipped broken once because
-/// they were only reachable through live I/O.
 enum DialOutcome {
     KeepWaiting,
     GoLive { recovered: bool },
@@ -283,23 +322,22 @@ fn dial_decision(retry: &Retry, outcome: Drained, now: f64) -> DialOutcome {
     }
 }
 
-/// Outcome of draining a socket's event queue in one poll.
 enum Drained {
     Quiet,
     Opened,
     Dropped(String),
 }
 
-fn drain(net: &mut Net, events: &mut Vec<ConnEvent>) -> Drained {
+fn drain(net: &mut Net, now: f64, heartbeat: &mut Heartbeat, events: &mut Vec<ConnEvent>) -> Drained {
     let mut outcome = Drained::Quiet;
     while let Some(event) = net.ws_receiver.try_recv() {
         match event {
             WsEvent::Opened => outcome = Drained::Opened,
-            WsEvent::Message(WsMessage::Binary(bytes)) => {
-                if let Some(m) = shared::decode::<ServerMessage>(&bytes) {
-                    events.push(ConnEvent::Message(Box::new(m)));
-                }
-            }
+            WsEvent::Message(WsMessage::Binary(bytes)) => match shared::decode::<ServerMessage>(&bytes) {
+                Some(ServerMessage::Pong { id }) => heartbeat.on_pong(id, now),
+                Some(m) => events.push(ConnEvent::Message(Box::new(m))),
+                None => {}
+            },
             WsEvent::Closed => outcome = Drained::Dropped("fermée par le serveur".to_string()),
             WsEvent::Error(e) => outcome = Drained::Dropped(e),
             _ => {}
@@ -312,7 +350,68 @@ fn drain(net: &mut Net, events: &mut Vec<ConnEvent>) -> Drained {
 mod tests {
     use super::*;
 
-    /// The first dial is immediate, then the backoff doubles and saturates.
+    #[test]
+    fn heartbeat_pings_once_per_interval() {
+        let t0 = 100.0;
+        let mut hb = Heartbeat::new(t0);
+        assert!(hb.due(t0).is_some(), "a new link must be probed immediately");
+        assert!(hb.due(t0).is_none(), "twice in the same poll");
+        assert!(hb.due(t0 + config::PING_INTERVAL_SECS - 0.01).is_none());
+        assert!(hb.due(t0 + config::PING_INTERVAL_SECS).is_some());
+    }
+
+    #[test]
+    fn heartbeat_measures_the_round_trip() {
+        let t0 = 100.0;
+        let mut hb = Heartbeat::new(t0);
+        let Some(ClientMessage::Ping { id }) = hb.due(t0) else {
+            panic!("no ping was due");
+        };
+        hb.on_pong(id, t0 + 0.123);
+        assert_eq!(hb.rtt_ms.map(f32::round), Some(123.0));
+    }
+
+    #[test]
+    fn silence_is_timed_from_the_first_unanswered_ping() {
+        let t0 = 100.0;
+        let mut hb = Heartbeat::new(t0);
+        let mut t = t0;
+        while t < t0 + config::PING_TIMEOUT_SECS {
+            hb.due(t);
+            assert!(!hb.timed_out(t), "gave up after only {:.0}s of silence", t - t0);
+            t += config::PING_INTERVAL_SECS;
+        }
+        assert!(hb.timed_out(t0 + config::PING_TIMEOUT_SECS));
+    }
+
+    #[test]
+    fn a_late_pong_clears_the_silence_without_a_sample() {
+        let t0 = 100.0;
+        let mut hb = Heartbeat::new(t0);
+        hb.due(t0); // id 1, lost on the way
+        let Some(ClientMessage::Ping { id }) = hb.due(t0 + config::PING_INTERVAL_SECS) else {
+            panic!("no second ping was due");
+        };
+        assert_eq!(id, 2);
+        hb.on_pong(id, t0 + config::PING_INTERVAL_SECS + 0.05);
+        assert!(hb.rtt_ms.is_none(), "id 2 was never the ping being timed");
+        assert!(!hb.timed_out(t0 + config::PING_TIMEOUT_SECS + 1.0));
+    }
+
+    #[test]
+    fn an_answered_link_never_times_out() {
+        let t0 = 100.0;
+        let mut hb = Heartbeat::new(t0);
+        let mut t = t0;
+        for _ in 0..500 {
+            if let Some(ClientMessage::Ping { id }) = hb.due(t) {
+                hb.on_pong(id, t + 0.2);
+            }
+            t += config::PING_INTERVAL_SECS;
+            assert!(!hb.timed_out(t));
+        }
+    }
+
     #[test]
     fn backoff_doubles_then_saturates() {
         let now = 1_000.0;
@@ -326,14 +425,12 @@ mod tests {
             armed.push(retry.next_dial_at - t);
             t = retry.next_dial_at;
         }
-        // frac 0.5 is the midpoint of the jitter range, i.e. no displacement.
         let nominal = [0.2, 0.4, 0.8, 1.6, 3.0, 3.0, 3.0];
         for (got, want) in armed.iter().zip(nominal) {
             assert!((got - want).abs() < 1e-9, "delay {got}, expected {want}");
         }
     }
 
-    /// Jitter must keep every delay inside ±25% of nominal, whatever the seed.
     #[test]
     fn jitter_stays_within_bounds() {
         let mut state = seed_from("some-player");
@@ -351,27 +448,18 @@ mod tests {
         }
     }
 
-    /// Two clients must not dial back in lockstep after one server restart.
-    ///
-    /// The seed comes from the player id, not the clock: `performance.now()` is
-    /// coarsened on the web, so a clock-derived jitter would be identical on
-    /// every wasm client.
     #[test]
     fn jitter_decorrelates_two_clients() {
         let mut a = seed_from("player-aaaa");
         let mut b = seed_from("player-bbbb");
         assert_ne!(a, b, "distinct ids must seed differently");
 
-        // Same drop instant, same backoff: only the seed can separate them.
         for i in 0..10 {
             let (fa, fb) = (next_frac(&mut a), next_frac(&mut b));
             assert!((fa - fb).abs() > 1e-9, "identical jitter at step {i}");
         }
     }
 
-    /// Regression: a dial that never opens and never errors — a blackholed SYN —
-    /// must still hit the deadline. The deadline used to be checked only between
-    /// dials, so such a dial hung forever and the player saw nothing at all.
     #[test]
     fn hanging_dial_gives_up_at_deadline() {
         let retry = Retry::initial(0.0);
@@ -385,9 +473,6 @@ mod tests {
         ));
     }
 
-    /// Regression: whether an open followed a drop has to be decided while the
-    /// retry still exists. Reading it after the transition to `Live` always said
-    /// "not a recovery", so the reconnection notice was never cleared.
     #[test]
     fn open_reports_whether_it_was_a_recovery() {
         let recovered = dial_decision(&Retry::recovering(0.0), Drained::Opened, 1.0);
@@ -397,16 +482,12 @@ mod tests {
         assert!(matches!(fresh, DialOutcome::GoLive { recovered: false }));
     }
 
-    /// A socket that opens and dies within one poll must be treated as dead,
-    /// otherwise the retry restarts and spins.
     #[test]
     fn drop_takes_precedence_over_open() {
         let d = dial_decision(&Retry::recovering(0.0), Drained::Dropped("x".into()), 1.0);
         assert!(matches!(d, DialOutcome::Drop(_)));
     }
 
-    /// A recovery that gives up is the most interesting failure there is, so its
-    /// reason must survive the player reconnecting by hand afterwards.
     #[test]
     fn give_up_then_manual_reconnect_still_reports_the_reason() {
         let now = 40.0;
@@ -415,20 +496,17 @@ mod tests {
         let link = c.drop_link("read: boom".to_string(), stale, now, &mut Vec::new());
         assert!(matches!(link, Link::Offline), "this drop must give up");
 
-        // The player goes back to the menu and clicks Play again.
         c.connect(now + 30.0);
 
         assert_eq!(c.take_unreported_drop().as_deref(), Some("read: boom"));
     }
 
-    /// A zero seed would make xorshift produce zeros forever.
     #[test]
     fn seed_is_never_zero() {
         assert_ne!(seed_from(""), 0);
         assert_ne!(seed_from("\0\0\0\0\0\0\0\0"), 0);
     }
 
-    /// A retry is refused until its delay has elapsed, and the window ends.
     #[test]
     fn schedule_respects_delay_and_deadline() {
         let now = 500.0;
@@ -441,7 +519,6 @@ mod tests {
         assert!(retry.expired(now + RECOVER_WINDOW));
     }
 
-    /// A fresh connect gives up quickly; a recovery gets the long window.
     #[test]
     fn initial_connect_fails_faster_than_recovery() {
         let now = 0.0;
@@ -450,7 +527,6 @@ mod tests {
         assert!(Retry::recovering(now).recovering);
     }
 
-    /// Only a recovery shows the banner; a first connection stays quiet.
     #[test]
     fn banner_only_while_recovering() {
         let now = 10.0;
@@ -468,7 +544,6 @@ mod tests {
         assert!((left - RECOVER_WINDOW).abs() < 1e-9);
     }
 
-    /// Deliberately leaving must not leave a reconnection armed behind it.
     #[test]
     fn disconnect_clears_everything() {
         let now = 3.0;
@@ -485,7 +560,6 @@ mod tests {
         assert_eq!(c.take_unreported_drop(), None);
     }
 
-    /// The drop reason survives until it is reported, and is spent only once.
     #[test]
     fn drop_reason_is_reported_once() {
         let now = 7.0;
@@ -500,7 +574,6 @@ mod tests {
         assert_eq!(c.take_unreported_drop(), None, "reported twice");
     }
 
-    /// Dropping past the deadline gives up instead of scheduling another dial.
     #[test]
     fn drop_past_deadline_gives_up() {
         let now = 7.0;
@@ -514,7 +587,6 @@ mod tests {
         assert!(matches!(events.as_slice(), [ConnEvent::GaveUp]));
     }
 
-    /// Messages that arrive in the same poll as the drop must not be acted on.
     #[test]
     fn drop_discards_messages_read_alongside_it() {
         let now = 2.0;

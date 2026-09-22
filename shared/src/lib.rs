@@ -11,19 +11,8 @@ pub fn encode<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, bitcode::Error> {
     Ok(lz4_flex::compress_prepend_size(&raw))
 }
 
-/// Largest decompressed payload `decode` will accept.
-///
-/// The real messages are tiny (a StateUpdate is ~100 B, a long RoomList a few KB),
-/// so this is a sanity bound, not a tuning knob.
 pub const MAX_DECODED_SIZE: usize = 1 << 20;
 
-/// Decodes a message produced by [`encode`], or `None` if it is malformed.
-///
-/// The first 4 bytes carry the decompressed size, and they come straight from the
-/// peer. `lz4_flex` allocates that size up front, before reading anything else, so
-/// an unchecked prefix lets a 5-byte message request 4 GiB — and an allocation
-/// failure aborts the whole process, not just one connection. The prefix is
-/// therefore bounded before any decompression happens.
 pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
     let size = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
     if size > MAX_DECODED_SIZE {
@@ -31,6 +20,53 @@ pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
     }
     let raw = lz4_flex::decompress_size_prepended(bytes).ok()?;
     bitcode::deserialize(&raw).ok()
+}
+
+struct Fnv(u64);
+
+impl Fnv {
+    fn new() -> Self {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+
+    fn finish(self) -> u64 {
+        self.0
+    }
+
+    fn byte(&mut self, b: u8) {
+        self.0 ^= b as u64;
+        self.0 = self.0.wrapping_mul(0x100_0000_01b3);
+    }
+
+    fn bytes(&mut self, bs: &[u8]) {
+        for b in bs {
+            self.byte(*b);
+        }
+    }
+
+    fn bool(&mut self, v: bool) {
+        self.byte(v as u8);
+    }
+
+    fn u32(&mut self, v: u32) {
+        self.bytes(&v.to_le_bytes());
+    }
+
+    fn i32(&mut self, v: i32) {
+        self.bytes(&v.to_le_bytes());
+    }
+
+    fn u64(&mut self, v: u64) {
+        self.bytes(&v.to_le_bytes());
+    }
+
+    fn usize(&mut self, v: usize) {
+        self.u64(v as u64);
+    }
+
+    fn f32(&mut self, v: f32) {
+        self.u32(v.to_bits());
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, Serialize, Deserialize)]
@@ -55,8 +91,6 @@ pub enum InputKind {
 
 pub type RoomId = u32;
 
-/// Who may pause a running game. The automatic pause on disconnect is separate
-/// and always applies.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PausePolicy {
     Everyone,
@@ -75,7 +109,6 @@ impl PausePolicy {
         }
     }
 
-    /// Whether a player may toggle the pause, given whether they host the room.
     pub fn allows(self, is_host: bool) -> bool {
         match self {
             PausePolicy::Everyone => true,
@@ -84,7 +117,6 @@ impl PausePolicy {
         }
     }
 
-    /// Steps through the policies, wrapping around, in the direction of `dir`.
     fn step(self, dir: i32) -> Self {
         let n = Self::ALL.len() as i32;
         let i = Self::ALL.iter().position(|&p| p == self).unwrap_or(0) as i32;
@@ -106,7 +138,6 @@ impl Default for RoomSettings {
             starting_level: 1,
             colors: 5,
             friends_only: false,
-            // Matches the behaviour before this setting existed.
             pause: PausePolicy::Everyone,
         }
     }
@@ -145,8 +176,6 @@ impl RoomSettings {
             1 => self.colors = (self.colors as i32 + dir).clamp(4, 5) as u32,
             2 => self.friends_only = !self.friends_only,
             3 => self.pause = self.pause.step(dir),
-            // The index comes from the client: an unknown one must not touch
-            // anything, rather than falling through to the last setting.
             _ => {}
         }
     }
@@ -168,9 +197,6 @@ pub struct LobbyInfo {
     pub name: String,
     pub settings: RoomSettings,
     pub players: u8,
-    /// Seats whose player is connected right now. Lower than `players` while a
-    /// disconnected player's seat is being held for them, during which the game
-    /// cannot be launched.
     pub connected: u8,
     pub your_slot: u8,
     pub is_host: bool,
@@ -183,16 +209,12 @@ pub enum ClientMessage {
         player_id: String,
         auth_token: Option<String>,
         username: Option<String>,
-        /// Why the previous connection ended, when this Hello follows a drop.
-        ///
-        /// Client-side stderr is unreachable for a player running a released
-        /// GUI binary, so the reason rides along here and is logged server-side
-        /// where it can actually be read.
         last_disconnect_reason: Option<String>,
     },
     Input {
         kind: InputKind,
         seq: u32,
+        tick: u32,
     },
     TogglePause,
     RequestRestart,
@@ -213,6 +235,9 @@ pub enum ClientMessage {
     InviteFriend {
         user_id: String,
     },
+    Ping {
+        id: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -221,15 +246,11 @@ pub enum ServerMessage {
     StateUpdate {
         p1_board: Box<Board>,
         p2_board: Box<Board>,
-        // The board's RNG is excluded from its own wire format (see `Board::rng`) and
-        // carried here instead. It only changes when a new piece spawns, so it is sent
-        // as `Some` on snapshots and on the frames where it advanced, and `None` the rest
-        // of the time — the client keeps the RNG it already holds. This trims ~64% off a
-        // routine update. See `Board::rng_state` / `Board::set_rng`.
         p1_rng: Option<Box<rand_chacha::ChaCha12Rng>>,
         p2_rng: Option<Box<rand_chacha::ChaCha12Rng>>,
         p1_ack: u32,
         p2_ack: u32,
+        tick: u32,
     },
     Restart,
     OpponentDisconnected,
@@ -246,6 +267,9 @@ pub enum ServerMessage {
         from_username: String,
         room_id: RoomId,
         room_name: String,
+    },
+    Pong {
+        id: u32,
     },
 }
 
@@ -327,11 +351,6 @@ pub struct Board {
     pub resolve_timer: f32,
     #[serde(default)]
     pub garbage_delay_timer: f32,
-    // Excluded from the wire format: the client never advances the RNG (it only replays
-    // inputs, which don't consume it), and sending its ~36-byte state every frame was the
-    // bulk of a board update. It travels separately and only when needed via
-    // `ServerMessage::StateUpdate::p1_rng`. On deserialize this is filled with a throwaway
-    // RNG; callers that need the real one restore it with `set_rng`.
     #[serde(skip, default = "default_rng")]
     rng: rand_chacha::ChaCha12Rng,
 }
@@ -798,13 +817,10 @@ impl Board {
         self.start_level + (self.played_time / LEVEL_DURATION) as u32
     }
 
-    /// A copy of the current RNG state, for transmitting it alongside (but separately
-    /// from) the board see `ServerMessage::StateUpdate`.
     pub fn rng_state(&self) -> rand_chacha::ChaCha12Rng {
         self.rng.clone()
     }
 
-    /// Restore the RNG state on a board deserialized from the wire (where it was skipped).
     pub fn set_rng(&mut self, rng: rand_chacha::ChaCha12Rng) {
         self.rng = rng;
     }
@@ -848,6 +864,94 @@ impl Board {
             self.force_drop();
             self.fall_timer = 0.0;
         }
+    }
+
+    pub fn state_hash(&self) -> u64 {
+        let Board {
+            width,
+            height,
+            start_level,
+            colors,
+            cells,
+            active_piece,
+            piece_id,
+            next_types,
+            next_next_types,
+            score,
+            state,
+            previous_state,
+            pending_garbage,
+            nuisance_points,
+            lock_timer,
+            total_ground_timer,
+            is_touching_ground,
+            ground_move_count,
+            lowest_row_reached,
+            chain_count,
+            last_was_all_clear,
+            played_time,
+            fall_timer,
+            resolve_timer,
+            garbage_delay_timer,
+            rng,
+        } = self;
+
+        let mut h = Fnv::new();
+        h.usize(*width);
+        h.usize(*height);
+        h.u32(*start_level);
+        h.u32(*colors);
+        for row in cells {
+            for cell in row {
+                h.byte(match cell {
+                    None => 0,
+                    Some(t) => 1 + *t as u8,
+                });
+            }
+        }
+        match active_piece {
+            None => h.byte(0),
+            Some(p) => {
+                h.byte(1);
+                h.i32(p.row);
+                h.i32(p.col);
+                h.usize(p.rotation);
+                h.byte(p.axis_type as u8);
+                h.byte(p.sat_type as u8);
+            }
+        }
+        h.u32(*piece_id);
+        h.byte(next_types.0 as u8);
+        h.byte(next_types.1 as u8);
+        h.byte(next_next_types.0 as u8);
+        h.byte(next_next_types.1 as u8);
+        h.i32(*score);
+        h.byte(*state as u8);
+        match previous_state {
+            None => h.byte(0),
+            Some(s) => {
+                h.byte(1);
+                h.byte(*s as u8);
+            }
+        }
+        h.u32(*pending_garbage);
+        h.u32(*nuisance_points);
+        h.f32(*lock_timer);
+        h.f32(*total_ground_timer);
+        h.bool(*is_touching_ground);
+        h.u32(*ground_move_count);
+        h.i32(*lowest_row_reached);
+        h.u32(*chain_count);
+        h.bool(*last_was_all_clear);
+        h.f32(*played_time);
+        h.f32(*fall_timer);
+        h.f32(*resolve_timer);
+        h.f32(*garbage_delay_timer);
+        h.bytes(&rng.get_seed());
+        h.u64(rng.get_stream());
+        h.bytes(&rng.get_word_pos().to_le_bytes());
+
+        h.finish()
     }
 
     pub fn tick(&mut self, dt: f32) -> u32 {

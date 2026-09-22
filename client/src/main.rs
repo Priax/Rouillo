@@ -138,8 +138,10 @@ fn update_invitation(app: &mut App, state: &mut State) {
 }
 
 fn update(app: &mut App, state: &mut State) {
-    if let Some(session) = state.session.as_mut() {
+    let State { session, conn, .. } = state;
+    if let Some(session) = session.as_mut() {
         session.clock += app.timer.delta_f32() as f64;
+        session.ping_rtt_ms = conn.rtt_ms();
     }
 
     if state.startup_check.is_some() {

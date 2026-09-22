@@ -39,7 +39,6 @@ fn submit(form: &mut AuthForm) {
     form.pending = Some(slot);
 }
 
-// Called every frame. Processes pending HTTP response and updates state accordingly.
 fn poll_auth(state: &mut State) {
     let result = state.auth_form.pending.as_ref().and_then(http::poll);
     let Some(result) = result else { return };
@@ -69,7 +68,6 @@ fn poll_auth(state: &mut State) {
                     }
                 }
             } else {
-                // Try to extract "error" field from JSON body, else use status text.
                 let msg = serde_json::from_str::<serde_json::Value>(text)
                     .ok()
                     .and_then(|v| v["error"].as_str().map(str::to_owned))

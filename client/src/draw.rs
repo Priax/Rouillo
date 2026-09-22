@@ -5,7 +5,6 @@ use shared::*;
 use crate::state::GameSession;
 use crate::{config, Font};
 
-/// `can_pause`: whether the room's pause policy lets this player toggle the pause.
 pub fn draw_game(
     app: &mut App,
     gfx: &mut Graphics,
@@ -14,8 +13,6 @@ pub fn draw_game(
     is_host: bool,
     can_pause: bool,
 ) {
-    // Leaving costs the game only while it is undecided and the opponent is here:
-    // a finished game is already settled, and leaving an absent opponent voids it.
     let game_over = session.board.state == GameState::GameOver || session.other_board.state == GameState::GameOver;
     let leaving_forfeits = !game_over && !session.opponent_disconnected;
 
@@ -209,14 +206,29 @@ pub fn draw_game(
 
     #[cfg(debug_assertions)]
     {
-        draw.text(font, &format!("DEBUG NET: {}", session.last_server_msg))
-            .position(10.0, win_h - 30.0)
-            .size(20.0)
-            .color(Color::MAGENTA);
-        draw.text(font, &format!("RTT input->ack: {:.0} ms", session.last_rtt_ms))
-            .position(10.0, win_h - 55.0)
-            .size(20.0)
-            .color(Color::MAGENTA);
+        draw.text(
+            font,
+            &format!(
+                "DEBUG NET: srv tick={} (+{}) {}",
+                session.server_tick,
+                crate::network::input_tick(session) - session.server_tick,
+                session.last_server_msg
+            ),
+        )
+        .position(10.0, win_h - 30.0)
+        .size(20.0)
+        .color(Color::MAGENTA);
+        let ping = match session.ping_rtt_ms {
+            Some(ms) => format!("{ms:.0} ms"),
+            None => "--".to_string(),
+        };
+        draw.text(
+            font,
+            &format!("RTT ping: {ping} | input->ack: {:.0} ms", session.last_rtt_ms),
+        )
+        .position(10.0, win_h - 55.0)
+        .size(20.0)
+        .color(Color::MAGENTA);
 
         let me = &session.predicted_board;
         let opp = &session.other_board;
@@ -246,7 +258,6 @@ pub fn draw_game(
 }
 
 fn draw_exit_buttons(draw: &mut Draw, app: &App, font: &Font, ww: f32, wh: f32, is_host: bool, forfeits: bool) {
-    // Say so when walking away is recorded as a loss (see Room::forfeit).
     let (leave, back) = if forfeits {
         ("Abandonner (défaite)", "Lobby (défaite)")
     } else {
