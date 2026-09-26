@@ -46,28 +46,15 @@ fn reset_to_menu(state: &mut State, notice: &str) {
     state.notice = notice.to_string();
 }
 
-/// How far ahead of the last update's tick the local clock belongs. That
-/// update left the server half a round trip ago, and an input stamped now
-/// needs another half to get there: a full round trip, plus a margin for
-/// jitter. Anything less and inputs reach the server after their tick.
 fn lead_ticks(rtt_ms: Option<f32>) -> u32 {
     let rtt = rtt_ms.map_or(0, |ms| (ms / 1000.0 / config::CLIENT_SIM_DT).ceil() as u32);
     rtt.saturating_add(config::INPUT_LEAD_MARGIN_TICKS)
         .min(config::MAX_INPUT_LEAD_TICKS)
 }
 
-/// Updates are judged in windows this long; one arriving late looks like a
-/// client running ahead, so only the least delayed of the window counts.
 const DRIFT_WINDOW: u32 = 30;
-/// A drift this small is left alone rather than chased.
 const DRIFT_DEADBAND: i32 = 1;
 
-/// Steers the local clock from an update stamped `server_tick`. The first
-/// update of a game, or one showing the clock wildly off (a hidden tab that
-/// stopped stepping, a long pause), places it directly. Otherwise the
-/// smallest drift over a window becomes a correction that `step_simulation`
-/// spends one tick at a time. It steers both ways: a clock only ever pushed
-/// forward ratchets further ahead on every server pause.
 fn sync_clock(session: &mut GameSession, server_tick: u32) {
     let target = server_tick.saturating_add(lead_ticks(session.ping_rtt_ms));
     let drift = session.local_tick as i64 - target as i64;
@@ -90,7 +77,6 @@ fn sync_clock(session: &mut GameSession, server_tick: u32) {
     }
 }
 
-/// Everything a state update says about this client's game, from its side.
 pub struct Update {
     pub board: Board,
     pub other_board: Board,
@@ -100,11 +86,6 @@ pub struct Update {
     pub opp_incoming: Vec<IncomingGarbage>,
 }
 
-/// Takes in the server's word and rebuilds the local board on top of it: the
-/// server's state at `tick`, replayed forward through the inputs it has not
-/// applied yet to the local clock. With a deterministic simulation and inputs
-/// arriving in time, that lands exactly where the local board already was,
-/// and nothing on screen moves; anything else is a correction.
 pub fn reconcile(session: &mut GameSession, update: Update) {
     let prev_piece = session.predicted_board.active_piece.clone();
     let prev_piece_id = session.predicted_board.piece_id;
@@ -283,7 +264,6 @@ mod tests {
 
     #[test]
     fn lead_covers_the_whole_round_trip() {
-        // 200 ms is 12 ticks there and back.
         let lead = lead_ticks(Some(200.0));
         assert_eq!(lead, 12 + config::INPUT_LEAD_MARGIN_TICKS);
         assert!(lead_ticks(Some(200.0)) > lead_ticks(Some(20.0)));
@@ -316,8 +296,6 @@ mod tests {
         assert_eq!(session.local_tick, 500 + lead_ticks(Some(100.0)));
     }
 
-    /// Feeds a window of updates, each arriving when the local clock sits
-    /// `drift` ticks off where it belongs.
     fn feed_window(session: &mut GameSession, drifts: impl Fn(u32) -> i32) {
         let lead = lead_ticks(session.ping_rtt_ms) as i64;
         for i in 0..DRIFT_WINDOW {
@@ -344,8 +322,6 @@ mod tests {
     fn late_updates_do_not_pull_the_clock_back() {
         let mut session = session_with_rtt(60.0);
         sync_clock(&mut session, 1_000);
-        // Most updates delayed by up to 6 ticks, a few on time: the on-time
-        // ones show where the clock really is.
         feed_window(&mut session, |i| if i % 10 == 0 { 0 } else { (i % 7) as i32 });
         assert_eq!(session.clock_correction, 0);
     }
@@ -362,16 +338,11 @@ mod tests {
     fn a_clock_far_off_is_placed_at_once() {
         let mut session = session_with_rtt(60.0);
         sync_clock(&mut session, 1_000);
-        session.local_tick -= 200; // a hidden tab stopped stepping
+        session.local_tick -= 200;
         sync_clock(&mut session, 1_000);
         assert_eq!(session.local_tick, 1_000 + lead_ticks(Some(60.0)));
     }
 
-    /// End to end on one board: a server stepping its queue by the book and
-    /// a client pressing keys, stepping locally and taking in an update every
-    /// few ticks, over a link `latency` ticks long each way. The server trails
-    /// the client so that inputs land just in time, and each update is
-    /// `latency` ticks old on arrival. No update may move the local board.
     #[test]
     fn updates_never_correct_a_board_that_was_predicted_right() {
         let latency = 6;
@@ -381,14 +352,10 @@ mod tests {
         let mut history = vec![server.clone()];
         let mut queue: Vec<(u32, StampedInput)> = Vec::new();
 
-        // Just under the round trip, so `ceil` in the lead is not at the
-        // mercy of float rounding.
         let mut session = session_with_rtt((2 * latency) as f32 * 1000.0 * config::CLIENT_SIM_DT - 0.5);
         assert_eq!(lead_ticks(session.ping_rtt_ms), 2 * latency + margin, "setup");
         session.board = server.clone();
         session.predicted_board = server.clone();
-        // Both start at tick 0; the server holds there until the client is
-        // far enough ahead.
         session.synced = true;
 
         let script = [
@@ -406,9 +373,6 @@ mod tests {
         for step in 0..1_200u32 {
             crate::logic::advance_one(&mut session);
 
-            // The client presses on some frames, stamps for its next tick.
-            // Pressing after the step leaves the input for an update to meet
-            // before the tick it is stamped for.
             if step % 9 == 0 && session.predicted_board.state == GameState::Playing {
                 let kind = script[(step / 9) as usize % script.len()];
                 session.input_seq += 1;
@@ -421,7 +385,6 @@ mod tests {
                 queue.push((session.input_seq, input));
             }
 
-            // The server is one way plus the margin behind the client.
             while server_tick + latency + margin < session.local_tick {
                 server_tick += 1;
                 let due = queue
@@ -469,8 +432,6 @@ mod tests {
         );
     }
 
-    /// The highest sequence the server had applied by tick `at`: inputs are
-    /// never late here, so every one stamped up to `at`.
     fn acked_by(session: &GameSession, at: u32) -> u32 {
         session
             .pending_inputs

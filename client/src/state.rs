@@ -338,7 +338,6 @@ pub struct GameSession {
 
     pub input_seq: u32,
     pub my_ack: u32,
-    /// Sent but not yet acknowledged, by sequence number, in stamp order.
     pub pending_inputs: Vec<(u32, StampedInput)>,
 
     pub key_timer_left: f32,
@@ -346,8 +345,6 @@ pub struct GameSession {
     pub key_timer_down: f32,
 
     pub piece_visual_offset: (f32, f32),
-    /// The opponent's board as drawn: `other_board` played back slightly
-    /// behind, so that its piece moves smoothly.
     pub opponent_view: OpponentView,
 
     pub chain_display: Option<(u32, f32)>,
@@ -360,27 +357,15 @@ pub struct GameSession {
 
     pub server_tick: u32,
 
-    /// The tick `predicted_board` is the state after. It runs ahead of the
-    /// server by about a round trip, so that an input stamped `local_tick + 1`
-    /// reaches the server before that tick comes.
     pub local_tick: u32,
-    /// False until the first update of a game has placed `local_tick`; the
-    /// board is not stepped before that.
     pub synced: bool,
-    /// Ticks to add (positive) or hold back (negative) to steer `local_tick`,
-    /// one per simulation step.
     pub clock_correction: i32,
-    /// Smallest drift seen in the current window of updates, and how many
-    /// updates the window holds so far.
     pub drift_min: Option<i32>,
     pub drift_samples: u32,
 
-    /// Attacks travelling towards each board, as of the last update.
     pub incoming: Vec<IncomingGarbage>,
     pub opp_incoming: Vec<IncomingGarbage>,
 
-    /// The last (piece, chain step) and all-clear piece announced, so that a
-    /// replay reaching the same event again does not play it twice.
     pub announced_chain: (u32, u32),
     pub announced_all_clear: u32,
 
@@ -432,7 +417,6 @@ impl GameSession {
 }
 
 impl GameSession {
-    /// Nuisance about to fall on this board: queued on it, or still travelling.
     pub fn my_nuisance(&self) -> u32 {
         let travelling: u32 = self
             .incoming

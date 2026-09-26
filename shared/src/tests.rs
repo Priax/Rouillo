@@ -766,3 +766,37 @@ fn an_attack_lands_in_the_replay_on_its_own_tick() {
         4
     );
 }
+
+/// The drawn height of the falling piece: its row plus how far it is towards
+/// the next one.
+fn drawn_row(b: &Board) -> f32 {
+    b.active_piece.as_ref().expect("a piece").row as f32 + b.fall_progress()
+}
+
+/// Left alone, a piece must glide: never move up, never jump. Across a
+/// natural drop the row goes up by one while the progress falls back to 0,
+/// and the two must cancel out.
+#[test]
+fn a_falling_piece_is_drawn_gliding_down() {
+    let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, 3, 1, 5);
+    b.spawn_piece();
+    let start_row = b.active_piece.as_ref().expect("a piece").row;
+    let mut prev = drawn_row(&b);
+    let per_tick = config::CLIENT_SIM_DT / BASE_FALL_INTERVAL as f32;
+    while b.active_piece.as_ref().is_some_and(|p| p.row < start_row + 3) {
+        b.tick(config::CLIENT_SIM_DT);
+        let now = drawn_row(&b);
+        assert!(now >= prev - 1e-4, "the piece went up: {prev} -> {now}");
+        assert!(now - prev <= 2.0 * per_tick + 1e-4, "the piece jumped: {prev} -> {now}");
+        prev = now;
+    }
+}
+
+#[test]
+fn a_resting_piece_is_drawn_on_its_cell() {
+    let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, 3, 1, 5);
+    b.spawn_piece();
+    b.active_piece.as_mut().expect("a piece").row = GRID_HEIGHT as i32 - 1;
+    b.fall_timer = 0.5; // mid-way, had it been able to fall
+    assert_eq!(b.fall_progress(), 0.0);
+}

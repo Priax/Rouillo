@@ -87,22 +87,11 @@ fn clear_attempts(attempts: &LoginAttempts, username: &str) {
     rate_clear(attempts, username);
 }
 
-// The per-username limit above protects one account from guessing, but costs
-// nothing to evade: a new username per attempt buys a fresh argon2 hash every
-// time, and on a 2-core VM a stream of hashes starves the 60 Hz game loop. So
-// every request that reaches argon2 without proving an account is also counted
-// per client address.
 type IpLimit = RateMap;
 const MAX_LOGIN_FAILURES_PER_IP: u32 = 30;
 const MAX_REGISTRATIONS_PER_IP: u32 = 10;
 const REGISTER_WINDOW: Duration = Duration::from_secs(3600);
 
-/// The address to rate-limit a request by. Behind Caddy every peer is
-/// loopback, so there (and only there) the client is the last
-/// `X-Forwarded-For` entry: the one our own proxy appended. Anything to its
-/// left was written by the client and is not trusted. IPv6 is keyed by /64,
-/// the smallest block an end user is routinely handed, so rotating addresses
-/// inside one's own prefix does not reset the count.
 fn client_key(peer: Option<SocketAddr>, forwarded_for: Option<&str>) -> Option<String> {
     let peer = peer?.ip();
     let ip = if peer.is_loopback() {
@@ -123,8 +112,6 @@ fn client_key(peer: Option<SocketAddr>, forwarded_for: Option<&str>) -> Option<S
 }
 
 fn client_addr() -> impl Filter<Extract = (Option<String>,), Error = std::convert::Infallible> + Clone {
-    // Read from the raw header map: `header::optional` rejects a non-UTF-8
-    // value, which would turn a junk header into a 404 instead of a fallback.
     warp::addr::remote().and(warp::header::headers_cloned()).map(
         |peer: Option<SocketAddr>, headers: warp::http::HeaderMap| {
             let xff = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
@@ -229,8 +216,6 @@ async fn handle_register(
             "Password must be at least 8 characters".into(),
         )));
     }
-    // Counted before hashing, whatever the outcome: a taken username still
-    // costs a hash, so it must still cost an attempt.
     if let Some(ip) = &client {
         if rate_check(&registrations, ip, MAX_REGISTRATIONS_PER_IP, REGISTER_WINDOW) {
             return Err(warp::reject::custom(TooManyRequests));
@@ -292,8 +277,6 @@ async fn handle_login(
         (Some(u), true) => u,
         _ => {
             record_failure(&attempts, &body.username);
-            // Not cleared on success: one valid account must not launder the
-            // failures sprayed across others from the same address.
             if let Some(ip) = &client {
                 rate_record(&ip_failures, ip, WINDOW);
             }
@@ -760,7 +743,6 @@ mod tests {
 
     #[test]
     fn behind_the_proxy_only_the_last_forwarded_entry_counts() {
-        // The client wrote "1.2.3.4"; Caddy appended the real peer.
         assert_eq!(
             client_key(addr("127.0.0.1:40000"), Some("1.2.3.4, 203.0.113.7")),
             Some("203.0.113.7".into())
@@ -790,10 +772,6 @@ mod tests {
         assert_ne!(a, client_key(addr("127.0.0.1:1"), Some("2001:db8:1:3::1")));
     }
 
-    /// The whole path, through the route: the limit is keyed on the address
-    /// Caddy forwards, so rotating usernames from one client runs out, and a
-    /// different client is unaffected. The pool points at nothing, so every
-    /// accepted attempt ends in a 500 once past the hash.
     #[tokio::test]
     async fn registrations_are_limited_per_forwarded_client() {
         let pool = sqlx::postgres::PgPoolOptions::new()
@@ -815,7 +793,6 @@ mod tests {
         }
         let res = register("203.0.113.7", 999).reply(&api).await;
         assert_eq!(res.status(), 429);
-        // A spoofed left-hand entry does not buy a fresh budget.
         let res = register("198.51.100.1, 203.0.113.7", 1000).reply(&api).await;
         assert_eq!(res.status(), 429);
         let res = register("198.51.100.1", 1001).reply(&api).await;

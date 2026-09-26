@@ -13,10 +13,6 @@ pub type DbPool = PgPool;
 
 static DUMMY_HASH: OnceLock<String> = OnceLock::new();
 
-// One at a time: the VM has 2 cores and the 60 Hz game loop needs one of them
-// whatever the login traffic. This is the backstop the per-IP limits in
-// auth.rs cannot be, since many addresses are cheap to come by; ~20 hashes/s
-// is still far above any real sign-in rate.
 const MAX_CONCURRENT_HASH_OPS: usize = 1;
 static HASH_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 

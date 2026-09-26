@@ -1,30 +1,13 @@
-//! The opponent's board, played back slightly in the past.
-//!
-//! Updates are sent every tick but do not arrive every frame: the network
-//! bunches them up and spreads them out. Drawing the newest one as it lands
-//! makes the opponent's piece stutter along. Instead, updates are kept with
-//! the server tick they describe, and the board is drawn at a render tick that
-//! trails the newest by a small delay, sized from how unevenly updates arrive.
-//! The falling piece is placed between the two updates around that tick.
-
 use std::collections::VecDeque;
 
 use shared::{config, Board};
 
-/// Never less than this behind the newest update, even on a perfect link:
-/// one tick of slack for the frame and the update to be out of step.
 const MIN_DELAY_TICKS: f64 = 2.0;
-/// Never more: past this, the opponent looks laggy rather than stuttery.
 const MAX_DELAY_TICKS: f64 = 12.0;
-/// Arrivals remembered to measure jitter; 2 s of updates.
 const JITTER_WINDOW: usize = 120;
-/// Updates kept at most; the render tick only needs the two around it.
 const MAX_SNAPSHOTS: usize = 120;
-/// How much faster or slower than real time playback may run while it
-/// catches up with its target, and how hard it leans towards it.
 const MAX_RATE_CHANGE: f64 = 0.25;
 const STEER_GAIN: f64 = 0.05;
-/// Off by more than this, playback jumps instead of catching up.
 const SNAP_TICKS: f64 = 30.0;
 
 const TICK_HZ: f64 = config::SERVER_TICK_HZ as f64;
@@ -37,8 +20,6 @@ struct Snapshot {
 #[derive(Default)]
 pub struct OpponentView {
     snapshots: VecDeque<Snapshot>,
-    /// For each recent update, its arrival time in ticks minus its tick. On
-    /// a steady link this is constant; its spread is the jitter.
     arrivals: VecDeque<f64>,
     render_tick: Option<f64>,
 }
@@ -48,13 +29,9 @@ impl OpponentView {
         *self = Self::default();
     }
 
-    /// Takes in the opponent's board as of `tick`, received at `now_secs`.
     pub fn push(&mut self, tick: u32, board: Board, now_secs: f64) {
         match self.snapshots.back() {
-            // A new game started without us seeing the restart: start over.
             Some(last) if tick < last.tick => self.clear(),
-            // Same tick sent again (a snapshot after a pause, a rejoin): the
-            // newer word wins, the timing sample says nothing new.
             Some(last) if tick == last.tick => {
                 if let Some(last) = self.snapshots.back_mut() {
                     last.board = board;
@@ -76,9 +53,6 @@ impl OpponentView {
         }
     }
 
-    /// How far behind the newest update to play: the spread of recent
-    /// arrivals, so that the update after the render tick has almost always
-    /// arrived already, plus one tick of slack.
     pub fn delay_ticks(&self) -> f64 {
         let (min, max) = self
             .arrivals
@@ -90,10 +64,6 @@ impl OpponentView {
         (jitter.ceil() + 1.0).clamp(MIN_DELAY_TICKS, MAX_DELAY_TICKS)
     }
 
-    /// Moves playback on by `dt` seconds, a little faster or slower than real
-    /// time so that it settles `delay_ticks` behind the newest update. It
-    /// never plays past the newest one: when updates stop (a pause), the
-    /// board holds on the last one known.
     pub fn advance(&mut self, dt: f32) {
         let (Some(rt), Some(newest)) = (self.render_tick, self.snapshots.back()) else {
             return;
@@ -110,31 +80,31 @@ impl OpponentView {
         let next = next.min(newest);
         self.render_tick = Some(next);
 
-        // Keep one snapshot at or before the render tick, drop the rest.
         while self.snapshots.len() > 2 && self.snapshots[1].tick as f64 <= next {
             self.snapshots.pop_front();
         }
     }
 
-    /// The board to draw and the offset, in cells, to draw its falling piece
-    /// at: the last update at or before the render tick, with the piece moved
-    /// part of the way to where the next update has it. Only a piece that is
-    /// the same in both is moved; a new piece or a lock shows as it is.
     pub fn frame(&self) -> Option<(&Board, (f32, f32))> {
         let rt = self.render_tick?;
         let i = self.snapshots.iter().rposition(|s| s.tick as f64 <= rt).unwrap_or(0);
         let a = self.snapshots.get(i)?;
-        let offset = self
+        let Some(pa) = a.board.active_piece.as_ref() else {
+            return Some((&a.board, (0.0, 0.0)));
+        };
+        let from = (pa.row as f32 + a.board.fall_progress(), pa.col as f32);
+        let (row, col) = self
             .snapshots
             .get(i + 1)
             .filter(|b| b.board.piece_id == a.board.piece_id && b.tick > a.tick)
             .and_then(|b| {
-                let (pa, pb) = (a.board.active_piece.as_ref()?, b.board.active_piece.as_ref()?);
+                let pb = b.board.active_piece.as_ref()?;
+                let to = (pb.row as f32 + b.board.fall_progress(), pb.col as f32);
                 let frac = ((rt - a.tick as f64) / (b.tick - a.tick) as f64).clamp(0.0, 1.0) as f32;
-                Some((frac * (pb.row - pa.row) as f32, frac * (pb.col - pa.col) as f32))
+                Some((from.0 + frac * (to.0 - from.0), from.1 + frac * (to.1 - from.1)))
             })
-            .unwrap_or((0.0, 0.0));
-        Some((&a.board, offset))
+            .unwrap_or(from);
+        Some((&a.board, (row - pa.row as f32, col - pa.col as f32)))
     }
 }
 
@@ -144,7 +114,6 @@ mod tests {
 
     const DT: f32 = 1.0 / 60.0;
 
-    /// A board whose piece sits at column `col`, piece number `id`.
     fn board_at(col: i32, id: u32) -> Board {
         let mut b = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 1, 1, 5);
         b.spawn_piece();
@@ -158,9 +127,6 @@ mod tests {
         board.active_piece.as_ref().expect("a piece").col as f32 + off.1
     }
 
-    /// Feeds one update per tick, each arriving `lateness(tick)` ticks after
-    /// it was sent, and advances playback one frame per tick. Returns the
-    /// render tick after every frame.
     fn play(view: &mut OpponentView, ticks: u32, lateness: impl Fn(u32) -> f64) -> Vec<f64> {
         let mut arrivals: Vec<(f64, u32)> = (1..=ticks).map(|t| (t as f64 + lateness(t), t)).collect();
         arrivals.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -171,7 +137,6 @@ mod tests {
             let now = frame as f64;
             while next < arrivals.len() && arrivals[next].0 <= now {
                 let t = arrivals[next].1;
-                // Out-of-order arrivals are dropped, like an older tick is.
                 if t > seen {
                     view.push(t, board_at(0, 1), now / TICK_HZ);
                     seen = t;
@@ -196,6 +161,30 @@ mod tests {
 
         view.render_tick = Some(10.0);
         assert!((col_of(&view) - 1.0).abs() < 1e-5);
+    }
+
+    fn row_of(view: &OpponentView) -> f32 {
+        let (board, off) = view.frame().expect("a frame");
+        board.active_piece.as_ref().expect("a piece").row as f32 + off.0
+    }
+
+    #[test]
+    fn a_drop_between_two_updates_is_not_counted_twice() {
+        let mut before = board_at(2, 7);
+        before.active_piece.as_mut().expect("a piece").row = 3;
+        before.fall_timer = config::BASE_FALL_INTERVAL as f32 * 0.99;
+        let mut after = board_at(2, 7);
+        after.active_piece.as_mut().expect("a piece").row = 4;
+        after.fall_timer = 0.0;
+
+        let mut view = OpponentView::default();
+        view.push(10, before, 0.0);
+        view.push(11, after, 0.0);
+        for rt in [10.0, 10.5, 11.0] {
+            view.render_tick = Some(rt);
+            let row = row_of(&view);
+            assert!((row - 4.0).abs() < 0.02, "drawn at row {row} at tick {rt}");
+        }
     }
 
     #[test]
@@ -231,15 +220,10 @@ mod tests {
     #[test]
     fn jitter_buys_a_longer_delay_and_keeps_playback_smooth() {
         let mut view = OpponentView::default();
-        // Now and then the link stalls for 8 ticks and the held updates
-        // arrive together; the rest of the time it is steady. Steering alone
-        // cannot hide that: the average barely moves, the gap is real.
         let rts = play(&mut view, 600, |t| 2.0 + (8 - (t % 37) as i64).max(0) as f64);
         let delay = view.delay_ticks();
         assert!(delay >= 8.0, "a delay of {delay} ticks cannot bridge the gaps");
 
-        // Once settled, the render tick moves forward every frame, never
-        // stalling on a gap nor skipping ahead.
         let tail = &rts[rts.len() - 120..];
         for w in tail.windows(2) {
             let step = w[1] - w[0];

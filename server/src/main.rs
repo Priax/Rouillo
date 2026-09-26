@@ -215,8 +215,6 @@ impl Sim {
         });
     }
 
-    /// The nuisance landing on `slot` this tick. Credited to the sender here,
-    /// not when sent: an attack still travelling when the game ends never hit.
     fn take_due_garbage(&mut self, slot: usize) -> u32 {
         let now = self.tick;
         let mut landed = 0;
@@ -234,7 +232,6 @@ impl Sim {
         landed
     }
 
-    /// The attacks still travelling towards `slot`, for its client to replay.
     fn incoming(&self, slot: usize) -> Vec<IncomingGarbage> {
         self.garbage_in_flight
             .iter()
@@ -256,9 +253,6 @@ impl Sim {
         queue.drain(..due).map(|p| p.kind).collect()
     }
 
-    /// Advances both boards one tick. Each goes through `Board::step`, the
-    /// function clients replay their own board with, so the two cannot drift
-    /// apart in the order things happen within a tick.
     fn advance(&mut self, dt: f32) {
         self.tick += 1;
         let at = self.tick + config::GARBAGE_TRAVEL_TICKS;

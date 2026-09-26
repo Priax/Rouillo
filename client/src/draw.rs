@@ -33,6 +33,7 @@ pub fn draw_game(
     let ui_x = start_x + board_w + 30.0;
 
     let me = &session.predicted_board;
+    let (row_off, col_off) = session.piece_visual_offset;
     draw_board(
         &mut draw,
         me,
@@ -40,7 +41,7 @@ pub fn draw_game(
         offset_y,
         board_w,
         board_h,
-        session.piece_visual_offset,
+        (row_off + me.fall_progress(), col_off),
     );
     draw.text(font, "YOU")
         .position(start_x, offset_y - 50.0)
@@ -304,7 +305,9 @@ fn draw_board(
                 } else {
                     ghost.sat_type
                 };
-                let draw_r = pos.0 as f32 - config::VISIBLE_ROW_OFFSET as f32 + piece_offset.0;
+                // Where the piece will land does not glide with it; only a
+                // sideways correction applies.
+                let draw_r = pos.0 as f32 - config::VISIBLE_ROW_OFFSET as f32;
                 let draw_c = pos.1 as f32 + piece_offset.1;
                 draw_cell(draw, draw_r, draw_c, Some(p_type), offset_x, offset_y, 0.3);
             }

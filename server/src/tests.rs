@@ -1251,8 +1251,6 @@ fn sim_of(mgr: &mut Manager) -> &mut Sim {
     &mut mgr.rooms.get_mut(&1).expect("room 1").sim
 }
 
-/// Sets up a 5-tall column on slot 0 that clears on the next tick, sending
-/// one nuisance.
 fn attack_on_next_tick(mgr: &mut Manager) {
     let sim = sim_of(mgr);
     for r in 8..=12 {
@@ -1282,8 +1280,6 @@ fn an_attack_travels_before_it_lands() {
     assert_eq!(mgr.rooms[&1].sim.tick, sent_at + config::GARBAGE_TRAVEL_TICKS);
     assert_eq!(mgr.rooms[&1].sim.boards[1].pending_garbage, 1);
     assert_eq!(mgr.rooms[&1].sim.nuisance_sent[0], 1);
-    // The clear emptied the board, so an all-clear bonus may follow it; only
-    // the landed attack must be gone.
     assert!(mgr.rooms[&1]
         .sim
         .garbage_in_flight
