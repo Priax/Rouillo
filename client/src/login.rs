@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use notan::draw::*;
 use notan::prelude::*;
 
@@ -34,7 +36,7 @@ fn submit(form: &mut AuthForm) {
         AuthMode::Login => "login",
         AuthMode::Register => "register",
     };
-    http::post_json(http::api_url(path), body, None, slot.clone());
+    http::post_json(http::api_url(path), body, None, Arc::clone(&slot));
     form.error.clear();
     form.pending = Some(slot);
 }

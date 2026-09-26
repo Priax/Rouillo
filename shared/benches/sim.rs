@@ -86,7 +86,7 @@ fn bench_simulation(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut board = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 1, 5);
-                for row in board.cells.iter_mut() {
+                for row in &mut board.cells {
                     for cell in row.iter_mut() {
                         *cell = Some(PuyoType::Red);
                     }

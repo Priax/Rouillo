@@ -459,7 +459,7 @@ impl Board {
     }
 
     pub fn check_collision(&self, piece: &ActivePuyo) -> bool {
-        for (r, c) in piece.get_positions().iter() {
+        for (r, c) in &piece.get_positions() {
             if *c < 0 || *c >= self.width as i32 || *r >= self.height as i32 {
                 return true;
             }
@@ -596,7 +596,7 @@ impl Board {
     fn lock_piece(&mut self) {
         self.last_was_all_clear = false;
         if let Some(piece) = self.active_piece.take() {
-            for (r, c) in piece.get_positions().iter() {
+            for (r, c) in &piece.get_positions() {
                 if *r >= 0 && *r < self.height as i32 && *c >= 0 && *c < self.width as i32 {
                     let puyo_type = if *r == piece.row && *c == piece.col {
                         piece.axis_type
@@ -673,7 +673,7 @@ impl Board {
 
     fn mark_adjacent_garbage(&self, r: usize, c: usize, to_remove: &mut HashSet<(usize, usize)>) {
         let neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)];
-        for (dr, dc) in neighbors.iter() {
+        for (dr, dc) in &neighbors {
             let nr = r as i32 + dr;
             let nc = c as i32 + dc;
 
@@ -800,7 +800,9 @@ impl Board {
     }
 
     fn check_all_clear(&self) -> bool {
-        self.cells.iter().all(|row| row.iter().all(|c| c.is_none()))
+        self.cells
+            .iter()
+            .all(|row| row.iter().all(std::option::Option::is_none))
     }
 
     pub fn toggle_pause(&mut self) {

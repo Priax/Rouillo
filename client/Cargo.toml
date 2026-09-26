@@ -12,7 +12,7 @@ ewebsock = { version = "0.8", features = ["tls"] }
 ehttp = "0.5"
 shared = { path = "../shared" }
 
-[build-dependencies]
+[target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 
 [package.metadata.notan.assets]
@@ -27,3 +27,6 @@ web-sys = { version = "0.3", features = [
     "OscillatorNode", "OscillatorType",
     "GainNode", "AudioParam",
 ] }
+
+[lints]
+workspace = true

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use notan::draw::*;
 use notan::prelude::*;
 
@@ -103,7 +105,7 @@ fn refresh_btn(wh: f32) -> Btn {
 pub fn enter_friends(state: &mut State) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let slot = http::new_slot();
-    http::get(http::api_url("friends"), token, slot.clone());
+    http::get(http::api_url("friends"), token, Arc::clone(&slot));
     state.friends = Some(FriendsData {
         friends: Vec::new(),
         sent: Vec::new(),
@@ -125,7 +127,7 @@ pub fn enter_friends(state: &mut State) {
 fn refresh_list(state: &mut State) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let slot = http::new_slot();
-    http::get(http::api_url("friends"), token, slot.clone());
+    http::get(http::api_url("friends"), token, Arc::clone(&slot));
     if let Some(f) = state.friends.as_mut() {
         f.list_slot = Some(slot);
     }
@@ -166,7 +168,7 @@ fn try_search(state: &mut State) {
     http::get(
         http::api_url(&format!("users/search?q={encoded_q}")),
         token,
-        slot.clone(),
+        Arc::clone(&slot),
     );
     if let Some(f) = state.friends.as_mut() {
         f.search_slot = Some(slot);
@@ -183,7 +185,7 @@ fn send_add_request(state: &mut State, user_id: &str) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let body = serde_json::json!({ "user_id": user_id }).to_string();
     let slot = http::new_slot();
-    http::post_json(http::api_url("friends"), body, token, slot.clone());
+    http::post_json(http::api_url("friends"), body, token, Arc::clone(&slot));
     if let Some(f) = state.friends.as_mut() {
         f.add_pending = Some(slot);
         f.add_error.clear();
@@ -424,7 +426,7 @@ pub fn update_friends(app: &mut App, state: &mut State) {
             FriendAction::ConfirmRemove(id) | FriendAction::Reject(id) | FriendAction::Cancel(id) => {
                 let token = state.auth.as_ref().map(|a| a.token.clone());
                 let slot = http::new_slot();
-                http::delete_req(http::api_url(&format!("friends/{id}")), token, slot.clone());
+                http::delete_req(http::api_url(&format!("friends/{id}")), token, Arc::clone(&slot));
                 if let Some(f) = state.friends.as_mut() {
                     f.action_pending = Some(slot);
                     f.action_error.clear();
@@ -434,7 +436,7 @@ pub fn update_friends(app: &mut App, state: &mut State) {
             FriendAction::Accept(id) => {
                 let token = state.auth.as_ref().map(|a| a.token.clone());
                 let slot = http::new_slot();
-                http::post_empty(http::api_url(&format!("friends/{id}/accept")), token, slot.clone());
+                http::post_empty(http::api_url(&format!("friends/{id}/accept")), token, Arc::clone(&slot));
                 if let Some(f) = state.friends.as_mut() {
                     f.action_pending = Some(slot);
                     f.action_error.clear();
@@ -459,12 +461,9 @@ pub fn draw_friends(app: &mut App, gfx: &mut Graphics, state: &State) {
         .v_align_middle()
         .color(Color::from_rgb(0.9, 0.7, 1.0));
 
-    let f = match &state.friends {
-        Some(f) => f,
-        None => {
-            gfx.render(&draw);
-            return;
-        }
+    let Some(f) = &state.friends else {
+        gfx.render(&draw);
+        return;
     };
 
     draw.text(&state.font, "Rechercher un ami :")

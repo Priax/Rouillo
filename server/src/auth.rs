@@ -273,15 +273,12 @@ async fn handle_login(
         .await
         .map_err(internal)?;
 
-    let user = match (user, ok) {
-        (Some(u), true) => u,
-        _ => {
-            record_failure(&attempts, &body.username);
-            if let Some(ip) = &client {
-                rate_record(&ip_failures, ip, WINDOW);
-            }
-            return Err(warp::reject::custom(Unauthorized));
+    let (Some(user), true) = (user, ok) else {
+        record_failure(&attempts, &body.username);
+        if let Some(ip) = &client {
+            rate_record(&ip_failures, ip, WINDOW);
         }
+        return Err(warp::reject::custom(Unauthorized));
     };
 
     clear_attempts(&attempts, &body.username);

@@ -148,7 +148,7 @@ fn send_input(session: &mut GameSession, conn: &mut Connection, kind: InputKind)
         InputKind::MoveLeft | InputKind::MoveRight => crate::audio::play_move(),
         InputKind::RotateCW | InputKind::RotateCCW => crate::audio::play_rotate(),
         InputKind::HardDrop => crate::audio::play_lock(),
-        _ => {}
+        InputKind::SoftDrop => {}
     }
     session.input_seq += 1;
     let seq = session.input_seq;

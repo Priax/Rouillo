@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use notan::app::Event;
 use notan::draw::*;
 use notan::prelude::*;
@@ -47,13 +49,15 @@ fn setup(gfx: &mut Graphics) -> State {
 
     if let Some(token) = state::load_stored_token() {
         let slot = http::new_slot();
-        http::get(http::api_url("me"), Some(token), slot.clone());
+        http::get(http::api_url("me"), Some(token), Arc::clone(&slot));
         state.startup_check = Some(slot);
     }
 
     state
 }
 
+// notan hands the event over by value; the signature is its, not ours.
+#[allow(clippy::needless_pass_by_value)]
 fn event(state: &mut State, evt: Event) {
     if let Event::ReceivedCharacter(c) = evt {
         if c.is_control() {

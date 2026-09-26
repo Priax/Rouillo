@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use notan::draw::*;
 use notan::prelude::*;
 use shared::{ClientMessage, LobbyInfo, RoomSettings};
@@ -340,7 +342,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         if state.invite_friends.is_empty() && state.invite_slot.is_none() {
             let token = state.auth.as_ref().map(|a| a.token.clone());
             let slot = http::new_slot();
-            http::get(http::api_url("friends"), token, slot.clone());
+            http::get(http::api_url("friends"), token, Arc::clone(&slot));
             state.invite_slot = Some(slot);
         }
     }
@@ -349,9 +351,8 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
 }
 
 pub fn draw_lobby(app: &mut App, gfx: &mut Graphics, state: &State) {
-    let info = match &state.lobby {
-        Some(l) => l,
-        None => return,
+    let Some(info) = &state.lobby else {
+        return;
     };
     let (w, h) = (app.window().width() as f32, app.window().height() as f32);
     let mut draw = gfx.create_draw();

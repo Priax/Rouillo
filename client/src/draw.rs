@@ -296,7 +296,7 @@ fn draw_board(
 
     if board.state == GameState::Playing || board.state == GameState::Paused {
         if let Some(ghost) = board.get_ghost_piece() {
-            for pos in ghost.get_positions().iter() {
+            for pos in &ghost.get_positions() {
                 if pos.0 >= 0 && (board.cells[pos.0 as usize][pos.1 as usize]).is_some() {
                     continue;
                 }
@@ -313,7 +313,7 @@ fn draw_board(
             }
         }
         if let Some(ref piece) = board.active_piece {
-            for pos in piece.get_positions().iter() {
+            for pos in &piece.get_positions() {
                 let p_type = if pos.0 == piece.row && pos.1 == piece.col {
                     piece.axis_type
                 } else {

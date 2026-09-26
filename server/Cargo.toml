@@ -36,3 +36,6 @@ tokio = { version = "1", features = ["full", "test-util"] }
 #   RUSTFLAGS="--cfg tokio_unstable" cargo run -p server --features console
 # Off by default so normal builds pull neither console-subscriber nor tokio/tracing.
 console = ["dep:console-subscriber", "tokio/tracing"]
+
+[lints]
+workspace = true

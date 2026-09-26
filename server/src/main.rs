@@ -523,7 +523,7 @@ impl Command {
     }
 }
 
-fn clean_name(name: String) -> String {
+fn clean_name(name: &str) -> String {
     let n = name.trim();
     if n.is_empty() {
         "Room".to_string()
@@ -641,7 +641,7 @@ impl Manager {
         self.sync_after_attach(id, conn);
     }
 
-    fn finish_join_check(&mut self, conn: ConnId, room: RoomId, host: Token, from: Option<RoomId>, friends: bool) {
+    fn finish_join_check(&mut self, conn: ConnId, room: RoomId, host: &str, from: Option<RoomId>, friends: bool) {
         if !self.senders.contains_key(&conn) || self.room_of(conn) != from {
             return;
         }
@@ -737,18 +737,17 @@ impl Manager {
 
     fn send_room_msg(&mut self, id: RoomId, msg: &ServerMessage) {
         match shared::encode(msg) {
-            Ok(payload) => self.send_room(id, payload),
+            Ok(payload) => self.send_room(id, &payload),
             Err(e) => error!("encode failed, dropping message: {e}"),
         }
     }
 
-    fn send_room(&mut self, id: RoomId, payload: Vec<u8>) {
-        let conns = match self.rooms.get(&id) {
-            Some(room) => room.connected_conns(),
-            None => return,
+    fn send_room(&mut self, id: RoomId, payload: &[u8]) {
+        let Some(conns) = self.rooms.get(&id).map(Room::connected_conns) else {
+            return;
         };
         for c in conns {
-            self.deliver(c, payload.clone());
+            self.deliver(c, payload.to_vec());
         }
     }
 
@@ -791,7 +790,7 @@ impl Manager {
         self.rooms
             .values()
             .filter(|r| !r.settings.friends_only)
-            .map(|r| r.info())
+            .map(Room::info)
             .collect()
     }
 
@@ -881,7 +880,7 @@ impl Manager {
                 let user_id = self.conn_user_id.get(&conn).copied();
                 let room = Room {
                     id,
-                    name: clean_name(name),
+                    name: clean_name(&name),
                     host: token.clone(),
                     members: vec![Member {
                         token,
@@ -1033,7 +1032,7 @@ impl Manager {
                 match check {
                     FriendCheck::Join {
                         conn, room, host, from, ..
-                    } => self.finish_join_check(conn, room, host, from, friends),
+                    } => self.finish_join_check(conn, room, &host, from, friends),
                     FriendCheck::Invite { conn, room, target, .. } => {
                         self.finish_invite_check(conn, room, target, friends)
                     }
@@ -1098,14 +1097,12 @@ impl Manager {
     }
 
     fn mark_disconnected(&mut self, conn: ConnId) {
-        let id = match self.room_of(conn) {
-            Some(id) => id,
-            None => return,
+        let Some(id) = self.room_of(conn) else {
+            return;
         };
         let (notify, in_game) = if let Some(room) = self.rooms.get_mut(&id) {
-            let slot = match room.slot_of_conn(conn) {
-                Some(s) => s,
-                None => return,
+            let Some(slot) = room.slot_of_conn(conn) else {
+                return;
             };
             room.members[slot].conn = None;
             room.members[slot].disconnect_at = Some(Instant::now());
@@ -1156,14 +1153,12 @@ impl Manager {
     }
 
     fn leave_current(&mut self, conn: ConnId) {
-        let id = match self.room_of(conn) {
-            Some(id) => id,
-            None => return,
+        let Some(id) = self.room_of(conn) else {
+            return;
         };
         self.clients.insert(conn, None);
-        let slot = match self.rooms.get(&id).and_then(|r| r.slot_of_conn(conn)) {
-            Some(s) => s,
-            None => return,
+        let Some(slot) = self.rooms.get(&id).and_then(|r| r.slot_of_conn(conn)) else {
+            return;
         };
         self.record_forfeit(id, slot, "a quitté la partie");
         self.remove_member(id, slot);
@@ -1535,7 +1530,7 @@ fn ws_route(
     warp::path("ws")
         .and(warp::ws())
         .and(warp::any().map(move || cmd_tx.clone()))
-        .and(warp::any().map(move || conn_counter.clone()))
+        .and(warp::any().map(move || Arc::clone(&conn_counter)))
         .and(warp::any().map(move || pool.clone()))
         .map(|ws: warp::ws::Ws, cmd_tx, counter: Arc<AtomicU64>, pool: db::DbPool| {
             let conn = counter.fetch_add(1, Ordering::Relaxed);

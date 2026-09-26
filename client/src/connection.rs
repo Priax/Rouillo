@@ -207,9 +207,8 @@ impl Connection {
     }
 
     pub fn recovering(&self, now: f64) -> Option<(u32, f64)> {
-        let retry = match &self.link {
-            Link::Dialing { retry, .. } | Link::Waiting { retry } => retry,
-            _ => return None,
+        let (Link::Dialing { retry, .. } | Link::Waiting { retry }) = &self.link else {
+            return None;
         };
         retry
             .recovering
@@ -340,7 +339,8 @@ fn drain(net: &mut Net, now: f64, heartbeat: &mut Heartbeat, events: &mut Vec<Co
             },
             WsEvent::Closed => outcome = Drained::Dropped("fermée par le serveur".to_string()),
             WsEvent::Error(e) => outcome = Drained::Dropped(e),
-            _ => {}
+            // Text frames and pings: the protocol is binary only.
+            WsEvent::Message(_) => {}
         }
     }
     outcome

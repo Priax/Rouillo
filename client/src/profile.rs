@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use notan::draw::*;
 use notan::prelude::*;
 
@@ -306,9 +308,8 @@ pub(crate) fn draw_match_row(
 }
 
 pub fn enter_profile(state: &mut State) {
-    let auth = match &state.auth {
-        Some(a) => a,
-        None => return,
+    let Some(auth) = &state.auth else {
+        return;
     };
     let user_id = auth.user_id.clone();
     let token = auth.token.clone();
@@ -319,12 +320,12 @@ pub fn enter_profile(state: &mut State) {
     http::get(
         http::api_url(&format!("users/{user_id}")),
         Some(token.clone()),
-        profile_slot.clone(),
+        Arc::clone(&profile_slot),
     );
     http::get(
         http::api_url(&format!("users/{user_id}/matches?limit=10")),
         Some(token),
-        history_slot.clone(),
+        Arc::clone(&history_slot),
     );
 
     state.profile = Some(ProfileData {
@@ -385,7 +386,7 @@ fn save_profile(state: &mut State) {
     })
     .to_string();
     let slot = http::new_slot();
-    http::patch_json(http::api_url("me"), body, token, slot.clone());
+    http::patch_json(http::api_url("me"), body, token, Arc::clone(&slot));
     if let Some(p) = state.profile.as_mut() {
         p.edit_pending = Some(slot);
         p.edit_error.clear();
@@ -525,12 +526,9 @@ pub fn draw_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
     let mut draw = gfx.create_draw();
     draw.clear(Color::from_rgb(0.05, 0.05, 0.08));
 
-    let profile = match &state.profile {
-        Some(p) => p,
-        None => {
-            gfx.render(&draw);
-            return;
-        }
+    let Some(profile) = &state.profile else {
+        gfx.render(&draw);
+        return;
     };
 
     draw_header(&mut draw, &state.font, cx, &profile.core);
@@ -621,19 +619,19 @@ pub fn enter_other_profile(state: &mut State, user_id: String, username: String,
     http::get(
         http::api_url(&format!("users/{user_id}")),
         token.clone(),
-        profile_slot.clone(),
+        Arc::clone(&profile_slot),
     );
     http::get(
         http::api_url(&format!("users/{user_id}/matches?limit=8")),
         token.clone(),
-        history_slot.clone(),
+        Arc::clone(&history_slot),
     );
 
     let (friendship, friendship_check_slot) = if let Some(f) = state.friends.as_ref() {
         (friendship_with(&f.friends, &f.sent, &f.received, &user_id), None)
     } else if token.is_some() {
         let slot = http::new_slot();
-        http::get(http::api_url("friends"), token, slot.clone());
+        http::get(http::api_url("friends"), token, Arc::clone(&slot));
         (FriendshipStatus::Unknown, Some(slot))
     } else {
         (FriendshipStatus::Unknown, None)
@@ -702,7 +700,7 @@ fn add_friend(state: &mut State) {
     );
     let body = serde_json::json!({ "user_id": user_id }).to_string();
     let slot = http::new_slot();
-    http::post_json(http::api_url("friends"), body, token, slot.clone());
+    http::post_json(http::api_url("friends"), body, token, Arc::clone(&slot));
     if let Some(p) = state.other_profile.as_mut() {
         p.friend_slot = Some(slot);
         p.friend_msg.clear();
@@ -769,12 +767,9 @@ pub fn draw_other_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
     let mut draw = gfx.create_draw();
     draw.clear(Color::from_rgb(0.05, 0.05, 0.08));
 
-    let p = match &state.other_profile {
-        Some(p) => p,
-        None => {
-            gfx.render(&draw);
-            return;
-        }
+    let Some(p) = &state.other_profile else {
+        gfx.render(&draw);
+        return;
     };
 
     draw_header(&mut draw, &state.font, cx, &p.core);
