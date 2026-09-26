@@ -49,7 +49,7 @@ pub const SPLIT_DELAY_SATELLITE: u8 = 2;
 pub const BOUNCE_FRAMES: u32 = 16;
 /// How long a group flashes before vanishing. Not in Puyo Nexus's tables:
 /// an estimate, to be tuned by eye.
-pub const POP_FRAMES: u32 = 40;
+pub const POP_FRAMES: u32 = 34;
 
 /// Horizontal autorepeat, as in Tsu: 8 frames before the first repeat, then
 /// one move every 2 frames.

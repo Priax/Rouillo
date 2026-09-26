@@ -698,7 +698,7 @@ fn one_dropped_input_diverges() {
 ///
 /// It therefore fails whenever the simulation changes, deliberately or not. If
 /// the change was intended, re-read the diff, then paste the new value in.
-const GOLDEN_FINAL_HASH: u64 = 9_443_256_685_813_863_261;
+const GOLDEN_FINAL_HASH: u64 = 797_379_939_742_832_967;
 
 #[test]
 fn scripted_run_matches_its_recorded_outcome() {
@@ -915,4 +915,47 @@ fn a_resting_piece_is_drawn_on_its_cell() {
     b.active_piece.as_mut().expect("a piece").row = GRID_HEIGHT as i32 - 1;
     b.fall_offset = config::HALF_CELL_UNITS; // mid-way, had it been able to fall
     assert_eq!(b.fall_progress(), 0.0);
+}
+
+/// A group of five reds at the bottom of column 0, and nothing else.
+fn board_about_to_pop() -> Board {
+    let mut b = empty_board();
+    for r in 8..=12 {
+        b.cells[r][0] = Some(PuyoType::Red);
+    } // score 100 -> 1 nuisance
+    b.state = GameState::ResolvingMatches;
+    b
+}
+
+#[test]
+fn a_chain_cancels_waiting_nuisance_before_attacking() {
+    let mut b = board_about_to_pop();
+    b.pending_garbage = 5;
+    b.nuisance_points = 69; // 100 + 69 = 169 -> 2 nuisance
+    assert_eq!(b.after_landing(), 0, "sent while nuisance was still waiting");
+    assert_eq!(b.pending_garbage, 3);
+}
+
+#[test]
+fn only_the_surplus_of_an_offset_is_sent() {
+    let mut b = board_about_to_pop();
+    b.pending_garbage = 1;
+    b.nuisance_points = 69;
+    assert_eq!(b.after_landing(), 1);
+    assert_eq!(b.pending_garbage, 0);
+}
+
+#[test]
+fn an_all_clear_pays_out_with_the_next_chain() {
+    let mut b = empty_board();
+    b.state = GameState::ResolvingMatches;
+    assert_eq!(b.after_landing(), 0, "an all clear was sent on its own");
+    assert!(b.last_was_all_clear && b.all_clear_bonus);
+
+    let mut b = Board {
+        all_clear_bonus: true,
+        ..board_about_to_pop()
+    };
+    assert_eq!(b.after_landing(), 1 + config::ALL_CLEAR_BONUS);
+    assert!(!b.all_clear_bonus, "the bonus was paid twice");
 }

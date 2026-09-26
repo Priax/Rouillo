@@ -441,6 +441,8 @@ pub struct Board {
     pub nuisance_points: u32,
     pub chain_count: u32,
     pub last_was_all_clear: bool,
+    /// An all clear waiting to add `ALL_CLEAR_BONUS` to the next chain.
+    pub all_clear_bonus: bool,
     pub played_time: f32,
     /// How far the pair is on its way to the next row, 0 to `CELL_UNITS`.
     pub fall_offset: u32,
@@ -490,6 +492,7 @@ impl Board {
             nuisance_points: 0,
             chain_count: 0,
             last_was_all_clear: false,
+            all_clear_bonus: false,
             played_time: 0.0,
             fall_offset: 0,
             soft_dropping: false,
@@ -959,7 +962,16 @@ impl Board {
             self.settle = Settle::Popping { frame: 0 };
             let total_nuisance = score + self.nuisance_points;
             self.nuisance_points = total_nuisance % 70;
-            return total_nuisance / 70;
+            let mut attack = total_nuisance / 70;
+            if self.all_clear_bonus {
+                attack += config::ALL_CLEAR_BONUS;
+                self.all_clear_bonus = false;
+            }
+            // Tsu's offset rule: an attack first cancels the nuisance waiting
+            // over this board; only what is left goes to the opponent.
+            let offset = attack.min(self.pending_garbage);
+            self.pending_garbage -= offset;
+            return attack - offset;
         }
         if self.state == GameState::GameOver {
             return 0;
@@ -969,23 +981,23 @@ impl Board {
             self.drop_garbage();
             return 0;
         }
-        self.next_pair()
+        self.next_pair();
+        0
     }
 
-    fn next_pair(&mut self) -> u32 {
+    fn next_pair(&mut self) {
         if self.cells[VISIBLE_ROW_OFFSET][SPAWN_COL].is_some() {
             self.state = GameState::GameOver;
-            return 0;
+            return;
         }
         let ac = self.check_all_clear();
         self.last_was_all_clear = ac;
+        // As in Tsu, an all clear is paid out with the next chain.
+        if ac {
+            self.all_clear_bonus = true;
+        }
         self.state = GameState::Playing;
         self.spawn_piece();
-        if ac {
-            config::ALL_CLEAR_BONUS
-        } else {
-            0
-        }
     }
 
     /// One frame of settling after a lock: falling, popping, falling again.
@@ -1000,7 +1012,8 @@ impl Board {
                 if self.state == GameState::DroppingGarbage {
                     self.falls.clear();
                     self.settle = Settle::Idle;
-                    return self.next_pair();
+                    self.next_pair();
+                    return 0;
                 }
                 self.after_landing()
             }
@@ -1027,7 +1040,8 @@ impl Board {
             }
             Settle::Idle => {
                 if self.state == GameState::DroppingGarbage {
-                    return self.next_pair();
+                    self.next_pair();
+                    return 0;
                 }
                 self.after_landing()
             }
@@ -1115,6 +1129,7 @@ impl Board {
             nuisance_points,
             chain_count,
             last_was_all_clear,
+            all_clear_bonus,
             played_time,
             fall_offset,
             soft_dropping,
@@ -1168,6 +1183,7 @@ impl Board {
         h.u32(*nuisance_points);
         h.u32(*chain_count);
         h.bool(*last_was_all_clear);
+        h.bool(*all_clear_bonus);
         h.f32(*played_time);
         h.u32(*fall_offset);
         h.bool(*soft_dropping);
