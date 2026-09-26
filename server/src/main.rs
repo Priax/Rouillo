@@ -9,7 +9,8 @@ use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
 use rand::RngExt;
 use shared::{
-    config, Board, ClientMessage, GameState, InputKind, LobbyInfo, RoomId, RoomInfo, RoomSettings, ServerMessage,
+    config, Board, ClientMessage, GameState, IncomingGarbage, InputKind, LobbyInfo, RoomId, RoomInfo, RoomSettings,
+    ServerMessage,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::mpsc;
@@ -207,7 +208,6 @@ impl Sim {
         if amount == 0 {
             return;
         }
-        self.nuisance_sent[from] += amount;
         self.garbage_in_flight.push(GarbageDelivery {
             at,
             slot: 1 - from,
@@ -215,34 +215,80 @@ impl Sim {
         });
     }
 
-    fn deliver_due_garbage(&mut self) {
+    /// The nuisance landing on `slot` this tick. Credited to the sender here,
+    /// not when sent: an attack still travelling when the game ends never hit.
+    fn take_due_garbage(&mut self, slot: usize) -> u32 {
         let now = self.tick;
+        let mut landed = 0;
         let mut i = 0;
         while i < self.garbage_in_flight.len() {
-            if self.garbage_in_flight[i].at <= now {
-                let due = self.garbage_in_flight.swap_remove(i);
-                self.boards[due.slot].pending_garbage += due.amount;
+            let g = &self.garbage_in_flight[i];
+            if g.slot == slot && g.at <= now {
+                landed += g.amount;
+                self.nuisance_sent[1 - slot] += g.amount;
+                self.garbage_in_flight.swap_remove(i);
             } else {
                 i += 1;
             }
         }
+        landed
     }
 
-    fn apply_due_inputs(&mut self) {
+    /// The attacks still travelling towards `slot`, for its client to replay.
+    fn incoming(&self, slot: usize) -> Vec<IncomingGarbage> {
+        self.garbage_in_flight
+            .iter()
+            .filter(|g| g.slot == slot)
+            .map(|g| IncomingGarbage {
+                at: g.at,
+                amount: g.amount,
+            })
+            .collect()
+    }
+
+    fn take_due_inputs(&mut self, slot: usize) -> Vec<InputKind> {
         let now = self.tick;
-        for slot in 0..2 {
-            let mut due = 0;
-            while due < self.queued_inputs[slot].len() {
-                let pending = &self.queued_inputs[slot][due];
-                if pending.at > now {
-                    break;
-                }
-                let (seq, kind) = (pending.seq, pending.kind);
-                self.last_seq[slot] = seq;
-                self.boards[slot].apply_input(kind);
-                due += 1;
-            }
-            self.queued_inputs[slot].drain(..due);
+        let queue = &mut self.queued_inputs[slot];
+        let due = queue.iter().position(|p| p.at > now).unwrap_or(queue.len());
+        if let Some(last) = queue[..due].last() {
+            self.last_seq[slot] = last.seq;
+        }
+        queue.drain(..due).map(|p| p.kind).collect()
+    }
+
+    /// Advances both boards one tick. Each goes through `Board::step`, the
+    /// function clients replay their own board with, so the two cannot drift
+    /// apart in the order things happen within a tick.
+    fn advance(&mut self, dt: f32) {
+        self.tick += 1;
+        let at = self.tick + config::GARBAGE_TRAVEL_TICKS;
+        let mut produced = [0; 2];
+        for (slot, sent) in produced.iter_mut().enumerate() {
+            let inputs = self.take_due_inputs(slot);
+            let landed = self.take_due_garbage(slot);
+            *sent = self.boards[slot].step(inputs, landed, dt);
+        }
+        for (slot, sent) in produced.into_iter().enumerate() {
+            self.send_garbage(slot, sent, at);
+        }
+    }
+
+    fn state_update(&self, full_rng: bool) -> ServerMessage {
+        let pid = [self.boards[0].piece_id, self.boards[1].piece_id];
+        let rng = |i: usize| {
+            let changed = full_rng || self.last_sent_piece_id.is_none_or(|ids| ids[i] != pid[i]);
+            changed.then(|| Box::new(self.boards[i].rng_state()))
+        };
+        ServerMessage::StateUpdate {
+            p1_board: Box::new(self.boards[0].clone()),
+            p2_board: Box::new(self.boards[1].clone()),
+            p1_rng: rng(0),
+            p2_rng: rng(1),
+            p1_ack: self.last_seq[0],
+            p2_ack: self.last_seq[1],
+            tick: self.tick,
+            p1_incoming: self.incoming(0),
+            p2_incoming: self.incoming(1),
         }
     }
 
@@ -741,15 +787,7 @@ impl Manager {
 
     fn send_snapshot(&mut self, id: RoomId) {
         let msg = match self.rooms.get(&id) {
-            Some(room) => ServerMessage::StateUpdate {
-                p1_board: Box::new(room.sim.boards[0].clone()),
-                p2_board: Box::new(room.sim.boards[1].clone()),
-                p1_rng: Some(Box::new(room.sim.boards[0].rng_state())),
-                p2_rng: Some(Box::new(room.sim.boards[1].rng_state())),
-                p1_ack: room.sim.last_seq[0],
-                p2_ack: room.sim.last_seq[1],
-                tick: room.sim.tick,
-            },
+            Some(room) => room.sim.state_update(true),
             None => return,
         };
         self.send_room_msg(id, &msg);
@@ -1249,15 +1287,7 @@ impl Manager {
                 let advanced = !room.sim.paused && !room.sim.finished;
                 let mut just_finished = false;
                 if advanced {
-                    room.sim.tick += 1;
-                    room.sim.apply_due_inputs();
-                    let g0 = room.sim.boards[0].tick(dt);
-                    let g1 = room.sim.boards[1].tick(dt);
-
-                    let at = room.sim.tick;
-                    room.sim.send_garbage(0, g0, at);
-                    room.sim.send_garbage(1, g1, at);
-                    room.sim.deliver_due_garbage();
+                    room.sim.advance(dt);
 
                     for i in 0..2 {
                         let cc = room.sim.boards[i].chain_count;
@@ -1301,22 +1331,8 @@ impl Manager {
                     }
                 }
                 if (do_broadcast && advanced) || just_finished {
-                    let baseline = room.sim.last_sent_piece_id;
-                    let pid = [room.sim.boards[0].piece_id, room.sim.boards[1].piece_id];
-                    let rng_if_changed = |i: usize| {
-                        let changed = just_finished || baseline.is_none_or(|ids| ids[i] != pid[i]);
-                        changed.then(|| Box::new(room.sim.boards[i].rng_state()))
-                    };
-                    let msg = ServerMessage::StateUpdate {
-                        p1_board: Box::new(room.sim.boards[0].clone()),
-                        p2_board: Box::new(room.sim.boards[1].clone()),
-                        p1_rng: rng_if_changed(0),
-                        p2_rng: rng_if_changed(1),
-                        p1_ack: room.sim.last_seq[0],
-                        p2_ack: room.sim.last_seq[1],
-                        tick: room.sim.tick,
-                    };
-                    room.sim.last_sent_piece_id = Some(pid);
+                    let msg = room.sim.state_update(just_finished);
+                    room.sim.last_sent_piece_id = Some([room.sim.boards[0].piece_id, room.sim.boards[1].piece_id]);
                     match shared::encode(&msg) {
                         Ok(upd) => {
                             for m in &room.members {

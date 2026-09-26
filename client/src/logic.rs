@@ -49,19 +49,17 @@ pub fn update_game(
         release_keys(session);
     }
 
-    for (off, rate) in [
-        (&mut session.piece_visual_offset, PIECE_SMOOTH_RATE),
-        (&mut session.opponent_piece_offset, OPPONENT_SMOOTH_RATE),
-    ] {
-        let decay = (-rate * dt).exp();
-        off.0 *= decay;
-        off.1 *= decay;
-        if off.0.abs() < 0.001 {
-            off.0 = 0.0;
-        }
-        if off.1.abs() < 0.001 {
-            off.1 = 0.0;
-        }
+    session.opponent_view.advance(dt);
+
+    let off = &mut session.piece_visual_offset;
+    let decay = (-PIECE_SMOOTH_RATE * dt).exp();
+    off.0 *= decay;
+    off.1 *= decay;
+    if off.0.abs() < 0.001 {
+        off.0 = 0.0;
+    }
+    if off.1.abs() < 0.001 {
+        off.1 = 0.0;
     }
 
     if let Some((_, ref mut t)) = session.chain_display {
@@ -76,7 +74,6 @@ pub fn update_game(
 }
 
 const PIECE_SMOOTH_RATE: f32 = 22.0;
-const OPPONENT_SMOOTH_RATE: f32 = 35.0;
 
 fn release_keys(session: &mut GameSession) {
     session.key_timer_left = 0.0;
@@ -85,16 +82,64 @@ fn release_keys(session: &mut GameSession) {
 }
 
 fn step_simulation(session: &mut GameSession, dt: f32) {
+    if !session.synced {
+        return;
+    }
     session.sim_accumulator += dt;
     let mut steps = 0;
     while session.sim_accumulator >= config::CLIENT_SIM_DT && steps < config::MAX_SIM_STEPS_PER_FRAME {
-        session.ticks_since_update += 1;
-        session.predicted_board.predict_fall(config::CLIENT_SIM_DT);
         session.sim_accumulator -= config::CLIENT_SIM_DT;
         steps += 1;
+        // Clock steering spends one step at a time, never a burst: a skipped
+        // or doubled 1/60 s is invisible where a jump of several is not.
+        match session.clock_correction.signum() {
+            -1 => {
+                session.clock_correction += 1;
+                continue;
+            }
+            1 => {
+                session.clock_correction -= 1;
+                advance_one(session);
+            }
+            _ => {}
+        }
+        advance_one(session);
     }
     if steps == config::MAX_SIM_STEPS_PER_FRAME {
         session.sim_accumulator = 0.0;
+    }
+}
+
+/// One tick of the local board, exactly as the server will run it. Inputs are
+/// not passed: they were applied the moment they were pressed, stamped for
+/// this very tick, which is the same thing `Board::step` would do first.
+pub(crate) fn advance_one(session: &mut GameSession) {
+    session.local_tick = session.local_tick.wrapping_add(1);
+    let now = session.local_tick;
+    let landed = session.incoming.iter().filter(|g| g.at == now).map(|g| g.amount).sum();
+    let was_playing = session.predicted_board.state == GameState::Playing;
+    session.predicted_board.step([], landed, config::CLIENT_SIM_DT);
+    if was_playing && session.predicted_board.state == GameState::ResolvingMatches {
+        crate::audio::play_lock();
+    }
+    announce_events(session);
+}
+
+/// Plays what the local board just did. Keyed on (piece, chain step) rather
+/// than on a transition, because a replay may reach the same moment again.
+pub fn announce_events(session: &mut GameSession) {
+    let board = &session.predicted_board;
+    let chain = (board.piece_id, board.chain_count);
+    if board.chain_count > 0 && chain > session.announced_chain {
+        session.announced_chain = chain;
+        crate::audio::play_pop(board.chain_count);
+        session.chain_display = Some((board.chain_count, 2.0));
+    }
+    let board = &session.predicted_board;
+    if board.last_was_all_clear && board.piece_id != session.announced_all_clear {
+        session.announced_all_clear = board.piece_id;
+        crate::audio::play_all_clear();
+        session.all_clear_timer = 3.0;
     }
 }
 
@@ -107,14 +152,11 @@ fn send_input(session: &mut GameSession, conn: &mut Connection, kind: InputKind)
     }
     session.input_seq += 1;
     let seq = session.input_seq;
+    let tick = session.local_tick.wrapping_add(1);
     session.predicted_board.apply_input(kind);
-    session.pending_inputs.push((seq, kind));
+    session.pending_inputs.push((seq, StampedInput { tick, kind }));
     session.sent_at.push((seq, session.clock));
-    conn.send(&ClientMessage::Input {
-        kind,
-        seq,
-        tick: crate::network::input_tick(session),
-    });
+    conn.send(&ClientMessage::Input { kind, seq, tick });
 }
 
 fn handle_global_input(app: &mut App, session: &mut GameSession, conn: &mut Connection) {
@@ -194,9 +236,15 @@ fn handle_game_input(
 mod tests {
     use super::*;
 
-    fn rows_fallen(frame_dts: &[f32], secs: f32) -> i32 {
+    fn synced_session() -> GameSession {
         let mut session = GameSession::new(1);
         session.predicted_board.spawn_piece();
+        session.synced = true;
+        session
+    }
+
+    fn rows_fallen(frame_dts: &[f32], secs: f32) -> i32 {
+        let mut session = synced_session();
         let start = session.predicted_board.active_piece.as_ref().expect("a piece").row;
 
         let mut elapsed = 0.0;
@@ -231,8 +279,7 @@ mod tests {
 
     #[test]
     fn a_long_stall_does_not_replay_as_a_burst() {
-        let mut session = GameSession::new(1);
-        session.predicted_board.spawn_piece();
+        let mut session = synced_session();
         let start = session.predicted_board.active_piece.as_ref().expect("a piece").row;
 
         step_simulation(&mut session, 30.0);
@@ -244,5 +291,72 @@ mod tests {
             config::MAX_SIM_STEPS_PER_FRAME
         );
         assert_eq!(session.sim_accumulator, 0.0, "the backlog was kept to be replayed");
+    }
+
+    fn run_steps(session: &mut GameSession, n: u32) {
+        for _ in 0..n {
+            step_simulation(session, config::CLIENT_SIM_DT);
+        }
+    }
+
+    #[test]
+    fn the_board_waits_for_the_first_update() {
+        let mut session = GameSession::new(1);
+        run_steps(&mut session, 10);
+        assert_eq!(session.local_tick, 0);
+    }
+
+    #[test]
+    fn each_step_advances_the_local_clock_by_one_tick() {
+        let mut session = synced_session();
+        run_steps(&mut session, 10);
+        assert_eq!(session.local_tick, 10);
+    }
+
+    #[test]
+    fn a_correction_is_spent_one_tick_per_step() {
+        let mut session = synced_session();
+        session.clock_correction = -3;
+        run_steps(&mut session, 10);
+        assert_eq!(session.local_tick, 7, "held back");
+        assert_eq!(session.clock_correction, 0);
+
+        let mut session = synced_session();
+        session.clock_correction = 3;
+        run_steps(&mut session, 10);
+        assert_eq!(session.local_tick, 13, "caught up");
+        assert_eq!(session.clock_correction, 0);
+    }
+
+    #[test]
+    fn a_chain_step_is_announced_once_however_often_it_is_replayed() {
+        let mut session = synced_session();
+        session.predicted_board.chain_count = 2;
+        announce_events(&mut session);
+        assert_eq!(session.chain_display.map(|(c, _)| c), Some(2));
+
+        session.chain_display = None;
+        announce_events(&mut session);
+        assert_eq!(session.chain_display, None, "announced twice");
+
+        session.predicted_board.chain_count = 3;
+        announce_events(&mut session);
+        assert_eq!(
+            session.chain_display.map(|(c, _)| c),
+            Some(3),
+            "the next step was missed"
+        );
+    }
+
+    #[test]
+    fn landing_garbage_moves_from_travelling_to_queued() {
+        let mut session = synced_session();
+        session.incoming = vec![IncomingGarbage { at: 3, amount: 5 }];
+        assert_eq!(session.my_nuisance(), 5);
+        run_steps(&mut session, 2);
+        assert_eq!(session.predicted_board.pending_garbage, 0);
+        run_steps(&mut session, 1);
+        assert_eq!(session.predicted_board.pending_garbage, 5);
+        assert_eq!(session.my_nuisance(), 5, "counted twice or lost on landing");
     }
 }

@@ -40,6 +40,8 @@ fn state_update(p1: &Board, p2: &Board) -> ServerMessage {
         p1_ack: 0,
         p2_ack: 0,
         tick: 0,
+        p1_incoming: Vec::new(),
+        p2_incoming: Vec::new(),
     }
 }
 

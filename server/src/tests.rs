@@ -1251,28 +1251,85 @@ fn sim_of(mgr: &mut Manager) -> &mut Sim {
     &mut mgr.rooms.get_mut(&1).expect("room 1").sim
 }
 
+/// Sets up a 5-tall column on slot 0 that clears on the next tick, sending
+/// one nuisance.
+fn attack_on_next_tick(mgr: &mut Manager) {
+    let sim = sim_of(mgr);
+    for r in 8..=12 {
+        sim.boards[0].cells[r][0] = Some(PuyoType::Red);
+    }
+    sim.boards[0].state = GameState::ResolvingMatches;
+    sim.boards[0].resolve_timer = config::RESOLVE_STEP_INTERVAL;
+}
+
 #[test]
-fn an_attack_reaches_the_opponent_on_the_tick_that_produced_it() {
+fn an_attack_travels_before_it_lands() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
-    {
-        let sim = sim_of(&mut mgr);
-        for r in 8..=12 {
-            sim.boards[0].cells[r][0] = Some(PuyoType::Red);
-        }
-        sim.boards[0].state = GameState::ResolvingMatches;
-        sim.boards[0].resolve_timer = config::RESOLVE_STEP_INTERVAL;
-    }
-    assert_eq!(mgr.rooms[&1].sim.boards[1].pending_garbage, 0, "setup");
+    attack_on_next_tick(&mut mgr);
 
     mgr.tick(STEP, false);
+    let sent_at = mgr.rooms[&1].sim.tick;
+    assert_eq!(mgr.rooms[&1].sim.garbage_in_flight.len(), 1, "no attack was produced");
 
-    assert_eq!(
-        mgr.rooms[&1].sim.boards[1].pending_garbage, 1,
-        "the attack was held over to a later tick"
-    );
+    for _ in 1..config::GARBAGE_TRAVEL_TICKS {
+        mgr.tick(STEP, false);
+    }
+    assert_eq!(mgr.rooms[&1].sim.boards[1].pending_garbage, 0, "landed early");
+    assert_eq!(mgr.rooms[&1].sim.nuisance_sent[0], 0, "credited before it landed");
+
+    mgr.tick(STEP, false);
+    assert_eq!(mgr.rooms[&1].sim.tick, sent_at + config::GARBAGE_TRAVEL_TICKS);
+    assert_eq!(mgr.rooms[&1].sim.boards[1].pending_garbage, 1);
     assert_eq!(mgr.rooms[&1].sim.nuisance_sent[0], 1);
-    assert!(mgr.rooms[&1].sim.garbage_in_flight.is_empty(), "left in flight");
+    // The clear emptied the board, so an all-clear bonus may follow it; only
+    // the landed attack must be gone.
+    assert!(mgr.rooms[&1]
+        .sim
+        .garbage_in_flight
+        .iter()
+        .all(|g| g.at > sent_at + config::GARBAGE_TRAVEL_TICKS));
+}
+
+#[test]
+fn the_victim_is_told_of_an_attack_in_flight() {
+    let mut mgr = new_mgr();
+    let (mut rx1, mut rx2) = running_game(&mut mgr);
+    attack_on_next_tick(&mut mgr);
+    mgr.tick(STEP, false);
+    let lands = mgr.rooms[&1].sim.tick + config::GARBAGE_TRAVEL_TICKS;
+    drain(&mut rx1);
+    drain(&mut rx2);
+
+    mgr.tick(STEP, true);
+    let update = drain(&mut rx2)
+        .into_iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::StateUpdate {
+                p1_incoming,
+                p2_incoming,
+                ..
+            } => Some((p1_incoming, p2_incoming)),
+            _ => None,
+        })
+        .expect("no update");
+    assert_eq!(update.0, vec![], "the attacker was told it is under attack");
+    assert_eq!(update.1, vec![IncomingGarbage { at: lands, amount: 1 }]);
+}
+
+#[test]
+fn an_attack_still_in_flight_at_the_end_is_not_credited() {
+    let mut mgr = new_mgr();
+    let (_rx1, _rx2) = running_game(&mut mgr);
+    attack_on_next_tick(&mut mgr);
+    mgr.tick(STEP, false);
+    assert!(!mgr.rooms[&1].sim.garbage_in_flight.is_empty(), "setup");
+
+    sim_of(&mut mgr).boards[1].state = GameState::GameOver;
+    mgr.tick(STEP, false);
+    assert!(mgr.rooms[&1].sim.finished, "setup: the game should be over");
+    assert_eq!(mgr.rooms[&1].sim.nuisance_sent[0], 0);
 }
 
 #[test]

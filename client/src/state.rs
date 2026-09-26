@@ -1,7 +1,8 @@
 use notan::prelude::*;
-use shared::{config, Board, InputKind, LobbyInfo, RoomId, RoomInfo};
+use shared::{config, Board, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, StampedInput};
 
 use crate::connection::Connection;
+use crate::interp::OpponentView;
 use crate::Font;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -337,14 +338,17 @@ pub struct GameSession {
 
     pub input_seq: u32,
     pub my_ack: u32,
-    pub pending_inputs: Vec<(u32, InputKind)>,
+    /// Sent but not yet acknowledged, by sequence number, in stamp order.
+    pub pending_inputs: Vec<(u32, StampedInput)>,
 
     pub key_timer_left: f32,
     pub key_timer_right: f32,
     pub key_timer_down: f32,
 
     pub piece_visual_offset: (f32, f32),
-    pub opponent_piece_offset: (f32, f32),
+    /// The opponent's board as drawn: `other_board` played back slightly
+    /// behind, so that its piece moves smoothly.
+    pub opponent_view: OpponentView,
 
     pub chain_display: Option<(u32, f32)>,
     pub all_clear_timer: f32,
@@ -356,7 +360,29 @@ pub struct GameSession {
 
     pub server_tick: u32,
 
-    pub ticks_since_update: u32,
+    /// The tick `predicted_board` is the state after. It runs ahead of the
+    /// server by about a round trip, so that an input stamped `local_tick + 1`
+    /// reaches the server before that tick comes.
+    pub local_tick: u32,
+    /// False until the first update of a game has placed `local_tick`; the
+    /// board is not stepped before that.
+    pub synced: bool,
+    /// Ticks to add (positive) or hold back (negative) to steer `local_tick`,
+    /// one per simulation step.
+    pub clock_correction: i32,
+    /// Smallest drift seen in the current window of updates, and how many
+    /// updates the window holds so far.
+    pub drift_min: Option<i32>,
+    pub drift_samples: u32,
+
+    /// Attacks travelling towards each board, as of the last update.
+    pub incoming: Vec<IncomingGarbage>,
+    pub opp_incoming: Vec<IncomingGarbage>,
+
+    /// The last (piece, chain step) and all-clear piece announced, so that a
+    /// replay reaching the same event again does not play it twice.
+    pub announced_chain: (u32, u32),
+    pub announced_all_clear: u32,
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub last_server_msg: String,
@@ -382,18 +408,44 @@ impl GameSession {
             key_timer_right: 0.0,
             key_timer_down: 0.0,
             piece_visual_offset: (0.0, 0.0),
-            opponent_piece_offset: (0.0, 0.0),
+            opponent_view: OpponentView::default(),
             chain_display: None,
             all_clear_timer: 0.0,
             clock: 0.0,
             sent_at: Vec::new(),
             sim_accumulator: 0.0,
             server_tick: 0,
-            ticks_since_update: 0,
+            local_tick: 0,
+            synced: false,
+            clock_correction: 0,
+            drift_min: None,
+            drift_samples: 0,
+            incoming: Vec::new(),
+            opp_incoming: Vec::new(),
+            announced_chain: (0, 0),
+            announced_all_clear: 0,
             last_server_msg: String::new(),
             last_rtt_ms: 0.0,
             ping_rtt_ms: None,
         }
+    }
+}
+
+impl GameSession {
+    /// Nuisance about to fall on this board: queued on it, or still travelling.
+    pub fn my_nuisance(&self) -> u32 {
+        let travelling: u32 = self
+            .incoming
+            .iter()
+            .filter(|g| g.at > self.local_tick)
+            .map(|g| g.amount)
+            .sum();
+        self.predicted_board.pending_garbage + travelling
+    }
+
+    pub fn opp_nuisance(&self) -> u32 {
+        let travelling: u32 = self.opp_incoming.iter().map(|g| g.amount).sum();
+        self.other_board.pending_garbage + travelling
     }
 }
 

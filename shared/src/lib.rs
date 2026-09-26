@@ -91,6 +91,20 @@ pub enum InputKind {
 
 pub type RoomId = u32;
 
+/// An attack on its way to a board: `amount` nuisance lands on tick `at`.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IncomingGarbage {
+    pub at: u32,
+    pub amount: u32,
+}
+
+/// An input together with the tick it is to be applied on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StampedInput {
+    pub tick: u32,
+    pub kind: InputKind,
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PausePolicy {
     Everyone,
@@ -251,6 +265,10 @@ pub enum ServerMessage {
         p1_ack: u32,
         p2_ack: u32,
         tick: u32,
+        /// Attacks scheduled but not landed yet, all with `at > tick`. The
+        /// victim needs them to simulate its own board past `tick`.
+        p1_incoming: Vec<IncomingGarbage>,
+        p2_incoming: Vec<IncomingGarbage>,
     },
     Restart,
     OpponentDisconnected,
@@ -842,30 +860,6 @@ impl Board {
         }
     }
 
-    pub fn predict_fall(&mut self, dt: f32) {
-        if self.state != GameState::Playing {
-            return;
-        }
-        let can_fall = match &self.active_piece {
-            Some(p) => {
-                let mut below = p.clone();
-                below.row += 1;
-                !self.check_collision(&below)
-            }
-            None => false,
-        };
-        if !can_fall {
-            return;
-        }
-        let speed_decrease = (self.level() as f64 - 1.0) * FALL_SPEEDUP_PER_LEVEL;
-        let fall_interval = (BASE_FALL_INTERVAL - speed_decrease).max(MIN_FALL_INTERVAL) as f32;
-        self.fall_timer += dt;
-        if self.fall_timer > fall_interval {
-            self.force_drop();
-            self.fall_timer = 0.0;
-        }
-    }
-
     pub fn state_hash(&self) -> u64 {
         let Board {
             width,
@@ -952,6 +946,47 @@ impl Board {
         h.bytes(&rng.get_word_pos().to_le_bytes());
 
         h.finish()
+    }
+
+    /// One simulation tick, in the one order the server and the client's
+    /// replay must share: the inputs due on this tick, then the tick itself,
+    /// then the nuisance landing on it. Returns the nuisance this board sends.
+    pub fn step(&mut self, inputs: impl IntoIterator<Item = InputKind>, landed_garbage: u32, dt: f32) -> u32 {
+        for kind in inputs {
+            self.apply_input(kind);
+        }
+        let produced = self.tick(dt);
+        self.pending_garbage += landed_garbage;
+        produced
+    }
+
+    /// Takes `self`, the state after tick `from`, forward to the state after
+    /// tick `to`, stepping exactly as the server will.
+    ///
+    /// `inputs` are walked in order and each is applied on the first tick at
+    /// or after its stamp, never before the one ahead of it: the same prefix
+    /// rule the server drains its queue with. One stamped at or before `from`
+    /// is late (the server has not seen it yet) and is assumed to land on
+    /// `from + 1`, the earliest it can. Whatever is stamped past `to` was
+    /// pressed after the last step and is applied on top without ticking,
+    /// which is exactly what stepping will do to it next.
+    pub fn replay(&self, from: u32, to: u32, inputs: &[StampedInput], incoming: &[IncomingGarbage], dt: f32) -> Board {
+        let mut board = self.clone();
+        let mut next = 0;
+        let mut t = from;
+        while t < to {
+            t += 1;
+            let start = next;
+            while next < inputs.len() && inputs[next].tick <= t {
+                next += 1;
+            }
+            let landed = incoming.iter().filter(|g| g.at == t).map(|g| g.amount).sum();
+            board.step(inputs[start..next].iter().map(|i| i.kind), landed, dt);
+        }
+        for input in &inputs[next..] {
+            board.apply_input(input.kind);
+        }
+        board
     }
 
     pub fn tick(&mut self, dt: f32) -> u32 {

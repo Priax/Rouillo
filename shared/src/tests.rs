@@ -233,6 +233,8 @@ fn state_update_survives_encode_decode() {
         p1_ack: 7,
         p2_ack: 9,
         tick: 4_242,
+        p1_incoming: Vec::new(),
+        p2_incoming: Vec::new(),
     };
     let bytes = encode(&msg).expect("encode");
     let back: ServerMessage = decode(&bytes).expect("decode");
@@ -274,6 +276,8 @@ fn rng_state_survives_encode_decode() {
         p1_ack: 0,
         p2_ack: 0,
         tick: 0,
+        p1_incoming: Vec::new(),
+        p2_incoming: Vec::new(),
     };
     let bytes = encode(&msg).expect("encode");
     let back: ServerMessage = decode(&bytes).expect("decode");
@@ -306,6 +310,8 @@ fn state_update_omits_rng_when_none() {
         p1_ack: 3,
         p2_ack: 4,
         tick: 0,
+        p1_incoming: Vec::new(),
+        p2_incoming: Vec::new(),
     };
     let bytes = encode(&msg).expect("encode");
     let back: ServerMessage = decode(&bytes).expect("decode");
@@ -616,4 +622,147 @@ fn the_digest_notices_fields_the_script_never_varies() {
     assert_ne!(faster.state_hash(), base.state_hash(), "start_level");
     let four_colours = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 1, 4);
     assert_ne!(four_colours.state_hash(), base.state_hash(), "colors");
+}
+
+/// What the server does with one board: a queue of stamped inputs drained by
+/// the prefix rule, attacks landing on their tick, `Board::step` in between.
+/// `states[t]` is the state after tick t, tagged with which game it belongs
+/// to: like `run_script`, a board that tops out is replaced so the timeline
+/// keeps reaching chains and garbage.
+fn server_timeline(ticks: u32, inputs: &[StampedInput], incoming: &[IncomingGarbage]) -> Vec<(u32, Board)> {
+    let fresh = |game: u32| {
+        let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, 0xDEAD_BEEF + game as u64, 1, 5);
+        b.spawn_piece();
+        b
+    };
+    let mut game = 0;
+    let mut board = fresh(game);
+    let mut states = vec![(game, board.clone())];
+    let mut next = 0;
+    for t in 1..=ticks {
+        if board.state == GameState::GameOver {
+            game += 1;
+            board = fresh(game);
+        }
+        let start = next;
+        while next < inputs.len() && inputs[next].tick <= t {
+            next += 1;
+        }
+        let landed = incoming.iter().filter(|g| g.at == t).map(|g| g.amount).sum();
+        board.step(
+            inputs[start..next].iter().map(|i| i.kind),
+            landed,
+            config::CLIENT_SIM_DT,
+        );
+        states.push((game, board.clone()));
+    }
+    states
+}
+
+fn scripted_stamps(ticks: u32) -> Vec<StampedInput> {
+    (1..=ticks)
+        .filter_map(|t| scripted_input(t as u64 - 1).map(|kind| StampedInput { tick: t, kind }))
+        .collect()
+}
+
+fn scripted_attacks(ticks: u32) -> Vec<IncomingGarbage> {
+    (1..=ticks)
+        .filter(|t| t % 240 == 0)
+        .map(|at| IncomingGarbage { at, amount: 9 })
+        .collect()
+}
+
+/// The contract stage 5 rests on: from the server's state after any tick,
+/// replaying the inputs and attacks not yet in it reaches, bit for bit, the
+/// state the server will be in. Otherwise every update would correct the
+/// client's own board, however good the connection.
+#[test]
+fn replaying_from_any_server_state_lands_on_the_server_future() {
+    let ticks = 6_000;
+    let inputs = scripted_stamps(ticks);
+    let attacks = scripted_attacks(ticks);
+    let states = server_timeline(ticks, &inputs, &attacks);
+    assert!(
+        states.iter().any(|(_, b)| b.chain_count >= 2),
+        "the timeline never chained, the replay is under-tested"
+    );
+    assert!(
+        states.iter().any(|(_, b)| b.state == GameState::DroppingGarbage),
+        "the timeline never dropped garbage, the replay is under-tested"
+    );
+
+    let mut checked = 0;
+    for from in (0..ticks - 40).step_by(3) {
+        for ahead in [0, 1, 5, 17, 40] {
+            let to = from + ahead;
+            let (game, start) = &states[from as usize];
+            if states[to as usize].0 != *game {
+                continue; // a replay cannot see a restart coming
+            }
+            // What the client still holds: everything the server has not
+            // applied by `from`, and every attack not landed by then.
+            let pending: Vec<_> = inputs.iter().copied().filter(|i| i.tick > from).collect();
+            let in_flight: Vec<_> = attacks.iter().copied().filter(|g| g.at > from).collect();
+            let replayed = start.replay(from, to, &pending, &in_flight, config::CLIENT_SIM_DT);
+            // Inputs stamped past `to` sit on top of the replay without a tick.
+            let mut expected = states[to as usize].1.clone();
+            for i in pending.iter().filter(|i| i.tick > to) {
+                expected.apply_input(i.kind);
+            }
+            assert_eq!(
+                replayed.state_hash(),
+                expected.state_hash(),
+                "replay from tick {from} to {to} left the server's timeline"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 5_000, "only {checked} replays were comparable");
+}
+
+#[test]
+fn a_late_input_replays_on_the_first_tick_after_the_snapshot() {
+    let states: Vec<_> = server_timeline(10, &[], &[]).into_iter().map(|(_, b)| b).collect();
+    let late = [StampedInput {
+        tick: 3,
+        kind: InputKind::MoveLeft,
+    }];
+    let replayed = states[8].replay(8, 10, &late, &[], config::CLIENT_SIM_DT);
+
+    let mut expected = states[8].clone();
+    expected.step([InputKind::MoveLeft], 0, config::CLIENT_SIM_DT);
+    expected.step([], 0, config::CLIENT_SIM_DT);
+    assert_eq!(replayed.state_hash(), expected.state_hash());
+}
+
+#[test]
+fn an_input_pressed_after_the_last_step_is_applied_without_a_tick() {
+    let states: Vec<_> = server_timeline(5, &[], &[]).into_iter().map(|(_, b)| b).collect();
+    let pressed = [StampedInput {
+        tick: 6,
+        kind: InputKind::MoveRight,
+    }];
+    let replayed = states[5].replay(5, 5, &pressed, &[], config::CLIENT_SIM_DT);
+
+    let mut expected = states[5].clone();
+    expected.apply_input(InputKind::MoveRight);
+    assert_eq!(replayed.state_hash(), expected.state_hash());
+}
+
+#[test]
+fn an_attack_lands_in_the_replay_on_its_own_tick() {
+    let states: Vec<_> = server_timeline(10, &[], &[]).into_iter().map(|(_, b)| b).collect();
+    let attack = [IncomingGarbage { at: 7, amount: 4 }];
+    assert_eq!(
+        states[5]
+            .replay(5, 6, &[], &attack, config::CLIENT_SIM_DT)
+            .pending_garbage,
+        0
+    );
+    assert_eq!(
+        states[5]
+            .replay(5, 7, &[], &attack, config::CLIENT_SIM_DT)
+            .pending_garbage,
+        4
+    );
 }

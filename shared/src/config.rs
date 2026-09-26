@@ -60,3 +60,17 @@ pub const INPUT_LEAD_MARGIN_TICKS: u32 = 2;
 pub const MAX_INPUT_LEAD_TICKS: u32 = 30;
 
 const _: () = assert!(INPUT_LEAD_MARGIN_TICKS < MAX_INPUT_LEAD_TICKS);
+
+/// How long an attack travels before it lands on the opponent's board.
+///
+/// Each client simulates its own board ahead of the server, by about one round
+/// trip, so an attack landing at once would land in a past the victim has
+/// already simulated without it and be corrected with a visible snap. Landing
+/// later than the victim is ahead lets it learn of the attack first and play
+/// it on the right tick. 20 ticks covers round trips up to ~290 ms; longer
+/// ones still work, they just see the correction.
+pub const GARBAGE_TRAVEL_TICKS: u32 = 20;
+
+// Zero would land an attack on the tick that produced it, which a replay
+// cannot see coming whatever the latency.
+const _: () = assert!(GARBAGE_TRAVEL_TICKS >= 1);

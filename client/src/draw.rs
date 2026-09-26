@@ -49,22 +49,18 @@ pub fn draw_game(
     draw_nuisance_bar(
         &mut draw,
         font,
-        session.board.pending_garbage,
+        session.my_nuisance(),
         start_x,
         offset_y - 28.0,
         board_w,
     );
 
     let opponent_x = start_x + board_w + gap;
-    draw_board(
-        &mut draw,
-        &session.other_board,
-        opponent_x,
-        offset_y,
-        board_w,
-        board_h,
-        session.opponent_piece_offset,
-    );
+    let (opp_board, opp_offset) = session
+        .opponent_view
+        .frame()
+        .unwrap_or((&session.other_board, (0.0, 0.0)));
+    draw_board(&mut draw, opp_board, opponent_x, offset_y, board_w, board_h, opp_offset);
     draw.text(font, "OPPONENT")
         .position(opponent_x, offset_y - 50.0)
         .size(20.0)
@@ -72,7 +68,7 @@ pub fn draw_game(
     draw_nuisance_bar(
         &mut draw,
         font,
-        session.other_board.pending_garbage,
+        session.opp_nuisance(),
         opponent_x,
         offset_y - 28.0,
         board_w,
@@ -211,7 +207,7 @@ pub fn draw_game(
             &format!(
                 "DEBUG NET: srv tick={} (+{}) {}",
                 session.server_tick,
-                crate::network::input_tick(session) - session.server_tick,
+                session.local_tick as i64 - session.server_tick as i64,
                 session.last_server_msg
             ),
         )

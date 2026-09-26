@@ -8,6 +8,7 @@ mod connection;
 mod draw;
 mod friends;
 mod http;
+mod interp;
 mod logic;
 mod login;
 mod menu;
@@ -242,6 +243,8 @@ fn main() -> Result<(), String> {
         .set_resizable(true)
         .set_window_icon_data(icon)
         .set_taskbar_icon_data(icon);
+    #[cfg(target_arch = "wasm32")]
+    let win_config = win_config.set_maximized(true);
 
     notan::init_with(setup)
         .add_config(DrawConfig)

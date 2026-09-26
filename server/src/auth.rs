@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -86,6 +87,52 @@ fn clear_attempts(attempts: &LoginAttempts, username: &str) {
     rate_clear(attempts, username);
 }
 
+// The per-username limit above protects one account from guessing, but costs
+// nothing to evade: a new username per attempt buys a fresh argon2 hash every
+// time, and on a 2-core VM a stream of hashes starves the 60 Hz game loop. So
+// every request that reaches argon2 without proving an account is also counted
+// per client address.
+type IpLimit = RateMap;
+const MAX_LOGIN_FAILURES_PER_IP: u32 = 30;
+const MAX_REGISTRATIONS_PER_IP: u32 = 10;
+const REGISTER_WINDOW: Duration = Duration::from_secs(3600);
+
+/// The address to rate-limit a request by. Behind Caddy every peer is
+/// loopback, so there (and only there) the client is the last
+/// `X-Forwarded-For` entry: the one our own proxy appended. Anything to its
+/// left was written by the client and is not trusted. IPv6 is keyed by /64,
+/// the smallest block an end user is routinely handed, so rotating addresses
+/// inside one's own prefix does not reset the count.
+fn client_key(peer: Option<SocketAddr>, forwarded_for: Option<&str>) -> Option<String> {
+    let peer = peer?.ip();
+    let ip = if peer.is_loopback() {
+        forwarded_for
+            .and_then(|h| h.rsplit(',').next())
+            .and_then(|last| last.trim().parse::<IpAddr>().ok())
+            .unwrap_or(peer)
+    } else {
+        peer
+    };
+    Some(match ip.to_canonical() {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+        }
+    })
+}
+
+fn client_addr() -> impl Filter<Extract = (Option<String>,), Error = std::convert::Infallible> + Clone {
+    // Read from the raw header map: `header::optional` rejects a non-UTF-8
+    // value, which would turn a junk header into a 404 instead of a fallback.
+    warp::addr::remote().and(warp::header::headers_cloned()).map(
+        |peer: Option<SocketAddr>, headers: warp::http::HeaderMap| {
+            let xff = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+            client_key(peer, xff)
+        },
+    )
+}
+
 type FriendLimit = RateMap;
 const MAX_FRIEND_REQS: u32 = 30;
 const FRIEND_WINDOW: Duration = Duration::from_secs(600);
@@ -166,7 +213,12 @@ fn validate_password(p: &str) -> bool {
     (8..=1024).contains(&n)
 }
 
-async fn handle_register(body: RegisterBody, pool: DbPool) -> Result<impl Reply, Rejection> {
+async fn handle_register(
+    body: RegisterBody,
+    pool: DbPool,
+    client: Option<String>,
+    registrations: IpLimit,
+) -> Result<impl Reply, Rejection> {
     if !validate_username(&body.username) {
         return Err(warp::reject::custom(BadRequest(
             "Username must be 3-24 alphanumeric characters or underscores".into(),
@@ -176,6 +228,14 @@ async fn handle_register(body: RegisterBody, pool: DbPool) -> Result<impl Reply,
         return Err(warp::reject::custom(BadRequest(
             "Password must be at least 8 characters".into(),
         )));
+    }
+    // Counted before hashing, whatever the outcome: a taken username still
+    // costs a hash, so it must still cost an attempt.
+    if let Some(ip) = &client {
+        if rate_check(&registrations, ip, MAX_REGISTRATIONS_PER_IP, REGISTER_WINDOW) {
+            return Err(warp::reject::custom(TooManyRequests));
+        }
+        rate_record(&registrations, ip, REGISTER_WINDOW);
     }
 
     let user = match db::create_user(&pool, &body.username, &body.password).await {
@@ -199,9 +259,20 @@ async fn handle_register(body: RegisterBody, pool: DbPool) -> Result<impl Reply,
     ))
 }
 
-async fn handle_login(body: LoginBody, pool: DbPool, attempts: LoginAttempts) -> Result<impl Reply, Rejection> {
+async fn handle_login(
+    body: LoginBody,
+    pool: DbPool,
+    attempts: LoginAttempts,
+    client: Option<String>,
+    ip_failures: IpLimit,
+) -> Result<impl Reply, Rejection> {
     if is_rate_limited(&attempts, &body.username) {
         return Err(warp::reject::custom(TooManyRequests));
+    }
+    if let Some(ip) = &client {
+        if rate_check(&ip_failures, ip, MAX_LOGIN_FAILURES_PER_IP, WINDOW) {
+            return Err(warp::reject::custom(TooManyRequests));
+        }
     }
 
     let user = db::find_user_by_username(&pool, &body.username)
@@ -221,6 +292,11 @@ async fn handle_login(body: LoginBody, pool: DbPool, attempts: LoginAttempts) ->
         (Some(u), true) => u,
         _ => {
             record_failure(&attempts, &body.username);
+            // Not cleared on success: one valid account must not launder the
+            // failures sprayed across others from the same address.
+            if let Some(ip) = &client {
+                rate_record(&ip_failures, ip, WINDOW);
+            }
             return Err(warp::reject::custom(Unauthorized));
         }
     };
@@ -532,6 +608,8 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
     let attempts: LoginAttempts = new_rate_map();
     let friend_limit: FriendLimit = new_rate_map();
     let search_limit: SearchLimit = new_rate_map();
+    let registrations: IpLimit = new_rate_map();
+    let ip_login_failures: IpLimit = new_rate_map();
 
     let register = api
         .and(warp::path("register"))
@@ -540,6 +618,8 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(body_limit)
         .and(warp::body::json())
         .and(pool.clone())
+        .and(client_addr())
+        .and(with(registrations))
         .and_then(handle_register);
 
     let login = api
@@ -550,6 +630,8 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::body::json())
         .and(pool.clone())
         .and(with(attempts))
+        .and(client_addr())
+        .and(with(ip_login_failures))
         .and_then(handle_login);
 
     let friend_limit = with(friend_limit);
@@ -658,4 +740,93 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .or(friends_post)
         .or(friends_accept)
         .or(friends_delete)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn addr(s: &str) -> Option<SocketAddr> {
+        Some(s.parse().unwrap())
+    }
+
+    #[test]
+    fn direct_peer_is_the_client_and_its_forwarded_header_is_ignored() {
+        assert_eq!(
+            client_key(addr("203.0.113.7:5000"), Some("198.51.100.1")),
+            Some("203.0.113.7".into())
+        );
+    }
+
+    #[test]
+    fn behind_the_proxy_only_the_last_forwarded_entry_counts() {
+        // The client wrote "1.2.3.4"; Caddy appended the real peer.
+        assert_eq!(
+            client_key(addr("127.0.0.1:40000"), Some("1.2.3.4, 203.0.113.7")),
+            Some("203.0.113.7".into())
+        );
+        assert_eq!(
+            client_key(addr("[::1]:40000"), Some("203.0.113.7")),
+            Some("203.0.113.7".into())
+        );
+    }
+
+    #[test]
+    fn unparseable_or_missing_forwarded_header_falls_back_to_the_peer() {
+        assert_eq!(
+            client_key(addr("127.0.0.1:1"), Some("garbage")),
+            Some("127.0.0.1".into())
+        );
+        assert_eq!(client_key(addr("127.0.0.1:1"), None), Some("127.0.0.1".into()));
+        assert_eq!(client_key(None, Some("203.0.113.7")), None);
+    }
+
+    #[test]
+    fn ipv6_is_keyed_by_its_64_prefix() {
+        let a = client_key(addr("127.0.0.1:1"), Some("2001:db8:1:2:aaaa::1"));
+        let b = client_key(addr("127.0.0.1:1"), Some("2001:db8:1:2:bbbb::9"));
+        assert_eq!(a, Some("2001:db8:1:2::/64".into()));
+        assert_eq!(a, b);
+        assert_ne!(a, client_key(addr("127.0.0.1:1"), Some("2001:db8:1:3::1")));
+    }
+
+    /// The whole path, through the route: the limit is keyed on the address
+    /// Caddy forwards, so rotating usernames from one client runs out, and a
+    /// different client is unaffected. The pool points at nothing, so every
+    /// accepted attempt ends in a 500 once past the hash.
+    #[tokio::test]
+    async fn registrations_are_limited_per_forwarded_client() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap();
+        let api = routes(pool).recover(handle_rejection);
+        let register = |from: &'static str, n: u32| {
+            warp::test::request()
+                .method("POST")
+                .path("/api/register")
+                .remote_addr("127.0.0.1:40000".parse().unwrap())
+                .header("x-forwarded-for", from)
+                .json(&serde_json::json!({ "username": format!("user_{n}"), "password": "password123" }))
+        };
+        for n in 0..MAX_REGISTRATIONS_PER_IP {
+            let res = register("203.0.113.7", n).reply(&api).await;
+            assert_ne!(res.status(), 429, "attempt {n} limited too early");
+        }
+        let res = register("203.0.113.7", 999).reply(&api).await;
+        assert_eq!(res.status(), 429);
+        // A spoofed left-hand entry does not buy a fresh budget.
+        let res = register("198.51.100.1, 203.0.113.7", 1000).reply(&api).await;
+        assert_eq!(res.status(), 429);
+        let res = register("198.51.100.1", 1001).reply(&api).await;
+        assert_ne!(res.status(), 429);
+    }
+
+    #[test]
+    fn ipv4_mapped_ipv6_is_the_ipv4_address() {
+        assert_eq!(
+            client_key(addr("[::ffff:203.0.113.7]:1"), None),
+            Some("203.0.113.7".into())
+        );
+    }
 }

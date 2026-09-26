@@ -46,18 +46,121 @@ fn reset_to_menu(state: &mut State, notice: &str) {
     state.notice = notice.to_string();
 }
 
-pub fn input_tick(session: &GameSession) -> u32 {
-    session
-        .server_tick
-        .saturating_add(lead_ticks(session.ping_rtt_ms))
-        .saturating_add(session.ticks_since_update)
+/// How far ahead of the last update's tick the local clock belongs. That
+/// update left the server half a round trip ago, and an input stamped now
+/// needs another half to get there: a full round trip, plus a margin for
+/// jitter. Anything less and inputs reach the server after their tick.
+fn lead_ticks(rtt_ms: Option<f32>) -> u32 {
+    let rtt = rtt_ms.map_or(0, |ms| (ms / 1000.0 / config::CLIENT_SIM_DT).ceil() as u32);
+    rtt.saturating_add(config::INPUT_LEAD_MARGIN_TICKS)
+        .min(config::MAX_INPUT_LEAD_TICKS)
 }
 
-fn lead_ticks(rtt_ms: Option<f32>) -> u32 {
-    let one_way = rtt_ms.map_or(0, |ms| (ms / 2.0 / 1000.0 / config::CLIENT_SIM_DT).ceil() as u32);
-    one_way
-        .saturating_add(config::INPUT_LEAD_MARGIN_TICKS)
-        .min(config::MAX_INPUT_LEAD_TICKS)
+/// Updates are judged in windows this long; one arriving late looks like a
+/// client running ahead, so only the least delayed of the window counts.
+const DRIFT_WINDOW: u32 = 30;
+/// A drift this small is left alone rather than chased.
+const DRIFT_DEADBAND: i32 = 1;
+
+/// Steers the local clock from an update stamped `server_tick`. The first
+/// update of a game, or one showing the clock wildly off (a hidden tab that
+/// stopped stepping, a long pause), places it directly. Otherwise the
+/// smallest drift over a window becomes a correction that `step_simulation`
+/// spends one tick at a time. It steers both ways: a clock only ever pushed
+/// forward ratchets further ahead on every server pause.
+fn sync_clock(session: &mut GameSession, server_tick: u32) {
+    let target = server_tick.saturating_add(lead_ticks(session.ping_rtt_ms));
+    let drift = session.local_tick as i64 - target as i64;
+    if !session.synced || drift.unsigned_abs() > config::MAX_INPUT_LEAD_TICKS as u64 {
+        session.local_tick = target;
+        session.synced = true;
+        session.clock_correction = 0;
+        session.drift_min = None;
+        session.drift_samples = 0;
+        return;
+    }
+    let drift = drift as i32;
+    let min = session.drift_min.map_or(drift, |m| m.min(drift));
+    session.drift_min = Some(min);
+    session.drift_samples += 1;
+    if session.drift_samples >= DRIFT_WINDOW {
+        session.clock_correction = if min.abs() > DRIFT_DEADBAND { -min } else { 0 };
+        session.drift_min = None;
+        session.drift_samples = 0;
+    }
+}
+
+/// Everything a state update says about this client's game, from its side.
+pub struct Update {
+    pub board: Board,
+    pub other_board: Board,
+    pub ack: u32,
+    pub tick: u32,
+    pub incoming: Vec<IncomingGarbage>,
+    pub opp_incoming: Vec<IncomingGarbage>,
+}
+
+/// Takes in the server's word and rebuilds the local board on top of it: the
+/// server's state at `tick`, replayed forward through the inputs it has not
+/// applied yet to the local clock. With a deterministic simulation and inputs
+/// arriving in time, that lands exactly where the local board already was,
+/// and nothing on screen moves; anything else is a correction.
+pub fn reconcile(session: &mut GameSession, update: Update) {
+    let prev_piece = session.predicted_board.active_piece.clone();
+    let prev_piece_id = session.predicted_board.piece_id;
+    let nuisance_before = session.my_nuisance();
+
+    session.board = update.board;
+    session.other_board = update.other_board;
+    session.my_ack = update.ack;
+    session.server_tick = update.tick;
+    session.incoming = update.incoming;
+    session.opp_incoming = update.opp_incoming;
+    session.pending_inputs.retain(|(seq, _)| *seq > update.ack);
+
+    if let Some(&(_, sent)) = session
+        .sent_at
+        .iter()
+        .filter(|(seq, _)| *seq <= update.ack)
+        .max_by_key(|(seq, _)| *seq)
+    {
+        session.last_rtt_ms = ((session.clock - sent) * 1000.0) as f32;
+    }
+    session.sent_at.retain(|(seq, _)| *seq > update.ack);
+
+    sync_clock(session, update.tick);
+
+    let pending: Vec<StampedInput> = session.pending_inputs.iter().map(|(_, input)| *input).collect();
+    let predicted = session.board.replay(
+        update.tick,
+        session.local_tick,
+        &pending,
+        &session.incoming,
+        config::CLIENT_SIM_DT,
+    );
+
+    if predicted.piece_id == prev_piece_id {
+        if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.as_ref()) {
+            let off = &mut session.piece_visual_offset;
+            off.0 = (off.0 + (prev.row - cur.row) as f32).clamp(-3.0, 3.0);
+            off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
+        }
+    } else {
+        session.piece_visual_offset = (0.0, 0.0);
+    }
+
+    session.predicted_board = predicted;
+    crate::logic::announce_events(session);
+    if session.my_nuisance() > nuisance_before {
+        crate::audio::play_garbage();
+    }
+
+    session.last_server_msg = format!(
+        "StateUpdate ack={} pending={} seq={}",
+        update.ack,
+        session.pending_inputs.len(),
+        session.input_seq,
+    );
 }
 
 fn process_message(state: &mut State, msg: ServerMessage) {
@@ -93,127 +196,37 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             p1_ack,
             p2_ack,
             tick,
+            p1_incoming,
+            p2_incoming,
         } => {
             if let Some(session) = state.session.as_mut() {
-                let (mut my_auth, mut opp_auth, my_ack, my_rng, opp_rng) = match session.my_slot {
-                    1 => (*p1_board, *p2_board, p1_ack, p1_rng, p2_rng),
-                    2 => (*p2_board, *p1_board, p2_ack, p2_rng, p1_rng),
+                let (mut board, mut other_board, ack, my_rng, opp_rng, incoming, opp_incoming) = match session.my_slot {
+                    1 => (*p1_board, *p2_board, p1_ack, p1_rng, p2_rng, p1_incoming, p2_incoming),
+                    2 => (*p2_board, *p1_board, p2_ack, p2_rng, p1_rng, p2_incoming, p1_incoming),
                     _ => return,
                 };
-
                 match my_rng {
-                    Some(r) => my_auth.set_rng(*r),
-                    None => my_auth.set_rng(session.board.rng_state()),
+                    Some(r) => board.set_rng(*r),
+                    None => board.set_rng(session.board.rng_state()),
                 }
                 match opp_rng {
-                    Some(r) => opp_auth.set_rng(*r),
-                    None => opp_auth.set_rng(session.other_board.rng_state()),
+                    Some(r) => other_board.set_rng(*r),
+                    None => other_board.set_rng(session.other_board.rng_state()),
                 }
-
-                let prev_piece = session.predicted_board.active_piece.clone();
-                let prev_piece_id = session.predicted_board.piece_id;
-                let prev_fall_timer = session.predicted_board.fall_timer;
-                let prev_opp_piece = session.other_board.active_piece.clone();
-                let prev_opp_piece_id = session.other_board.piece_id;
-
-                let prev_chain = session.board.chain_count;
-                let prev_all_clear = session.board.last_was_all_clear;
-                let prev_garbage = session.board.pending_garbage;
-                let prev_state = session.board.state;
-                let hard_drop_acked = session
-                    .pending_inputs
-                    .iter()
-                    .any(|(seq, kind)| *seq <= my_ack && *kind == InputKind::HardDrop);
-
-                session.board = my_auth.clone();
-                session.other_board = opp_auth;
-                session.my_ack = my_ack;
-                session.server_tick = tick;
-                session.ticks_since_update = 0;
-                session.pending_inputs.retain(|(seq, _)| *seq > my_ack);
-
-                if let Some(&(_, sent)) = session
-                    .sent_at
-                    .iter()
-                    .filter(|(seq, _)| *seq <= my_ack)
-                    .max_by_key(|(seq, _)| *seq)
-                {
-                    session.last_rtt_ms = ((session.clock - sent) * 1000.0) as f32;
-                }
-                session.sent_at.retain(|(seq, _)| *seq > my_ack);
-
-                session.last_server_msg = format!(
-                    "StateUpdate ack={} pending={} seq={}",
-                    my_ack,
-                    session.pending_inputs.len(),
-                    session.input_seq,
+                session
+                    .opponent_view
+                    .push(tick, other_board.clone(), crate::connection::now_secs());
+                reconcile(
+                    session,
+                    Update {
+                        board,
+                        other_board,
+                        ack,
+                        tick,
+                        incoming,
+                        opp_incoming,
+                    },
                 );
-
-                let mut predicted = my_auth;
-
-                let same_piece = predicted.piece_id == prev_piece_id;
-                if same_piece {
-                    if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.clone()) {
-                        if prev.row > cur.row {
-                            let mut p = cur;
-                            while p.row < prev.row {
-                                let mut next = p.clone();
-                                next.row += 1;
-                                if predicted.check_collision(&next) {
-                                    break;
-                                }
-                                p.row += 1;
-                            }
-                            predicted.active_piece = Some(p);
-                        }
-                    }
-                    predicted.fall_timer = prev_fall_timer;
-                }
-
-                for (_, kind) in session.pending_inputs.iter() {
-                    predicted.apply_input(*kind);
-                }
-
-                if same_piece {
-                    if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.as_ref()) {
-                        let off = &mut session.piece_visual_offset;
-                        off.0 = (off.0 + (prev.row - cur.row) as f32).clamp(-3.0, 3.0);
-                        off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
-                    }
-                } else {
-                    session.piece_visual_offset = (0.0, 0.0);
-                }
-
-                if session.other_board.piece_id == prev_opp_piece_id {
-                    if let (Some(prev), Some(cur)) = (&prev_opp_piece, session.other_board.active_piece.as_ref()) {
-                        let off = &mut session.opponent_piece_offset;
-                        off.0 = (off.0 + (prev.row - cur.row) as f32).clamp(-3.0, 3.0);
-                        off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
-                    }
-                } else {
-                    session.opponent_piece_offset = (0.0, 0.0);
-                }
-
-                session.predicted_board = predicted;
-
-                if prev_state == GameState::Playing
-                    && session.board.state == GameState::ResolvingMatches
-                    && !hard_drop_acked
-                {
-                    crate::audio::play_lock();
-                }
-                let cc = session.board.chain_count;
-                if cc > prev_chain {
-                    crate::audio::play_pop(cc);
-                    session.chain_display = Some((cc, 2.0));
-                }
-                if session.board.pending_garbage > prev_garbage {
-                    crate::audio::play_garbage();
-                }
-                if session.board.last_was_all_clear && !prev_all_clear {
-                    crate::audio::play_all_clear();
-                    session.all_clear_timer = 3.0;
-                }
             }
         }
         ServerMessage::Restart => {
@@ -226,10 +239,18 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.chain_display = None;
                 session.all_clear_timer = 0.0;
                 session.piece_visual_offset = (0.0, 0.0);
-                session.opponent_piece_offset = (0.0, 0.0);
+                session.opponent_view.clear();
                 session.sim_accumulator = 0.0;
                 session.server_tick = 0;
-                session.ticks_since_update = 0;
+                session.local_tick = 0;
+                session.synced = false;
+                session.clock_correction = 0;
+                session.drift_min = None;
+                session.drift_samples = 0;
+                session.incoming.clear();
+                session.opp_incoming.clear();
+                session.announced_chain = (0, 0);
+                session.announced_all_clear = 0;
                 session.last_server_msg = "Restart".to_string();
             }
         }
@@ -261,10 +282,10 @@ mod tests {
     }
 
     #[test]
-    fn lead_covers_half_the_round_trip() {
+    fn lead_covers_the_whole_round_trip() {
+        // 200 ms is 12 ticks there and back.
         let lead = lead_ticks(Some(200.0));
-        assert!((7..=9).contains(&lead), "200 ms round trip gave a lead of {lead}");
-
+        assert_eq!(lead, 12 + config::INPUT_LEAD_MARGIN_TICKS);
         assert!(lead_ticks(Some(200.0)) > lead_ticks(Some(20.0)));
     }
 
@@ -274,28 +295,188 @@ mod tests {
         assert_eq!(lead_ticks(Some(f32::INFINITY)), config::MAX_INPUT_LEAD_TICKS);
     }
 
-    fn session_at(server_tick: u32, rtt_ms: f32, since: u32) -> GameSession {
-        let mut session = GameSession::new(1);
-        session.server_tick = server_tick;
-        session.ping_rtt_ms = Some(rtt_ms);
-        session.ticks_since_update = since;
-        session
-    }
-
-    #[test]
-    fn the_stamp_is_pinned_to_the_last_update() {
-        let stamp = |t, rtt, since| input_tick(&session_at(t, rtt, since));
-
-        assert_eq!(stamp(1_000, 60.0, 0), stamp(1_000, 60.0, 0));
-        assert!(stamp(1_100, 60.0, 0) > stamp(1_000, 60.0, 0));
-        assert_eq!(stamp(1_000, 60.0, 3), stamp(1_000, 60.0, 0) + 3);
-        assert!(stamp(1_000, 20.0, 0) < stamp(1_000, 200.0, 0));
-    }
-
     #[test]
     fn a_nonsense_sample_falls_back_to_the_margin() {
         for bad in [f32::NAN, -1.0, f32::NEG_INFINITY] {
             assert_eq!(lead_ticks(Some(bad)), config::INPUT_LEAD_MARGIN_TICKS, "sample {bad}");
         }
+    }
+
+    fn session_with_rtt(rtt_ms: f32) -> GameSession {
+        let mut session = GameSession::new(1);
+        session.ping_rtt_ms = Some(rtt_ms);
+        session
+    }
+
+    #[test]
+    fn the_first_update_places_the_clock() {
+        let mut session = session_with_rtt(100.0);
+        sync_clock(&mut session, 500);
+        assert!(session.synced);
+        assert_eq!(session.local_tick, 500 + lead_ticks(Some(100.0)));
+    }
+
+    /// Feeds a window of updates, each arriving when the local clock sits
+    /// `drift` ticks off where it belongs.
+    fn feed_window(session: &mut GameSession, drifts: impl Fn(u32) -> i32) {
+        let lead = lead_ticks(session.ping_rtt_ms) as i64;
+        for i in 0..DRIFT_WINDOW {
+            let server_tick = session.local_tick as i64 - lead - drifts(i) as i64;
+            sync_clock(session, server_tick as u32);
+            session.local_tick += 1;
+        }
+    }
+
+    #[test]
+    fn a_clock_behind_is_pushed_forward_and_one_ahead_held_back() {
+        let mut session = session_with_rtt(60.0);
+        sync_clock(&mut session, 1_000);
+        feed_window(&mut session, |_| -4);
+        assert_eq!(session.clock_correction, 4);
+
+        let mut session = session_with_rtt(60.0);
+        sync_clock(&mut session, 1_000);
+        feed_window(&mut session, |_| 4);
+        assert_eq!(session.clock_correction, -4);
+    }
+
+    #[test]
+    fn late_updates_do_not_pull_the_clock_back() {
+        let mut session = session_with_rtt(60.0);
+        sync_clock(&mut session, 1_000);
+        // Most updates delayed by up to 6 ticks, a few on time: the on-time
+        // ones show where the clock really is.
+        feed_window(&mut session, |i| if i % 10 == 0 { 0 } else { (i % 7) as i32 });
+        assert_eq!(session.clock_correction, 0);
+    }
+
+    #[test]
+    fn a_small_drift_is_left_alone() {
+        let mut session = session_with_rtt(60.0);
+        sync_clock(&mut session, 1_000);
+        feed_window(&mut session, |_| DRIFT_DEADBAND);
+        assert_eq!(session.clock_correction, 0);
+    }
+
+    #[test]
+    fn a_clock_far_off_is_placed_at_once() {
+        let mut session = session_with_rtt(60.0);
+        sync_clock(&mut session, 1_000);
+        session.local_tick -= 200; // a hidden tab stopped stepping
+        sync_clock(&mut session, 1_000);
+        assert_eq!(session.local_tick, 1_000 + lead_ticks(Some(60.0)));
+    }
+
+    /// End to end on one board: a server stepping its queue by the book and
+    /// a client pressing keys, stepping locally and taking in an update every
+    /// few ticks, over a link `latency` ticks long each way. The server trails
+    /// the client so that inputs land just in time, and each update is
+    /// `latency` ticks old on arrival. No update may move the local board.
+    #[test]
+    fn updates_never_correct_a_board_that_was_predicted_right() {
+        let latency = 6;
+        let margin = config::INPUT_LEAD_MARGIN_TICKS;
+        let mut server = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 77, 1, 5);
+        server.spawn_piece();
+        let mut history = vec![server.clone()];
+        let mut queue: Vec<(u32, StampedInput)> = Vec::new();
+
+        // Just under the round trip, so `ceil` in the lead is not at the
+        // mercy of float rounding.
+        let mut session = session_with_rtt((2 * latency) as f32 * 1000.0 * config::CLIENT_SIM_DT - 0.5);
+        assert_eq!(lead_ticks(session.ping_rtt_ms), 2 * latency + margin, "setup");
+        session.board = server.clone();
+        session.predicted_board = server.clone();
+        // Both start at tick 0; the server holds there until the client is
+        // far enough ahead.
+        session.synced = true;
+
+        let script = [
+            InputKind::MoveLeft,
+            InputKind::RotateCW,
+            InputKind::HardDrop,
+            InputKind::MoveRight,
+            InputKind::MoveRight,
+            InputKind::SoftDrop,
+            InputKind::RotateCCW,
+            InputKind::HardDrop,
+        ];
+        let mut corrections = 0;
+        let mut server_tick = 0u32;
+        for step in 0..1_200u32 {
+            crate::logic::advance_one(&mut session);
+
+            // The client presses on some frames, stamps for its next tick.
+            // Pressing after the step leaves the input for an update to meet
+            // before the tick it is stamped for.
+            if step % 9 == 0 && session.predicted_board.state == GameState::Playing {
+                let kind = script[(step / 9) as usize % script.len()];
+                session.input_seq += 1;
+                let input = StampedInput {
+                    tick: session.local_tick + 1,
+                    kind,
+                };
+                session.predicted_board.apply_input(kind);
+                session.pending_inputs.push((session.input_seq, input));
+                queue.push((session.input_seq, input));
+            }
+
+            // The server is one way plus the margin behind the client.
+            while server_tick + latency + margin < session.local_tick {
+                server_tick += 1;
+                let due = queue
+                    .iter()
+                    .position(|(_, i)| i.tick > server_tick)
+                    .unwrap_or(queue.len());
+                assert!(
+                    queue[..due].iter().all(|(_, i)| i.tick == server_tick),
+                    "an input arrived late"
+                );
+                let applied: Vec<_> = queue.drain(..due).collect();
+                server.step(applied.iter().map(|(_, i)| i.kind), 0, config::CLIENT_SIM_DT);
+                history.push(server.clone());
+            }
+
+            if step % 4 == 0 && server_tick >= latency {
+                let at = server_tick - latency;
+                let ack = acked_by(&session, at);
+                let before = session.predicted_board.state_hash();
+                let local = session.local_tick;
+                reconcile(
+                    &mut session,
+                    Update {
+                        board: history[at as usize].clone(),
+                        other_board: history[at as usize].clone(),
+                        ack,
+                        tick: at,
+                        incoming: Vec::new(),
+                        opp_incoming: Vec::new(),
+                    },
+                );
+                assert_eq!(session.local_tick, local, "the clock moved on a steady link");
+                if session.predicted_board.state_hash() != before {
+                    corrections += 1;
+                }
+            }
+        }
+        assert!(
+            session.predicted_board.piece_id > 5,
+            "the script placed too few pieces to prove much"
+        );
+        assert_eq!(
+            corrections, 0,
+            "{corrections} updates corrected a correctly predicted board"
+        );
+    }
+
+    /// The highest sequence the server had applied by tick `at`: inputs are
+    /// never late here, so every one stamped up to `at`.
+    fn acked_by(session: &GameSession, at: u32) -> u32 {
+        session
+            .pending_inputs
+            .iter()
+            .filter(|(_, i)| i.tick <= at)
+            .map(|(seq, _)| *seq)
+            .fold(session.my_ack, u32::max)
     }
 }
