@@ -1257,7 +1257,7 @@ fn attack_on_next_tick(mgr: &mut Manager) {
         sim.boards[0].cells[r][0] = Some(PuyoType::Red);
     }
     sim.boards[0].state = GameState::ResolvingMatches;
-    sim.boards[0].resolve_timer = config::RESOLVE_STEP_INTERVAL;
+    sim.boards[0].settle = shared::Settle::Idle;
 }
 
 #[test]

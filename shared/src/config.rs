@@ -4,21 +4,57 @@ pub const GRID_HEIGHT: usize = 13;
 pub const VISIBLE_ROW_OFFSET: usize = 1;
 pub const SPAWN_COL: usize = 2;
 
-pub const MAX_LOCK_TIME: f32 = 0.5;
-pub const MAX_LOCK_DELAY_MOVES: u32 = 15;
-pub const MAX_TOTAL_GROUND_TIME: f32 = 2.0;
+// Timings follow Puyo Puyo Tsu, as measured by Puyo Nexus
+// (puyonexus.com/wiki/Puyo_Puyo_Tsu/Frame_Data_Tables). The simulation runs
+// at 60 Hz, so one tick is one of Tsu's frames.
 
-pub const DAS_DELAY: f32 = 0.11;
-pub const DAS_SPEED: f32 = 0.05;
-pub const SOFT_DROP_SPEED: f32 = 0.15;
+/// Sub-cell units in one cell: the pair's fall progress counts up to this.
+pub const CELL_UNITS: u32 = 0x10000;
+/// Past this, the pair overlaps the row below and must fit there too to move
+/// sideways or turn.
+pub const HALF_CELL_UNITS: u32 = CELL_UNITS / 2;
 
+/// Frames per cell of the pair's natural fall at level 1: Tsu's 2P versus
+/// speed. Each level takes a frame off, down to the next constant.
+pub const FALL_FRAMES_PER_CELL: u32 = 16;
+/// Tsu's fastest versus speed ("Hardest").
+pub const MIN_FALL_FRAMES_PER_CELL: u32 = 8;
+/// Units per frame while down is held: half a cell, so 2 frames per cell,
+/// whatever the natural speed.
+pub const SOFT_DROP_UNITS: u32 = 0x8000;
 pub const LEVEL_DURATION: f32 = 15.0;
-pub const BASE_FALL_INTERVAL: f64 = 0.8;
-pub const MIN_FALL_INTERVAL: f64 = 0.1;
-pub const FALL_SPEEDUP_PER_LEVEL: f64 = 0.05;
 
-pub const RESOLVE_STEP_INTERVAL: f32 = 0.10;
-pub const GARBAGE_DROP_DELAY: f32 = 0.5;
+/// Frames a pair may spend resting on something before it locks, in total
+/// over its life. Soft dropping onto something skips it.
+pub const GRACE_FRAMES: u32 = 32;
+/// Floor kicks a pair gets; the one after locks it instead.
+pub const MAX_PUSH_BACKS: u32 = 8;
+
+/// Free fall of a split pair or of what is left after a pop, in 1/65536 px
+/// (a cell is 16 px): start speed, gravity, top speed. These reproduce Tsu's
+/// table exactly: 10 frames for one cell, 15 for two, ... 43 for thirteen.
+pub const PX_UNITS: u32 = 0x10000;
+pub const CELL_PX: u32 = 16;
+pub const FREE_FALL_START: u32 = 0x10000;
+pub const FREE_FALL_ACCEL: u32 = 0x3000;
+pub const FREE_FALL_MAX: u32 = 0x80000;
+/// Nuisance falls from standstill with a gravity of its own per column,
+/// again matching Tsu's table for every column and height.
+pub const OJAMA_ACCEL: [u32; 6] = [0x2400, 0x2600, 0x2000, 0x2A00, 0x2200, 0x2800];
+/// Frames before each puyo of a locked pair starts to fall: axis, then
+/// satellite.
+pub const SPLIT_DELAY_AXIS: u8 = 1;
+pub const SPLIT_DELAY_SATELLITE: u8 = 2;
+/// A puyo squashes and springs back for this long on landing.
+pub const BOUNCE_FRAMES: u32 = 16;
+/// How long a group flashes before vanishing. Not in Puyo Nexus's tables:
+/// an estimate, to be tuned by eye.
+pub const POP_FRAMES: u32 = 40;
+
+/// Horizontal autorepeat, as in Tsu: 8 frames before the first repeat, then
+/// one move every 2 frames.
+pub const DAS_DELAY: f32 = 8.0 / 60.0;
+pub const DAS_SPEED: f32 = 2.0 / 60.0;
 
 pub const ALL_CLEAR_BONUS: u32 = 30;
 

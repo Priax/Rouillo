@@ -269,7 +269,6 @@ pub fn clear_stored_token() {
 pub struct Settings {
     pub das_delay: f32,
     pub das_speed: f32,
-    pub soft_drop_speed: f32,
 }
 
 impl Default for Settings {
@@ -277,43 +276,38 @@ impl Default for Settings {
         Self {
             das_delay: config::DAS_DELAY,
             das_speed: config::DAS_SPEED,
-            soft_drop_speed: config::SOFT_DROP_SPEED,
         }
     }
 }
 
 impl Settings {
-    pub const COUNT: usize = 3;
+    pub const COUNT: usize = 2;
 
     pub fn label(i: usize) -> &'static str {
         match i {
             0 => "DAS delay",
-            1 => "DAS speed",
-            _ => "Soft drop",
+            _ => "DAS speed",
         }
     }
 
     pub fn value(&self, i: usize) -> f32 {
         match i {
             0 => self.das_delay,
-            1 => self.das_speed,
-            _ => self.soft_drop_speed,
+            _ => self.das_speed,
         }
     }
 
     fn step(i: usize) -> f32 {
         match i {
             0 => 0.01,
-            1 => 0.005,
-            _ => 0.01,
+            _ => 0.005,
         }
     }
 
     fn range(i: usize) -> (f32, f32) {
         match i {
             0 => (0.05, 0.50),
-            1 => (0.005, 0.20),
-            _ => (0.05, 0.50),
+            _ => (0.005, 0.20),
         }
     }
 
@@ -322,8 +316,7 @@ impl Settings {
         let new = (self.value(i) + dir as f32 * Self::step(i)).clamp(min, max);
         match i {
             0 => self.das_delay = new,
-            1 => self.das_speed = new,
-            _ => self.soft_drop_speed = new,
+            _ => self.das_speed = new,
         }
     }
 }
@@ -342,7 +335,13 @@ pub struct GameSession {
 
     pub key_timer_left: f32,
     pub key_timer_right: f32,
-    pub key_timer_down: f32,
+    /// Whether the server has been told down is held.
+    pub soft_drop_held: bool,
+
+    /// Satellite angles as drawn, in quarter turns, easing towards the
+    /// pair's rotation: mine and the opponent's.
+    pub my_turn: TurnAnim,
+    pub opp_turn: TurnAnim,
 
     pub piece_visual_offset: (f32, f32),
     pub opponent_view: OpponentView,
@@ -391,7 +390,9 @@ impl GameSession {
             pending_inputs: Vec::new(),
             key_timer_left: 0.0,
             key_timer_right: 0.0,
-            key_timer_down: 0.0,
+            soft_drop_held: false,
+            my_turn: TurnAnim::default(),
+            opp_turn: TurnAnim::default(),
             piece_visual_offset: (0.0, 0.0),
             opponent_view: OpponentView::default(),
             chain_display: None,
@@ -413,6 +414,46 @@ impl GameSession {
             last_rtt_ms: 0.0,
             ping_rtt_ms: None,
         }
+    }
+}
+
+/// A pair's satellite, drawn turning around the axis rather than jumping to
+/// its new side: Tsu spends 7 frames on a quarter turn.
+#[derive(Default, Clone, Copy)]
+pub struct TurnAnim {
+    piece_id: u32,
+    /// Quarter turns, 0 = up, 1 = right, 2 = down, 3 = left.
+    shown: f32,
+}
+
+const TURN_FRAMES: f32 = 7.0;
+
+impl TurnAnim {
+    /// Eases towards `rotation` of piece `piece_id`; a new piece starts
+    /// where it is.
+    pub fn update(&mut self, piece_id: u32, rotation: usize, dt: f32) {
+        let target = rotation as f32;
+        if piece_id != self.piece_id {
+            *self = TurnAnim {
+                piece_id,
+                shown: target,
+            };
+            return;
+        }
+        // Shortest way round, so 3 -> 0 turns a quarter, not three.
+        let diff = (target - self.shown + 2.0).rem_euclid(4.0) - 2.0;
+        let step = dt * 60.0 / TURN_FRAMES;
+        self.shown = if diff.abs() <= step {
+            target
+        } else {
+            (self.shown + step * diff.signum()).rem_euclid(4.0)
+        };
+    }
+
+    /// The satellite's offset from the axis, in cells (row, column).
+    pub fn satellite(&self) -> (f32, f32) {
+        let angle = self.shown * std::f32::consts::FRAC_PI_2;
+        (-angle.cos(), angle.sin())
     }
 }
 

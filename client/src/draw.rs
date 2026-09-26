@@ -42,6 +42,7 @@ pub fn draw_game(
         board_w,
         board_h,
         (row_off + fall_step(me), col_off),
+        session.my_turn.satellite(),
     );
     draw.text(font, "YOU")
         .position(start_x, offset_y - 50.0)
@@ -61,7 +62,16 @@ pub fn draw_game(
         .opponent_view
         .frame()
         .unwrap_or((&session.other_board, (0.0, 0.0)));
-    draw_board(&mut draw, opp_board, opponent_x, offset_y, board_w, board_h, opp_offset);
+    draw_board(
+        &mut draw,
+        opp_board,
+        opponent_x,
+        offset_y,
+        board_w,
+        board_h,
+        opp_offset,
+        session.opp_turn.satellite(),
+    );
     draw.text(font, "OPPONENT")
         .position(opponent_x, offset_y - 50.0)
         .size(20.0)
@@ -90,8 +100,8 @@ pub fn draw_game(
         .color(Color::GRAY);
     draw.rect((ui_x, offset_y + 140.0), (config::CELL_SIZE, config::CELL_SIZE * 2.1))
         .color(Color::from_rgb(0.2, 0.2, 0.2));
-    draw_cell(&mut draw, 0.0, 0.0, Some(me.next_types.1), ui_x, offset_y + 140.0, 1.0);
-    draw_cell(&mut draw, 1.0, 0.0, Some(me.next_types.0), ui_x, offset_y + 140.0, 1.0);
+    draw_puyo(&mut draw, 0.0, 0.0, me.next_types.1, ui_x, offset_y + 140.0, 1.0, 0.0);
+    draw_puyo(&mut draw, 1.0, 0.0, me.next_types.0, ui_x, offset_y + 140.0, 1.0, 0.0);
 
     let next_next_y = offset_y + 170.0 + (config::CELL_SIZE * 2.5);
     draw.text(font, "Next Next:")
@@ -100,8 +110,8 @@ pub fn draw_game(
         .color(Color::GRAY);
     draw.rect((ui_x, next_next_y), (config::CELL_SIZE, config::CELL_SIZE * 2.1))
         .color(Color::from_rgb(0.15, 0.15, 0.15));
-    draw_cell(&mut draw, 0.0, 0.0, Some(me.next_next_types.1), ui_x, next_next_y, 1.0);
-    draw_cell(&mut draw, 1.0, 0.0, Some(me.next_next_types.0), ui_x, next_next_y, 1.0);
+    draw_puyo(&mut draw, 0.0, 0.0, me.next_next_types.1, ui_x, next_next_y, 1.0, 0.0);
+    draw_puyo(&mut draw, 1.0, 0.0, me.next_next_types.0, ui_x, next_next_y, 1.0, 0.0);
 
     draw_chain_anim(
         &mut draw,
@@ -113,15 +123,10 @@ pub fn draw_game(
         board_h,
     );
 
-    if me.is_touching_ground && me.state == GameState::Playing {
-        let ratio_std = 1.0 - (me.lock_timer / config::MAX_LOCK_TIME);
-        let ratio_hard = 1.0 - (me.total_ground_timer / config::MAX_TOTAL_GROUND_TIME);
-        let ratio = ratio_std.min(ratio_hard).max(0.0);
-        let col = if me.total_ground_timer > config::MAX_TOTAL_GROUND_TIME * 0.75 {
-            Color::RED
-        } else {
-            Color::ORANGE
-        };
+    if me.state == GameState::Playing && me.active_piece.is_some() && !me.can_fall() {
+        let used = me.ground_frames as f32 / config::GRACE_FRAMES as f32;
+        let ratio = (1.0 - used).max(0.0);
+        let col = if used > 0.75 { Color::RED } else { Color::ORANGE };
         draw.rect((ui_x, offset_y + 350.0), (100.0 * ratio, 10.0)).color(col);
     }
 
@@ -266,10 +271,10 @@ fn draw_exit_buttons(draw: &mut Draw, app: &App, font: &Font, ww: f32, wh: f32, 
     }
 }
 
-/// Notches a falling piece shows per cell it falls. Two, as in Puyo Puyo: the
-/// piece moves down in half-cell notches rather than gliding or jumping a
-/// whole cell.
-const FALL_STEPS_PER_CELL: f32 = 2.0;
+/// Notches a falling piece shows per cell it falls: Tsu's 16 pixels, so the
+/// natural fall moves a pixel a frame and a soft drop half a cell a frame.
+/// 2 gives half-cell steps, 1 whole cells.
+const FALL_STEPS_PER_CELL: f32 = config::CELL_PX as f32;
 
 /// How far below its row to draw the falling piece: its fall progress,
 /// rounded down to a notch. Drawing only; the simulation knows whole rows.
@@ -277,6 +282,7 @@ pub fn fall_step(board: &Board) -> f32 {
     (board.fall_progress() * FALL_STEPS_PER_CELL).floor() / FALL_STEPS_PER_CELL
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_board(
     draw: &mut Draw,
     board: &Board,
@@ -285,6 +291,7 @@ fn draw_board(
     board_w: f32,
     board_h: f32,
     piece_offset: (f32, f32),
+    satellite: (f32, f32),
 ) {
     draw.rect((offset_x, offset_y), (board_w, board_h))
         .color(Color::from_rgb(0.12, 0.12, 0.12));
@@ -298,10 +305,35 @@ fn draw_board(
         .width(3.0)
         .color(Color::RED);
 
-    for r in config::VISIBLE_ROW_OFFSET..board.height {
+    let fall_frame = match board.settle {
+        Settle::Falling { frame, .. } => Some(frame),
+        _ => None,
+    };
+    let pop_frame = match board.settle {
+        Settle::Popping { frame } => Some(frame),
+        _ => None,
+    };
+    let hidden = config::VISIBLE_ROW_OFFSET as f32;
+    for r in 0..board.height {
         for c in 0..board.width {
-            let draw_r = (r - config::VISIBLE_ROW_OFFSET) as f32;
-            draw_cell(draw, draw_r, c as f32, board.cells[r][c], offset_x, offset_y, 1.0);
+            let Some(pt) = board.cells[r][c] else {
+                continue;
+            };
+            let mut row = r as f32 - hidden;
+            let mut bounce = 0.0;
+            let mut alpha = 1.0;
+            if let Some(frame) = fall_frame {
+                if let Some(f) = board.falls.iter().find(|f| f.row as usize == r && f.col as usize == c) {
+                    row -= f.height_at(frame);
+                    bounce = f.bounce_at(frame).unwrap_or(0.0);
+                }
+            }
+            if let Some(frame) = pop_frame {
+                if board.popping.contains(&(r as u8, c as u8)) {
+                    alpha = pop_alpha(frame);
+                }
+            }
+            draw_puyo(draw, row, c as f32, pt, offset_x, offset_y, alpha, bounce);
         }
     }
 
@@ -318,22 +350,27 @@ fn draw_board(
                 };
                 // Where the piece will land does not glide with it; only a
                 // sideways correction applies.
-                let draw_r = pos.0 as f32 - config::VISIBLE_ROW_OFFSET as f32;
+                let draw_r = pos.0 as f32 - hidden;
                 let draw_c = pos.1 as f32 + piece_offset.1;
-                draw_cell(draw, draw_r, draw_c, Some(p_type), offset_x, offset_y, 0.3);
+                draw_puyo(draw, draw_r, draw_c, p_type, offset_x, offset_y, 0.3, 0.0);
             }
         }
         if let Some(ref piece) = board.active_piece {
-            for pos in &piece.get_positions() {
-                let p_type = if pos.0 == piece.row && pos.1 == piece.col {
-                    piece.axis_type
-                } else {
-                    piece.sat_type
-                };
-                let draw_r = pos.0 as f32 - config::VISIBLE_ROW_OFFSET as f32 + piece_offset.0;
-                let draw_c = pos.1 as f32 + piece_offset.1;
-                draw_cell(draw, draw_r, draw_c, Some(p_type), offset_x, offset_y, 1.0);
-            }
+            let axis_r = piece.row as f32 - hidden + piece_offset.0;
+            let axis_c = piece.col as f32 + piece_offset.1;
+            draw_puyo(draw, axis_r, axis_c, piece.axis_type, offset_x, offset_y, 1.0, 0.0);
+            // The satellite as drawn turns around the axis.
+            let (sr, sc) = satellite;
+            draw_puyo(
+                draw,
+                axis_r + sr,
+                axis_c + sc,
+                piece.sat_type,
+                offset_x,
+                offset_y,
+                1.0,
+                0.0,
+            );
         }
     }
 
@@ -352,23 +389,41 @@ fn draw_board(
     }
 }
 
-fn draw_cell(draw: &mut Draw, row: f32, col: f32, puyo_type: Option<PuyoType>, dx: f32, dy: f32, alpha: f32) {
-    if let Some(pt) = puyo_type {
-        if row >= 0.0 {
-            let mut color = get_puyo_color(pt);
-            color.a = alpha;
+/// A popping group blinks, then fades out over its last frames.
+fn pop_alpha(frame: u32) -> f32 {
+    const FADE: u32 = 8;
+    let fade_from = config::POP_FRAMES.saturating_sub(FADE);
+    if frame >= fade_from {
+        1.0 - (frame - fade_from) as f32 / FADE as f32
+    } else if (frame / 4).is_multiple_of(2) {
+        1.0
+    } else {
+        0.35
+    }
+}
 
-            let x = dx + col * config::CELL_SIZE + 1.0;
-            let y = dy + row * config::CELL_SIZE + 1.0;
-            let size = config::CELL_SIZE - 2.0;
+/// One puyo. `bounce`, 0 to 1 through a landing, squashes it against the
+/// floor and lets it spring back.
+#[allow(clippy::too_many_arguments)]
+fn draw_puyo(draw: &mut Draw, row: f32, col: f32, pt: PuyoType, dx: f32, dy: f32, alpha: f32, bounce: f32) {
+    if row < 0.0 || alpha <= 0.0 {
+        return;
+    }
+    let mut color = get_puyo_color(pt);
+    color.a = alpha;
 
-            draw.rect((x, y), (size, size)).color(color);
+    let squash = (bounce * std::f32::consts::PI).sin() * 0.22;
+    let size = config::CELL_SIZE - 2.0;
+    let (w, h) = (size * (1.0 + squash * 0.6), size * (1.0 - squash));
+    // Anchored on the cell's floor, centred horizontally.
+    let x = dx + col * config::CELL_SIZE + 1.0 + (size - w) / 2.0;
+    let y = dy + row * config::CELL_SIZE + 1.0 + (size - h);
 
-            if pt == PuyoType::Garbage {
-                draw.rect((x + size * 0.25, y + size * 0.25), (size * 0.5, size * 0.5))
-                    .color(Color::BLACK);
-            }
-        }
+    draw.rect((x, y), (w, h)).color(color);
+
+    if pt == PuyoType::Garbage {
+        draw.rect((x + w * 0.25, y + h * 0.25), (w * 0.5, h * 0.5))
+            .color(Color::from_rgba(0.0, 0.0, 0.0, alpha));
     }
 }
 

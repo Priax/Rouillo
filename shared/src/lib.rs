@@ -85,7 +85,10 @@ pub enum InputKind {
     MoveRight,
     RotateCW,
     RotateCCW,
-    SoftDrop,
+    /// Down pressed and released: soft drop is a speed held for as long as
+    /// the key is, as in Tsu, not a step per key repeat.
+    SoftDropPress,
+    SoftDropRelease,
     HardDrop,
 }
 
@@ -331,6 +334,94 @@ pub enum GameState {
     Paused,
 }
 
+/// What a board between two pairs is busy with. Both run for a number of
+/// ticks worked out when they start, so the timing of a chain is part of the
+/// simulation, identical on every machine.
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum Settle {
+    Idle,
+    /// The puyos in `falls` are dropping into place and bouncing; done when
+    /// `frame` reaches `frames`.
+    Falling {
+        frame: u32,
+        frames: u32,
+    },
+    /// The cells in `popping` flash, then vanish when `frame` reaches
+    /// `POP_FRAMES`.
+    Popping {
+        frame: u32,
+    },
+}
+
+/// One puyo dropping into place. It already sits at its final cell in
+/// `cells`; `cells_fallen` says how far above that it started, so it can be
+/// drawn on the way down.
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct CellFall {
+    pub row: u8,
+    pub col: u8,
+    pub cells_fallen: u8,
+    /// Frames before it starts moving.
+    pub delay: u8,
+    pub ojama: bool,
+}
+
+/// Distance covered after `frames` of free fall, in 1/65536 px. Tsu's order:
+/// move, then speed up.
+pub fn fallen_px(frames: u32, start: u32, accel: u32) -> u64 {
+    let (mut y, mut v) = (0u64, start);
+    for _ in 0..frames {
+        y += v as u64;
+        v = (v + accel).min(FREE_FALL_MAX);
+    }
+    y
+}
+
+/// Frames a free fall of `cells` takes.
+pub fn frames_to_fall(cells: u32, start: u32, accel: u32) -> u32 {
+    let target = (cells * CELL_PX) as u64 * PX_UNITS as u64;
+    let (mut y, mut v, mut frames) = (0u64, start, 0);
+    while y < target {
+        y += v as u64;
+        v = (v + accel).min(FREE_FALL_MAX);
+        frames += 1;
+    }
+    frames
+}
+
+impl CellFall {
+    fn start_and_accel(&self) -> (u32, u32) {
+        if self.ojama {
+            (0, OJAMA_ACCEL[self.col as usize % OJAMA_ACCEL.len()])
+        } else {
+            (FREE_FALL_START, FREE_FALL_ACCEL)
+        }
+    }
+
+    /// The frame, counted from the start of the fall, it lands on.
+    pub fn lands_at(&self) -> u32 {
+        let (start, accel) = self.start_and_accel();
+        self.delay as u32 + frames_to_fall(self.cells_fallen as u32, start, accel)
+    }
+
+    /// How many cells above its final one to draw it at, `frame` frames into
+    /// the fall.
+    pub fn height_at(&self, frame: u32) -> f32 {
+        let (start, accel) = self.start_and_accel();
+        let moving = frame.saturating_sub(self.delay as u32);
+        let total = (self.cells_fallen as u32 * CELL_PX) as u64 * PX_UNITS as u64;
+        let left = total.saturating_sub(fallen_px(moving, start, accel));
+        left as f32 / (CELL_PX * PX_UNITS) as f32
+    }
+
+    /// How far through its landing bounce it is at `frame`, 0 to 1, or None
+    /// when it is not bouncing.
+    pub fn bounce_at(&self, frame: u32) -> Option<f32> {
+        let since = frame.checked_sub(self.lands_at())?;
+        (since < BOUNCE_FRAMES).then(|| since as f32 / BOUNCE_FRAMES as f32)
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Board {
     pub width: usize,
@@ -339,7 +430,6 @@ pub struct Board {
     pub colors: u32,
     pub cells: Vec<Vec<Option<PuyoType>>>,
     pub active_piece: Option<ActivePuyo>,
-    #[serde(default)]
     pub piece_id: u32,
     pub next_types: (PuyoType, PuyoType),
     pub next_next_types: (PuyoType, PuyoType),
@@ -349,22 +439,18 @@ pub struct Board {
     pub previous_state: Option<GameState>,
     pub pending_garbage: u32,
     pub nuisance_points: u32,
-    pub lock_timer: f32,
-    pub total_ground_timer: f32,
-    pub is_touching_ground: bool,
-    pub ground_move_count: u32,
-    pub lowest_row_reached: i32,
     pub chain_count: u32,
-    #[serde(default)]
     pub last_was_all_clear: bool,
-    #[serde(default)]
     pub played_time: f32,
-    #[serde(default)]
-    pub fall_timer: f32,
-    #[serde(default)]
-    pub resolve_timer: f32,
-    #[serde(default)]
-    pub garbage_delay_timer: f32,
+    /// How far the pair is on its way to the next row, 0 to `CELL_UNITS`.
+    pub fall_offset: u32,
+    pub soft_dropping: bool,
+    /// Frames this pair has spent resting on something, in total.
+    pub ground_frames: u32,
+    pub push_backs: u32,
+    pub settle: Settle,
+    pub falls: Vec<CellFall>,
+    pub popping: Vec<(u8, u8)>,
     #[serde(skip, default = "default_rng")]
     rng: rand_chacha::ChaCha12Rng,
 }
@@ -402,17 +488,16 @@ impl Board {
             previous_state: None,
             pending_garbage: 0,
             nuisance_points: 0,
-            lock_timer: 0.0,
-            total_ground_timer: 0.0,
-            is_touching_ground: false,
-            ground_move_count: 0,
-            lowest_row_reached: -100,
             chain_count: 0,
             last_was_all_clear: false,
             played_time: 0.0,
-            fall_timer: 0.0,
-            resolve_timer: 0.0,
-            garbage_delay_timer: 0.0,
+            fall_offset: 0,
+            soft_dropping: false,
+            ground_frames: 0,
+            push_backs: 0,
+            settle: Settle::Idle,
+            falls: Vec::new(),
+            popping: Vec::new(),
             rng,
         }
     }
@@ -439,12 +524,10 @@ impl Board {
             self.state = GameState::GameOver;
         } else {
             self.piece_id = self.piece_id.wrapping_add(1);
-            self.lowest_row_reached = new_piece.row;
             self.active_piece = Some(new_piece);
-            self.lock_timer = 0.0;
-            self.total_ground_timer = 0.0;
-            self.is_touching_ground = false;
-            self.ground_move_count = 0;
+            self.fall_offset = 0;
+            self.ground_frames = 0;
+            self.push_backs = 0;
             self.chain_count = 0;
         }
     }
@@ -470,68 +553,73 @@ impl Board {
         false
     }
 
-    fn reset_lock_if_needed(&mut self) {
-        if self.is_touching_ground && self.ground_move_count < MAX_LOCK_DELAY_MOVES {
-            self.lock_timer = 0.0;
-            self.ground_move_count += 1;
+    /// Whether the pair could be at `piece`. Past mid-height it also covers
+    /// the row below, which must then be free too: a pair halfway into a
+    /// cell cannot slide over a gap it is already overlapping.
+    fn fits(&self, piece: &ActivePuyo) -> bool {
+        if self.check_collision(piece) {
+            return false;
         }
+        if self.fall_offset < HALF_CELL_UNITS {
+            return true;
+        }
+        let mut lower = piece.clone();
+        lower.row += 1;
+        !self.check_collision(&lower)
     }
 
     pub fn move_piece(&mut self, dx: i32) {
-        if let Some(mut piece) = self.active_piece.take() {
-            piece.col += dx;
-            if self.check_collision(&piece) {
-                piece.col -= dx;
-            } else {
-                self.reset_lock_if_needed();
-                self.active_piece = Some(piece);
-                return;
-            }
+        let Some(mut piece) = self.active_piece.clone() else {
+            return;
+        };
+        piece.col += dx;
+        if self.fits(&piece) {
             self.active_piece = Some(piece);
         }
     }
 
     pub fn rotate_piece(&mut self, direction: usize) {
-        let Some(mut piece) = self.active_piece.take() else {
+        let Some(piece) = self.active_piece.clone() else {
             return;
         };
         let (old_rot, old_col, old_row) = (piece.rotation, piece.col, piece.row);
         let new_rot = (old_rot + direction) % 4;
         let sat = piece.get_positions()[1];
-        let grounded = {
-            let mut below = piece.clone();
-            below.row += 1;
-            self.check_collision(&below)
-        };
 
         let candidates = [
-            (old_row, old_col, new_rot, true),                         // in place
-            (old_row, old_col - 1, new_rot, true),                     // kick left
-            (old_row, old_col + 1, new_rot, true),                     // kick right
-            (old_row - 1, old_col, new_rot, grounded && new_rot == 2), // floor kick
-            (sat.0, sat.1, (old_rot + 2) % 4, true),                   // pivot on satellite
+            (old_row, old_col, new_rot, false),       // in place
+            (old_row, old_col - 1, new_rot, false),   // kick left
+            (old_row, old_col + 1, new_rot, false),   // kick right
+            (old_row - 1, old_col, new_rot, true),    // floor kick
+            (sat.0, sat.1, (old_rot + 2) % 4, false), // pivot on satellite
         ];
 
-        for (row, col, rotation, enabled) in candidates {
-            if !enabled {
-                continue;
-            }
-            piece.row = row;
-            piece.col = col;
-            piece.rotation = rotation;
-            if !self.check_collision(&piece) {
-                if piece.rotation != old_rot || piece.col != old_col || piece.row != old_row {
-                    self.reset_lock_if_needed();
+        for (row, col, rotation, push_back) in candidates {
+            let turned = ActivePuyo {
+                row,
+                col,
+                rotation,
+                ..piece.clone()
+            };
+            if push_back {
+                // Only a satellite turning to point down pushes the pair up.
+                if new_rot != 2 || !self.fits(&turned) {
+                    continue;
                 }
-                self.active_piece = Some(piece);
+                if self.push_backs >= MAX_PUSH_BACKS {
+                    self.lock_piece();
+                    return;
+                }
+                self.push_backs += 1;
+                self.fall_offset = 0;
+                self.active_piece = Some(turned);
+                return;
+            }
+            if self.fits(&turned) {
+                self.active_piece = Some(turned);
                 return;
             }
         }
-
-        piece.row = old_row;
-        piece.col = old_col;
-        piece.rotation = old_rot;
-        self.active_piece = Some(piece);
     }
 
     pub fn hard_drop(&mut self) {
@@ -548,87 +636,138 @@ impl Board {
         }
     }
 
-    pub fn force_drop(&mut self) {
-        if let Some(mut piece) = self.active_piece.take() {
-            piece.row += 1;
-            if self.check_collision(&piece) {
-                piece.row -= 1;
-                self.is_touching_ground = true;
-            } else {
-                self.is_touching_ground = false;
-                self.lock_timer = 0.0;
-            }
-            self.active_piece = Some(piece);
-        }
+    /// Whether there is a falling piece with a free cell right below it.
+    pub fn can_fall(&self) -> bool {
+        let Some(piece) = &self.active_piece else {
+            return false;
+        };
+        let mut below = piece.clone();
+        below.row += 1;
+        !self.check_collision(&below)
     }
 
-    pub fn update_logic(&mut self, delta_time: f32) -> bool {
-        let mut locked = false;
-        if let Some(mut piece) = self.active_piece.take() {
-            if piece.row > self.lowest_row_reached {
-                self.lowest_row_reached = piece.row;
-                self.total_ground_timer = 0.0;
-                self.ground_move_count = 0;
-            }
-            piece.row += 1;
-            let collision = self.check_collision(&piece);
-            piece.row -= 1;
-            if collision {
-                self.is_touching_ground = true;
-                self.lock_timer += delta_time;
-                self.total_ground_timer += delta_time;
-                if self.lock_timer > MAX_LOCK_TIME || self.total_ground_timer > MAX_TOTAL_GROUND_TIME {
-                    self.active_piece = Some(piece);
-                    self.lock_piece();
-                    locked = true;
-                } else {
-                    self.active_piece = Some(piece);
+    /// Frames per cell of the natural fall at the current level.
+    fn fall_frames_per_cell(&self) -> u32 {
+        FALL_FRAMES_PER_CELL
+            .saturating_sub(self.level().saturating_sub(1))
+            .max(MIN_FALL_FRAMES_PER_CELL)
+    }
+
+    /// How far, as a fraction of a cell, the pair is on its way to the next
+    /// row; 0 when it rests on something.
+    pub fn fall_progress(&self) -> f32 {
+        if !self.can_fall() {
+            return 0.0;
+        }
+        self.fall_offset as f32 / CELL_UNITS as f32
+    }
+
+    /// One frame of the pair's life: it falls at the natural or soft drop
+    /// speed, and locks after its grace period on the ground, or at once when
+    /// soft dropped onto something.
+    fn tick_pair(&mut self) {
+        if self.active_piece.is_none() {
+            return;
+        }
+        let speed = if self.soft_dropping {
+            SOFT_DROP_UNITS
+        } else {
+            CELL_UNITS / self.fall_frames_per_cell()
+        };
+        if self.can_fall() {
+            self.fall_offset += speed;
+            while self.fall_offset >= CELL_UNITS && self.can_fall() {
+                self.fall_offset -= CELL_UNITS;
+                if let Some(piece) = self.active_piece.as_mut() {
+                    piece.row += 1;
                 }
-            } else {
-                self.is_touching_ground = false;
-                self.lock_timer = 0.0;
-                self.active_piece = Some(piece);
             }
         }
-        locked
+        if self.can_fall() {
+            return;
+        }
+        self.fall_offset = 0;
+        self.ground_frames += 1;
+        if self.soft_dropping || self.ground_frames > GRACE_FRAMES {
+            self.lock_piece();
+        }
     }
 
     fn lock_piece(&mut self) {
         self.last_was_all_clear = false;
-        if let Some(piece) = self.active_piece.take() {
-            for (r, c) in &piece.get_positions() {
-                if *r >= 0 && *r < self.height as i32 && *c >= 0 && *c < self.width as i32 {
-                    let puyo_type = if *r == piece.row && *c == piece.col {
-                        piece.axis_type
-                    } else {
-                        piece.sat_type
-                    };
-                    self.cells[*r as usize][*c as usize] = Some(puyo_type);
-                }
+        let Some(piece) = self.active_piece.take() else {
+            return;
+        };
+        let mut placed = Vec::new();
+        for (i, (r, c)) in piece.get_positions().iter().enumerate() {
+            if *r >= 0 && *r < self.height as i32 && *c >= 0 && *c < self.width as i32 {
+                let puyo_type = if i == 0 { piece.axis_type } else { piece.sat_type };
+                self.cells[*r as usize][*c as usize] = Some(puyo_type);
+                let delay = if i == 0 {
+                    SPLIT_DELAY_AXIS
+                } else {
+                    SPLIT_DELAY_SATELLITE
+                };
+                placed.push((*r as usize, *c as usize, delay));
             }
-            self.apply_board_gravity();
-            self.state = GameState::ResolvingMatches;
         }
+        self.fall_offset = 0;
+        self.state = GameState::ResolvingMatches;
+
+        // Every puyo of the pair bounces, fallen or not; a hanging one first
+        // drops with its split delay.
+        let moved = self.collapse();
+        let mut falls = Vec::new();
+        for (r, c, delay) in placed {
+            let fell = moved.iter().find(|&&(from, col, _)| from == r && col == c);
+            let (row, cells_fallen) = match fell {
+                Some(&(from, _, to)) => (to, to - from),
+                None => (r, 0),
+            };
+            falls.push(CellFall {
+                row: row as u8,
+                col: c as u8,
+                cells_fallen: cells_fallen as u8,
+                delay,
+                ojama: false,
+            });
+        }
+        self.begin_fall(falls);
     }
 
-    pub fn apply_board_gravity(&mut self) -> bool {
-        let mut moved = false;
+    /// Drops every floating puyo straight down, at once. Returns each move
+    /// as (from row, column, to row).
+    fn collapse(&mut self) -> Vec<(usize, usize, usize)> {
+        let mut moved = Vec::new();
         for col in 0..self.width {
-            for row in (0..self.height - 1).rev() {
-                if self.cells[row][col].is_some() && self.cells[row + 1][col].is_none() {
-                    let mut drop_row = row;
-                    while drop_row + 1 < self.height && self.cells[drop_row + 1][col].is_none() {
-                        drop_row += 1;
+            let mut floor = self.height;
+            for row in (0..self.height).rev() {
+                if let Some(t) = self.cells[row][col] {
+                    floor -= 1;
+                    if floor != row {
+                        self.cells[floor][col] = Some(t);
+                        self.cells[row][col] = None;
+                        moved.push((row, col, floor));
                     }
-                    self.cells[drop_row][col] = self.cells[row][col].take();
-                    moved = true;
                 }
             }
         }
         moved
     }
 
-    pub fn check_matches(&mut self) -> Option<u32> {
+    pub fn apply_board_gravity(&mut self) -> bool {
+        !self.collapse().is_empty()
+    }
+
+    fn begin_fall(&mut self, falls: Vec<CellFall>) {
+        let frames = falls.iter().map(|f| f.lands_at() + BOUNCE_FRAMES).max().unwrap_or(0);
+        self.falls = falls;
+        self.settle = Settle::Falling { frame: 0, frames };
+    }
+
+    /// Marks the groups to pop and scores them, without clearing them yet.
+    /// Returns the score, or None when nothing pops.
+    fn start_pop(&mut self) -> Option<u32> {
         let mut to_remove = HashSet::new();
         let mut visited = HashSet::new();
         let mut group_sizes = Vec::new();
@@ -665,10 +804,25 @@ impl Board {
         let score_gained = self.calculate_score(unique_colors.len(), total_puyos_cleared, &group_sizes);
         self.score += score_gained;
 
-        for (r, c) in to_remove {
-            self.cells[r][c] = None;
-        }
+        // Sorted, so the list does not depend on the set's iteration order.
+        let mut popping: Vec<(u8, u8)> = to_remove.into_iter().map(|(r, c)| (r as u8, c as u8)).collect();
+        popping.sort_unstable();
+        self.popping = popping;
         Some(score_gained as u32)
+    }
+
+    fn clear_popping(&mut self) {
+        for (r, c) in std::mem::take(&mut self.popping) {
+            self.cells[r as usize][c as usize] = None;
+        }
+    }
+
+    /// Pops what can pop, right away. For tests and tools; the game goes
+    /// through the timed `Popping` step instead.
+    pub fn check_matches(&mut self) -> Option<u32> {
+        let score = self.start_pop()?;
+        self.clear_popping();
+        Some(score)
     }
 
     fn mark_adjacent_garbage(&self, r: usize, c: usize, to_remove: &mut HashSet<(usize, usize)>) {
@@ -700,6 +854,8 @@ impl Board {
         (10 * total_cleared) as i32 * multiplier as i32
     }
 
+    /// Puts up to 30 nuisance on the board, each at the cell it will end up
+    /// in, and starts them falling from above the field.
     pub fn drop_garbage(&mut self) {
         if self.pending_garbage == 0 {
             return;
@@ -709,12 +865,13 @@ impl Board {
 
         let full_lines = garbage_to_drop / self.width as u32;
         let leftover = garbage_to_drop % self.width as u32;
+        let mut landed: Vec<(usize, usize)> = Vec::new();
 
         'full: for _ in 0..full_lines {
             for c in 0..self.width {
-                self.drop_one_garbage(c);
-                if self.state == GameState::GameOver {
-                    break 'full;
+                match self.drop_one_garbage(c) {
+                    Some(r) => landed.push((r, c)),
+                    None => break 'full,
                 }
             }
         }
@@ -726,22 +883,42 @@ impl Board {
                 cols.swap(i, j);
             }
             for &col in cols.iter().take(leftover as usize) {
-                self.drop_one_garbage(col);
-                if self.state == GameState::GameOver {
-                    break;
+                match self.drop_one_garbage(col) {
+                    Some(r) => landed.push((r, col)),
+                    None => break,
                 }
             }
         }
+
+        // Each column's nuisance falls as one block whose bottom starts at
+        // the top of the field.
+        let mut falls = Vec::new();
+        for col in 0..self.width {
+            let Some(bottom) = landed.iter().filter(|&&(_, c)| c == col).map(|&(r, _)| r).max() else {
+                continue;
+            };
+            for &(r, _) in landed.iter().filter(|&&(_, c)| c == col) {
+                falls.push(CellFall {
+                    row: r as u8,
+                    col: col as u8,
+                    cells_fallen: bottom as u8,
+                    delay: 0,
+                    ojama: true,
+                });
+            }
+        }
+        self.begin_fall(falls);
     }
 
-    fn drop_one_garbage(&mut self, col: usize) {
+    fn drop_one_garbage(&mut self, col: usize) -> Option<usize> {
         for r in (0..self.height).rev() {
             if self.cells[r][col].is_none() {
                 self.cells[r][col] = Some(PuyoType::Garbage);
-                return;
+                return Some(r);
             }
         }
         self.state = GameState::GameOver;
+        None
     }
 
     fn flood_fill(
@@ -772,31 +949,89 @@ impl Board {
         }
     }
 
-    pub fn resolve_step(&mut self) -> u32 {
-        if self.apply_board_gravity() {
-            return 0;
-        }
-        if let Some(score) = self.check_matches() {
+    /// Everything has landed: pop what connects, or else hand over to the
+    /// next pair (through the nuisance, if any is due). Returns the nuisance
+    /// this sends.
+    fn after_landing(&mut self) -> u32 {
+        self.falls.clear();
+        self.settle = Settle::Idle;
+        if let Some(score) = self.start_pop() {
+            self.settle = Settle::Popping { frame: 0 };
             let total_nuisance = score + self.nuisance_points;
             self.nuisance_points = total_nuisance % 70;
             return total_nuisance / 70;
         }
-        if self.state != GameState::GameOver {
-            if self.pending_garbage > 0 {
-                self.state = GameState::DroppingGarbage;
-            } else if self.cells[VISIBLE_ROW_OFFSET][SPAWN_COL].is_some() {
-                self.state = GameState::GameOver;
-            } else {
-                let ac = self.check_all_clear();
-                self.last_was_all_clear = ac;
-                self.state = GameState::Playing;
-                self.spawn_piece();
-                if ac {
-                    return config::ALL_CLEAR_BONUS;
+        if self.state == GameState::GameOver {
+            return 0;
+        }
+        if self.pending_garbage > 0 {
+            self.state = GameState::DroppingGarbage;
+            self.drop_garbage();
+            return 0;
+        }
+        self.next_pair()
+    }
+
+    fn next_pair(&mut self) -> u32 {
+        if self.cells[VISIBLE_ROW_OFFSET][SPAWN_COL].is_some() {
+            self.state = GameState::GameOver;
+            return 0;
+        }
+        let ac = self.check_all_clear();
+        self.last_was_all_clear = ac;
+        self.state = GameState::Playing;
+        self.spawn_piece();
+        if ac {
+            config::ALL_CLEAR_BONUS
+        } else {
+            0
+        }
+    }
+
+    /// One frame of settling after a lock: falling, popping, falling again.
+    fn tick_settle(&mut self) -> u32 {
+        match self.settle {
+            Settle::Falling { frame, frames } => {
+                let frame = frame + 1;
+                if frame < frames {
+                    self.settle = Settle::Falling { frame, frames };
+                    return 0;
                 }
+                if self.state == GameState::DroppingGarbage {
+                    self.falls.clear();
+                    self.settle = Settle::Idle;
+                    return self.next_pair();
+                }
+                self.after_landing()
+            }
+            Settle::Popping { frame } => {
+                let frame = frame + 1;
+                if frame < POP_FRAMES {
+                    self.settle = Settle::Popping { frame };
+                    return 0;
+                }
+                self.clear_popping();
+                let falls = self
+                    .collapse()
+                    .into_iter()
+                    .map(|(from, col, to)| CellFall {
+                        row: to as u8,
+                        col: col as u8,
+                        cells_fallen: (to - from) as u8,
+                        delay: 0,
+                        ojama: false,
+                    })
+                    .collect();
+                self.begin_fall(falls);
+                0
+            }
+            Settle::Idle => {
+                if self.state == GameState::DroppingGarbage {
+                    return self.next_pair();
+                }
+                self.after_landing()
             }
         }
-        0
     }
 
     fn check_all_clear(&self) -> bool {
@@ -842,6 +1077,13 @@ impl Board {
     }
 
     pub fn apply_input(&mut self, input: InputKind) {
+        // Down is held across pieces and phases: the key's state is
+        // recorded whatever the board is doing.
+        match input {
+            InputKind::SoftDropPress => self.soft_dropping = true,
+            InputKind::SoftDropRelease => self.soft_dropping = false,
+            _ => {}
+        }
         if self.state != GameState::Playing {
             return;
         }
@@ -850,11 +1092,8 @@ impl Board {
             InputKind::MoveRight => self.move_piece(1),
             InputKind::RotateCW => self.rotate_piece(1),
             InputKind::RotateCCW => self.rotate_piece(3),
-            InputKind::SoftDrop => {
-                self.force_drop();
-                self.fall_timer = 0.0;
-            }
             InputKind::HardDrop => self.hard_drop(),
+            InputKind::SoftDropPress | InputKind::SoftDropRelease => {}
         }
     }
 
@@ -874,17 +1113,16 @@ impl Board {
             previous_state,
             pending_garbage,
             nuisance_points,
-            lock_timer,
-            total_ground_timer,
-            is_touching_ground,
-            ground_move_count,
-            lowest_row_reached,
             chain_count,
             last_was_all_clear,
             played_time,
-            fall_timer,
-            resolve_timer,
-            garbage_delay_timer,
+            fall_offset,
+            soft_dropping,
+            ground_frames,
+            push_backs,
+            settle,
+            falls,
+            popping,
             rng,
         } = self;
 
@@ -928,17 +1166,33 @@ impl Board {
         }
         h.u32(*pending_garbage);
         h.u32(*nuisance_points);
-        h.f32(*lock_timer);
-        h.f32(*total_ground_timer);
-        h.bool(*is_touching_ground);
-        h.u32(*ground_move_count);
-        h.i32(*lowest_row_reached);
         h.u32(*chain_count);
         h.bool(*last_was_all_clear);
         h.f32(*played_time);
-        h.f32(*fall_timer);
-        h.f32(*resolve_timer);
-        h.f32(*garbage_delay_timer);
+        h.u32(*fall_offset);
+        h.bool(*soft_dropping);
+        h.u32(*ground_frames);
+        h.u32(*push_backs);
+        match settle {
+            Settle::Idle => h.byte(0),
+            Settle::Falling { frame, frames } => {
+                h.byte(1);
+                h.u32(*frame);
+                h.u32(*frames);
+            }
+            Settle::Popping { frame } => {
+                h.byte(2);
+                h.u32(*frame);
+            }
+        }
+        h.usize(falls.len());
+        for f in falls {
+            h.bytes(&[f.row, f.col, f.cells_fallen, f.delay, f.ojama as u8]);
+        }
+        h.usize(popping.len());
+        for (r, c) in popping {
+            h.bytes(&[*r, *c]);
+        }
         h.bytes(&rng.get_seed());
         h.u64(rng.get_stream());
         h.bytes(&rng.get_word_pos().to_le_bytes());
@@ -974,69 +1228,21 @@ impl Board {
         board
     }
 
-    fn fall_interval(&self) -> f32 {
-        let speed_decrease = (self.level() as f64 - 1.0) * FALL_SPEEDUP_PER_LEVEL;
-        (BASE_FALL_INTERVAL - speed_decrease).max(MIN_FALL_INTERVAL) as f32
-    }
-
-    pub fn fall_progress(&self) -> f32 {
-        let Some(piece) = &self.active_piece else {
-            return 0.0;
-        };
-        let mut below = piece.clone();
-        below.row += 1;
-        if self.check_collision(&below) {
-            return 0.0;
-        }
-        (self.fall_timer / self.fall_interval()).clamp(0.0, 1.0)
-    }
-
+    /// One tick. Everything but the level clock counts frames, one per call:
+    /// the simulation always runs at 60 Hz. Returns the nuisance this board
+    /// sends.
     pub fn tick(&mut self, dt: f32) -> u32 {
         if self.state == GameState::Playing || self.state == GameState::ResolvingMatches {
             self.played_time += dt;
         }
-
-        let fall_interval = self.fall_interval();
-
-        let mut garbage_produced = 0;
         match self.state {
             GameState::Playing => {
-                let locked = self.update_logic(dt);
-                if locked {
-                    self.fall_timer = 0.0;
-                } else if !self.is_touching_ground {
-                    self.fall_timer += dt;
-                    if self.fall_timer > fall_interval {
-                        self.force_drop();
-                        self.fall_timer = 0.0;
-                    }
-                }
+                self.tick_pair();
+                0
             }
-            GameState::ResolvingMatches => {
-                self.resolve_timer += dt;
-                if self.resolve_timer > RESOLVE_STEP_INTERVAL {
-                    garbage_produced = self.resolve_step();
-                    self.resolve_timer = 0.0;
-                }
-            }
-            GameState::DroppingGarbage => {
-                self.garbage_delay_timer += dt;
-                if self.garbage_delay_timer > GARBAGE_DROP_DELAY {
-                    self.drop_garbage();
-                    self.apply_board_gravity();
-                    if self.state != GameState::GameOver {
-                        self.state = GameState::Playing;
-                        self.spawn_piece();
-                        self.lock_timer = 0.0;
-                        self.total_ground_timer = 0.0;
-                        self.fall_timer = 0.0;
-                    }
-                    self.garbage_delay_timer = 0.0;
-                }
-            }
-            _ => {}
+            GameState::ResolvingMatches | GameState::DroppingGarbage => self.tick_settle(),
+            _ => 0,
         }
-        garbage_produced
     }
 }
 

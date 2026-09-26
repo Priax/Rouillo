@@ -38,6 +38,9 @@ pub fn update_game(
 
     let dt = app.timer.delta_f32();
     if !game_over && !paused {
+        // Down is held across pieces and chains, so it is tracked whatever
+        // the board is doing.
+        handle_soft_drop_key(app, session, conn);
         if session.predicted_board.state == GameState::Playing {
             handle_game_input(app, session, settings, conn, dt);
         } else {
@@ -50,6 +53,15 @@ pub fn update_game(
     }
 
     session.opponent_view.advance(dt);
+    if let Some(p) = &session.predicted_board.active_piece {
+        session.my_turn.update(session.predicted_board.piece_id, p.rotation, dt);
+    }
+    if let Some((b, _)) = session.opponent_view.frame() {
+        if let Some(p) = &b.active_piece {
+            let (id, rotation) = (b.piece_id, p.rotation);
+            session.opp_turn.update(id, rotation, dt);
+        }
+    }
 
     let off = &mut session.piece_visual_offset;
     let decay = (-PIECE_SMOOTH_RATE * dt).exp();
@@ -78,7 +90,6 @@ const PIECE_SMOOTH_RATE: f32 = 22.0;
 fn release_keys(session: &mut GameSession) {
     session.key_timer_left = 0.0;
     session.key_timer_right = 0.0;
-    session.key_timer_down = 0.0;
 }
 
 fn step_simulation(session: &mut GameSession, dt: f32) {
@@ -148,7 +159,7 @@ fn send_input(session: &mut GameSession, conn: &mut Connection, kind: InputKind)
         InputKind::MoveLeft | InputKind::MoveRight => crate::audio::play_move(),
         InputKind::RotateCW | InputKind::RotateCCW => crate::audio::play_rotate(),
         InputKind::HardDrop => crate::audio::play_lock(),
-        InputKind::SoftDrop => {}
+        InputKind::SoftDropPress | InputKind::SoftDropRelease => {}
     }
     session.input_seq += 1;
     let seq = session.input_seq;
@@ -197,7 +208,7 @@ fn handle_game_input(
             session.key_timer_left = 0.0001;
         } else {
             session.key_timer_left += delta_time;
-            while session.key_timer_left > settings.das_delay + settings.das_speed {
+            while session.key_timer_left > settings.das_delay {
                 send_input(session, conn, InputKind::MoveLeft);
                 session.key_timer_left -= settings.das_speed;
             }
@@ -212,7 +223,7 @@ fn handle_game_input(
             session.key_timer_right = 0.0001;
         } else {
             session.key_timer_right += delta_time;
-            while session.key_timer_right > settings.das_delay + settings.das_speed {
+            while session.key_timer_right > settings.das_delay {
                 send_input(session, conn, InputKind::MoveRight);
                 session.key_timer_right -= settings.das_speed;
             }
@@ -220,15 +231,20 @@ fn handle_game_input(
     } else {
         session.key_timer_right = 0.0;
     }
+}
 
-    if app.keyboard.is_down(KeyCode::ArrowDown) {
-        session.key_timer_down += delta_time;
-        if session.key_timer_down > settings.soft_drop_speed {
-            send_input(session, conn, InputKind::SoftDrop);
-            session.key_timer_down = 0.0;
-        }
-    } else {
-        session.key_timer_down = 0.0;
+/// Soft drop is a speed the board holds while down is: tell it when the key
+/// goes down and when it comes back up, nothing in between.
+fn handle_soft_drop_key(app: &App, session: &mut GameSession, conn: &mut Connection) {
+    let down = app.keyboard.is_down(KeyCode::ArrowDown);
+    if down != session.soft_drop_held {
+        session.soft_drop_held = down;
+        let kind = if down {
+            InputKind::SoftDropPress
+        } else {
+            InputKind::SoftDropRelease
+        };
+        send_input(session, conn, kind);
     }
 }
 
@@ -358,5 +374,29 @@ mod tests {
         run_steps(&mut session, 1);
         assert_eq!(session.predicted_board.pending_garbage, 5);
         assert_eq!(session.my_nuisance(), 5, "counted twice or lost on landing");
+    }
+
+    #[test]
+    fn the_satellite_turns_the_short_way_in_seven_frames() {
+        let mut turn = crate::state::TurnAnim::default();
+        turn.update(1, 3, 0.0);
+        for _ in 0..7 {
+            turn.update(1, 0, 1.0 / 60.0);
+        }
+        let (dr, dc) = turn.satellite();
+        assert!((dr + 1.0).abs() < 1e-4 && dc.abs() < 1e-4, "not pointing up: {dr} {dc}");
+
+        turn.update(1, 1, 3.0 / 60.0);
+        let (_, dc) = turn.satellite();
+        assert!(dc > 0.1 && dc < 0.95, "mid-turn should be part way right: {dc}");
+    }
+
+    #[test]
+    fn a_new_pair_shows_its_rotation_at_once() {
+        let mut turn = crate::state::TurnAnim::default();
+        turn.update(1, 0, 0.0);
+        turn.update(2, 2, 1.0 / 60.0);
+        let (dr, _) = turn.satellite();
+        assert!((dr - 1.0).abs() < 1e-4);
     }
 }

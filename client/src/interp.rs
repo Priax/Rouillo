@@ -170,12 +170,14 @@ mod tests {
 
     #[test]
     fn a_drop_between_two_updates_is_not_counted_twice() {
+        // Just before the drop: row 3, almost at the next row. Just after:
+        // row 4, progress back to zero. Both say "about 4".
         let mut before = board_at(2, 7);
         before.active_piece.as_mut().expect("a piece").row = 3;
-        before.fall_timer = config::BASE_FALL_INTERVAL as f32 * 0.99;
+        before.fall_offset = config::CELL_UNITS - 1;
         let mut after = board_at(2, 7);
         after.active_piece.as_mut().expect("a piece").row = 4;
-        after.fall_timer = 0.0;
+        after.fall_offset = 0;
 
         let mut view = OpponentView::default();
         view.push(10, before, 0.0);
@@ -184,29 +186,25 @@ mod tests {
             view.render_tick = Some(rt);
             row_of(view)
         };
-        assert_eq!(at(&mut view, 10.0), 3.5);
-        let mid = at(&mut view, 10.5);
-        assert!((3.5..=4.0).contains(&mid), "drawn at row {mid}");
-        assert_eq!(at(&mut view, 11.0), 4.0);
+        let (start, mid, end) = (at(&mut view, 10.0), at(&mut view, 10.5), at(&mut view, 11.0));
+        assert!((3.9..4.0).contains(&start), "drawn at row {start}");
+        assert!(start <= mid && mid <= end, "went back up: {start} {mid} {end}");
+        assert_eq!(end, 4.0);
     }
 
     #[test]
-    fn a_falling_piece_is_drawn_in_half_cell_notches() {
+    fn a_falling_piece_is_drawn_to_the_pixel() {
         let mut b = board_at(2, 1);
-        let interval = config::BASE_FALL_INTERVAL as f32;
-        for (timer, drawn) in [(0.0, 0.0), (0.49, 0.0), (0.5, 0.5), (0.99, 0.5)] {
-            b.fall_timer = interval * timer;
-            assert_eq!(crate::draw::fall_step(&b), drawn, "at {timer} of the interval");
+        let px = config::CELL_UNITS / config::CELL_PX;
+        for (offset, drawn) in [
+            (0, 0.0),
+            (px - 1, 0.0),
+            (px, 1.0 / 16.0),
+            (config::CELL_UNITS - 1, 15.0 / 16.0),
+        ] {
+            b.fall_offset = offset;
+            assert_eq!(crate::draw::fall_step(&b), drawn, "at offset {offset:#x}");
         }
-    }
-
-    #[test]
-    fn a_new_piece_is_not_slid_from_the_old_one() {
-        let mut view = OpponentView::default();
-        view.push(10, board_at(5, 7), 0.0);
-        view.push(11, board_at(2, 8), 0.0);
-        view.render_tick = Some(10.5);
-        assert_eq!(col_of(&view), 5.0, "the old piece must stay put until it is gone");
     }
 
     #[test]

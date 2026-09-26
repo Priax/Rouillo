@@ -221,6 +221,8 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.all_clear_timer = 0.0;
                 session.piece_visual_offset = (0.0, 0.0);
                 session.opponent_view.clear();
+                // The new boards start with down up; say so again if it is held.
+                session.soft_drop_held = false;
                 session.sim_accumulator = 0.0;
                 session.server_tick = 0;
                 session.local_tick = 0;
@@ -364,8 +366,9 @@ mod tests {
             InputKind::HardDrop,
             InputKind::MoveRight,
             InputKind::MoveRight,
-            InputKind::SoftDrop,
+            InputKind::SoftDropPress,
             InputKind::RotateCCW,
+            InputKind::SoftDropRelease,
             InputKind::HardDrop,
         ];
         let mut corrections = 0;

@@ -1,7 +1,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 
 use super::*;
-use crate::config::{GRID_HEIGHT, GRID_WIDTH, MAX_LOCK_TIME, VISIBLE_ROW_OFFSET};
+use crate::config::{GRACE_FRAMES, GRID_HEIGHT, GRID_WIDTH, VISIBLE_ROW_OFFSET};
 
 struct CappedAlloc;
 
@@ -142,12 +142,13 @@ fn gravity_noop_when_settled() {
 // 70 points of clears == 1 garbage puyo sent; the remainder carries over to
 // the next clear. Getting this wrong makes attacks unfair.
 #[test]
-fn resolve_step_converts_score_to_garbage_with_carry() {
+fn a_pop_converts_score_to_garbage_with_carry() {
     let mut b = empty_board();
     for r in 8..=12 {
         b.cells[r][0] = Some(PuyoType::Red);
     } // group of 5 -> score 100
-    assert_eq!(b.resolve_step(), 1); // floor(100 / 70)
+    b.state = GameState::ResolvingMatches;
+    assert_eq!(b.after_landing(), 1); // floor(100 / 70)
     assert_eq!(b.nuisance_points, 30); // 100 % 70 carried for the next clear
 }
 
@@ -188,27 +189,137 @@ fn grounded_rotation_floor_kicks_up() {
 }
 
 #[test]
-fn piece_locks_after_lock_delay() {
+fn piece_locks_after_its_grace_period() {
     let mut b = empty_board();
     b.active_piece = Some(piece((GRID_HEIGHT - 1) as i32, 2, 0));
-    let locked = b.update_logic(MAX_LOCK_TIME + 0.1);
-    assert!(locked);
+    for _ in 0..GRACE_FRAMES {
+        b.tick(config::CLIENT_SIM_DT);
+    }
+    assert!(b.active_piece.is_some(), "locked before its grace period ran out");
+    b.tick(config::CLIENT_SIM_DT);
     assert!(b.active_piece.is_none());
     assert_eq!(b.cells[GRID_HEIGHT - 1][2], Some(PuyoType::Red)); // axis
     assert_eq!(b.cells[GRID_HEIGHT - 2][2], Some(PuyoType::Blue)); // satellite
     assert_eq!(b.state, GameState::ResolvingMatches);
 }
 
-// Moving a grounded piece resets the lock timer (lets you slide before it
-// locks). Two sub-threshold ticks must not lock if a move resets between them.
+// As in Tsu, the grace period is a total over the pair's life: sliding along
+// the floor does not buy more time.
 #[test]
-fn moving_grounded_piece_resets_lock_timer() {
+fn moving_on_the_ground_does_not_extend_the_grace_period() {
     let mut b = empty_board();
     b.active_piece = Some(piece((GRID_HEIGHT - 1) as i32, 2, 0));
-    assert!(!b.update_logic(0.4)); // touching ground, timer at 0.4
-    b.move_piece(-1); // resets timer to 0
-    assert!(!b.update_logic(0.4)); // 0.4 again < 0.5 -> still not locked
-    assert!(b.active_piece.is_some());
+    for _ in 0..GRACE_FRAMES / 2 {
+        b.tick(config::CLIENT_SIM_DT);
+    }
+    b.move_piece(-1);
+    for _ in 0..GRACE_FRAMES / 2 + 1 {
+        b.tick(config::CLIENT_SIM_DT);
+    }
+    assert!(b.active_piece.is_none(), "the move reset the grace period");
+}
+
+#[test]
+fn soft_dropping_onto_something_locks_at_once() {
+    let mut b = empty_board();
+    b.active_piece = Some(piece((GRID_HEIGHT - 1) as i32, 2, 0));
+    b.apply_input(InputKind::SoftDropPress);
+    b.tick(config::CLIENT_SIM_DT);
+    assert!(b.active_piece.is_none());
+}
+
+#[test]
+fn soft_drop_takes_two_frames_per_cell_and_the_natural_fall_sixteen() {
+    let rows_after = |frames: u32, soft: bool| {
+        let mut b = empty_board();
+        b.active_piece = Some(piece(2, 2, 0));
+        if soft {
+            b.apply_input(InputKind::SoftDropPress);
+        }
+        for _ in 0..frames {
+            b.tick(config::CLIENT_SIM_DT);
+        }
+        b.active_piece.expect("still falling").row - 2
+    };
+    assert_eq!(rows_after(8, true), 4);
+    assert_eq!(rows_after(32, false), 2);
+}
+
+#[test]
+fn free_fall_matches_the_tsu_table() {
+    let tsu = [10, 15, 19, 22, 25, 28, 31, 33, 35, 37, 39, 41, 43];
+    for (cells, frames) in (1..).zip(tsu) {
+        assert_eq!(
+            frames_to_fall(cells, config::FREE_FALL_START, config::FREE_FALL_ACCEL),
+            frames,
+            "{cells} cells"
+        );
+    }
+}
+
+#[test]
+fn ojama_fall_matches_the_tsu_table_in_every_column() {
+    let tsu: [[u32; 13]; 6] = [
+        [16, 22, 27, 31, 35, 38, 41, 44, 46, 49, 51, 53, 55],
+        [16, 22, 26, 30, 34, 37, 40, 43, 45, 47, 50, 52, 54],
+        [17, 24, 29, 33, 37, 40, 43, 46, 49, 52, 54, 56, 59],
+        [15, 21, 25, 29, 32, 35, 38, 41, 43, 45, 47, 49, 51],
+        [17, 23, 28, 32, 36, 39, 42, 45, 48, 50, 52, 55, 57],
+        [15, 21, 26, 30, 33, 36, 39, 41, 44, 46, 48, 51, 53],
+    ];
+    for (col, frames) in tsu.iter().enumerate() {
+        for (cells, &expected) in (1..).zip(frames) {
+            assert_eq!(
+                frames_to_fall(cells, 0, config::OJAMA_ACCEL[col]),
+                expected,
+                "column {col}, {cells} cells"
+            );
+        }
+    }
+}
+
+/// A pair locked with its satellite hanging over a hole: the satellite falls
+/// with gravity, the chain check waits for it to land and bounce.
+#[test]
+fn a_split_pair_falls_before_anything_pops() {
+    let mut b = empty_board();
+    // Satellite to the right of the axis, over an empty column.
+    b.cells[GRID_HEIGHT - 1][2] = Some(PuyoType::Green);
+    b.active_piece = Some(piece((GRID_HEIGHT - 2) as i32, 2, 1));
+    b.hard_drop();
+    assert_eq!(b.state, GameState::ResolvingMatches);
+    let hanging = b.falls.iter().find(|f| f.col == 3).expect("the satellite falls");
+    assert_eq!(hanging.cells_fallen, 1);
+    let Settle::Falling { frames, .. } = b.settle else {
+        panic!("not falling: {:?}", b.settle);
+    };
+    assert_eq!(
+        frames,
+        config::SPLIT_DELAY_SATELLITE as u32 + 10 + config::BOUNCE_FRAMES
+    );
+    for _ in 0..frames - 1 {
+        b.tick(config::CLIENT_SIM_DT);
+        assert_eq!(b.state, GameState::ResolvingMatches);
+    }
+    b.tick(config::CLIENT_SIM_DT);
+    assert_eq!(b.state, GameState::Playing, "the next pair never came");
+}
+
+#[test]
+fn a_group_flashes_before_it_vanishes() {
+    let mut b = empty_board();
+    for r in 9..=12 {
+        b.cells[r][0] = Some(PuyoType::Red);
+    }
+    b.state = GameState::ResolvingMatches;
+    b.after_landing();
+    assert_eq!(b.popping.len(), 4);
+    for _ in 0..config::POP_FRAMES - 1 {
+        b.tick(config::CLIENT_SIM_DT);
+    }
+    assert_eq!(b.cells[12][0], Some(PuyoType::Red), "cleared before the flash ended");
+    b.tick(config::CLIENT_SIM_DT);
+    assert_eq!(b.cells[12][0], None);
 }
 
 #[test]
@@ -466,7 +577,8 @@ fn scripted_input(step: u64) -> Option<InputKind> {
         1 => Some(InputKind::MoveRight),
         2 => Some(InputKind::RotateCW),
         3 => Some(InputKind::RotateCCW),
-        4 => Some(InputKind::SoftDrop),
+        4 => Some(InputKind::SoftDropPress),
+        6 => Some(InputKind::SoftDropRelease),
         5 => Some(InputKind::HardDrop),
         _ => None,
     }
@@ -483,6 +595,10 @@ struct Run {
 /// Plays `ticks` fixed steps of the script. A board that tops out is replaced
 /// with a fresh one from a derived seed, so the run keeps exercising spawning,
 /// locking, chains and garbage instead of freezing on the first game over.
+/// A seed whose script reaches a chain of 3 within 6000 ticks: random play
+/// rarely chains, and the tests below need the resolution path exercised.
+const SCRIPT_SEED: u64 = 99;
+
 fn run_script(seed: u64, ticks: u64, skip_input_at: Option<u64>) -> Run {
     let fresh = |s: u64| {
         let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, s, 1, 5);
@@ -533,8 +649,8 @@ fn first_divergence(a: &[u64], b: &[u64]) -> Option<usize> {
 /// score, the RNG draw order, anything — the two runs would part company here.
 #[test]
 fn the_same_script_replays_to_the_same_states() {
-    let a = run_script(0xDEAD_BEEF, 6_000, None);
-    let b = run_script(0xDEAD_BEEF, 6_000, None);
+    let a = run_script(SCRIPT_SEED, 6_000, None);
+    let b = run_script(SCRIPT_SEED, 6_000, None);
     assert_eq!(
         first_divergence(&a.hashes, &b.hashes),
         None,
@@ -546,7 +662,7 @@ fn the_same_script_replays_to_the_same_states() {
 /// proves only that an idle board stays idle.
 #[test]
 fn the_script_exercises_the_whole_simulation() {
-    let run = run_script(0xDEAD_BEEF, 6_000, None);
+    let run = run_script(SCRIPT_SEED, 6_000, None);
     assert!(run.max_chain >= 2, "no chain longer than {} occurred", run.max_chain);
     assert!(run.garbage_dropped > 0, "garbage was never dropped");
     assert!(run.boards >= 2, "no board ever topped out, spawning is under-covered");
@@ -563,8 +679,8 @@ fn one_dropped_input_diverges() {
     let at = (0..100)
         .find(|s| scripted_input(*s) == Some(InputKind::HardDrop))
         .expect("the schedule never hard drops");
-    let base = run_script(0xDEAD_BEEF, 6_000, None);
-    let altered = run_script(0xDEAD_BEEF, 6_000, Some(at));
+    let base = run_script(SCRIPT_SEED, 6_000, None);
+    let altered = run_script(SCRIPT_SEED, 6_000, Some(at));
     let diverged = first_divergence(&base.hashes, &altered.hashes).expect("a dropped input went unnoticed");
     assert_eq!(
         diverged as u64, at,
@@ -582,11 +698,11 @@ fn one_dropped_input_diverges() {
 ///
 /// It therefore fails whenever the simulation changes, deliberately or not. If
 /// the change was intended, re-read the diff, then paste the new value in.
-const GOLDEN_FINAL_HASH: u64 = 17_688_842_506_210_853_224;
+const GOLDEN_FINAL_HASH: u64 = 9_443_256_685_813_863_261;
 
 #[test]
 fn scripted_run_matches_its_recorded_outcome() {
-    let run = run_script(0xDEAD_BEEF, 6_000, None);
+    let run = run_script(SCRIPT_SEED, 6_000, None);
     assert_eq!(
         run.hashes.last().copied(),
         Some(GOLDEN_FINAL_HASH),
@@ -631,7 +747,7 @@ fn the_digest_notices_fields_the_script_never_varies() {
 /// keeps reaching chains and garbage.
 fn server_timeline(ticks: u32, inputs: &[StampedInput], incoming: &[IncomingGarbage]) -> Vec<(u32, Board)> {
     let fresh = |game: u32| {
-        let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, 0xDEAD_BEEF + game as u64, 1, 5);
+        let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, SCRIPT_SEED + game as u64, 1, 5);
         b.spawn_piece();
         b
     };
@@ -782,7 +898,7 @@ fn a_falling_piece_is_drawn_gliding_down() {
     b.spawn_piece();
     let start_row = b.active_piece.as_ref().expect("a piece").row;
     let mut prev = drawn_row(&b);
-    let per_tick = config::CLIENT_SIM_DT / BASE_FALL_INTERVAL as f32;
+    let per_tick = 1.0 / config::FALL_FRAMES_PER_CELL as f32;
     while b.active_piece.as_ref().is_some_and(|p| p.row < start_row + 3) {
         b.tick(config::CLIENT_SIM_DT);
         let now = drawn_row(&b);
@@ -797,6 +913,6 @@ fn a_resting_piece_is_drawn_on_its_cell() {
     let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, 3, 1, 5);
     b.spawn_piece();
     b.active_piece.as_mut().expect("a piece").row = GRID_HEIGHT as i32 - 1;
-    b.fall_timer = 0.5; // mid-way, had it been able to fall
+    b.fall_offset = config::HALF_CELL_UNITS; // mid-way, had it been able to fall
     assert_eq!(b.fall_progress(), 0.0);
 }
