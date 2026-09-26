@@ -1,11 +1,24 @@
+//! Sound effects: short synthesised tones, no audio files. The browser build
+//! plays them through Web Audio, the native build through rodio; both shape
+//! them the same way, a waveform whose volume falls linearly to silence.
+
+#[derive(Clone, Copy)]
+enum Wave {
+    Sine,
+    Square,
+    Sawtooth,
+}
+
 #[cfg(target_arch = "wasm32")]
 mod imp {
     use std::cell::RefCell;
 
     use web_sys::{AudioContext, OscillatorType};
 
+    use super::Wave;
+
     thread_local! {
-        static CTX: RefCell<Option<AudioContext>> = RefCell::new(None);
+        static CTX: RefCell<Option<AudioContext>> = const { RefCell::new(None) };
     }
 
     fn with_ctx<F: FnOnce(&AudioContext)>(f: F) {
@@ -20,7 +33,12 @@ mod imp {
         });
     }
 
-    pub fn play(freq: f32, duration: f64, osc_type: OscillatorType, peak_gain: f32) {
+    pub fn play(freq: f32, duration: f64, wave: Wave, peak_gain: f32) {
+        let osc_type = match wave {
+            Wave::Sine => OscillatorType::Sine,
+            Wave::Square => OscillatorType::Square,
+            Wave::Sawtooth => OscillatorType::Sawtooth,
+        };
         with_ctx(|ctx| {
             let _ = ctx.resume(); // re-wake after tab backgrounding
             let Ok(osc) = ctx.create_oscillator() else {
@@ -43,45 +61,131 @@ mod imp {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(target_arch = "wasm32"))]
+mod imp {
+    use std::cell::RefCell;
+    use std::num::NonZero;
+    use std::time::Duration;
+
+    use rodio::{ChannelCount, MixerDeviceSink, SampleRate, Source};
+
+    use super::Wave;
+
+    const RATE: u32 = 48_000;
+
+    thread_local! {
+        /// The output device, opened on the first sound. `Some(None)` once
+        /// opening has failed (no sound card, no audio server): the game
+        /// then plays silently rather than retrying on every sound.
+        static SINK: RefCell<Option<Option<MixerDeviceSink>>> = const { RefCell::new(None) };
+    }
+
+    /// One tone, generated sample by sample, with the same shape as the Web
+    /// Audio version: `peak_gain` falling linearly to 0 over its duration.
+    struct Tone {
+        wave: Wave,
+        freq: f32,
+        peak_gain: f32,
+        sample: u32,
+        samples: u32,
+    }
+
+    impl Iterator for Tone {
+        type Item = rodio::Sample;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.sample >= self.samples {
+                return None;
+            }
+            let t = self.sample as f32 / RATE as f32;
+            let phase = (self.freq * t).fract();
+            let value = match self.wave {
+                Wave::Sine => (phase * std::f32::consts::TAU).sin(),
+                Wave::Square => {
+                    if phase < 0.5 {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                }
+                Wave::Sawtooth => 2.0 * phase - 1.0,
+            };
+            let envelope = 1.0 - self.sample as f32 / self.samples as f32;
+            self.sample += 1;
+            Some(value * self.peak_gain * envelope)
+        }
+    }
+
+    impl Source for Tone {
+        fn current_span_len(&self) -> Option<usize> {
+            None
+        }
+
+        fn channels(&self) -> ChannelCount {
+            NonZero::<u16>::MIN
+        }
+
+        fn sample_rate(&self) -> SampleRate {
+            NonZero::new(RATE).expect("the rate is not zero")
+        }
+
+        fn total_duration(&self) -> Option<Duration> {
+            Some(Duration::from_secs_f64(self.samples as f64 / RATE as f64))
+        }
+    }
+
+    pub fn play(freq: f32, duration: f64, wave: Wave, peak_gain: f32) {
+        // Tests go through code that plays sounds; they must not open the
+        // sound card, nor beep at whoever runs them.
+        if cfg!(test) {
+            return;
+        }
+        SINK.with(|cell| {
+            let mut sink = cell.borrow_mut();
+            let sink = sink.get_or_insert_with(|| {
+                let mut opened = rodio::DeviceSinkBuilder::open_default_sink().ok()?;
+                opened.log_on_drop(false);
+                Some(opened)
+            });
+            if let Some(sink) = sink {
+                sink.mixer().add(Tone {
+                    wave,
+                    freq,
+                    peak_gain,
+                    sample: 0,
+                    samples: (duration * RATE as f64) as u32,
+                });
+            }
+        });
+    }
+}
+
 use imp::play;
 
 // --- Public API ---
 
 pub fn play_move() {
-    #[cfg(target_arch = "wasm32")]
-    play(220.0, 0.05, web_sys::OscillatorType::Square, 0.12);
+    play(220.0, 0.05, Wave::Square, 0.12);
 }
 
 pub fn play_rotate() {
-    #[cfg(target_arch = "wasm32")]
-    play(300.0, 0.05, web_sys::OscillatorType::Square, 0.12);
+    play(300.0, 0.05, Wave::Square, 0.12);
 }
 
 pub fn play_lock() {
-    #[cfg(target_arch = "wasm32")]
-    play(90.0, 0.12, web_sys::OscillatorType::Sawtooth, 0.22);
+    play(90.0, 0.12, Wave::Sawtooth, 0.22);
 }
 
 pub fn play_pop(chain: u32) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let freq = (300.0 * 1.25_f32.powi(chain as i32 - 1)).min(1800.0);
-        play(freq, 0.18, web_sys::OscillatorType::Sine, 0.30);
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = chain;
+    let freq = (300.0 * 1.25_f32.powi(chain as i32 - 1)).min(1800.0);
+    play(freq, 0.18, Wave::Sine, 0.30);
 }
 
 pub fn play_garbage() {
-    #[cfg(target_arch = "wasm32")]
-    play(65.0, 0.22, web_sys::OscillatorType::Sawtooth, 0.20);
+    play(65.0, 0.22, Wave::Sawtooth, 0.20);
 }
 
 pub fn play_all_clear() {
-    #[cfg(target_arch = "wasm32")]
-    {
-        play(880.0, 0.15, web_sys::OscillatorType::Sine, 0.35);
-        play(1320.0, 0.35, web_sys::OscillatorType::Sine, 0.30);
-    }
+    play(880.0, 0.15, Wave::Sine, 0.35);
+    play(1320.0, 0.35, Wave::Sine, 0.30);
 }
