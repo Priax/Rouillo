@@ -92,14 +92,14 @@ impl OpponentView {
         let Some(pa) = a.board.active_piece.as_ref() else {
             return Some((&a.board, (0.0, 0.0)));
         };
-        let from = (pa.row as f32 + a.board.fall_progress(), pa.col as f32);
+        let from = (pa.row as f32 + crate::draw::fall_step(&a.board), pa.col as f32);
         let (row, col) = self
             .snapshots
             .get(i + 1)
             .filter(|b| b.board.piece_id == a.board.piece_id && b.tick > a.tick)
             .and_then(|b| {
                 let pb = b.board.active_piece.as_ref()?;
-                let to = (pb.row as f32 + b.board.fall_progress(), pb.col as f32);
+                let to = (pb.row as f32 + crate::draw::fall_step(&b.board), pb.col as f32);
                 let frac = ((rt - a.tick as f64) / (b.tick - a.tick) as f64).clamp(0.0, 1.0) as f32;
                 Some((from.0 + frac * (to.0 - from.0), from.1 + frac * (to.1 - from.1)))
             })
@@ -180,10 +180,23 @@ mod tests {
         let mut view = OpponentView::default();
         view.push(10, before, 0.0);
         view.push(11, after, 0.0);
-        for rt in [10.0, 10.5, 11.0] {
+        let at = |view: &mut OpponentView, rt: f64| {
             view.render_tick = Some(rt);
-            let row = row_of(&view);
-            assert!((row - 4.0).abs() < 0.02, "drawn at row {row} at tick {rt}");
+            row_of(view)
+        };
+        assert_eq!(at(&mut view, 10.0), 3.5);
+        let mid = at(&mut view, 10.5);
+        assert!((3.5..=4.0).contains(&mid), "drawn at row {mid}");
+        assert_eq!(at(&mut view, 11.0), 4.0);
+    }
+
+    #[test]
+    fn a_falling_piece_is_drawn_in_half_cell_notches() {
+        let mut b = board_at(2, 1);
+        let interval = config::BASE_FALL_INTERVAL as f32;
+        for (timer, drawn) in [(0.0, 0.0), (0.49, 0.0), (0.5, 0.5), (0.99, 0.5)] {
+            b.fall_timer = interval * timer;
+            assert_eq!(crate::draw::fall_step(&b), drawn, "at {timer} of the interval");
         }
     }
 

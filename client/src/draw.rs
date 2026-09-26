@@ -41,7 +41,7 @@ pub fn draw_game(
         offset_y,
         board_w,
         board_h,
-        (row_off + me.fall_progress(), col_off),
+        (row_off + fall_step(me), col_off),
     );
     draw.text(font, "YOU")
         .position(start_x, offset_y - 50.0)
@@ -264,6 +264,17 @@ fn draw_exit_buttons(draw: &mut Draw, app: &App, font: &Font, ww: f32, wh: f32, 
     if is_host {
         crate::rooms::back_to_lobby_button(ww, wh).draw(draw, app, font, back);
     }
+}
+
+/// Notches a falling piece shows per cell it falls. Two, as in Puyo Puyo: the
+/// piece moves down in half-cell notches rather than gliding or jumping a
+/// whole cell.
+const FALL_STEPS_PER_CELL: f32 = 2.0;
+
+/// How far below its row to draw the falling piece: its fall progress,
+/// rounded down to a notch. Drawing only; the simulation knows whole rows.
+pub fn fall_step(board: &Board) -> f32 {
+    (board.fall_progress() * FALL_STEPS_PER_CELL).floor() / FALL_STEPS_PER_CELL
 }
 
 fn draw_board(
