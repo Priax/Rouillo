@@ -21,7 +21,7 @@ jobs:
     name: rustfmt (nightly)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install nightly rustfmt
         uses: dtolnay/rust-toolchain@nightly
         with:
@@ -34,7 +34,7 @@ jobs:
     name: clippy + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # notan builds natively against system X11/GL/audio libraries.
       - name: Install Linux dependencies
@@ -66,7 +66,7 @@ jobs:
     name: simulation on aarch64
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p shared --release
@@ -78,7 +78,7 @@ jobs:
     name: clippy (wasm client)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
