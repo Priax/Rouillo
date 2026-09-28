@@ -1,16 +1,10 @@
 use notan::prelude::*;
-use shared::*;
+use shared::{config, ClientMessage, GameState, InputKind, StampedInput};
 
 use crate::connection::Connection;
 use crate::state::{GameSession, Settings};
 
-pub fn update_game(
-    app: &mut App,
-    session: &mut GameSession,
-    settings: &Settings,
-    conn: &mut Connection,
-    is_host: bool,
-) {
+pub fn update_game(app: &mut App, session: &mut GameSession, settings: Settings, conn: &mut Connection, is_host: bool) {
     if !conn.is_live() {
         return;
     }
@@ -38,8 +32,6 @@ pub fn update_game(
 
     let dt = app.timer.delta_f32();
     if !game_over && !paused {
-        // Down is held across pieces and chains, so it is tracked whatever
-        // the board is doing.
         handle_soft_drop_key(app, session, conn);
         if session.predicted_board.state == GameState::Playing {
             handle_game_input(app, session, settings, conn, dt);
@@ -101,8 +93,6 @@ fn step_simulation(session: &mut GameSession, dt: f32) {
     while session.sim_accumulator >= config::CLIENT_SIM_DT && steps < config::MAX_SIM_STEPS_PER_FRAME {
         session.sim_accumulator -= config::CLIENT_SIM_DT;
         steps += 1;
-        // Clock steering spends one step at a time, never a burst: a skipped
-        // or doubled 1/60 s is invisible where a jump of several is not.
         match session.clock_correction.signum() {
             -1 => {
                 session.clock_correction += 1;
@@ -121,23 +111,18 @@ fn step_simulation(session: &mut GameSession, dt: f32) {
     }
 }
 
-/// One tick of the local board, exactly as the server will run it. Inputs are
-/// not passed: they were applied the moment they were pressed, stamped for
-/// this very tick, which is the same thing `Board::step` would do first.
 pub(crate) fn advance_one(session: &mut GameSession) {
     session.local_tick = session.local_tick.wrapping_add(1);
     let now = session.local_tick;
     let landed = session.incoming.iter().filter(|g| g.at == now).map(|g| g.amount).sum();
     let was_playing = session.predicted_board.state == GameState::Playing;
-    session.predicted_board.step([], landed, config::CLIENT_SIM_DT);
+    session.predicted_board.step([], landed);
     if was_playing && session.predicted_board.state == GameState::ResolvingMatches {
         crate::audio::play_lock();
     }
     announce_events(session);
 }
 
-/// Plays what the local board just did. Keyed on (piece, chain step) rather
-/// than on a transition, because a replay may reach the same moment again.
 pub fn announce_events(session: &mut GameSession) {
     let board = &session.predicted_board;
     let chain = (board.piece_id, board.chain_count);
@@ -154,23 +139,25 @@ pub fn announce_events(session: &mut GameSession) {
     }
 }
 
-fn send_input(session: &mut GameSession, conn: &mut Connection, kind: InputKind) {
-    match kind {
-        InputKind::MoveLeft | InputKind::MoveRight => crate::audio::play_move(),
-        InputKind::RotateCW | InputKind::RotateCCW => crate::audio::play_rotate(),
-        InputKind::HardDrop => crate::audio::play_lock(),
-        InputKind::SoftDropPress | InputKind::SoftDropRelease => {}
-    }
+fn send_input(session: &mut GameSession, conn: &mut Connection, kind: InputKind) -> bool {
     session.input_seq += 1;
     let seq = session.input_seq;
     let tick = session.local_tick.wrapping_add(1);
+    let before = session.predicted_board.active_piece.clone();
     session.predicted_board.apply_input(kind);
+    let moved = session.predicted_board.active_piece != before;
+    match kind {
+        InputKind::RotateCW | InputKind::RotateCCW if moved => crate::audio::play_rotate(),
+        InputKind::HardDrop => crate::audio::play_lock(),
+        _ => {}
+    }
     session.pending_inputs.push((seq, StampedInput { tick, kind }));
     session.sent_at.push((seq, session.clock));
     conn.send(&ClientMessage::Input { kind, seq, tick });
+    moved
 }
 
-fn handle_global_input(app: &mut App, session: &mut GameSession, conn: &mut Connection) {
+fn handle_global_input(app: &App, session: &GameSession, conn: &mut Connection) {
     let can_restart = session.board.state == GameState::GameOver || session.other_board.state == GameState::GameOver;
     if app.keyboard.was_pressed(KeyCode::KeyR) && can_restart {
         conn.send(&ClientMessage::RequestRestart);
@@ -179,17 +166,9 @@ fn handle_global_input(app: &mut App, session: &mut GameSession, conn: &mut Conn
     if app.keyboard.was_pressed(KeyCode::Escape) {
         conn.send(&ClientMessage::TogglePause);
     }
-
-    let _ = session;
 }
 
-fn handle_game_input(
-    app: &mut App,
-    session: &mut GameSession,
-    settings: &Settings,
-    conn: &mut Connection,
-    delta_time: f32,
-) {
+fn handle_game_input(app: &App, session: &mut GameSession, settings: Settings, conn: &mut Connection, delta_time: f32) {
     if app.keyboard.was_pressed(KeyCode::ArrowUp) || app.keyboard.was_pressed(KeyCode::KeyZ) {
         send_input(session, conn, InputKind::RotateCW);
     }
@@ -202,39 +181,53 @@ fn handle_game_input(
         return;
     }
 
-    if app.keyboard.is_down(KeyCode::ArrowLeft) {
-        if session.key_timer_left == 0.0 {
-            send_input(session, conn, InputKind::MoveLeft);
-            session.key_timer_left = 0.0001;
-        } else {
-            session.key_timer_left += delta_time;
-            while session.key_timer_left > settings.das_delay {
-                send_input(session, conn, InputKind::MoveLeft);
-                session.key_timer_left -= settings.das_speed;
-            }
+    let left_pressed = session.key_timer_left == 0.0;
+    let left = autorepeat(
+        &mut session.key_timer_left,
+        app.keyboard.is_down(KeyCode::ArrowLeft),
+        delta_time,
+        settings,
+    );
+    for i in 0..left {
+        if send_input(session, conn, InputKind::MoveLeft) && i == 0 && left_pressed {
+            crate::audio::play_move();
         }
-    } else {
-        session.key_timer_left = 0.0;
     }
-
-    if app.keyboard.is_down(KeyCode::ArrowRight) {
-        if session.key_timer_right == 0.0 {
-            send_input(session, conn, InputKind::MoveRight);
-            session.key_timer_right = 0.0001;
-        } else {
-            session.key_timer_right += delta_time;
-            while session.key_timer_right > settings.das_delay {
-                send_input(session, conn, InputKind::MoveRight);
-                session.key_timer_right -= settings.das_speed;
-            }
+    let right_pressed = session.key_timer_right == 0.0;
+    let right = autorepeat(
+        &mut session.key_timer_right,
+        app.keyboard.is_down(KeyCode::ArrowRight),
+        delta_time,
+        settings,
+    );
+    for i in 0..right {
+        if send_input(session, conn, InputKind::MoveRight) && i == 0 && right_pressed {
+            crate::audio::play_move();
         }
-    } else {
-        session.key_timer_right = 0.0;
     }
 }
 
-/// Soft drop is a speed the board holds while down is: tell it when the key
-/// goes down and when it comes back up, nothing in between.
+fn autorepeat(timer: &mut f32, held: bool, dt: f32, settings: Settings) -> u32 {
+    if !held {
+        *timer = 0.0;
+        return 0;
+    }
+    if *timer == 0.0 {
+        *timer = f32::MIN_POSITIVE;
+        return 1;
+    }
+    *timer += dt;
+    let mut moves = 0;
+    while *timer + 1e-4 >= settings.das_delay && moves < config::GRID_WIDTH as u32 {
+        *timer -= settings.das_speed;
+        moves += 1;
+    }
+    if moves == config::GRID_WIDTH as u32 {
+        *timer = settings.das_delay;
+    }
+    moves
+}
+
 fn handle_soft_drop_key(app: &App, session: &mut GameSession, conn: &mut Connection) {
     let down = app.keyboard.is_down(KeyCode::ArrowDown);
     if down != session.soft_drop_held {
@@ -250,6 +243,8 @@ fn handle_soft_drop_key(app: &App, session: &mut GameSession, conn: &mut Connect
 
 #[cfg(test)]
 mod tests {
+    use shared::IncomingGarbage;
+
     use super::*;
 
     fn synced_session() -> GameSession {
@@ -398,5 +393,48 @@ mod tests {
         turn.update(2, 2, 1.0 / 60.0);
         let (dr, _) = turn.satellite();
         assert!((dr - 1.0).abs() < 1e-4);
+    }
+
+    fn moves_over(frames: u32, dt: f32) -> Vec<u32> {
+        let settings = Settings::default();
+        let mut timer = 0.0;
+        (0..frames)
+            .map(|_| autorepeat(&mut timer, true, dt, settings))
+            .collect()
+    }
+
+    #[test]
+    fn a_held_key_moves_at_once_then_repeats_after_the_delay() {
+        let moves = moves_over(14, 1.0 / 60.0);
+        assert_eq!(moves[0], 1, "the press itself moves");
+        let first_repeat = moves.iter().skip(1).position(|&m| m > 0).map(|i| i + 1);
+        assert_eq!(first_repeat, Some(8), "Tsu repeats after 8 frames");
+        assert_eq!(moves[8..].iter().sum::<u32>(), 3, "then every 2 frames: 8, 10, 12");
+    }
+
+    #[test]
+    fn a_stall_does_not_unload_a_burst_of_moves() {
+        let settings = Settings::default();
+        let mut timer = 0.0;
+        autorepeat(&mut timer, true, 1.0 / 60.0, settings);
+        let burst = autorepeat(&mut timer, true, 5.0, settings);
+        assert_eq!(burst, config::GRID_WIDTH as u32);
+        let after: u32 = (0..10)
+            .map(|_| autorepeat(&mut timer, true, 1.0 / 60.0, settings))
+            .sum();
+        assert!(after <= 6, "{after} moves in the 10 frames after the stall");
+    }
+
+    #[test]
+    fn releasing_the_key_resets_it() {
+        let settings = Settings::default();
+        let mut timer = 0.0;
+        autorepeat(&mut timer, true, 1.0 / 60.0, settings);
+        assert_eq!(autorepeat(&mut timer, false, 1.0 / 60.0, settings), 0);
+        assert_eq!(
+            autorepeat(&mut timer, true, 1.0 / 60.0, settings),
+            1,
+            "a new press moves at once"
+        );
     }
 }

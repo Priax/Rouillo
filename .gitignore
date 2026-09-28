@@ -1,5 +1,4 @@
 /target
-tests/
 *.txt
 adresse_ip.txt
 dist/

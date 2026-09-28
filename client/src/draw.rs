@@ -1,6 +1,6 @@
-use notan::draw::*;
+use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
-use shared::*;
+use shared::{Board, GameState, PuyoType, Settle};
 
 use crate::state::GameSession;
 use crate::{config, Font};
@@ -116,7 +116,7 @@ pub fn draw_game(
     draw_chain_anim(
         &mut draw,
         font,
-        &session.chain_display,
+        session.chain_display,
         start_x,
         offset_y,
         board_w,
@@ -271,13 +271,8 @@ fn draw_exit_buttons(draw: &mut Draw, app: &App, font: &Font, ww: f32, wh: f32, 
     }
 }
 
-/// Notches a falling piece shows per cell it falls: Tsu's 16 pixels, so the
-/// natural fall moves a pixel a frame and a soft drop half a cell a frame.
-/// 2 gives half-cell steps, 1 whole cells.
 const FALL_STEPS_PER_CELL: f32 = config::CELL_PX as f32;
 
-/// How far below its row to draw the falling piece: its fall progress,
-/// rounded down to a notch. Drawing only; the simulation knows whole rows.
 pub fn fall_step(board: &Board) -> f32 {
     (board.fall_progress() * FALL_STEPS_PER_CELL).floor() / FALL_STEPS_PER_CELL
 }
@@ -348,8 +343,6 @@ fn draw_board(
                 } else {
                     ghost.sat_type
                 };
-                // Where the piece will land does not glide with it; only a
-                // sideways correction applies.
                 let draw_r = pos.0 as f32 - hidden;
                 let draw_c = pos.1 as f32 + piece_offset.1;
                 draw_puyo(draw, draw_r, draw_c, p_type, offset_x, offset_y, 0.3, 0.0);
@@ -359,7 +352,6 @@ fn draw_board(
             let axis_r = piece.row as f32 - hidden + piece_offset.0;
             let axis_c = piece.col as f32 + piece_offset.1;
             draw_puyo(draw, axis_r, axis_c, piece.axis_type, offset_x, offset_y, 1.0, 0.0);
-            // The satellite as drawn turns around the axis.
             let (sr, sc) = satellite;
             draw_puyo(
                 draw,
@@ -389,7 +381,6 @@ fn draw_board(
     }
 }
 
-/// A popping group blinks, then fades out over its last frames.
 fn pop_alpha(frame: u32) -> f32 {
     const FADE: u32 = 8;
     let fade_from = config::POP_FRAMES.saturating_sub(FADE);
@@ -402,8 +393,6 @@ fn pop_alpha(frame: u32) -> f32 {
     }
 }
 
-/// One puyo. `bounce`, 0 to 1 through a landing, squashes it against the
-/// floor and lets it spring back.
 #[allow(clippy::too_many_arguments)]
 fn draw_puyo(draw: &mut Draw, row: f32, col: f32, pt: PuyoType, dx: f32, dy: f32, alpha: f32, bounce: f32) {
     if row < 0.0 || alpha <= 0.0 {
@@ -415,7 +404,6 @@ fn draw_puyo(draw: &mut Draw, row: f32, col: f32, pt: PuyoType, dx: f32, dy: f32
     let squash = (bounce * std::f32::consts::PI).sin() * 0.22;
     let size = config::CELL_SIZE - 2.0;
     let (w, h) = (size * (1.0 + squash * 0.6), size * (1.0 - squash));
-    // Anchored on the cell's floor, centred horizontally.
     let x = dx + col * config::CELL_SIZE + 1.0 + (size - w) / 2.0;
     let y = dy + row * config::CELL_SIZE + 1.0 + (size - h);
 
@@ -468,7 +456,7 @@ fn draw_nuisance_bar(draw: &mut Draw, font: &Font, nuisance: u32, board_x: f32, 
     }
 
     if nuisance > config::GRID_WIDTH as u32 * 6 {
-        draw.text(font, &format!("+{}", nuisance))
+        draw.text(font, &format!("+{nuisance}"))
             .position(board_x + board_w - 2.0, bar_y - 1.0)
             .size(14.0)
             .h_align_right()
@@ -479,7 +467,7 @@ fn draw_nuisance_bar(draw: &mut Draw, font: &Font, nuisance: u32, board_x: f32, 
 fn draw_chain_anim(
     draw: &mut Draw,
     font: &Font,
-    chain_display: &Option<(u32, f32)>,
+    chain_display: Option<(u32, f32)>,
     board_x: f32,
     board_y: f32,
     board_w: f32,
@@ -488,8 +476,8 @@ fn draw_chain_anim(
     let Some((count, t)) = chain_display else {
         return;
     };
-    let alpha = (*t / 0.5).min(1.0_f32);
-    let scale = 1.0 + ((*t - 1.7).max(0.0) / 0.3 * 0.4).min(0.4_f32);
+    let alpha = (t / 0.5).min(1.0_f32);
+    let scale = 1.0 + ((t - 1.7).max(0.0) / 0.3 * 0.4).min(0.4_f32);
     let size = 42.0 * scale;
 
     let cx = board_x + board_w / 2.0;
@@ -502,7 +490,7 @@ fn draw_chain_anim(
         4 => Color::from_rgba(1.0, 0.5, 0.1, alpha),
         _ => Color::from_rgba(1.0, 0.2, 1.0, alpha),
     };
-    draw.text(font, &format!("{}  CHAIN!", count))
+    draw.text(font, &format!("{count}  CHAIN!"))
         .position(cx, cy)
         .size(size)
         .h_align_center()

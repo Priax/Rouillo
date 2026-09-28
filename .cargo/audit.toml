@@ -1,0 +1,9 @@
+# Configuration for `cargo audit`.
+
+[advisories]
+ignore = [
+    # rsa (Marvin attack). It is only in Cargo.lock because sqlx lists its
+    # unused MySQL driver there: `cargo tree -i rsa --target all` finds no
+    # path to it and it is never compiled. Drop this if MySQL is ever used.
+    "RUSTSEC-2023-0071",
+]

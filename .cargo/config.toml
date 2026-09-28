@@ -1,0 +1,38 @@
+[alias]
+# `cargo strict`: clippy with its pedantic and nursery groups, for a review
+# pass. Not what CI runs (that is `cargo +stable clippy --workspace
+# --all-targets -- -D warnings`); these are warnings to read, not to obey.
+strict = [
+    "clippy", "--workspace", "--all-targets", "--",
+    "-W", "clippy::pedantic",
+    "-W", "clippy::nursery",
+
+    # Noise on this codebase: numeric casts are deliberate throughout (grid
+    # indices, pixel positions), and the docs are not an API reference.
+    "-A", "clippy::cast_possible_truncation",
+    "-A", "clippy::cast_precision_loss",
+    "-A", "clippy::cast_sign_loss",
+    "-A", "clippy::cast_possible_wrap",
+    "-A", "clippy::cast_lossless",
+    "-A", "clippy::missing_const_for_fn",
+    "-A", "clippy::must_use_candidate",
+    "-A", "clippy::too_many_lines",
+    "-A", "clippy::module_name_repetitions",
+    "-A", "clippy::doc_markdown",
+    "-A", "clippy::missing_panics_doc",
+    "-A", "clippy::missing_errors_doc",
+
+    # Reviewed and rejected. `mul_add` is slower here, not faster (no FMA
+    # target feature, and none at all on wasm). The rest trade clarity for
+    # nothing, or flag things that are deliberate.
+    "-A", "clippy::suboptimal_flops",
+    "-A", "clippy::option_option",
+    "-A", "clippy::match_same_arms",
+    "-A", "clippy::float_cmp",
+    "-A", "clippy::while_float",
+    "-A", "clippy::similar_names",
+    "-A", "clippy::redundant_pub_crate",
+    "-A", "clippy::unnecessary_wraps",
+    "-A", "clippy::option_if_let_else",
+    "-A", "clippy::assigning_clones",
+]

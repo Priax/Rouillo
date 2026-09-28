@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use notan::draw::*;
+use notan::draw::{CreateDraw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 use shared::{ClientMessage, LobbyInfo, RoomSettings};
 
@@ -41,7 +41,7 @@ struct BrowserButtons {
 fn browser_buttons(w: f32, h: f32) -> BrowserButtons {
     let bw = 190.0;
     let gap = 15.0;
-    let start = w / 2.0 - (4.0 * bw + 3.0 * gap) / 2.0;
+    let start = w / 2.0 - f32::midpoint(4.0 * bw, 3.0 * gap);
     let y = h - 90.0;
     let at = |i: f32| Btn::at(start + i * (bw + gap), y, bw, 50.0);
     BrowserButtons {

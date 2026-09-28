@@ -55,10 +55,10 @@ fn bench_codec(c: &mut Criterion) {
     c.bench_function("encode_state_update_full", |b| b.iter(|| encode(black_box(&full))));
 
     c.bench_function("decode_state_update_empty", |b| {
-        b.iter(|| decode::<ServerMessage>(black_box(&empty_bytes)).unwrap())
+        b.iter(|| decode::<ServerMessage>(black_box(&empty_bytes)).unwrap());
     });
     c.bench_function("decode_state_update_full", |b| {
-        b.iter(|| decode::<ServerMessage>(black_box(&full_bytes)).unwrap())
+        b.iter(|| decode::<ServerMessage>(black_box(&full_bytes)).unwrap());
     });
 
     println!(
@@ -69,17 +69,15 @@ fn bench_codec(c: &mut Criterion) {
 }
 
 fn bench_simulation(c: &mut Criterion) {
-    let dt = 1.0 / 60.0;
-
     c.bench_function("board_tick", |b| {
         b.iter_batched(
             empty_board,
             |mut board| {
-                board.tick(black_box(dt));
+                black_box(board.tick());
                 board
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     c.bench_function("check_matches_full_board", |b| {
@@ -95,23 +93,22 @@ fn bench_simulation(c: &mut Criterion) {
             },
             |mut board| black_box(board.check_matches()),
             BatchSize::SmallInput,
-        )
+        );
     });
 }
 
 fn bench_room_step(c: &mut Criterion) {
-    let dt = 1.0 / 60.0;
     c.bench_function("room_step_tick_and_encode", |b| {
         b.iter_batched(
             || [empty_board(), empty_board()],
             |mut boards| {
-                boards[0].tick(black_box(dt));
-                boards[1].tick(black_box(dt));
+                black_box(boards[0].tick());
+                black_box(boards[1].tick());
                 let msg = state_update(&boards[0], &boards[1]);
                 black_box(encode(&msg))
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 }
 

@@ -1389,3 +1389,44 @@ fn a_restart_clears_attacks_in_flight() {
         "an attack from the previous game landed in this one"
     );
 }
+
+fn update_rngs(rx: &mut mpsc::Receiver<Vec<u8>>) -> Option<(bool, bool)> {
+    drain(rx).into_iter().rev().find_map(|m| match m {
+        ServerMessage::StateUpdate { p1_rng, p2_rng, .. } => Some((p1_rng.is_some(), p2_rng.is_some())),
+        _ => None,
+    })
+}
+
+#[test]
+fn the_rng_is_resent_when_a_drop_draws_from_it() {
+    let mut mgr = new_mgr();
+    let (mut rx1, _rx2) = running_game(&mut mgr);
+    mgr.tick(STEP, true);
+    drain(&mut rx1);
+    mgr.tick(STEP, true);
+    assert_eq!(
+        update_rngs(&mut rx1),
+        Some((false, false)),
+        "setup: a quiet tick resends nothing"
+    );
+
+    let before = mgr.rooms[&1].sim.boards[0].rng_position();
+    {
+        let b = &mut sim_of(&mut mgr).boards[0];
+        b.pending_garbage = 3; // not a multiple of 6: the leftover columns are drawn
+        b.state = GameState::DroppingGarbage;
+        b.drop_garbage();
+    }
+    assert_ne!(
+        mgr.rooms[&1].sim.boards[0].rng_position(),
+        before,
+        "setup: the drop drew nothing"
+    );
+    let pid = mgr.rooms[&1].sim.boards[0].piece_id;
+    mgr.tick(STEP, true);
+    assert_eq!(
+        mgr.rooms[&1].sim.boards[0].piece_id, pid,
+        "setup: a new pair already came"
+    );
+    assert_eq!(update_rngs(&mut rx1), Some((true, false)));
+}

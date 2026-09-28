@@ -57,3 +57,31 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  # The server runs on aarch64, the clients on x86-64 and wasm32, and the
+  # netcode needs them to simulate bit for bit alike. The golden-hash test
+  # pins that; this runs it on ARM, as a release build like the server's, so
+  # a disagreement shows up here rather than on the VM before a deploy.
+  determinism-arm:
+    name: simulation on aarch64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p shared --release
+
+  # The browser build has code of its own (Web Audio, local storage) that the
+  # native jobs never compile. Nothing to install: notan needs no system
+  # libraries on wasm.
+  wasm:
+    name: clippy (wasm client)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p client --target wasm32-unknown-unknown -- -D warnings

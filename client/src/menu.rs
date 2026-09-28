@@ -1,4 +1,4 @@
-use notan::draw::*;
+use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
 use crate::http;
@@ -13,8 +13,8 @@ pub struct Btn {
 }
 
 impl Btn {
-    pub fn at(x: f32, y: f32, w: f32, h: f32) -> Btn {
-        Btn { x, y, w, h }
+    pub fn at(x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self { x, y, w, h }
     }
 
     pub fn contains(&self, mx: f32, my: f32) -> bool {

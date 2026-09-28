@@ -1,0 +1,20 @@
+# Weekly update PRs. Minor and patch bumps come grouped into one PR per
+# ecosystem, so the noise stays at a PR or two a week; majors come alone,
+# since they are the ones that break things.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

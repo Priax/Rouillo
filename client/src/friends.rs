@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use notan::draw::*;
+use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
 use crate::http;
@@ -146,7 +146,7 @@ fn looks_like_uuid(s: &str) -> bool {
 }
 
 fn try_search(state: &mut State) {
-    let busy = state.friends.as_ref().map(|f| f.search_slot.is_some()).unwrap_or(true);
+    let busy = state.friends.as_ref().is_none_or(|f| f.search_slot.is_some());
     if busy {
         return;
     }
@@ -178,7 +178,7 @@ fn try_search(state: &mut State) {
 }
 
 fn send_add_request(state: &mut State, user_id: &str) {
-    let busy = state.friends.as_ref().map(|f| f.add_pending.is_some()).unwrap_or(true);
+    let busy = state.friends.as_ref().is_none_or(|f| f.add_pending.is_some());
     if busy {
         return;
     }
@@ -322,8 +322,7 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     let can_refresh = state
         .friends
         .as_ref()
-        .map(|f| f.list_slot.is_none() && f.action_pending.is_none())
-        .unwrap_or(false);
+        .is_some_and(|f| f.list_slot.is_none() && f.action_pending.is_none());
     if can_refresh && refresh_btn(wh).clicked(app) {
         refresh_list(state);
     }

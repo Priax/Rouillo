@@ -55,9 +55,13 @@ fn rate_check(map: &RateMap, key: &str, max: u32, window: Duration) -> bool {
     }
 }
 
+#[allow(
+    clippy::significant_drop_tightening,
+    reason = "the lock is needed until the last statement, which writes the entry"
+)]
 fn rate_record(map: &RateMap, key: &str, window: Duration) {
-    let mut m = map.lock().unwrap();
     let now = Instant::now();
+    let mut m = map.lock().unwrap();
     if m.len() > 500 {
         m.retain(|_, (_, since)| now.duration_since(*since) < window);
     }
@@ -75,7 +79,7 @@ fn rate_clear(map: &RateMap, key: &str) {
 
 type LoginAttempts = RateMap;
 const MAX_ATTEMPTS: u32 = 10;
-const WINDOW: Duration = Duration::from_secs(900);
+const WINDOW: Duration = Duration::from_mins(15);
 
 fn is_rate_limited(attempts: &LoginAttempts, username: &str) -> bool {
     rate_check(attempts, username, MAX_ATTEMPTS, WINDOW)
@@ -266,8 +270,7 @@ async fn handle_login(
 
     let hash = user
         .as_ref()
-        .map(|u| u.password_hash().to_owned())
-        .unwrap_or_else(|| db::dummy_hash().to_owned());
+        .map_or_else(|| db::dummy_hash().to_owned(), |u| u.password_hash().to_owned());
     let password = body.password.clone();
     let ok = db::run_hash(move || db::verify_password(&password, &hash))
         .await
@@ -704,8 +707,8 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::path::param::<Uuid>())
         .and(warp::path::end())
         .and(warp::delete())
-        .and(authed(db.clone()))
-        .and(pool.clone())
+        .and(authed(db))
+        .and(pool)
         .and_then(handle_remove_friend);
 
     register

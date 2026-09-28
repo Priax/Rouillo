@@ -24,7 +24,7 @@ impl Screen {
     pub fn needs_connection(self) -> bool {
         matches!(
             self,
-            Screen::RoomBrowser | Screen::CreateRoom | Screen::JoinById | Screen::RoomLobby | Screen::Game
+            Self::RoomBrowser | Self::CreateRoom | Self::JoinById | Self::RoomLobby | Self::Game
         )
     }
 }
@@ -290,7 +290,7 @@ impl Settings {
         }
     }
 
-    pub fn value(&self, i: usize) -> f32 {
+    pub fn value(self, i: usize) -> f32 {
         match i {
             0 => self.das_delay,
             _ => self.das_speed,
@@ -335,11 +335,8 @@ pub struct GameSession {
 
     pub key_timer_left: f32,
     pub key_timer_right: f32,
-    /// Whether the server has been told down is held.
     pub soft_drop_held: bool,
 
-    /// Satellite angles as drawn, in quarter turns, easing towards the
-    /// pair's rotation: mine and the opponent's.
     pub my_turn: TurnAnim,
     pub opp_turn: TurnAnim,
 
@@ -417,30 +414,24 @@ impl GameSession {
     }
 }
 
-/// A pair's satellite, drawn turning around the axis rather than jumping to
-/// its new side: Tsu spends 7 frames on a quarter turn.
 #[derive(Default, Clone, Copy)]
 pub struct TurnAnim {
     piece_id: u32,
-    /// Quarter turns, 0 = up, 1 = right, 2 = down, 3 = left.
     shown: f32,
 }
 
 const TURN_FRAMES: f32 = 7.0;
 
 impl TurnAnim {
-    /// Eases towards `rotation` of piece `piece_id`; a new piece starts
-    /// where it is.
     pub fn update(&mut self, piece_id: u32, rotation: usize, dt: f32) {
         let target = rotation as f32;
         if piece_id != self.piece_id {
-            *self = TurnAnim {
+            *self = Self {
                 piece_id,
                 shown: target,
             };
             return;
         }
-        // Shortest way round, so 3 -> 0 turns a quarter, not three.
         let diff = (target - self.shown + 2.0).rem_euclid(4.0) - 2.0;
         let step = dt * 60.0 / TURN_FRAMES;
         self.shown = if diff.abs() <= step {
@@ -450,8 +441,7 @@ impl TurnAnim {
         };
     }
 
-    /// The satellite's offset from the axis, in cells (row, column).
-    pub fn satellite(&self) -> (f32, f32) {
+    pub fn satellite(self) -> (f32, f32) {
         let angle = self.shown * std::f32::consts::FRAC_PI_2;
         (-angle.cos(), angle.sin())
     }

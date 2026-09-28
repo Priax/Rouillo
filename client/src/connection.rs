@@ -50,8 +50,6 @@ fn next_frac(state: &mut u64) -> f64 {
     (x >> 11) as f64 / (1u64 << 53) as f64
 }
 
-// Schedule for a sequence of dials: when the next is due, and when to stop.
-// Times are absolute readings of [`now_secs`], never accumulated deltas.
 #[derive(Clone)]
 struct Retry {
     attempts: u32,
@@ -90,8 +88,6 @@ impl Retry {
         now >= self.next_dial_at
     }
 
-    // Records that a dial just fired and arms the delay for the one after it.
-    // `frac` is a jitter fraction in `[0, 1)`, supplied by the connection.
     fn record_dial(&mut self, now: f64, frac: f64) {
         self.attempts += 1;
         self.next_dial_at = now + self.backoff * (1.0 - JITTER + 2.0 * JITTER * frac);
@@ -99,7 +95,6 @@ impl Retry {
     }
 }
 
-// An open socket. Private: nothing outside this module should hold one.
 struct Net {
     ws_sender: WsSender,
     ws_receiver: WsReceiver,
@@ -257,8 +252,8 @@ impl Connection {
                 }
             }
 
-            Link::Dialing { mut net, retry } => {
-                let outcome = drain(&mut net, now, &mut self.heartbeat, events);
+            Link::Dialing { net, retry } => {
+                let outcome = drain(&net, now, &mut self.heartbeat, events);
                 match dial_decision(&retry, outcome, now) {
                     DialOutcome::Drop(reason) => self.drop_link(reason, retry, now, events),
                     DialOutcome::GoLive { recovered } => {
@@ -275,7 +270,7 @@ impl Connection {
             }
 
             Link::Live { mut net } => {
-                if let Drained::Dropped(reason) = drain(&mut net, now, &mut self.heartbeat, events) {
+                if let Drained::Dropped(reason) = drain(&net, now, &mut self.heartbeat, events) {
                     return self.drop_link(reason, Retry::recovering(now), now, events);
                 }
                 if self.heartbeat.timed_out(now) {
@@ -327,7 +322,7 @@ enum Drained {
     Dropped(String),
 }
 
-fn drain(net: &mut Net, now: f64, heartbeat: &mut Heartbeat, events: &mut Vec<ConnEvent>) -> Drained {
+fn drain(net: &Net, now: f64, heartbeat: &mut Heartbeat, events: &mut Vec<ConnEvent>) -> Drained {
     let mut outcome = Drained::Quiet;
     while let Some(event) = net.ws_receiver.try_recv() {
         match event {

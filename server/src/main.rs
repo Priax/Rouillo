@@ -107,14 +107,14 @@ enum FriendCheck {
 impl FriendCheck {
     fn conn(&self) -> ConnId {
         match self {
-            FriendCheck::Join { conn, .. } | FriendCheck::Invite { conn, .. } => *conn,
+            Self::Join { conn, .. } | Self::Invite { conn, .. } => *conn,
         }
     }
 
     fn users(&self) -> (Uuid, Uuid) {
         match self {
-            FriendCheck::Join { joiner, host_user, .. } => (*joiner, *host_user),
-            FriendCheck::Invite { inviter, target, .. } => (*inviter, *target),
+            Self::Join { joiner, host_user, .. } => (*joiner, *host_user),
+            Self::Invite { inviter, target, .. } => (*inviter, *target),
         }
     }
 }
@@ -163,12 +163,12 @@ struct Sim {
     prev_chain: [u32; 2],
     prev_all_clear: [bool; 2],
     prev_piece_id: [u32; 2],
-    last_sent_piece_id: Option<[u32; 2]>,
+    last_sent_rng: Option<[u128; 2]>,
 }
 
 impl Sim {
-    fn new(settings: &RoomSettings) -> Sim {
-        Sim {
+    fn new(settings: &RoomSettings) -> Self {
+        Self {
             boards: Self::fresh_boards(settings),
             tick: 0,
             queued_inputs: [Vec::new(), Vec::new()],
@@ -187,7 +187,7 @@ impl Sim {
             prev_chain: [0; 2],
             prev_all_clear: [false; 2],
             prev_piece_id: [0; 2],
-            last_sent_piece_id: None,
+            last_sent_rng: None,
         }
     }
 
@@ -253,24 +253,28 @@ impl Sim {
         queue.drain(..due).map(|p| p.kind).collect()
     }
 
-    fn advance(&mut self, dt: f32) {
+    fn advance(&mut self) {
         self.tick += 1;
         let at = self.tick + config::GARBAGE_TRAVEL_TICKS;
         let mut produced = [0; 2];
         for (slot, sent) in produced.iter_mut().enumerate() {
             let inputs = self.take_due_inputs(slot);
             let landed = self.take_due_garbage(slot);
-            *sent = self.boards[slot].step(inputs, landed, dt);
+            *sent = self.boards[slot].step(inputs, landed);
         }
         for (slot, sent) in produced.into_iter().enumerate() {
             self.send_garbage(slot, sent, at);
         }
     }
 
+    fn rng_positions(&self) -> [u128; 2] {
+        [self.boards[0].rng_position(), self.boards[1].rng_position()]
+    }
+
     fn state_update(&self, full_rng: bool) -> ServerMessage {
-        let pid = [self.boards[0].piece_id, self.boards[1].piece_id];
+        let pos = self.rng_positions();
         let rng = |i: usize| {
-            let changed = full_rng || self.last_sent_piece_id.is_none_or(|ids| ids[i] != pid[i]);
+            let changed = full_rng || self.last_sent_rng.is_none_or(|sent| sent[i] != pos[i]);
             changed.then(|| Box::new(self.boards[i].rng_state()))
         };
         ServerMessage::StateUpdate {
@@ -326,7 +330,7 @@ impl Sim {
         self.prev_chain = [0; 2];
         self.prev_all_clear = [false; 2];
         self.prev_piece_id = [self.boards[0].piece_id, self.boards[1].piece_id];
-        self.last_sent_piece_id = None;
+        self.last_sent_rng = None;
     }
 }
 
@@ -505,20 +509,20 @@ enum Command {
 impl Command {
     fn client(&self) -> Option<ConnId> {
         match self {
-            Command::Register { .. } | Command::FriendCheckDone { .. } => None,
-            Command::Unregister { conn }
-            | Command::Hello { conn, .. }
-            | Command::RequestRoomList { conn }
-            | Command::CreateRoom { conn, .. }
-            | Command::JoinRoom { conn, .. }
-            | Command::LeaveRoom { conn }
-            | Command::SetSetting { conn, .. }
-            | Command::ToggleCountdown { conn }
-            | Command::ReturnToLobby { conn }
-            | Command::Input { conn, .. }
-            | Command::TogglePause { conn }
-            | Command::Restart { conn }
-            | Command::InviteFriend { conn, .. } => Some(*conn),
+            Self::Register { .. } | Self::FriendCheckDone { .. } => None,
+            Self::Unregister { conn }
+            | Self::Hello { conn, .. }
+            | Self::RequestRoomList { conn }
+            | Self::CreateRoom { conn, .. }
+            | Self::JoinRoom { conn, .. }
+            | Self::LeaveRoom { conn }
+            | Self::SetSetting { conn, .. }
+            | Self::ToggleCountdown { conn }
+            | Self::ReturnToLobby { conn }
+            | Self::Input { conn, .. }
+            | Self::TogglePause { conn }
+            | Self::Restart { conn }
+            | Self::InviteFriend { conn, .. } => Some(*conn),
         }
     }
 }
@@ -533,8 +537,8 @@ fn clean_name(name: &str) -> String {
 }
 
 impl Manager {
-    fn new() -> Manager {
-        Manager {
+    fn new() -> Self {
+        Self {
             rooms: HashMap::new(),
             clients: HashMap::new(),
             conn_token: HashMap::new(),
@@ -623,7 +627,7 @@ impl Manager {
         let Some(token) = self.conn_token.get(&conn).cloned() else {
             return;
         };
-        if !self.rooms.get(&id).is_some_and(|r| r.members.len() < 2) {
+        if self.rooms.get(&id).is_none_or(|r| r.members.len() >= 2) {
             self.join_failed(conn, JOIN_UNAVAILABLE);
             return;
         }
@@ -1009,12 +1013,12 @@ impl Manager {
                                     .sim
                                     .last_restart
                                     .is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
-                                if !in_cooldown {
+                                if in_cooldown {
+                                    false
+                                } else {
                                     room.sim.last_restart = Some(now);
                                     room.sim.reset_boards(&room.settings);
                                     true
-                                } else {
-                                    false
                                 }
                             } else {
                                 false
@@ -1034,7 +1038,7 @@ impl Manager {
                         conn, room, host, from, ..
                     } => self.finish_join_check(conn, room, &host, from, friends),
                     FriendCheck::Invite { conn, room, target, .. } => {
-                        self.finish_invite_check(conn, room, target, friends)
+                        self.finish_invite_check(conn, room, target, friends);
                     }
                 }
             }
@@ -1276,7 +1280,7 @@ impl Manager {
                 let advanced = !room.sim.paused && !room.sim.finished;
                 let mut just_finished = false;
                 if advanced {
-                    room.sim.advance(dt);
+                    room.sim.advance();
 
                     for i in 0..2 {
                         let cc = room.sim.boards[i].chain_count;
@@ -1321,7 +1325,7 @@ impl Manager {
                 }
                 if (do_broadcast && advanced) || just_finished {
                     let msg = room.sim.state_update(just_finished);
-                    room.sim.last_sent_piece_id = Some([room.sim.boards[0].piece_id, room.sim.boards[1].piece_id]);
+                    room.sim.last_sent_rng = Some(room.sim.rng_positions());
                     match shared::encode(&msg) {
                         Ok(upd) => {
                             for m in &room.members {
@@ -1355,8 +1359,8 @@ struct TickProfile {
 }
 
 impl TickProfile {
-    fn new() -> TickProfile {
-        TickProfile {
+    fn new() -> Self {
+        Self {
             enabled: std::env::var("PUYO_PROFILE").is_ok(),
             budget: Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64),
             sum: Duration::ZERO,

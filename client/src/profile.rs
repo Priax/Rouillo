@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use notan::draw::*;
+use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
 use crate::http;
@@ -366,7 +366,7 @@ fn poll_edit(state: &mut State) {
 }
 
 fn save_profile(state: &mut State) {
-    if state.profile.as_ref().map(|p| p.edit_pending.is_some()).unwrap_or(true) {
+    if state.profile.as_ref().is_none_or(|p| p.edit_pending.is_some()) {
         return;
     }
     let bio = state
@@ -425,7 +425,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
 
     let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
     let cx = ww / 2.0;
-    let editing = state.profile.as_ref().map(|p| p.editing).unwrap_or(false);
+    let editing = state.profile.as_ref().is_some_and(|p| p.editing);
 
     if editing {
         if app.keyboard.was_pressed(KeyCode::Backspace) {
@@ -461,11 +461,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
         }
         let (save_btn, cancel_btn) = edit_buttons(cx);
         if (save_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Enter))
-            && state
-                .profile
-                .as_ref()
-                .map(|p| p.edit_pending.is_none())
-                .unwrap_or(false)
+            && state.profile.as_ref().is_some_and(|p| p.edit_pending.is_none())
         {
             save_profile(state);
         }
@@ -682,12 +678,7 @@ fn poll_friend(state: &mut State) {
 }
 
 fn add_friend(state: &mut State) {
-    if state
-        .other_profile
-        .as_ref()
-        .map(|p| p.friend_slot.is_some())
-        .unwrap_or(true)
-    {
+    if state.other_profile.as_ref().is_none_or(|p| p.friend_slot.is_some()) {
         return;
     }
     let (user_id, token) = (
@@ -735,25 +726,17 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
     let cx = ww / 2.0;
     let (add_btn, back_btn) = other_buttons(cx, wh);
 
-    let sending = state
-        .other_profile
-        .as_ref()
-        .map(|p| p.friend_slot.is_some())
-        .unwrap_or(false);
+    let sending = state.other_profile.as_ref().is_some_and(|p| p.friend_slot.is_some());
     let can_add = matches!(
         state.other_profile.as_ref().map(|p| (p.friendship, p.load_failed)),
-        Some((FriendshipStatus::Unknown, false) | (FriendshipStatus::NotFriends, false))
+        Some((FriendshipStatus::Unknown | FriendshipStatus::NotFriends, false))
     );
     if add_btn.clicked(app) && !sending && can_add {
         add_friend(state);
     }
 
     if back_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Escape) {
-        let prev = state
-            .other_profile
-            .as_ref()
-            .map(|p| p.prev_screen)
-            .unwrap_or(Screen::Menu);
+        let prev = state.other_profile.as_ref().map_or(Screen::Menu, |p| p.prev_screen);
         state.other_profile = None;
         state.screen = prev;
     }

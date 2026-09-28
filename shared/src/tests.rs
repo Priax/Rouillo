@@ -1,4 +1,5 @@
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::collections::HashSet;
 
 use super::*;
 use crate::config::{GRACE_FRAMES, GRID_HEIGHT, GRID_WIDTH, VISIBLE_ROW_OFFSET};
@@ -193,10 +194,10 @@ fn piece_locks_after_its_grace_period() {
     let mut b = empty_board();
     b.active_piece = Some(piece((GRID_HEIGHT - 1) as i32, 2, 0));
     for _ in 0..GRACE_FRAMES {
-        b.tick(config::CLIENT_SIM_DT);
+        b.tick();
     }
     assert!(b.active_piece.is_some(), "locked before its grace period ran out");
-    b.tick(config::CLIENT_SIM_DT);
+    b.tick();
     assert!(b.active_piece.is_none());
     assert_eq!(b.cells[GRID_HEIGHT - 1][2], Some(PuyoType::Red)); // axis
     assert_eq!(b.cells[GRID_HEIGHT - 2][2], Some(PuyoType::Blue)); // satellite
@@ -210,11 +211,11 @@ fn moving_on_the_ground_does_not_extend_the_grace_period() {
     let mut b = empty_board();
     b.active_piece = Some(piece((GRID_HEIGHT - 1) as i32, 2, 0));
     for _ in 0..GRACE_FRAMES / 2 {
-        b.tick(config::CLIENT_SIM_DT);
+        b.tick();
     }
     b.move_piece(-1);
-    for _ in 0..GRACE_FRAMES / 2 + 1 {
-        b.tick(config::CLIENT_SIM_DT);
+    for _ in 0..=(GRACE_FRAMES / 2) {
+        b.tick();
     }
     assert!(b.active_piece.is_none(), "the move reset the grace period");
 }
@@ -224,7 +225,7 @@ fn soft_dropping_onto_something_locks_at_once() {
     let mut b = empty_board();
     b.active_piece = Some(piece((GRID_HEIGHT - 1) as i32, 2, 0));
     b.apply_input(InputKind::SoftDropPress);
-    b.tick(config::CLIENT_SIM_DT);
+    b.tick();
     assert!(b.active_piece.is_none());
 }
 
@@ -237,7 +238,7 @@ fn soft_drop_takes_two_frames_per_cell_and_the_natural_fall_sixteen() {
             b.apply_input(InputKind::SoftDropPress);
         }
         for _ in 0..frames {
-            b.tick(config::CLIENT_SIM_DT);
+            b.tick();
         }
         b.active_piece.expect("still falling").row - 2
     };
@@ -298,10 +299,10 @@ fn a_split_pair_falls_before_anything_pops() {
         config::SPLIT_DELAY_SATELLITE as u32 + 10 + config::BOUNCE_FRAMES
     );
     for _ in 0..frames - 1 {
-        b.tick(config::CLIENT_SIM_DT);
+        b.tick();
         assert_eq!(b.state, GameState::ResolvingMatches);
     }
-    b.tick(config::CLIENT_SIM_DT);
+    b.tick();
     assert_eq!(b.state, GameState::Playing, "the next pair never came");
 }
 
@@ -315,10 +316,10 @@ fn a_group_flashes_before_it_vanishes() {
     b.after_landing();
     assert_eq!(b.popping.len(), 4);
     for _ in 0..config::POP_FRAMES - 1 {
-        b.tick(config::CLIENT_SIM_DT);
+        b.tick();
     }
     assert_eq!(b.cells[12][0], Some(PuyoType::Red), "cleared before the flash ended");
-    b.tick(config::CLIENT_SIM_DT);
+    b.tick();
     assert_eq!(b.cells[12][0], None);
 }
 
@@ -597,7 +598,7 @@ struct Run {
 /// locking, chains and garbage instead of freezing on the first game over.
 /// A seed whose script reaches a chain of 3 within 6000 ticks: random play
 /// rarely chains, and the tests below need the resolution path exercised.
-const SCRIPT_SEED: u64 = 99;
+const SCRIPT_SEED: u64 = 351;
 
 fn run_script(seed: u64, ticks: u64, skip_input_at: Option<u64>) -> Run {
     let fresh = |s: u64| {
@@ -629,7 +630,7 @@ fn run_script(seed: u64, ticks: u64, skip_input_at: Option<u64>) -> Run {
             board.pending_garbage += 9;
             run.garbage_dropped += 9;
         }
-        board.tick(config::CLIENT_SIM_DT);
+        board.tick();
         run.max_chain = run.max_chain.max(board.chain_count);
         run.hashes.push(board.state_hash());
     }
@@ -698,7 +699,7 @@ fn one_dropped_input_diverges() {
 ///
 /// It therefore fails whenever the simulation changes, deliberately or not. If
 /// the change was intended, re-read the diff, then paste the new value in.
-const GOLDEN_FINAL_HASH: u64 = 797_379_939_742_832_967;
+const GOLDEN_FINAL_HASH: u64 = 4_449_363_173_517_608_836;
 
 #[test]
 fn scripted_run_matches_its_recorded_outcome() {
@@ -745,9 +746,17 @@ fn the_digest_notices_fields_the_script_never_varies() {
 /// `states[t]` is the state after tick t, tagged with which game it belongs
 /// to: like `run_script`, a board that tops out is replaced so the timeline
 /// keeps reaching chains and garbage.
+/// Same idea for the replay timeline, which plays its script differently and
+/// so needs a seed of its own that chains.
+const TIMELINE_SEED: u64 = 4;
+
 fn server_timeline(ticks: u32, inputs: &[StampedInput], incoming: &[IncomingGarbage]) -> Vec<(u32, Board)> {
+    timeline_from(TIMELINE_SEED, ticks, inputs, incoming)
+}
+
+fn timeline_from(seed: u64, ticks: u32, inputs: &[StampedInput], incoming: &[IncomingGarbage]) -> Vec<(u32, Board)> {
     let fresh = |game: u32| {
-        let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, SCRIPT_SEED + game as u64, 1, 5);
+        let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, seed + game as u64, 1, 5);
         b.spawn_piece();
         b
     };
@@ -765,11 +774,7 @@ fn server_timeline(ticks: u32, inputs: &[StampedInput], incoming: &[IncomingGarb
             next += 1;
         }
         let landed = incoming.iter().filter(|g| g.at == t).map(|g| g.amount).sum();
-        board.step(
-            inputs[start..next].iter().map(|i| i.kind),
-            landed,
-            config::CLIENT_SIM_DT,
-        );
+        board.step(inputs[start..next].iter().map(|i| i.kind), landed);
         states.push((game, board.clone()));
     }
     states
@@ -819,7 +824,7 @@ fn replaying_from_any_server_state_lands_on_the_server_future() {
             // applied by `from`, and every attack not landed by then.
             let pending: Vec<_> = inputs.iter().copied().filter(|i| i.tick > from).collect();
             let in_flight: Vec<_> = attacks.iter().copied().filter(|g| g.at > from).collect();
-            let replayed = start.replay(from, to, &pending, &in_flight, config::CLIENT_SIM_DT);
+            let replayed = start.replay(from, to, &pending, &in_flight);
             // Inputs stamped past `to` sit on top of the replay without a tick.
             let mut expected = states[to as usize].1.clone();
             for i in pending.iter().filter(|i| i.tick > to) {
@@ -843,11 +848,11 @@ fn a_late_input_replays_on_the_first_tick_after_the_snapshot() {
         tick: 3,
         kind: InputKind::MoveLeft,
     }];
-    let replayed = states[8].replay(8, 10, &late, &[], config::CLIENT_SIM_DT);
+    let replayed = states[8].replay(8, 10, &late, &[]);
 
     let mut expected = states[8].clone();
-    expected.step([InputKind::MoveLeft], 0, config::CLIENT_SIM_DT);
-    expected.step([], 0, config::CLIENT_SIM_DT);
+    expected.step([InputKind::MoveLeft], 0);
+    expected.step([], 0);
     assert_eq!(replayed.state_hash(), expected.state_hash());
 }
 
@@ -858,7 +863,7 @@ fn an_input_pressed_after_the_last_step_is_applied_without_a_tick() {
         tick: 6,
         kind: InputKind::MoveRight,
     }];
-    let replayed = states[5].replay(5, 5, &pressed, &[], config::CLIENT_SIM_DT);
+    let replayed = states[5].replay(5, 5, &pressed, &[]);
 
     let mut expected = states[5].clone();
     expected.apply_input(InputKind::MoveRight);
@@ -869,18 +874,8 @@ fn an_input_pressed_after_the_last_step_is_applied_without_a_tick() {
 fn an_attack_lands_in_the_replay_on_its_own_tick() {
     let states: Vec<_> = server_timeline(10, &[], &[]).into_iter().map(|(_, b)| b).collect();
     let attack = [IncomingGarbage { at: 7, amount: 4 }];
-    assert_eq!(
-        states[5]
-            .replay(5, 6, &[], &attack, config::CLIENT_SIM_DT)
-            .pending_garbage,
-        0
-    );
-    assert_eq!(
-        states[5]
-            .replay(5, 7, &[], &attack, config::CLIENT_SIM_DT)
-            .pending_garbage,
-        4
-    );
+    assert_eq!(states[5].replay(5, 6, &[], &attack).pending_garbage, 0);
+    assert_eq!(states[5].replay(5, 7, &[], &attack).pending_garbage, 4);
 }
 
 /// The drawn height of the falling piece: its row plus how far it is towards
@@ -900,7 +895,7 @@ fn a_falling_piece_is_drawn_gliding_down() {
     let mut prev = drawn_row(&b);
     let per_tick = 1.0 / config::FALL_FRAMES_PER_CELL as f32;
     while b.active_piece.as_ref().is_some_and(|p| p.row < start_row + 3) {
-        b.tick(config::CLIENT_SIM_DT);
+        b.tick();
         let now = drawn_row(&b);
         assert!(now >= prev - 1e-4, "the piece went up: {prev} -> {now}");
         assert!(now - prev <= 2.0 * per_tick + 1e-4, "the piece jumped: {prev} -> {now}");
@@ -958,4 +953,140 @@ fn an_all_clear_pays_out_with_the_next_chain() {
     };
     assert_eq!(b.after_landing(), 1 + config::ALL_CLEAR_BONUS);
     assert!(!b.all_clear_bonus, "the bonus was paid twice");
+}
+
+/// Nuisance that does not fit is lost; a full column is no reason to lose on
+/// the spot, while the nuisance is still falling and nobody has seen it.
+#[test]
+fn nuisance_into_a_full_column_does_not_end_the_game_mid_drop() {
+    let mut b = empty_board();
+    for r in 0..GRID_HEIGHT {
+        b.cells[r][0] = Some(PuyoType::Red);
+    }
+    b.pending_garbage = 30;
+    b.state = GameState::DroppingGarbage;
+    b.drop_garbage();
+    assert_ne!(b.state, GameState::GameOver);
+    assert!(b.falls.iter().all(|f| f.col != 0), "nuisance landed in a full column");
+    assert_eq!(b.falls.len(), 25, "the other five columns take five rows each");
+    assert_eq!(b.pending_garbage, 0, "what did not fit was kept for later");
+}
+
+/// Buried under nuisance, the board loses only once the drop is over and the
+/// next pair has nowhere to appear.
+#[test]
+fn a_board_buried_by_nuisance_loses_after_the_drop_is_seen() {
+    let mut b = empty_board();
+    for r in 3..GRID_HEIGHT {
+        for c in 0..GRID_WIDTH {
+            b.cells[r][c] = Some(PuyoType::Garbage);
+        }
+    }
+    b.pending_garbage = 30;
+    b.state = GameState::DroppingGarbage;
+    b.drop_garbage();
+    let Settle::Falling { frames, .. } = b.settle else {
+        panic!("not falling: {:?}", b.settle);
+    };
+    assert!(frames > 0);
+    for _ in 0..frames - 1 {
+        b.tick();
+        assert_ne!(b.state, GameState::GameOver, "lost before the nuisance had landed");
+    }
+    b.tick();
+    assert_eq!(b.state, GameState::GameOver);
+}
+
+fn at_level(level: u32) -> Board {
+    let mut b = empty_board();
+    b.match_frames = (level - 1) * config::LEVEL_FRAMES;
+    assert_eq!(b.level(), level);
+    b
+}
+
+#[test]
+fn margin_time_follows_the_level() {
+    assert_eq!(at_level(1).target_points(), 70);
+    assert_eq!(at_level(6).target_points(), 70, "reduced before the margin ran out");
+    assert_eq!(at_level(7).target_points(), 52, "70 x 3/4");
+    assert_eq!(at_level(8).target_points(), 39, "70 x (3/4)^2");
+    assert_eq!(at_level(20).target_points(), 1, "fourteen steps down");
+    assert_eq!(at_level(99).target_points(), 1, "never below 1");
+}
+
+/// A room started at a high level begins with its margin already spent.
+#[test]
+fn the_starting_level_counts_towards_the_margin() {
+    let b = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 8, 5);
+    assert_eq!(b.target_points(), 39);
+}
+
+/// With the target fully run down, a plain 4-puyo pop (40 points) sends 40
+/// nuisance: the figure quoted for Tsu.
+#[test]
+fn a_fully_run_down_margin_makes_a_single_pop_send_forty() {
+    let mut b = at_level(20);
+    for r in 9..=12 {
+        b.cells[r][0] = Some(PuyoType::Red);
+    }
+    b.state = GameState::ResolvingMatches;
+    assert_eq!(b.after_landing(), 40);
+}
+
+#[test]
+fn the_match_clock_only_runs_during_play() {
+    let mut b = empty_board();
+    b.spawn_piece();
+    b.tick();
+    assert_eq!(b.match_frames, 1);
+    b.set_paused(true);
+    b.tick();
+    assert_eq!(b.match_frames, 1, "the clock ran while paused");
+}
+
+#[test]
+fn a_higher_starting_level_starts_buried() {
+    let rows_of_garbage = |level: u32| {
+        let b = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, level, 5);
+        b.cells
+            .iter()
+            .filter(|row| row.iter().all(|c| *c == Some(PuyoType::Garbage)))
+            .count()
+    };
+    assert_eq!(rows_of_garbage(1), 0);
+    assert_eq!(rows_of_garbage(3), 0);
+    assert_eq!(rows_of_garbage(4), 1);
+    assert_eq!(rows_of_garbage(7), 2);
+    assert_eq!(rows_of_garbage(15), 4, "capped");
+    let b = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 4, 5);
+    assert!(
+        b.cells[GRID_HEIGHT - 1].iter().all(|c| *c == Some(PuyoType::Garbage)),
+        "not at the bottom"
+    );
+}
+
+#[test]
+fn the_fall_speeds_up_one_frame_every_two_levels() {
+    let frames = |level: u32| Board::new(GRID_WIDTH, GRID_HEIGHT, 1, level, 5).fall_frames_per_cell();
+    assert_eq!(frames(1), 16);
+    assert_eq!(frames(2), 16);
+    assert_eq!(frames(3), 15);
+    assert_eq!(frames(17), 8);
+    assert_eq!(frames(40), 8, "never faster than Tsu's fastest");
+}
+
+/// Turning the satellite down against the floor pushes the pair up. It used
+/// to try the sideways kicks first and hop a column over whenever the
+/// neighbouring column was free lower down.
+#[test]
+fn turning_down_against_the_floor_pushes_up_not_sideways() {
+    let mut b = empty_board();
+    // The pair rests on a puyo in column 2, satellite to its right; column 1
+    // is empty all the way down, so a sideways kick would have room.
+    let floor = GRID_HEIGHT - 1;
+    b.cells[floor][2] = Some(PuyoType::Green);
+    b.active_piece = Some(piece((floor - 1) as i32, 2, 1));
+    b.rotate_piece(1); // satellite right -> down, into the green puyo
+    let p = b.active_piece.unwrap();
+    assert_eq!((p.row, p.col, p.rotation), ((floor - 2) as i32, 2, 2));
 }

@@ -1,0 +1,25 @@
+name: Audit
+
+# Checks dependencies against the RustSec advisory database. Weekly as well as
+# on changes: an advisory can appear without a line of the project changing.
+# Advisories deliberately ignored are listed, with the reason, in
+# .cargo/audit.toml.
+on:
+  push:
+    branches: [master]
+    paths: ["**/Cargo.toml", "Cargo.lock", ".cargo/audit.toml"]
+  pull_request:
+    paths: ["**/Cargo.toml", "Cargo.lock", ".cargo/audit.toml"]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit

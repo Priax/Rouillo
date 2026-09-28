@@ -1,10 +1,13 @@
-use std::collections::HashSet;
-
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 
 pub mod config;
-use crate::config::*;
+use crate::config::{
+    BOUNCE_FRAMES, CELL_PX, CELL_UNITS, CHAIN_POWERS, COLOR_BONUS, FALL_FRAMES_PER_CELL, FREE_FALL_ACCEL,
+    FREE_FALL_MAX, FREE_FALL_START, GRACE_FRAMES, GROUP_BONUS, HALF_CELL_UNITS, LEVELS_PER_SPEEDUP, LEVEL_FRAMES,
+    MARGIN_LEVELS, MARGIN_STEPS, MAX_PUSH_BACKS, MIN_FALL_FRAMES_PER_CELL, OJAMA_ACCEL, POP_FRAMES, PX_UNITS,
+    SOFT_DROP_UNITS, SPAWN_COL, SPLIT_DELAY_AXIS, SPLIT_DELAY_SATELLITE, TARGET_POINTS, VISIBLE_ROW_OFFSET,
+};
 
 pub fn encode<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, bitcode::Error> {
     let raw = bitcode::serialize(msg)?;
@@ -26,7 +29,7 @@ struct Fnv(u64);
 
 impl Fnv {
     fn new() -> Self {
-        Fnv(0xcbf2_9ce4_8422_2325)
+        Self(0xcbf2_9ce4_8422_2325)
     }
 
     fn finish(self) -> u64 {
@@ -63,10 +66,6 @@ impl Fnv {
     fn usize(&mut self, v: usize) {
         self.u64(v as u64);
     }
-
-    fn f32(&mut self, v: f32) {
-        self.u32(v.to_bits());
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, Serialize, Deserialize)]
@@ -85,8 +84,6 @@ pub enum InputKind {
     MoveRight,
     RotateCW,
     RotateCCW,
-    /// Down pressed and released: soft drop is a speed held for as long as
-    /// the key is, as in Tsu, not a step per key repeat.
     SoftDropPress,
     SoftDropRelease,
     HardDrop,
@@ -114,21 +111,21 @@ pub enum PausePolicy {
 }
 
 impl PausePolicy {
-    const ALL: [PausePolicy; 3] = [PausePolicy::Everyone, PausePolicy::HostOnly, PausePolicy::Nobody];
+    const ALL: [Self; 3] = [Self::Everyone, Self::HostOnly, Self::Nobody];
 
     pub fn label(self) -> &'static str {
         match self {
-            PausePolicy::Everyone => "Tous",
-            PausePolicy::HostOnly => "Hôte",
-            PausePolicy::Nobody => "Personne",
+            Self::Everyone => "Tous",
+            Self::HostOnly => "Hôte",
+            Self::Nobody => "Personne",
         }
     }
 
     pub fn allows(self, is_host: bool) -> bool {
         match self {
-            PausePolicy::Everyone => true,
-            PausePolicy::HostOnly => is_host,
-            PausePolicy::Nobody => false,
+            Self::Everyone => true,
+            Self::HostOnly => is_host,
+            Self::Nobody => false,
         }
     }
 
@@ -172,7 +169,11 @@ impl RoomSettings {
 
     pub fn value(&self, i: usize) -> String {
         match i {
-            0 => self.starting_level.to_string(),
+            0 => match config::starting_garbage_rows(self.starting_level) {
+                0 => self.starting_level.to_string(),
+                1 => format!("{} (+1 ligne)", self.starting_level),
+                rows => format!("{} (+{rows} lignes)", self.starting_level),
+            },
             1 => self.colors.to_string(),
             2 => {
                 if self.friends_only {
@@ -291,19 +292,19 @@ pub enum ServerMessage {
 }
 
 impl PuyoType {
-    pub fn random_with_seed<R: Rng>(rng: &mut R, colors: u32) -> PuyoType {
+    pub fn random_with_seed<R: Rng>(rng: &mut R, colors: u32) -> Self {
         let n = colors.clamp(1, 5);
         match rng.random_range(0..n) {
-            0 => PuyoType::Red,
-            1 => PuyoType::Blue,
-            2 => PuyoType::Yellow,
-            3 => PuyoType::Green,
-            _ => PuyoType::Purple,
+            0 => Self::Red,
+            1 => Self::Blue,
+            2 => Self::Yellow,
+            3 => Self::Green,
+            _ => Self::Purple,
         }
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct ActivePuyo {
     pub row: i32,
     pub col: i32,
@@ -325,7 +326,7 @@ impl ActivePuyo {
     }
 }
 
-#[derive(PartialEq, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum GameState {
     Playing,
     ResolvingMatches,
@@ -334,40 +335,22 @@ pub enum GameState {
     Paused,
 }
 
-/// What a board between two pairs is busy with. Both run for a number of
-/// ticks worked out when they start, so the timing of a chain is part of the
-/// simulation, identical on every machine.
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Settle {
     Idle,
-    /// The puyos in `falls` are dropping into place and bouncing; done when
-    /// `frame` reaches `frames`.
-    Falling {
-        frame: u32,
-        frames: u32,
-    },
-    /// The cells in `popping` flash, then vanish when `frame` reaches
-    /// `POP_FRAMES`.
-    Popping {
-        frame: u32,
-    },
+    Falling { frame: u32, frames: u32 },
+    Popping { frame: u32 },
 }
 
-/// One puyo dropping into place. It already sits at its final cell in
-/// `cells`; `cells_fallen` says how far above that it started, so it can be
-/// drawn on the way down.
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct CellFall {
     pub row: u8,
     pub col: u8,
     pub cells_fallen: u8,
-    /// Frames before it starts moving.
     pub delay: u8,
     pub ojama: bool,
 }
 
-/// Distance covered after `frames` of free fall, in 1/65536 px. Tsu's order:
-/// move, then speed up.
 pub fn fallen_px(frames: u32, start: u32, accel: u32) -> u64 {
     let (mut y, mut v) = (0u64, start);
     for _ in 0..frames {
@@ -377,7 +360,6 @@ pub fn fallen_px(frames: u32, start: u32, accel: u32) -> u64 {
     y
 }
 
-/// Frames a free fall of `cells` takes.
 pub fn frames_to_fall(cells: u32, start: u32, accel: u32) -> u32 {
     let target = (cells * CELL_PX) as u64 * PX_UNITS as u64;
     let (mut y, mut v, mut frames) = (0u64, start, 0);
@@ -390,7 +372,7 @@ pub fn frames_to_fall(cells: u32, start: u32, accel: u32) -> u32 {
 }
 
 impl CellFall {
-    fn start_and_accel(&self) -> (u32, u32) {
+    fn start_and_accel(self) -> (u32, u32) {
         if self.ojama {
             (0, OJAMA_ACCEL[self.col as usize % OJAMA_ACCEL.len()])
         } else {
@@ -398,14 +380,11 @@ impl CellFall {
         }
     }
 
-    /// The frame, counted from the start of the fall, it lands on.
     pub fn lands_at(&self) -> u32 {
         let (start, accel) = self.start_and_accel();
         self.delay as u32 + frames_to_fall(self.cells_fallen as u32, start, accel)
     }
 
-    /// How many cells above its final one to draw it at, `frame` frames into
-    /// the fall.
     pub fn height_at(&self, frame: u32) -> f32 {
         let (start, accel) = self.start_and_accel();
         let moving = frame.saturating_sub(self.delay as u32);
@@ -414,8 +393,6 @@ impl CellFall {
         left as f32 / (CELL_PX * PX_UNITS) as f32
     }
 
-    /// How far through its landing bounce it is at `frame`, 0 to 1, or None
-    /// when it is not bouncing.
     pub fn bounce_at(&self, frame: u32) -> Option<f32> {
         let since = frame.checked_sub(self.lands_at())?;
         (since < BOUNCE_FRAMES).then(|| since as f32 / BOUNCE_FRAMES as f32)
@@ -441,13 +418,10 @@ pub struct Board {
     pub nuisance_points: u32,
     pub chain_count: u32,
     pub last_was_all_clear: bool,
-    /// An all clear waiting to add `ALL_CLEAR_BONUS` to the next chain.
     pub all_clear_bonus: bool,
-    pub played_time: f32,
-    /// How far the pair is on its way to the next row, 0 to `CELL_UNITS`.
+    pub match_frames: u32,
     pub fall_offset: u32,
     pub soft_dropping: bool,
-    /// Frames this pair has spent resting on something, in total.
     pub ground_frames: u32,
     pub push_backs: u32,
     pub settle: Settle,
@@ -463,7 +437,7 @@ fn default_rng() -> rand_chacha::ChaCha12Rng {
 }
 
 impl Board {
-    pub fn new(width: usize, height: usize, seed: u64, start_level: u32, colors: u32) -> Board {
+    pub fn new(width: usize, height: usize, seed: u64, start_level: u32, colors: u32) -> Self {
         use rand::SeedableRng;
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(seed);
         let n1 = (
@@ -475,7 +449,7 @@ impl Board {
             PuyoType::random_with_seed(&mut rng, colors),
         );
 
-        Board {
+        let mut board = Self {
             width,
             height,
             start_level,
@@ -493,7 +467,7 @@ impl Board {
             chain_count: 0,
             last_was_all_clear: false,
             all_clear_bonus: false,
-            played_time: 0.0,
+            match_frames: 0,
             fall_offset: 0,
             soft_dropping: false,
             ground_frames: 0,
@@ -502,7 +476,12 @@ impl Board {
             falls: Vec::new(),
             popping: Vec::new(),
             rng,
+        };
+        let rows = config::starting_garbage_rows(start_level) as usize;
+        for row in board.cells.iter_mut().rev().take(rows) {
+            row.fill(Some(PuyoType::Garbage));
         }
+        board
     }
 
     pub fn spawn_piece(&mut self) {
@@ -556,9 +535,6 @@ impl Board {
         false
     }
 
-    /// Whether the pair could be at `piece`. Past mid-height it also covers
-    /// the row below, which must then be free too: a pair halfway into a
-    /// cell cannot slide over a gap it is already overlapping.
     fn fits(&self, piece: &ActivePuyo) -> bool {
         if self.check_collision(piece) {
             return false;
@@ -590,14 +566,17 @@ impl Board {
         let sat = piece.get_positions()[1];
 
         let candidates = [
-            (old_row, old_col, new_rot, false),       // in place
-            (old_row, old_col - 1, new_rot, false),   // kick left
-            (old_row, old_col + 1, new_rot, false),   // kick right
-            (old_row - 1, old_col, new_rot, true),    // floor kick
-            (sat.0, sat.1, (old_rot + 2) % 4, false), // pivot on satellite
+            (old_row, old_col, new_rot, true, false),             // in place
+            (old_row, old_col - 1, new_rot, new_rot == 1, false), // off a wall on the right
+            (old_row, old_col + 1, new_rot, new_rot == 3, false), // off a wall on the left
+            (old_row - 1, old_col, new_rot, new_rot == 2, true),  // off the floor
+            (sat.0, sat.1, (old_rot + 2) % 4, true, false),       // pivot on satellite
         ];
 
-        for (row, col, rotation, push_back) in candidates {
+        for (row, col, rotation, applies, push_back) in candidates {
+            if !applies {
+                continue;
+            }
             let turned = ActivePuyo {
                 row,
                 col,
@@ -605,8 +584,7 @@ impl Board {
                 ..piece.clone()
             };
             if push_back {
-                // Only a satellite turning to point down pushes the pair up.
-                if new_rot != 2 || !self.fits(&turned) {
+                if !self.fits(&turned) {
                     continue;
                 }
                 if self.push_backs >= MAX_PUSH_BACKS {
@@ -639,7 +617,6 @@ impl Board {
         }
     }
 
-    /// Whether there is a falling piece with a free cell right below it.
     pub fn can_fall(&self) -> bool {
         let Some(piece) = &self.active_piece else {
             return false;
@@ -649,15 +626,12 @@ impl Board {
         !self.check_collision(&below)
     }
 
-    /// Frames per cell of the natural fall at the current level.
     fn fall_frames_per_cell(&self) -> u32 {
         FALL_FRAMES_PER_CELL
-            .saturating_sub(self.level().saturating_sub(1))
+            .saturating_sub(self.level().saturating_sub(1) / LEVELS_PER_SPEEDUP)
             .max(MIN_FALL_FRAMES_PER_CELL)
     }
 
-    /// How far, as a fraction of a cell, the pair is on its way to the next
-    /// row; 0 when it rests on something.
     pub fn fall_progress(&self) -> f32 {
         if !self.can_fall() {
             return 0.0;
@@ -665,9 +639,6 @@ impl Board {
         self.fall_offset as f32 / CELL_UNITS as f32
     }
 
-    /// One frame of the pair's life: it falls at the natural or soft drop
-    /// speed, and locks after its grace period on the ground, or at once when
-    /// soft dropped onto something.
     fn tick_pair(&mut self) {
         if self.active_piece.is_none() {
             return;
@@ -717,8 +688,6 @@ impl Board {
         self.fall_offset = 0;
         self.state = GameState::ResolvingMatches;
 
-        // Every puyo of the pair bounces, fallen or not; a hanging one first
-        // drops with its split delay.
         let moved = self.collapse();
         let mut falls = Vec::new();
         for (r, c, delay) in placed {
@@ -738,8 +707,6 @@ impl Board {
         self.begin_fall(falls);
     }
 
-    /// Drops every floating puyo straight down, at once. Returns each move
-    /// as (from row, column, to row).
     fn collapse(&mut self) -> Vec<(usize, usize, usize)> {
         let mut moved = Vec::new();
         for col in 0..self.width {
@@ -768,48 +735,45 @@ impl Board {
         self.settle = Settle::Falling { frame: 0, frames };
     }
 
-    /// Marks the groups to pop and scores them, without clearing them yet.
-    /// Returns the score, or None when nothing pops.
     fn start_pop(&mut self) -> Option<u32> {
-        let mut to_remove = HashSet::new();
-        let mut visited = HashSet::new();
+        let mut to_remove = vec![vec![false; self.width]; self.height];
+        let mut visited = vec![vec![false; self.width]; self.height];
         let mut group_sizes = Vec::new();
-        let mut unique_colors = HashSet::new();
+        let mut colors_seen = [false; 6];
         let mut total_puyos_cleared = 0;
 
         for r in 0..self.height {
             for c in 0..self.width {
-                if let Some(p_type) = self.cells[r][c] {
-                    if p_type == PuyoType::Garbage {
-                        continue;
-                    }
-
-                    if !visited.contains(&(r, c)) {
-                        let mut group = Vec::new();
-                        self.flood_fill(r, c, p_type, &mut group, &mut visited);
-                        if group.len() >= 4 && group.iter().any(|(r, _)| *r >= VISIBLE_ROW_OFFSET) {
-                            unique_colors.insert(p_type);
-                            group_sizes.push(group.len() as u32);
-                            total_puyos_cleared += group.len() as u32;
-                            for pos in group {
-                                to_remove.insert(pos);
-                                self.mark_adjacent_garbage(pos.0, pos.1, &mut to_remove);
-                            }
-                        }
+                let Some(p_type) = self.cells[r][c] else {
+                    continue;
+                };
+                if p_type == PuyoType::Garbage || visited[r][c] {
+                    continue;
+                }
+                let group = self.flood_fill(r, c, p_type, &mut visited);
+                if group.len() >= 4 && group.iter().any(|(r, _)| *r >= VISIBLE_ROW_OFFSET) {
+                    colors_seen[p_type as usize] = true;
+                    group_sizes.push(group.len() as u32);
+                    total_puyos_cleared += group.len() as u32;
+                    for (gr, gc) in group {
+                        to_remove[gr][gc] = true;
+                        self.mark_adjacent_garbage(gr, gc, &mut to_remove);
                     }
                 }
             }
         }
-        if to_remove.is_empty() {
+        let popping: Vec<(u8, u8)> = (0..self.height)
+            .flat_map(|r| (0..self.width).map(move |c| (r, c)))
+            .filter(|&(r, c)| to_remove[r][c])
+            .map(|(r, c)| (r as u8, c as u8))
+            .collect();
+        if popping.is_empty() {
             return None;
         }
         self.chain_count += 1;
-        let score_gained = self.calculate_score(unique_colors.len(), total_puyos_cleared, &group_sizes);
+        let colors = colors_seen.iter().filter(|&&seen| seen).count();
+        let score_gained = self.calculate_score(colors, total_puyos_cleared, &group_sizes);
         self.score += score_gained;
-
-        // Sorted, so the list does not depend on the set's iteration order.
-        let mut popping: Vec<(u8, u8)> = to_remove.into_iter().map(|(r, c)| (r as u8, c as u8)).collect();
-        popping.sort_unstable();
         self.popping = popping;
         Some(score_gained as u32)
     }
@@ -820,15 +784,13 @@ impl Board {
         }
     }
 
-    /// Pops what can pop, right away. For tests and tools; the game goes
-    /// through the timed `Popping` step instead.
     pub fn check_matches(&mut self) -> Option<u32> {
         let score = self.start_pop()?;
         self.clear_popping();
         Some(score)
     }
 
-    fn mark_adjacent_garbage(&self, r: usize, c: usize, to_remove: &mut HashSet<(usize, usize)>) {
+    fn mark_adjacent_garbage(&self, r: usize, c: usize, to_remove: &mut [Vec<bool>]) {
         let neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)];
         for (dr, dc) in &neighbors {
             let nr = r as i32 + dr;
@@ -837,8 +799,8 @@ impl Board {
             if nr >= 0 && nr < self.height as i32 && nc >= 0 && nc < self.width as i32 {
                 let nr = nr as usize;
                 let nc = nc as usize;
-                if let Some(PuyoType::Garbage) = self.cells[nr][nc] {
-                    to_remove.insert((nr, nc));
+                if self.cells[nr][nc] == Some(PuyoType::Garbage) {
+                    to_remove[nr][nc] = true;
                 }
             }
         }
@@ -857,8 +819,6 @@ impl Board {
         (10 * total_cleared) as i32 * multiplier as i32
     }
 
-    /// Puts up to 30 nuisance on the board, each at the cell it will end up
-    /// in, and starts them falling from above the field.
     pub fn drop_garbage(&mut self) {
         if self.pending_garbage == 0 {
             return;
@@ -870,31 +830,27 @@ impl Board {
         let leftover = garbage_to_drop % self.width as u32;
         let mut landed: Vec<(usize, usize)> = Vec::new();
 
-        'full: for _ in 0..full_lines {
+        for _ in 0..full_lines {
             for c in 0..self.width {
-                match self.drop_one_garbage(c) {
-                    Some(r) => landed.push((r, c)),
-                    None => break 'full,
+                if let Some(r) = self.drop_one_garbage(c) {
+                    landed.push((r, c));
                 }
             }
         }
 
-        if self.state != GameState::GameOver && leftover > 0 {
+        if leftover > 0 {
             let mut cols: Vec<usize> = (0..self.width).collect();
             for i in 0..leftover as usize {
                 let j = self.rng.random_range(i..self.width);
                 cols.swap(i, j);
             }
             for &col in cols.iter().take(leftover as usize) {
-                match self.drop_one_garbage(col) {
-                    Some(r) => landed.push((r, col)),
-                    None => break,
+                if let Some(r) = self.drop_one_garbage(col) {
+                    landed.push((r, col));
                 }
             }
         }
 
-        // Each column's nuisance falls as one block whose bottom starts at
-        // the top of the field.
         let mut falls = Vec::new();
         for col in 0..self.width {
             let Some(bottom) = landed.iter().filter(|&&(_, c)| c == col).map(|&(r, _)| r).max() else {
@@ -914,29 +870,19 @@ impl Board {
     }
 
     fn drop_one_garbage(&mut self, col: usize) -> Option<usize> {
-        for r in (0..self.height).rev() {
-            if self.cells[r][col].is_none() {
-                self.cells[r][col] = Some(PuyoType::Garbage);
-                return Some(r);
-            }
-        }
-        self.state = GameState::GameOver;
-        None
+        let r = (0..self.height).rev().find(|&r| self.cells[r][col].is_none())?;
+        self.cells[r][col] = Some(PuyoType::Garbage);
+        Some(r)
     }
 
-    fn flood_fill(
-        &self,
-        r: usize,
-        c: usize,
-        target_type: PuyoType,
-        group: &mut Vec<(usize, usize)>,
-        visited: &mut HashSet<(usize, usize)>,
-    ) {
+    fn flood_fill(&self, r: usize, c: usize, target_type: PuyoType, visited: &mut [Vec<bool>]) -> Vec<(usize, usize)> {
+        let mut group = Vec::new();
         let mut stack = vec![(r, c)];
         while let Some((r, c)) = stack.pop() {
-            if !visited.insert((r, c)) {
+            if visited[r][c] {
                 continue;
             }
+            visited[r][c] = true;
             group.push((r, c));
             for (dr, dc) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
                 let nr = r as i32 + dr;
@@ -950,31 +896,25 @@ impl Board {
                 }
             }
         }
+        group
     }
 
-    /// Everything has landed: pop what connects, or else hand over to the
-    /// next pair (through the nuisance, if any is due). Returns the nuisance
-    /// this sends.
     fn after_landing(&mut self) -> u32 {
         self.falls.clear();
         self.settle = Settle::Idle;
         if let Some(score) = self.start_pop() {
             self.settle = Settle::Popping { frame: 0 };
+            let target = self.target_points();
             let total_nuisance = score + self.nuisance_points;
-            self.nuisance_points = total_nuisance % 70;
-            let mut attack = total_nuisance / 70;
+            self.nuisance_points = total_nuisance % target;
+            let mut attack = total_nuisance / target;
             if self.all_clear_bonus {
                 attack += config::ALL_CLEAR_BONUS;
                 self.all_clear_bonus = false;
             }
-            // Tsu's offset rule: an attack first cancels the nuisance waiting
-            // over this board; only what is left goes to the opponent.
             let offset = attack.min(self.pending_garbage);
             self.pending_garbage -= offset;
             return attack - offset;
-        }
-        if self.state == GameState::GameOver {
-            return 0;
         }
         if self.pending_garbage > 0 {
             self.state = GameState::DroppingGarbage;
@@ -992,7 +932,6 @@ impl Board {
         }
         let ac = self.check_all_clear();
         self.last_was_all_clear = ac;
-        // As in Tsu, an all clear is paid out with the next chain.
         if ac {
             self.all_clear_bonus = true;
         }
@@ -1000,7 +939,6 @@ impl Board {
         self.spawn_piece();
     }
 
-    /// One frame of settling after a lock: falling, popping, falling again.
     fn tick_settle(&mut self) -> u32 {
         match self.settle {
             Settle::Falling { frame, frames } => {
@@ -1078,8 +1016,18 @@ impl Board {
         }
     }
 
+    pub fn target_points(&self) -> u32 {
+        let steps = self.level().saturating_sub(MARGIN_LEVELS).min(MARGIN_STEPS);
+        let target = TARGET_POINTS as u64 * 3u64.pow(steps) / 4u64.pow(steps);
+        target.max(1) as u32
+    }
+
     pub fn level(&self) -> u32 {
-        self.start_level + (self.played_time / LEVEL_DURATION) as u32
+        self.start_level + self.match_frames / LEVEL_FRAMES
+    }
+
+    pub fn rng_position(&self) -> u128 {
+        self.rng.get_word_pos()
     }
 
     pub fn rng_state(&self) -> rand_chacha::ChaCha12Rng {
@@ -1091,8 +1039,6 @@ impl Board {
     }
 
     pub fn apply_input(&mut self, input: InputKind) {
-        // Down is held across pieces and phases: the key's state is
-        // recorded whatever the board is doing.
         match input {
             InputKind::SoftDropPress => self.soft_dropping = true,
             InputKind::SoftDropRelease => self.soft_dropping = false,
@@ -1112,7 +1058,7 @@ impl Board {
     }
 
     pub fn state_hash(&self) -> u64 {
-        let Board {
+        let Self {
             width,
             height,
             start_level,
@@ -1130,7 +1076,7 @@ impl Board {
             chain_count,
             last_was_all_clear,
             all_clear_bonus,
-            played_time,
+            match_frames,
             fall_offset,
             soft_dropping,
             ground_frames,
@@ -1184,7 +1130,7 @@ impl Board {
         h.u32(*chain_count);
         h.bool(*last_was_all_clear);
         h.bool(*all_clear_bonus);
-        h.f32(*played_time);
+        h.u32(*match_frames);
         h.u32(*fall_offset);
         h.bool(*soft_dropping);
         h.u32(*ground_frames);
@@ -1216,16 +1162,17 @@ impl Board {
         h.finish()
     }
 
-    pub fn step(&mut self, inputs: impl IntoIterator<Item = InputKind>, landed_garbage: u32, dt: f32) -> u32 {
+    pub fn step(&mut self, inputs: impl IntoIterator<Item = InputKind>, landed_garbage: u32) -> u32 {
         for kind in inputs {
             self.apply_input(kind);
         }
-        let produced = self.tick(dt);
+        let produced = self.tick();
         self.pending_garbage += landed_garbage;
         produced
     }
 
-    pub fn replay(&self, from: u32, to: u32, inputs: &[StampedInput], incoming: &[IncomingGarbage], dt: f32) -> Board {
+    #[must_use]
+    pub fn replay(&self, from: u32, to: u32, inputs: &[StampedInput], incoming: &[IncomingGarbage]) -> Self {
         let mut board = self.clone();
         let mut next = 0;
         let mut t = from;
@@ -1236,7 +1183,7 @@ impl Board {
                 next += 1;
             }
             let landed = incoming.iter().filter(|g| g.at == t).map(|g| g.amount).sum();
-            board.step(inputs[start..next].iter().map(|i| i.kind), landed, dt);
+            board.step(inputs[start..next].iter().map(|i| i.kind), landed);
         }
         for input in &inputs[next..] {
             board.apply_input(input.kind);
@@ -1244,12 +1191,12 @@ impl Board {
         board
     }
 
-    /// One tick. Everything but the level clock counts frames, one per call:
-    /// the simulation always runs at 60 Hz. Returns the nuisance this board
-    /// sends.
-    pub fn tick(&mut self, dt: f32) -> u32 {
-        if self.state == GameState::Playing || self.state == GameState::ResolvingMatches {
-            self.played_time += dt;
+    pub fn tick(&mut self) -> u32 {
+        if matches!(
+            self.state,
+            GameState::Playing | GameState::ResolvingMatches | GameState::DroppingGarbage
+        ) {
+            self.match_frames += 1;
         }
         match self.state {
             GameState::Playing => {

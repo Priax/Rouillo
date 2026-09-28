@@ -1,4 +1,4 @@
-use shared::*;
+use shared::{config, Board, ClientMessage, IncomingGarbage, ServerMessage, StampedInput};
 
 use crate::connection::ConnEvent;
 use crate::state::{GameSession, Screen, State};
@@ -10,11 +10,11 @@ pub fn handle_server_messages(state: &mut State) {
             ConnEvent::Opened { recovered } => on_opened(state, recovered),
             ConnEvent::Message(msg) => process_message(state, *msg),
             ConnEvent::Retrying => {
-                if !state.screen.needs_connection() {
+                if state.screen.needs_connection() {
+                    state.notice = "Connexion perdue — reconnexion…".to_string();
+                } else {
                     state.conn.disconnect();
                     reset_to_menu(state, "Connexion au serveur perdue.");
-                } else {
-                    state.notice = "Connexion perdue — reconnexion…".to_string();
                 }
             }
             ConnEvent::GaveUp => reset_to_menu(state, "Connexion au serveur perdue."),
@@ -112,13 +112,9 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
     sync_clock(session, update.tick);
 
     let pending: Vec<StampedInput> = session.pending_inputs.iter().map(|(_, input)| *input).collect();
-    let predicted = session.board.replay(
-        update.tick,
-        session.local_tick,
-        &pending,
-        &session.incoming,
-        config::CLIENT_SIM_DT,
-    );
+    let predicted = session
+        .board
+        .replay(update.tick, session.local_tick, &pending, &session.incoming);
 
     if predicted.piece_id == prev_piece_id {
         if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.as_ref()) {
@@ -136,12 +132,14 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
         crate::audio::play_garbage();
     }
 
-    session.last_server_msg = format!(
-        "StateUpdate ack={} pending={} seq={}",
-        update.ack,
-        session.pending_inputs.len(),
-        session.input_seq,
-    );
+    if cfg!(debug_assertions) {
+        session.last_server_msg = format!(
+            "StateUpdate ack={} pending={} seq={}",
+            update.ack,
+            session.pending_inputs.len(),
+            session.input_seq,
+        );
+    }
 }
 
 fn process_message(state: &mut State, msg: ServerMessage) {
@@ -163,7 +161,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             state.notice = reason;
         }
         ServerMessage::GameStart => {
-            let slot = state.lobby.as_ref().map(|l| l.your_slot).unwrap_or(1);
+            let slot = state.lobby.as_ref().map_or(1, |l| l.your_slot);
             let mut session = GameSession::new(slot);
             session.last_server_msg = "GameStart".to_string();
             state.session = Some(session);
@@ -212,29 +210,10 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         }
         ServerMessage::Restart => {
             if let Some(session) = state.session.as_mut() {
-                session.opponent_disconnected = false;
-                session.input_seq = 0;
-                session.my_ack = 0;
-                session.pending_inputs.clear();
-                session.sent_at.clear();
-                session.chain_display = None;
-                session.all_clear_timer = 0.0;
-                session.piece_visual_offset = (0.0, 0.0);
-                session.opponent_view.clear();
-                // The new boards start with down up; say so again if it is held.
-                session.soft_drop_held = false;
-                session.sim_accumulator = 0.0;
-                session.server_tick = 0;
-                session.local_tick = 0;
-                session.synced = false;
-                session.clock_correction = 0;
-                session.drift_min = None;
-                session.drift_samples = 0;
-                session.incoming.clear();
-                session.opp_incoming.clear();
-                session.announced_chain = (0, 0);
-                session.announced_all_clear = 0;
-                session.last_server_msg = "Restart".to_string();
+                let mut fresh = GameSession::new(session.my_slot);
+                fresh.ping_rtt_ms = session.ping_rtt_ms;
+                fresh.last_server_msg = "Restart".to_string();
+                *session = fresh;
             }
         }
         ServerMessage::OpponentDisconnected => {
@@ -256,6 +235,8 @@ fn process_message(state: &mut State, msg: ServerMessage) {
 
 #[cfg(test)]
 mod tests {
+    use shared::{GameState, InputKind};
+
     use super::*;
 
     #[test]
@@ -399,7 +380,7 @@ mod tests {
                     "an input arrived late"
                 );
                 let applied: Vec<_> = queue.drain(..due).collect();
-                server.step(applied.iter().map(|(_, i)| i.kind), 0, config::CLIENT_SIM_DT);
+                server.step(applied.iter().map(|(_, i)| i.kind), 0);
                 history.push(server.clone());
             }
 

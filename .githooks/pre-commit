@@ -1,0 +1,20 @@
+#!/bin/sh
+# The same checks as CI, run before each commit. Enable once per clone with:
+#   git config core.hooksPath .githooks
+#
+# It only checks, never rewrites: formatting files here would fix the working
+# tree but not what is already staged, and the commit would go out unformatted.
+
+echo "rustfmt (nightly, check)..."
+if ! cargo +nightly fmt --all --check; then
+    echo
+    echo "Code mal formaté : lance 'cargo +nightly fmt --all', puis 'git add', puis recommite."
+    exit 1
+fi
+
+echo "clippy (stable, comme la CI)..."
+if ! cargo +stable clippy --workspace --all-targets -- -D warnings; then
+    echo
+    echo "clippy a trouvé des problèmes : corrige-les, puis recommite."
+    exit 1
+fi

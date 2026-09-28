@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use notan::app::Event;
-use notan::draw::*;
+use notan::draw::{CreateDraw, CreateFont, DrawConfig, DrawShapes, DrawTextSection, Font};
 use notan::prelude::*;
 use shared::{config, ClientMessage};
 
@@ -56,7 +56,6 @@ fn setup(gfx: &mut Graphics) -> State {
     state
 }
 
-// notan hands the event over by value; the signature is its, not ours.
 #[allow(clippy::needless_pass_by_value)]
 fn event(state: &mut State, evt: Event) {
     if let Event::ReceivedCharacter(c) = evt {
@@ -118,13 +117,12 @@ fn update_invitation(app: &mut App, state: &mut State) {
         if let Some((_, room_id, _)) = state.pending_invitation.take() {
             if state.conn.is_live() {
                 state.conn.send(&ClientMessage::JoinRoom { id: room_id });
-                state.screen = Screen::RoomBrowser;
             } else {
                 state.conn.connect(connection::now_secs());
                 state.rooms.clear();
                 state.pending_join = Some(room_id);
-                state.screen = Screen::RoomBrowser;
             }
+            state.screen = Screen::RoomBrowser;
         }
     } else if decline_btn.clicked(app) {
         state.pending_invitation = None;
@@ -157,7 +155,7 @@ fn update(app: &mut App, state: &mut State) {
         Screen::Friends => friends::update_friends(app, state),
         Screen::OtherProfile => profile::update_other_profile(app, state),
         Screen::Game => {
-            let is_host = state.lobby.as_ref().map(|l| l.is_host).unwrap_or(false);
+            let is_host = state.lobby.as_ref().is_some_and(|l| l.is_host);
             let State {
                 session,
                 settings,
@@ -165,7 +163,7 @@ fn update(app: &mut App, state: &mut State) {
                 ..
             } = &mut *state;
             if let Some(session) = session {
-                logic::update_game(app, session, settings, conn, is_host);
+                logic::update_game(app, session, *settings, conn, is_host);
             }
         }
     }
@@ -207,7 +205,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         Screen::Friends => friends::draw_friends(app, gfx, state),
         Screen::OtherProfile => profile::draw_other_profile(app, gfx, state),
         Screen::Game => {
-            let is_host = state.lobby.as_ref().map(|l| l.is_host).unwrap_or(false);
+            let is_host = state.lobby.as_ref().is_some_and(|l| l.is_host);
             let can_pause = state.lobby.as_ref().is_some_and(|l| l.settings.pause.allows(l.is_host));
             if let Some(session) = state.session.as_ref() {
                 draw::draw_game(app, gfx, session, &state.font, is_host, can_pause);
