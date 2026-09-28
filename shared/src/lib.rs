@@ -11,7 +11,7 @@ use crate::config::{
 
 pub fn encode<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, bitcode::Error> {
     let raw = bitcode::serialize(msg)?;
-    Ok(lz4_flex::compress_prepend_size(&raw))
+    Ok(lz4_flex::block::compress_prepend_size(&raw))
 }
 
 pub const MAX_DECODED_SIZE: usize = 1 << 20;
@@ -21,7 +21,7 @@ pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
     if size > MAX_DECODED_SIZE {
         return None;
     }
-    let raw = lz4_flex::decompress_size_prepended(bytes).ok()?;
+    let raw = lz4_flex::block::decompress_size_prepended(bytes).ok()?;
     bitcode::deserialize(&raw).ok()
 }
 

@@ -65,9 +65,9 @@ fn send(mut req: ehttp::Request, token: Option<String>, slot: HttpSlot) {
     });
 }
 
-fn json_body(url: String, method: &str, body: String) -> ehttp::Request {
+fn json_body(url: String, method: ehttp::Method, body: String) -> ehttp::Request {
     let mut req = ehttp::Request {
-        method: method.to_owned(),
+        method,
         body: body.into_bytes(),
         ..ehttp::Request::get(url)
     };
@@ -80,16 +80,16 @@ pub fn get(url: String, token: Option<String>, slot: HttpSlot) {
 }
 
 pub fn post_json(url: String, body: String, token: Option<String>, slot: HttpSlot) {
-    send(json_body(url, "POST", body), token, slot);
+    send(json_body(url, ehttp::Method::POST, body), token, slot);
 }
 
 pub fn patch_json(url: String, body: String, token: Option<String>, slot: HttpSlot) {
-    send(json_body(url, "PATCH", body), token, slot);
+    send(json_body(url, ehttp::Method::PATCH, body), token, slot);
 }
 
 pub fn delete_req(url: String, token: Option<String>, slot: HttpSlot) {
     let req = ehttp::Request {
-        method: "DELETE".to_owned(),
+        method: ehttp::Method::DELETE,
         ..ehttp::Request::get(url)
     };
     send(req, token, slot);

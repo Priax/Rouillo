@@ -1,10 +1,10 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use argon2::password_hash::rand_core::OsRng;
-use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::{DateTime, Utc};
+use password_hash::rand_core::OsRng;
+use password_hash::SaltString;
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
