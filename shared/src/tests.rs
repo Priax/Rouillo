@@ -1303,15 +1303,6 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-/// Pins the wire format to `PROTOCOL_VERSION`.
-///
-/// If this fails, a message (or something it carries) changed shape, and a peer
-/// built before the change can no longer talk to one built after. Increment
-/// `PROTOCOL_VERSION`, then record the new digest under it here.
-///
-/// What it cannot see: a variant appended to an enum nested inside a message
-/// (`InputKind`, `PuyoType`…) leaves every sample's bytes as they were. Bump
-/// the version by hand for those.
 const PROTOCOL_DIGEST: (u32, u64) = (1, 6_548_698_159_580_308_123);
 
 #[test]
