@@ -4,7 +4,6 @@ use shared::{config, Board, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, Stampe
 use crate::connection::Connection;
 use crate::interp::OpponentView;
 use crate::ui::Status;
-use crate::Font;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
@@ -499,8 +498,7 @@ pub struct State {
     pub text_input: String,
     pub notice: Status,
     pub session: Option<GameSession>,
-    pub font: Font,
-    pub ui_font: Font,
+    pub fonts: crate::ui::Fonts,
     pub auth: Option<AuthInfo>,
     pub auth_form: AuthForm,
     pub profile: Option<ProfileData>,
@@ -518,7 +516,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(font: Font, ui_font: Font) -> Self {
+    pub fn new(fonts: crate::ui::Fonts) -> Self {
         let player_id = load_or_create_player_id();
         Self {
             screen: Screen::Auth,
@@ -530,8 +528,7 @@ impl State {
             text_input: String::new(),
             notice: Status::Empty,
             session: None,
-            font,
-            ui_font,
+            fonts,
             auth: None,
             auth_form: AuthForm::default(),
             profile: None,

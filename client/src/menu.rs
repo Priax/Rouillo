@@ -1,8 +1,8 @@
-use notan::draw::{CreateDraw, DrawShapes, DrawTextSection};
+use notan::draw::{DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
 use crate::state::{AuthForm, Screen, Settings, State};
-use crate::ui::Rect;
+use crate::ui::{Rect, Stepper, Ui, View};
 use crate::{http, theme};
 
 struct MenuLayout {
@@ -43,47 +43,47 @@ fn outdated_btn(ww: f32) -> Rect {
     Rect::at(acx - ar - 20.0 - w, acy - h / 2.0, w, h)
 }
 
-fn avatar_hovered(app: &App, cx: f32, cy: f32, r: f32) -> bool {
-    let dx = app.mouse.x - cx;
-    let dy = app.mouse.y - cy;
+fn avatar_hovered(ui: &Ui, cx: f32, cy: f32, r: f32) -> bool {
+    let (mx, my) = ui.mouse();
+    let (dx, dy) = (mx - cx, my - cy);
     dx * dx + dy * dy <= r * r
 }
 
-fn avatar_clicked(app: &App, cx: f32, cy: f32, r: f32) -> bool {
-    avatar_hovered(app, cx, cy, r) && app.mouse.left_was_pressed()
+fn avatar_clicked(ui: &Ui, cx: f32, cy: f32, r: f32) -> bool {
+    ui.pressed() && avatar_hovered(ui, cx, cy, r)
 }
 
-pub fn update_menu(app: &mut App, state: &mut State) {
-    let (ww, wh) = (win_w(app), win_h(app));
+pub fn update_menu(state: &mut State) {
+    let (ww, wh) = state.ui.view().size();
     let logged_in = state.auth.is_some();
     let layout = menu_layout(ww, wh, logged_in);
 
-    if layout.play.clicked(app) {
+    if state.ui.clicked(layout.play) {
         start_play(state);
-    } else if layout.settings.clicked(app) {
+    } else if state.ui.clicked(layout.settings) {
         state.screen = Screen::Settings;
     }
 
     if let Some(btn) = layout.friends {
-        if btn.clicked(app) {
+        if state.ui.clicked(btn) {
             crate::friends::enter_friends(state);
             state.screen = Screen::Friends;
         }
     }
 
     if let Some(btn) = layout.logout {
-        if btn.clicked(app) {
+        if state.ui.clicked(btn) {
             do_logout(state);
         }
     }
 
-    if state.outdated && outdated_btn(ww).clicked(app) {
+    if state.outdated && state.ui.clicked(outdated_btn(ww)) {
         crate::update::apply();
     }
 
     if logged_in {
         let (acx, acy, ar) = avatar_pos(ww);
-        if avatar_clicked(app, acx, acy, ar) {
+        if avatar_clicked(&state.ui, acx, acy, ar) {
             crate::profile::enter_profile(state);
             state.screen = Screen::Profile;
         }
@@ -103,37 +103,37 @@ pub fn do_logout(state: &mut State) {
     state.screen = Screen::Auth;
 }
 
-pub fn draw_menu(app: &mut App, gfx: &mut Graphics, state: &State) {
-    let (ww, wh) = (win_w(app), win_h(app));
-    let mut draw = gfx.create_draw();
+pub fn draw_menu(gfx: &mut Graphics, state: &State) {
+    let (ww, wh) = state.ui.view().size();
+    let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
 
-    draw.text(&state.font, "Rouillo")
+    draw.text(&state.fonts.display, "Rouillo")
         .position(ww / 2.0, wh / 2.0 - 140.0)
-        .size(80.0)
+        .size(theme::size::HERO)
         .h_align_center()
         .v_align_middle()
         .color(theme::TITLE);
 
     let logged_in = state.auth.is_some();
     let layout = menu_layout(ww, wh, logged_in);
-    state.ui.button(&mut draw, &state.font, layout.play, "Jouer");
+    state.ui.button(&mut draw, &state.fonts, layout.play, "Jouer");
     if state.outdated {
         state
             .ui
-            .button(&mut draw, &state.font, outdated_btn(ww), "Mettre à jour");
+            .button(&mut draw, &state.fonts, outdated_btn(ww), "Mettre à jour");
     }
-    state.ui.button(&mut draw, &state.font, layout.settings, "Paramètres");
+    state.ui.button(&mut draw, &state.fonts, layout.settings, "Paramètres");
     if let Some(btn) = layout.friends {
-        state.ui.button(&mut draw, &state.font, btn, "Amis");
+        state.ui.button(&mut draw, &state.fonts, btn, "Amis");
     }
     if let Some(btn) = layout.logout {
-        state.ui.button(&mut draw, &state.font, btn, "Déconnexion");
+        state.ui.button(&mut draw, &state.fonts, btn, "Déconnexion");
     }
 
     if let Some(auth) = &state.auth {
         let (acx, acy, ar) = avatar_pos(ww);
-        let hover = avatar_hovered(app, acx, acy, ar);
+        let hover = avatar_hovered(&state.ui, acx, acy, ar);
         let fill = if hover { theme::AVATAR_HOVER } else { theme::AVATAR };
         draw.circle(ar).position(acx, acy).color(fill);
         draw.circle(ar).position(acx, acy).stroke(2.0).color(theme::ACCENT);
@@ -143,24 +143,24 @@ pub fn draw_menu(app: &mut App, gfx: &mut Graphics, state: &State) {
             .next()
             .map(|c| c.to_uppercase().collect())
             .unwrap_or_default();
-        draw.text(&state.font, &initial)
+        draw.text(&state.fonts.display, &initial)
             .position(acx, acy)
-            .size(30.0)
+            .size(theme::size::HEADING)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT);
-        draw.text(&state.font, &auth.username)
+        draw.text(&state.fonts.text, &auth.username)
             .position(acx, acy + ar + 16.0)
-            .size(17.0)
+            .size(theme::size::BODY)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT_DIM);
     }
 
     if let Some((msg, color)) = state.notice.shown() {
-        draw.text(&state.font, msg)
+        draw.text(&state.fonts.text, msg)
             .position(ww / 2.0, wh - 60.0)
-            .size(22.0)
+            .size(theme::size::EMPHASIS)
             .h_align_center()
             .v_align_middle()
             .color(color);
@@ -170,30 +170,19 @@ pub fn draw_menu(app: &mut App, gfx: &mut Graphics, state: &State) {
 }
 
 struct SettingsLayout {
-    minus: [Rect; Settings::COUNT],
-    plus: [Rect; Settings::COUNT],
+    steppers: [Stepper; Settings::COUNT],
     back: Rect,
 }
 
-fn settings_layout(win_w: f32, win_h: f32) -> SettingsLayout {
+fn settings_layout(view: View) -> SettingsLayout {
+    let (win_w, win_h) = view.size();
     let row_h = 70.0;
-    let btn = 50.0;
     let first_y = win_h / 2.0 - (Settings::COUNT as f32 * row_h) / 2.0;
     let center_x = win_w / 2.0;
-    let minus_x = center_x + 60.0;
-    let plus_x = center_x + 200.0;
-
-    let mut minus = [Rect::at(0.0, 0.0, btn, btn); Settings::COUNT];
-    let mut plus = minus;
-    for i in 0..Settings::COUNT {
-        let y = first_y + i as f32 * row_h;
-        minus[i] = Rect::at(minus_x, y, btn, btn);
-        plus[i] = Rect::at(plus_x, y, btn, btn);
-    }
+    let steppers = std::array::from_fn(|i| Stepper::at(center_x + 20.0, first_y + i as f32 * row_h));
 
     SettingsLayout {
-        minus,
-        plus,
+        steppers,
         back: Rect::at(
             center_x - 100.0,
             first_y + Settings::COUNT as f32 * row_h + 40.0,
@@ -204,54 +193,41 @@ fn settings_layout(win_w: f32, win_h: f32) -> SettingsLayout {
 }
 
 pub fn update_settings(app: &mut App, state: &mut State) {
-    let layout = settings_layout(win_w(app), win_h(app));
-    for i in 0..Settings::COUNT {
-        if layout.minus[i].clicked(app) {
+    let layout = settings_layout(state.ui.view());
+    for (i, stepper) in layout.steppers.into_iter().enumerate() {
+        if state.ui.clicked(stepper.minus) {
             state.settings.adjust(i, -1);
         }
-        if layout.plus[i].clicked(app) {
+        if state.ui.clicked(stepper.plus) {
             state.settings.adjust(i, 1);
         }
     }
-    if layout.back.clicked(app) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if state.ui.clicked(layout.back) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.screen = Screen::Menu;
     }
 }
 
-pub fn draw_settings(app: &mut App, gfx: &mut Graphics, state: &State) {
-    let (ww, wh) = (win_w(app), win_h(app));
-    let mut draw = gfx.create_draw();
+pub fn draw_settings(gfx: &mut Graphics, state: &State) {
+    let (ww, wh) = state.ui.view().size();
+    let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
 
-    draw.text(&state.font, "SETTINGS")
+    draw.text(&state.fonts.display, "SETTINGS")
         .position(ww / 2.0, wh / 2.0 - 170.0)
-        .size(50.0)
+        .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
         .color(theme::TEXT);
 
-    let layout = settings_layout(ww, wh);
-    let center_x = ww / 2.0;
-    for i in 0..Settings::COUNT {
-        let y = layout.minus[i].y;
-        let mid = y + layout.minus[i].h / 2.0;
-        draw.text(&state.font, Settings::label(i))
-            .position(center_x - 100.0, mid)
-            .size(24.0)
-            .h_align_right()
-            .v_align_middle()
-            .color(theme::TEXT_DIM);
-        state.ui.button(&mut draw, &state.font, layout.minus[i], "-");
-        state.ui.button(&mut draw, &state.font, layout.plus[i], "+");
-        draw.text(&state.font, &format!("{:.0} ms", state.settings.value(i) * 1000.0))
-            .position(center_x + 130.0, mid)
-            .size(22.0)
-            .h_align_center()
-            .v_align_middle()
-            .color(theme::GOLD);
+    let layout = settings_layout(state.ui.view());
+    for (i, stepper) in layout.steppers.into_iter().enumerate() {
+        let value = format!("{:.0} ms", state.settings.value(i) * 1000.0);
+        state
+            .ui
+            .stepper(&mut draw, &state.fonts, stepper, Settings::label(i), &value, true);
     }
 
-    state.ui.button(&mut draw, &state.font, layout.back, "Back");
+    state.ui.button(&mut draw, &state.fonts, layout.back, "Back");
     gfx.render(&draw);
 }
 
@@ -260,12 +236,4 @@ fn start_play(state: &mut State) {
     state.rooms.clear();
     state.notice.clear();
     state.screen = Screen::RoomBrowser;
-}
-
-fn win_w(app: &mut App) -> f32 {
-    app.window().width() as f32
-}
-
-fn win_h(app: &mut App) -> f32 {
-    app.window().height() as f32
 }

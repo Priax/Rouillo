@@ -1,19 +1,27 @@
 mod button;
 mod field;
+mod fonts;
 mod keys;
 mod rect;
 mod status;
+mod stepper;
+mod view;
 
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+pub use button::Icon;
 pub use field::{text_field, Field};
+pub use fonts::Fonts;
 pub use keys::KeyRepeat;
-use notan::prelude::App;
+use notan::draw::Draw;
+use notan::prelude::{App, Graphics};
 pub use rect::Rect;
 pub use status::Status;
+pub use stepper::Stepper;
+pub use view::View;
 
 const MAX_DT: f32 = 0.1;
 
@@ -29,6 +37,7 @@ pub struct Ui {
 #[derive(Default)]
 struct Inner {
     dt: f32,
+    view: View,
     mouse: Mouse,
     input_off: bool,
     widgets: HashMap<(u64, u32), Widget>,
@@ -54,10 +63,10 @@ pub struct Mouse {
 }
 
 impl Mouse {
-    pub fn of(app: &App) -> Self {
+    pub fn of(app: &App, view: View) -> Self {
         Self {
-            x: app.mouse.x,
-            y: app.mouse.y,
+            x: app.mouse.x / view.scale,
+            y: app.mouse.y / view.scale,
             down: app.mouse.left_is_down(),
             pressed: app.mouse.left_was_pressed(),
         }
@@ -77,9 +86,10 @@ impl Ui {
     /// a click lands on the buttons drawn last frame, the ones the player saw,
     /// even when the screen it triggers is a different one. Returns whether a
     /// button was clicked.
-    pub fn begin_frame(&mut self, dt: f32, mouse: Mouse) -> bool {
+    pub fn begin_frame(&mut self, dt: f32, view: View, mouse: Mouse) -> bool {
         let inner = self.inner.get_mut();
         inner.dt = dt.clamp(0.0, MAX_DT);
+        inner.view = view;
         inner.mouse = mouse;
         inner.input_off = false;
         inner.widgets.retain(|_, w| std::mem::take(&mut w.touched));
@@ -100,6 +110,32 @@ impl Ui {
         clicked
     }
 
+    pub fn view(&self) -> View {
+        self.inner.borrow().view
+    }
+
+    pub fn canvas(&self, gfx: &mut Graphics) -> Draw {
+        self.view().canvas(gfx)
+    }
+
+    pub fn mouse(&self) -> (f32, f32) {
+        let m = self.inner.borrow().mouse;
+        (m.x, m.y)
+    }
+
+    pub fn hovered(&self, r: Rect) -> bool {
+        let (x, y) = self.mouse();
+        r.contains(x, y)
+    }
+
+    pub fn pressed(&self) -> bool {
+        self.inner.borrow().mouse.pressed
+    }
+
+    pub fn clicked(&self, r: Rect) -> bool {
+        self.pressed() && self.hovered(r)
+    }
+
     pub fn set_input(&self, on: bool) {
         self.inner.borrow_mut().input_off = !on;
     }
@@ -108,6 +144,7 @@ impl Ui {
         let mut inner = self.inner.borrow_mut();
         let Inner {
             dt,
+            view: _,
             mouse,
             input_off,
             widgets,
@@ -179,7 +216,7 @@ mod tests {
     };
 
     fn frame(ui: &mut Ui, mouse: Mouse, draws: &[(&str, Rect)]) -> Vec<Response> {
-        ui.begin_frame(1.0 / 60.0, mouse);
+        ui.begin_frame(1.0 / 60.0, View::default(), mouse);
         draws.iter().map(|(label, r)| ui.interact(label, *r, true)).collect()
     }
 
@@ -241,7 +278,10 @@ mod tests {
     fn a_click_lands_on_what_was_drawn_before_it() {
         let mut ui = Ui::default();
         frame(&mut ui, ON_A, &[("Jouer", A)]);
-        assert!(ui.begin_frame(1.0 / 60.0, CLICK_A), "the button under the click");
+        assert!(
+            ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A),
+            "the button under the click"
+        );
         let flash = ui.interact("Jouer", A, true).flash;
         assert!(flash > 0.8, "flashes, got {flash}");
     }
@@ -251,7 +291,7 @@ mod tests {
         let mut ui = Ui::default();
         frame(&mut ui, ON_A, &[("Amis", B)]);
         // The click switches screens: "Retour" now sits where the click was.
-        assert!(!ui.begin_frame(1.0 / 60.0, CLICK_A));
+        assert!(!ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A));
         assert!(ui.interact("Retour", A, true).flash.abs() < f32::EPSILON);
     }
 
@@ -267,14 +307,20 @@ mod tests {
     #[test]
     fn disabled_and_covered_buttons_ignore_the_pointer() {
         let mut ui = Ui::default();
-        ui.begin_frame(1.0 / 60.0, ON_A);
+        ui.begin_frame(1.0 / 60.0, View::default(), ON_A);
         ui.set_input(false);
         let under = ui.interact("Leave", A, true);
         ui.set_input(true);
         ui.interact("Off", A, false);
         assert!(under.hover.abs() < f32::EPSILON);
-        assert!(!ui.begin_frame(1.0 / 60.0, CLICK_A), "neither was clickable");
+        assert!(
+            !ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A),
+            "neither was clickable"
+        );
         ui.interact("Leave", A, true);
-        assert!(ui.begin_frame(1.0 / 60.0, CLICK_A), "input comes back the next frame");
+        assert!(
+            ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A),
+            "input comes back the next frame"
+        );
     }
 }

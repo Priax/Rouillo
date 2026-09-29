@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
+use notan::draw::{Draw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
-use crate::ui::{text_field, Field, Rect, Status, Ui};
+use crate::ui::{text_field, Field, Fonts, Rect, Status, Ui};
 use crate::{http, theme};
 
 const SEARCH_Y: f32 = 112.0;
@@ -290,8 +290,8 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     poll_add(state);
     poll_action(state);
 
-    let ww = app.window().width() as f32;
-    let wh = app.window().height() as f32;
+    let ww = state.ui.view().w;
+    let wh = state.ui.view().h;
 
     if state.backspace.fired() {
         if let Some(f) = state.friends.as_mut() {
@@ -299,7 +299,7 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         }
     }
 
-    if search_submit_btn(ww).clicked(app) || app.keyboard.was_pressed(KeyCode::Enter) {
+    if state.ui.clicked(search_submit_btn(ww)) || app.keyboard.was_pressed(KeyCode::Enter) {
         let q = state
             .friends
             .as_ref()
@@ -313,26 +313,26 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         try_search(state);
     }
 
-    if back_btn(wh).clicked(app) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if state.ui.clicked(back_btn(wh)) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.friends = None;
         state.screen = Screen::Menu;
         return;
     }
 
-    if state.friends.as_ref().is_some_and(can_refresh) && refresh_btn(wh).clicked(app) {
+    if state.friends.as_ref().is_some_and(can_refresh) && state.ui.clicked(refresh_btn(wh)) {
         refresh_list(state);
     }
 
     let Some(f) = &state.friends else {
         return;
     };
-    if let Some((uid, uname)) = clicked_profile(f, app, ww) {
+    if let Some((uid, uname)) = clicked_profile(f, &state.ui, ww) {
         crate::profile::enter_other_profile(state, uid, uname, Screen::Friends);
         state.screen = Screen::OtherProfile;
         return;
     }
-    let add = clicked_add(f, app, ww);
-    let action = clicked_action(f, app, ww);
+    let add = clicked_add(f, &state.ui, ww);
+    let action = clicked_action(f, &state.ui, ww);
     if let Some(uid) = add {
         send_add_request(state, &uid);
     }
@@ -345,17 +345,17 @@ fn can_refresh(f: &FriendsData) -> bool {
     f.list_slot.is_none() && f.action_pending.is_none()
 }
 
-fn clicked_profile(f: &FriendsData, app: &App, ww: f32) -> Option<(String, String)> {
+fn clicked_profile(f: &FriendsData, ui: &Ui, ww: f32) -> Option<(String, String)> {
     let (_, e) = f
         .search_results
         .iter()
         .take(MAX_SEARCH_RESULTS)
         .enumerate()
-        .find(|&(i, _)| result_view_btn(ww, i).clicked(app))?;
+        .find(|&(i, _)| ui.clicked(result_view_btn(ww, i)))?;
     Some((e.user_id.clone(), e.username.clone()))
 }
 
-fn clicked_add(f: &FriendsData, app: &App, ww: f32) -> Option<String> {
+fn clicked_add(f: &FriendsData, ui: &Ui, ww: f32) -> Option<String> {
     if f.add_pending.is_some() {
         return None;
     }
@@ -363,39 +363,39 @@ fn clicked_add(f: &FriendsData, app: &App, ww: f32) -> Option<String> {
         .iter()
         .take(MAX_SEARCH_RESULTS)
         .enumerate()
-        .find(|&(i, e)| result_add_btn(ww, i).clicked(app) && !f.friends.iter().any(|fr| fr.user_id == e.user_id))
+        .find(|&(i, e)| ui.clicked(result_add_btn(ww, i)) && !f.friends.iter().any(|fr| fr.user_id == e.user_id))
         .map(|(_, e)| e.user_id.clone())
 }
 
-fn clicked_action(f: &FriendsData, app: &App, ww: f32) -> Option<FriendAction> {
+fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
     if f.action_pending.is_some() {
         return None;
     }
     if let Some(confirm_id) = &f.confirm_remove {
         let row = f.friends.iter().take(MAX_ROWS).position(|e| &e.user_id == confirm_id)?;
-        if confirm_yes_btn(ww, row).clicked(app) {
+        if ui.clicked(confirm_yes_btn(ww, row)) {
             return Some(FriendAction::ConfirmRemove(confirm_id.clone()));
         }
-        if confirm_no_btn(ww, row).clicked(app) {
+        if ui.clicked(confirm_no_btn(ww, row)) {
             return Some(FriendAction::CancelRemove);
         }
         return None;
     }
     for (i, e) in f.friends.iter().take(MAX_ROWS).enumerate() {
-        if remove_btn(ww, 0, i).clicked(app) {
+        if ui.clicked(remove_btn(ww, 0, i)) {
             return Some(FriendAction::StartRemove(e.user_id.clone()));
         }
     }
     for (i, e) in f.received.iter().take(MAX_ROWS).enumerate() {
-        if accept_btn(ww, i).clicked(app) {
+        if ui.clicked(accept_btn(ww, i)) {
             return Some(FriendAction::Accept(e.user_id.clone()));
         }
-        if reject_btn(ww, i).clicked(app) {
+        if ui.clicked(reject_btn(ww, i)) {
             return Some(FriendAction::Reject(e.user_id.clone()));
         }
     }
     for (i, e) in f.sent.iter().take(MAX_ROWS).enumerate() {
-        if remove_btn(ww, 2, i).clicked(app) {
+        if ui.clicked(remove_btn(ww, 2, i)) {
             return Some(FriendAction::Cancel(e.user_id.clone()));
         }
     }
@@ -426,37 +426,37 @@ fn apply_action(state: &mut State, action: FriendAction) {
     }
 }
 
-pub fn draw_friends(app: &mut App, gfx: &mut Graphics, state: &State) {
-    let ww = app.window().width() as f32;
-    let wh = app.window().height() as f32;
+pub fn draw_friends(gfx: &mut Graphics, state: &State) {
+    let ww = state.ui.view().w;
+    let wh = state.ui.view().h;
 
-    let mut draw = gfx.create_draw();
+    let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
-    draw.text(&state.font, "Amis")
+    draw.text(&state.fonts.display, "Amis")
         .position(ww / 2.0, 58.0)
-        .size(52.0)
+        .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
         .color(theme::TITLE);
 
     if let Some(f) = &state.friends {
-        draw_search(&mut draw, &state.ui, &state.font, f, ww);
-        draw_lists(&mut draw, &state.ui, &state.font, f, ww);
+        draw_search(&mut draw, &state.ui, &state.fonts, f, ww);
+        draw_lists(&mut draw, &state.ui, &state.fonts, f, ww);
 
-        state.ui.button(&mut draw, &state.font, back_btn(wh), "Retour");
+        state.ui.button(&mut draw, &state.fonts, back_btn(wh), "Retour");
         let label = if f.list_slot.is_some() { "..." } else { "Rafraîchir" };
         state
             .ui
-            .button_enabled(&mut draw, &state.font, refresh_btn(wh), label, can_refresh(f));
+            .button_enabled(&mut draw, &state.fonts, refresh_btn(wh), label, can_refresh(f));
     }
     gfx.render(&draw);
 }
 
-fn draw_search(draw: &mut Draw, ui: &Ui, font: &crate::Font, f: &FriendsData, ww: f32) {
+fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {
     let field = search_box(ww);
-    draw.text(font, "Rechercher un ami:")
+    draw.text(&fonts.text, "Rechercher un ami:")
         .position(field.x, 96.0)
-        .size(17.0)
+        .size(theme::size::BODY)
         .v_align_middle()
         .color(theme::TEXT_DIM);
 
@@ -467,10 +467,10 @@ fn draw_search(draw: &mut Draw, ui: &Ui, font: &crate::Font, f: &FriendsData, ww
         focused: true,
         secret: false,
     };
-    text_field(draw, font, field, &search);
+    text_field(draw, fonts, field, &search);
     ui.button_enabled(
         draw,
-        font,
+        fonts,
         search_submit_btn(ww),
         if searching { "..." } else { "Rechercher" },
         !searching,
@@ -478,9 +478,9 @@ fn draw_search(draw: &mut Draw, ui: &Ui, font: &crate::Font, f: &FriendsData, ww
 
     if f.search_results.is_empty() {
         if let Some((msg, color)) = f.search_status.shown() {
-            draw.text(font, msg)
+            draw.text(&fonts.text, msg)
                 .position(field.x, SEARCH_RESULT_Y + 16.0)
-                .size(18.0)
+                .size(theme::size::BODY)
                 .v_align_middle()
                 .color(color);
         }
@@ -490,40 +490,40 @@ fn draw_search(draw: &mut Draw, ui: &Ui, font: &crate::Font, f: &FriendsData, ww
         let y = SEARCH_RESULT_Y + i as f32 * RESULT_ROW_H;
         let bg = if i % 2 == 0 { theme::SURFACE } else { theme::SURFACE_ALT };
         draw.rect((field.x, y), (600.0, RESULT_ROW_H - 2.0)).color(bg);
-        draw.text(font, &e.username)
+        draw.text(&fonts.text, &e.username)
             .position(field.x + 12.0, y + RESULT_ROW_H / 2.0)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .v_align_middle()
             .color(theme::TEXT);
-        draw.text(font, &format!("ELO {}", e.elo))
+        draw.text(&fonts.text, &format!("ELO {}", e.elo))
             .position(field.x + 170.0, y + RESULT_ROW_H / 2.0)
-            .size(17.0)
+            .size(theme::size::BODY)
             .v_align_middle()
             .color(theme::GOLD);
         if !f.friends.iter().any(|fr| fr.user_id == e.user_id) {
-            ui.button_enabled(draw, font, result_add_btn(ww, i), "Ajouter", !adding);
+            ui.button_enabled(draw, fonts, result_add_btn(ww, i), "Ajouter", !adding);
         }
-        ui.button(draw, font, result_view_btn(ww, i), "Profil");
+        ui.button(draw, fonts, result_view_btn(ww, i), "Profil");
     }
 
     if let Some((msg, color)) = f.add_status.shown() {
-        draw.text(font, msg)
+        draw.text(&fonts.text, msg)
             .position(ww / 2.0, ADD_ERROR_Y)
-            .size(17.0)
+            .size(theme::size::BODY)
             .h_align_center()
             .v_align_middle()
             .color(color);
     }
 }
 
-fn draw_lists(draw: &mut Draw, ui: &Ui, font: &crate::Font, f: &FriendsData, ww: f32) {
+fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {
     draw.rect((40.0, COL_HEADER_Y - 12.0), (ww - 80.0, 1.0))
         .color(theme::DIVIDER);
     let headers = ["Amis", "Demandes reçues", "Envoyées"];
     for (col, header) in headers.iter().enumerate() {
-        draw.text(font, header)
+        draw.text(&fonts.text, header)
             .position(col_x(ww, col) + COL_W / 2.0, COL_HEADER_Y)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT_DIM);
@@ -532,9 +532,9 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, font: &crate::Font, f: &FriendsData, ww:
     }
 
     if f.list_slot.is_some() {
-        draw.text(font, "Chargement...")
+        draw.text(&fonts.text, "Chargement...")
             .position(ww / 2.0, LIST_Y + 16.0)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT_MUTED);
@@ -543,61 +543,61 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, font: &crate::Font, f: &FriendsData, ww:
         let confirm = f.confirm_remove.as_deref();
         draw_col(
             draw,
-            font,
+            fonts,
             col_x(ww, 0),
             &f.friends,
             "Aucun ami pour l'instant",
-            |draw, font, entry, i| {
+            |draw, fonts, entry, i| {
                 if confirm == Some(entry.user_id.as_str()) {
-                    ui.button_enabled(draw, font, confirm_yes_btn(ww, i), "Oui", !busy);
-                    ui.button(draw, font, confirm_no_btn(ww, i), "Non");
+                    ui.button_enabled(draw, fonts, confirm_yes_btn(ww, i), "Oui", !busy);
+                    ui.button(draw, fonts, confirm_no_btn(ww, i), "Non");
                 } else {
                     let active = !busy && confirm.is_none();
-                    ui.button_enabled(draw, font, remove_btn(ww, 0, i), "Retirer", active);
+                    ui.button_enabled(draw, fonts, remove_btn(ww, 0, i), "Retirer", active);
                 }
             },
         );
         draw_col(
             draw,
-            font,
+            fonts,
             col_x(ww, 1),
             &f.received,
             "Aucune demande reçue",
-            |draw, font, _, i| {
-                ui.button_enabled(draw, font, accept_btn(ww, i), "Accepter", !busy);
-                ui.button_enabled(draw, font, reject_btn(ww, i), "Refuser", !busy);
+            |draw, fonts, _, i| {
+                ui.button_enabled(draw, fonts, accept_btn(ww, i), "Accepter", !busy);
+                ui.button_enabled(draw, fonts, reject_btn(ww, i), "Refuser", !busy);
             },
         );
         draw_col(
             draw,
-            font,
+            fonts,
             col_x(ww, 2),
             &f.sent,
             "Aucune demande envoyée",
-            |draw, font, _, i| {
-                ui.button_enabled(draw, font, remove_btn(ww, 2, i), "Annuler", !busy);
+            |draw, fonts, _, i| {
+                ui.button_enabled(draw, fonts, remove_btn(ww, 2, i), "Annuler", !busy);
             },
         );
     }
 
     if let Some((msg, color)) = f.action_status.shown() {
-        draw.text(font, msg)
+        draw.text(&fonts.text, msg)
             .position(ww / 2.0, LIST_Y + MAX_ROWS as f32 * ROW_H + 18.0)
-            .size(16.0)
+            .size(theme::size::SMALL)
             .h_align_center()
             .v_align_middle()
             .color(color);
     }
 }
 
-fn draw_col<F>(draw: &mut Draw, font: &crate::Font, x: f32, list: &[FriendEntry], empty_msg: &str, draw_buttons: F)
+fn draw_col<F>(draw: &mut Draw, fonts: &Fonts, x: f32, list: &[FriendEntry], empty_msg: &str, draw_buttons: F)
 where
-    F: Fn(&mut Draw, &crate::Font, &FriendEntry, usize),
+    F: Fn(&mut Draw, &Fonts, &FriendEntry, usize),
 {
     if list.is_empty() {
-        draw.text(font, empty_msg)
+        draw.text(&fonts.text, empty_msg)
             .position(x + COL_W / 2.0, LIST_Y + 18.0)
-            .size(16.0)
+            .size(theme::size::SMALL)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT_MUTED);
@@ -607,16 +607,16 @@ where
         let y = LIST_Y + i as f32 * ROW_H;
         let bg = if i % 2 == 0 { theme::SURFACE } else { theme::SURFACE_ALT };
         draw.rect((x, y), (COL_W, ROW_H - 3.0)).color(bg);
-        draw.text(font, &e.username)
+        draw.text(&fonts.text, &e.username)
             .position(x + 10.0, y + ROW_H / 2.0 - 8.0)
-            .size(19.0)
+            .size(theme::size::BODY)
             .v_align_middle()
             .color(theme::TEXT);
-        draw.text(font, &format!("ELO {}", e.elo))
+        draw.text(&fonts.text, &format!("ELO {}", e.elo))
             .position(x + 10.0, y + ROW_H / 2.0 + 10.0)
-            .size(14.0)
+            .size(theme::size::SMALL)
             .v_align_middle()
             .color(theme::GOLD);
-        draw_buttons(draw, font, e, i);
+        draw_buttons(draw, fonts, e, i);
     }
 }

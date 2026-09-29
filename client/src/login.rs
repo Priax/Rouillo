@@ -1,18 +1,11 @@
 use std::sync::Arc;
 
-use notan::draw::{CreateDraw, DrawShapes, DrawTextSection};
+use notan::draw::{DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
 use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, State};
-use crate::ui::{text_field, Field, Rect, Status};
+use crate::ui::{text_field, Field, Rect, Status, View};
 use crate::{http, theme};
-
-fn win_w(app: &mut App) -> f32 {
-    app.window().width() as f32
-}
-fn win_h(app: &mut App) -> f32 {
-    app.window().height() as f32
-}
 
 struct AuthLayout {
     cx: f32,
@@ -24,7 +17,8 @@ struct AuthLayout {
     guest: Rect,
 }
 
-fn auth_layout(ww: f32, wh: f32) -> AuthLayout {
+fn auth_layout(view: View) -> AuthLayout {
+    let (ww, wh) = view.size();
     let cx = ww / 2.0;
     let base_y = wh / 2.0 - 160.0;
     let field = |y: f32| Rect::at(cx - 210.0, y, 420.0, 50.0);
@@ -123,7 +117,7 @@ pub fn poll_startup_check(state: &mut State) {
 pub fn update_auth(app: &mut App, state: &mut State) {
     poll_auth(state);
 
-    let layout = auth_layout(win_w(app), win_h(app));
+    let layout = auth_layout(state.ui.view());
 
     if state.backspace.fired() {
         match state.auth_form.focused {
@@ -144,40 +138,42 @@ pub fn update_auth(app: &mut App, state: &mut State) {
     }
 
     for (tab, mode) in layout.tabs.iter().zip([AuthMode::Login, AuthMode::Register]) {
-        if tab.clicked(app) {
+        if state.ui.clicked(*tab) {
             state.auth_form.mode = mode;
             state.auth_form.status.clear();
         }
     }
 
-    if layout.username.clicked(app) {
+    if state.ui.clicked(layout.username) {
         state.auth_form.focused = AuthField::Username;
     }
-    if layout.password.clicked(app) {
+    if state.ui.clicked(layout.password) {
         state.auth_form.focused = AuthField::Password;
     }
 
-    if (layout.submit.clicked(app) || app.keyboard.was_pressed(KeyCode::Enter)) && state.auth_form.pending.is_none() {
+    if (state.ui.clicked(layout.submit) || app.keyboard.was_pressed(KeyCode::Enter))
+        && state.auth_form.pending.is_none()
+    {
         submit(&mut state.auth_form);
     }
 
-    if layout.guest.clicked(app) {
+    if state.ui.clicked(layout.guest) {
         state.auth = None;
         state.auth_form = AuthForm::default();
         state.screen = Screen::Menu;
     }
 }
 
-pub fn draw_auth(app: &mut App, gfx: &mut Graphics, state: &State) {
-    let layout = auth_layout(win_w(app), win_h(app));
+pub fn draw_auth(gfx: &mut Graphics, state: &State) {
+    let layout = auth_layout(state.ui.view());
     let AuthLayout { cx, base_y, .. } = layout;
 
-    let mut draw = gfx.create_draw();
+    let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
 
-    draw.text(&state.font, "ROUILLO")
+    draw.text(&state.fonts.display, "ROUILLO")
         .position(cx, base_y - 80.0)
-        .size(64.0)
+        .size(theme::size::HERO)
         .h_align_center()
         .v_align_middle()
         .color(theme::TITLE);
@@ -194,9 +190,9 @@ pub fn draw_auth(app: &mut App, gfx: &mut Graphics, state: &State) {
             .corner_radius(theme::RADIUS)
             .stroke(2.0)
             .color(border);
-        draw.text(&state.font, label)
+        draw.text(&state.fonts.text, label)
             .position(tab.x + tab.w / 2.0, tab.y + tab.h / 2.0)
-            .size(24.0)
+            .size(theme::size::EMPHASIS)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT);
@@ -219,7 +215,7 @@ pub fn draw_auth(app: &mut App, gfx: &mut Graphics, state: &State) {
             focused: form.focused == which,
             secret: which == AuthField::Password,
         };
-        text_field(&mut draw, &state.font, rect, &field);
+        text_field(&mut draw, &state.fonts, rect, &field);
     }
 
     let loading = state.auth_form.pending.is_some();
@@ -233,13 +229,15 @@ pub fn draw_auth(app: &mut App, gfx: &mut Graphics, state: &State) {
     };
     state
         .ui
-        .button_enabled(&mut draw, &state.font, layout.submit, submit_label, !loading);
-    state.ui.button(&mut draw, &state.font, layout.guest, "Jouer en invité");
+        .button_enabled(&mut draw, &state.fonts, layout.submit, submit_label, !loading);
+    state
+        .ui
+        .button(&mut draw, &state.fonts, layout.guest, "Jouer en invité");
 
     if let Some((msg, color)) = state.auth_form.status.shown() {
-        draw.text(&state.font, msg)
+        draw.text(&state.fonts.text, msg)
             .position(cx, base_y + 370.0)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
             .color(color);

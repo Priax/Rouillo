@@ -3,8 +3,16 @@ use shared::{config, ClientMessage, GameState, InputKind, StampedInput};
 
 use crate::connection::Connection;
 use crate::state::{GameSession, Settings};
+use crate::ui::Ui;
 
-pub fn update_game(app: &mut App, session: &mut GameSession, settings: Settings, conn: &mut Connection, is_host: bool) {
+pub fn update_game(
+    app: &mut App,
+    ui: &Ui,
+    session: &mut GameSession,
+    settings: Settings,
+    conn: &mut Connection,
+    is_host: bool,
+) {
     if !conn.is_live() {
         return;
     }
@@ -13,12 +21,12 @@ pub fn update_game(app: &mut App, session: &mut GameSession, settings: Settings,
     let paused = session.board.state == GameState::Paused;
 
     if paused || game_over || session.opponent_disconnected {
-        let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
-        if crate::rooms::leave_room_button(ww, wh).clicked(app) {
+        let (ww, wh) = ui.view().size();
+        if ui.clicked(crate::rooms::leave_room_button(ww, wh)) {
             conn.send(&ClientMessage::LeaveRoom);
             return;
         }
-        if is_host && crate::rooms::back_to_lobby_button(ww, wh).clicked(app) {
+        if is_host && ui.clicked(crate::rooms::back_to_lobby_button(ww, wh)) {
             conn.send(&ClientMessage::ReturnToLobby);
             return;
         }

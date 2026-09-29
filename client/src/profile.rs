@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
+use notan::draw::{Draw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
 use crate::state::{
     ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, OtherProfileData, ProfileCore,
     ProfileData, ProfileEditField, Screen, State,
 };
-use crate::ui::{text_field, Field, Rect, Status};
+use crate::ui::{text_field, Field, Fonts, Rect, Status, Ui};
 use crate::{http, theme};
 
 const HISTORY_Y: f32 = 175.0;
@@ -87,46 +87,39 @@ fn friendship_with(
     }
 }
 
-fn draw_header(draw: &mut Draw, font: &crate::Font, cx: f32, core: &ProfileCore) {
-    draw.text(font, &core.username)
+fn draw_header(draw: &mut Draw, fonts: &Fonts, cx: f32, core: &ProfileCore) {
+    draw.text(&fonts.display, &core.username)
         .position(cx, 90.0)
-        .size(52.0)
+        .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
         .color(theme::TITLE);
-    draw.text(font, &format!("ELO {}", core.elo))
+    draw.text(&fonts.display, &format!("ELO {}", core.elo))
         .position(cx, 140.0)
-        .size(26.0)
+        .size(theme::size::EMPHASIS)
         .h_align_center()
         .v_align_middle()
         .color(theme::GOLD);
 }
 
-fn draw_stats_panel(
-    draw: &mut Draw,
-    font: &crate::Font,
-    ui_font: &crate::Font,
-    core: &ProfileCore,
-    ww: f32,
-    load_failed: bool,
-) {
+fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32, load_failed: bool) {
     let (left_x, left_w, _, _) = panels(ww);
     let label_x = left_x + 10.0;
     let val_x = left_x + left_w - 10.0;
 
     if load_failed {
-        draw.text(font, "Profil introuvable.")
+        draw.text(&fonts.text, "Profil introuvable.")
             .position(left_x + left_w / 2.0, STATS_Y + 40.0)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
             .color(theme::DANGER);
         return;
     }
     if core.profile_slot.is_some() {
-        draw.text(font, "Chargement des stats...")
+        draw.text(&fonts.text, "Chargement des stats...")
             .position(left_x + left_w / 2.0, STATS_Y + 40.0)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT_MUTED);
@@ -147,14 +140,14 @@ fn draw_stats_panel(
     ];
     for (i, (label, val)) in stats.iter().enumerate() {
         let y = STATS_Y + i as f32 * 30.0;
-        draw.text(font, label)
+        draw.text(&fonts.text, label)
             .position(label_x, y)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .v_align_middle()
             .color(theme::TEXT_MUTED);
-        draw.text(font, val)
+        draw.text(&fonts.text, val)
             .position(val_x, y)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .h_align_right()
             .v_align_middle()
             .color(theme::TEXT);
@@ -166,15 +159,15 @@ fn draw_stats_panel(
     let mut info_y = sep_y + 22.0;
     if let Some(bio) = &core.bio {
         if !bio.is_empty() {
-            draw.text(font, "Bio")
+            draw.text(&fonts.text, "Bio")
                 .position(label_x, info_y)
-                .size(16.0)
+                .size(theme::size::SMALL)
                 .v_align_middle()
                 .color(theme::TEXT_DIM);
             info_y += 22.0;
-            draw.text(ui_font, &truncate_display(bio, 55))
+            draw.text(&fonts.text, &truncate_display(bio, 55))
                 .position(label_x, info_y)
-                .size(17.0)
+                .size(theme::size::BODY)
                 .v_align_middle()
                 .color(theme::TEXT);
             info_y += 28.0;
@@ -182,20 +175,26 @@ fn draw_stats_panel(
     }
     if let Some(music) = &core.favorite_music {
         if !music.is_empty() {
-            draw.text(ui_font, &format!("♪  {}", truncate_display(music, 45)))
+            draw.text(&fonts.text, "Musique")
                 .position(label_x, info_y)
-                .size(17.0)
+                .size(theme::size::SMALL)
+                .v_align_middle()
+                .color(theme::TEXT_DIM);
+            info_y += 22.0;
+            draw.text(&fonts.text, &truncate_display(music, 45))
+                .position(label_x, info_y)
+                .size(theme::size::BODY)
                 .v_align_middle()
                 .color(theme::ACCENT);
         }
     }
 }
 
-fn draw_history_panel(draw: &mut Draw, app: &App, font: &crate::Font, core: &ProfileCore, ww: f32, clickable: bool) {
+fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore, ww: f32, clickable: bool) {
     let (_, _, right_x, right_w) = panels(ww);
-    draw.text(font, "Derniers matchs")
+    draw.text(&fonts.text, "Derniers matchs")
         .position(right_x + right_w / 2.0, HISTORY_Y)
-        .size(22.0)
+        .size(theme::size::EMPHASIS)
         .h_align_center()
         .v_align_middle()
         .color(theme::TEXT_DIM);
@@ -203,16 +202,16 @@ fn draw_history_panel(draw: &mut Draw, app: &App, font: &crate::Font, core: &Pro
         .color(theme::DIVIDER);
 
     if core.history_slot.is_some() {
-        draw.text(font, "Chargement...")
+        draw.text(&fonts.text, "Chargement...")
             .position(right_x + right_w / 2.0, HISTORY_Y + 48.0)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT_MUTED);
     } else if core.match_history.is_empty() {
-        draw.text(font, "Aucun match pour l'instant.")
+        draw.text(&fonts.text, "Aucun match pour l'instant.")
             .position(right_x + right_w / 2.0, HISTORY_Y + 48.0)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT_MUTED);
@@ -220,8 +219,8 @@ fn draw_history_panel(draw: &mut Draw, app: &App, font: &crate::Font, core: &Pro
         for (i, m) in core.match_history.iter().enumerate().take(7) {
             draw_match_row(
                 draw,
-                app,
-                font,
+                ui,
+                fonts,
                 history_row(right_x, right_w, i),
                 m,
                 &core.user_id,
@@ -246,8 +245,8 @@ fn history_row_zone(ww: f32, i: usize) -> Rect {
 
 fn draw_match_row(
     draw: &mut Draw,
-    app: &App,
-    font: &crate::Font,
+    ui: &Ui,
+    fonts: &Fonts,
     row: Rect,
     m: &ApiMatchEntry,
     viewed_id: &str,
@@ -265,32 +264,35 @@ fn draw_match_row(
         .color(if won { theme::SUCCESS_BG } else { theme::DANGER_BG });
 
     let result_color = if won { theme::SUCCESS } else { theme::DANGER };
-    draw.text(font, if won { "VICTOIRE" } else { "DEFAITE" })
+    draw.text(&fonts.text, if won { "VICTOIRE" } else { "DEFAITE" })
         .position(row_x + row_w * 0.09, y)
-        .size(16.0)
+        .size(theme::size::SMALL)
         .h_align_center()
         .v_align_middle()
         .color(result_color);
 
-    let opp_hover = clickable && opp.user_id.is_some() && opponent_zone(row).contains(app.mouse.x, app.mouse.y);
-    draw.text(font, &format!("vs {opp_name}"))
+    let opp_hover = clickable && opp.user_id.is_some() && ui.hovered(opponent_zone(row));
+    draw.text(&fonts.text, &format!("vs {opp_name}"))
         .position(row_x + row_w * 0.33, y)
-        .size(17.0)
+        .size(theme::size::BODY)
         .h_align_center()
         .v_align_middle()
         .color(if opp_hover { theme::LINK } else { theme::TEXT });
 
-    draw.text(font, &format!("Chain x{}  Nuis {}", me.max_chain, me.nuisance_sent))
-        .position(row_x + row_w * 0.65, y)
-        .size(15.0)
-        .h_align_center()
-        .v_align_middle()
-        .color(theme::GOLD);
+    draw.text(
+        &fonts.text,
+        &format!("Chain x{}  Nuis {}", me.max_chain, me.nuisance_sent),
+    )
+    .position(row_x + row_w * 0.65, y)
+    .size(theme::size::SMALL)
+    .h_align_center()
+    .v_align_middle()
+    .color(theme::GOLD);
 
     let secs = m.duration_secs as u32;
-    draw.text(font, &format!("{}:{:02}", secs / 60, secs % 60))
+    draw.text(&fonts.text, &format!("{}:{:02}", secs / 60, secs % 60))
         .position(row_x + row_w * 0.88, y)
-        .size(15.0)
+        .size(theme::size::SMALL)
         .h_align_center()
         .v_align_middle()
         .color(theme::TEXT_MUTED);
@@ -412,7 +414,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
     }
     poll_edit(state);
 
-    let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
+    let (ww, wh) = state.ui.view().size();
     let cx = ww / 2.0;
     let editing = state.profile.as_ref().is_some_and(|p| p.editing);
 
@@ -438,23 +440,23 @@ pub fn update_profile(app: &mut App, state: &mut State) {
             }
         }
         let (bio_box, music_box) = edit_boxes(cx);
-        if bio_box.clicked(app) {
+        if state.ui.clicked(bio_box) {
             if let Some(p) = state.profile.as_mut() {
                 p.edit_focused = ProfileEditField::Bio;
             }
         }
-        if music_box.clicked(app) {
+        if state.ui.clicked(music_box) {
             if let Some(p) = state.profile.as_mut() {
                 p.edit_focused = ProfileEditField::Music;
             }
         }
         let (save_btn, cancel_btn) = edit_buttons(cx);
-        if (save_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Enter))
+        if (state.ui.clicked(save_btn) || app.keyboard.was_pressed(KeyCode::Enter))
             && state.profile.as_ref().is_some_and(|p| p.edit_pending.is_none())
         {
             save_profile(state);
         }
-        if cancel_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Escape) {
+        if state.ui.clicked(cancel_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
             if let Some(p) = state.profile.as_mut() {
                 p.editing = false;
                 p.edit_status.clear();
@@ -463,12 +465,12 @@ pub fn update_profile(app: &mut App, state: &mut State) {
     } else {
         let (back_btn, edit_btn, logout_btn) = own_buttons(cx, wh);
 
-        if back_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Escape) {
+        if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
             state.profile = None;
             state.screen = Screen::Menu;
             return;
         }
-        if edit_btn.clicked(app) {
+        if state.ui.clicked(edit_btn) {
             if let Some(p) = state.profile.as_mut() {
                 p.edit_bio = p.core.bio.clone().unwrap_or_default();
                 p.edit_music = p.core.favorite_music.clone().unwrap_or_default();
@@ -477,7 +479,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
                 p.edit_status.clear();
             }
         }
-        if logout_btn.clicked(app) {
+        if state.ui.clicked(logout_btn) {
             crate::menu::do_logout(state);
             return;
         }
@@ -491,7 +493,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
                 let i_am_p1 = m.player1.user_id.as_deref() == Some(my_id);
                 let opp = if i_am_p1 { &m.player2 } else { &m.player1 };
                 if let (Some(opp_id), Some(opp_name)) = (&opp.user_id, &opp.username) {
-                    if history_row_zone(ww, i).clicked(app) {
+                    if state.ui.clicked(history_row_zone(ww, i)) {
                         break 'find Some((opp_id.clone(), opp_name.clone()));
                     }
                 }
@@ -505,10 +507,10 @@ pub fn update_profile(app: &mut App, state: &mut State) {
     }
 }
 
-pub fn draw_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
-    let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
+pub fn draw_profile(gfx: &mut Graphics, state: &State) {
+    let (ww, wh) = state.ui.view().size();
     let cx = ww / 2.0;
-    let mut draw = gfx.create_draw();
+    let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
 
     let Some(profile) = &state.profile else {
@@ -516,31 +518,24 @@ pub fn draw_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
         return;
     };
 
-    draw_header(&mut draw, &state.font, cx, &profile.core);
+    draw_header(&mut draw, &state.fonts, cx, &profile.core);
 
     if profile.editing {
-        draw_edit_form(&state.ui, &mut draw, &state.font, &state.ui_font, profile, cx);
+        draw_edit_form(&state.ui, &mut draw, &state.fonts, profile, cx);
     } else {
-        draw_stats_panel(&mut draw, &state.font, &state.ui_font, &profile.core, ww, false);
-        draw_history_panel(&mut draw, app, &state.font, &profile.core, ww, true);
+        draw_stats_panel(&mut draw, &state.fonts, &profile.core, ww, false);
+        draw_history_panel(&mut draw, &state.ui, &state.fonts, &profile.core, ww, true);
 
         let (back_btn, edit_btn, logout_btn) = own_buttons(cx, wh);
-        state.ui.button(&mut draw, &state.font, back_btn, "Retour");
-        state.ui.button(&mut draw, &state.font, edit_btn, "Modifier");
-        state.ui.button(&mut draw, &state.font, logout_btn, "Déconnexion");
+        state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
+        state.ui.button(&mut draw, &state.fonts, edit_btn, "Modifier");
+        state.ui.button(&mut draw, &state.fonts, logout_btn, "Déconnexion");
     }
 
     gfx.render(&draw);
 }
 
-fn draw_edit_form(
-    ui: &crate::ui::Ui,
-    draw: &mut Draw,
-    font: &crate::Font,
-    ui_font: &crate::Font,
-    profile: &ProfileData,
-    cx: f32,
-) {
+fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &ProfileData, cx: f32) {
     let (bio_box, music_box) = edit_boxes(cx);
     let fields = [
         (
@@ -559,9 +554,9 @@ fn draw_edit_form(
         ),
     ];
     for (rect, label, placeholder, value, which) in fields {
-        draw.text(font, label)
+        draw.text(&fonts.text, label)
             .position(rect.x, rect.y - 15.0)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .v_align_middle()
             .color(theme::TEXT_DIM);
         let field = Field {
@@ -570,24 +565,24 @@ fn draw_edit_form(
             focused: profile.edit_focused == which,
             secret: false,
         };
-        text_field(draw, ui_font, rect, &field);
+        text_field(draw, fonts, rect, &field);
     }
 
     let (save_btn, cancel_btn) = edit_buttons(cx);
     let saving = profile.edit_pending.is_some();
     ui.button_enabled(
         draw,
-        font,
+        fonts,
         save_btn,
         if saving { "Sauvegarde..." } else { "Enregistrer" },
         !saving,
     );
-    ui.button(draw, font, cancel_btn, "Annuler");
+    ui.button(draw, fonts, cancel_btn, "Annuler");
 
     if let Some((msg, color)) = profile.edit_status.shown() {
-        draw.text(font, msg)
+        draw.text(&fonts.text, msg)
             .position(cx, 465.0)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
             .color(color);
@@ -707,8 +702,8 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
     }
     poll_friend(state);
 
-    let ww = app.window().width() as f32;
-    let wh = app.window().height() as f32;
+    let ww = state.ui.view().w;
+    let wh = state.ui.view().h;
     let cx = ww / 2.0;
     let (add_btn, back_btn) = other_buttons(cx, wh);
 
@@ -717,23 +712,23 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
         state.other_profile.as_ref().map(|p| (p.friendship, p.load_failed)),
         Some((FriendshipStatus::Unknown | FriendshipStatus::NotFriends, false))
     );
-    if add_btn.clicked(app) && !sending && can_add {
+    if state.ui.clicked(add_btn) && !sending && can_add {
         add_friend(state);
     }
 
-    if back_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
         let prev = state.other_profile.as_ref().map_or(Screen::Menu, |p| p.prev_screen);
         state.other_profile = None;
         state.screen = prev;
     }
 }
 
-pub fn draw_other_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
-    let ww = app.window().width() as f32;
-    let wh = app.window().height() as f32;
+pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
+    let ww = state.ui.view().w;
+    let wh = state.ui.view().h;
     let cx = ww / 2.0;
 
-    let mut draw = gfx.create_draw();
+    let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
 
     let Some(p) = &state.other_profile else {
@@ -741,9 +736,9 @@ pub fn draw_other_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
         return;
     };
 
-    draw_header(&mut draw, &state.font, cx, &p.core);
-    draw_stats_panel(&mut draw, &state.font, &state.ui_font, &p.core, ww, p.load_failed);
-    draw_history_panel(&mut draw, app, &state.font, &p.core, ww, false);
+    draw_header(&mut draw, &state.fonts, cx, &p.core);
+    draw_stats_panel(&mut draw, &state.fonts, &p.core, ww, p.load_failed);
+    draw_history_panel(&mut draw, &state.ui, &state.fonts, &p.core, ww, false);
 
     let btn_y = button_row_y(wh);
     let sending = p.friend_slot.is_some();
@@ -754,14 +749,14 @@ pub fn draw_other_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
         let label = if sending { "Envoi..." } else { "Ajouter en ami" };
         state
             .ui
-            .button_enabled(&mut draw, &state.font, add_btn, label, !sending);
+            .button_enabled(&mut draw, &state.fonts, add_btn, label, !sending);
     }
-    state.ui.button(&mut draw, &state.font, back_btn, "Retour");
+    state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
 
     if let Some((msg, color)) = p.friend_status.shown() {
-        draw.text(&state.font, msg)
+        draw.text(&state.fonts.text, msg)
             .position(cx, btn_y - 50.0)
-            .size(19.0)
+            .size(theme::size::BODY)
             .h_align_center()
             .v_align_middle()
             .color(color);

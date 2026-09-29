@@ -77,6 +77,17 @@ pub const SCRIM_STRONG: Color = tone(0.30, 0.03).with_alpha(0.88);
 
 pub const RADIUS: f32 = 8.0;
 
+pub mod size {
+    pub const SMALL: f32 = 15.0;
+    pub const BODY: f32 = 18.0;
+    pub const LABEL: f32 = 20.0;
+    pub const EMPHASIS: f32 = 24.0;
+    pub const HEADING: f32 = 30.0;
+    pub const TITLE: f32 = 48.0;
+    pub const HERO: f32 = 72.0;
+    pub const HUGE: f32 = 140.0;
+}
+
 pub mod game {
     use notan::prelude::Color;
     use shared::PuyoType;

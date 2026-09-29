@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use notan::app::Event;
-use notan::draw::{CreateDraw, CreateFont, DrawConfig, DrawShapes, DrawTextSection, Font};
+use notan::draw::{DrawConfig, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 use shared::{config, ClientMessage};
 
@@ -46,9 +46,8 @@ pub fn server_url() -> String {
 }
 
 fn setup(gfx: &mut Graphics) -> State {
-    let font = gfx.create_font(include_bytes!("../../assets/arcadeFont.ttf")).unwrap();
-    let ui_font = gfx.create_font(include_bytes!("../../assets/uiFont.ttf")).unwrap();
-    let mut state = State::new(font, ui_font);
+    let fonts = ui::Fonts::load(gfx).expect("the bundled fonts are valid");
+    let mut state = State::new(fonts);
 
     if let Some(token) = state::load_stored_token() {
         let slot = http::new_slot();
@@ -119,13 +118,13 @@ fn banner_buttons(ww: f32, wh: f32) -> (Rect, Rect) {
     )
 }
 
-fn update_invitation(app: &mut App, state: &mut State) {
+fn update_invitation(state: &mut State) {
     if state.pending_invitation.is_none() {
         return;
     }
-    let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
+    let (ww, wh) = state.ui.view().size();
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
-    if accept_btn.clicked(app) {
+    if state.ui.clicked(accept_btn) {
         if let Some((_, room_id, _)) = state.pending_invitation.take() {
             if state.conn.is_live() {
                 state.conn.send(&ClientMessage::JoinRoom { id: room_id });
@@ -136,14 +135,15 @@ fn update_invitation(app: &mut App, state: &mut State) {
             }
             state.screen = Screen::RoomBrowser;
         }
-    } else if decline_btn.clicked(app) {
+    } else if state.ui.clicked(decline_btn) {
         state.pending_invitation = None;
     }
 }
 
 fn update(app: &mut App, state: &mut State) {
     let dt = app.timer.delta_f32();
-    state.ui.begin_frame(dt, ui::Mouse::of(app));
+    let view = ui::View::of(app);
+    state.ui.begin_frame(dt, view, ui::Mouse::of(app, view));
     state.backspace.update(app.keyboard.is_down(KeyCode::Backspace), dt);
     let State { session, conn, .. } = state;
     if let Some(session) = session.as_mut() {
@@ -155,14 +155,14 @@ fn update(app: &mut App, state: &mut State) {
         login::poll_startup_check(state);
     }
 
-    update_invitation(app, state);
+    update_invitation(state);
     network::handle_server_messages(state);
 
     match state.screen {
         Screen::Auth => login::update_auth(app, state),
-        Screen::Menu => menu::update_menu(app, state),
+        Screen::Menu => menu::update_menu(state),
         Screen::Settings => menu::update_settings(app, state),
-        Screen::RoomBrowser => rooms::update_browser(app, state),
+        Screen::RoomBrowser => rooms::update_browser(state),
         Screen::CreateRoom => rooms::update_create_room(app, state),
         Screen::JoinById => rooms::update_join_by_id(app, state),
         Screen::RoomLobby => rooms::update_lobby(app, state),
@@ -175,59 +175,60 @@ fn update(app: &mut App, state: &mut State) {
                 session,
                 settings,
                 conn,
+                ui,
                 ..
             } = &mut *state;
             if let Some(session) = session {
-                logic::update_game(app, session, *settings, conn, is_host);
+                logic::update_game(app, ui, session, *settings, conn, is_host);
             }
         }
     }
 }
 
-fn draw_invitation_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
+fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
     let Some((ref from, _, ref room_name)) = state.pending_invitation else {
         return;
     };
-    let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
+    let (ww, wh) = state.ui.view().size();
     let banner_y = wh - BANNER_H;
-    let mut d = gfx.create_draw();
+    let mut d = state.ui.canvas(gfx);
     d.rect((0.0, banner_y), (ww, BANNER_H)).color(theme::BANNER);
     d.rect((0.0, banner_y), (ww, 2.0)).color(theme::ACCENT);
     let msg = format!("{from} t'invite dans \"{room_name}\"");
-    d.text(&state.font, &msg)
+    d.text(&state.fonts.text, &msg)
         .position(20.0, banner_y + 40.0)
-        .size(20.0)
+        .size(theme::size::LABEL)
         .v_align_middle()
         .color(theme::TEXT);
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
-    state.ui.button(&mut d, &state.font, accept_btn, "Rejoindre");
-    state.ui.button(&mut d, &state.font, decline_btn, "Ignorer");
+    state.ui.button(&mut d, &state.fonts, accept_btn, "Rejoindre");
+    state.ui.button(&mut d, &state.fonts, decline_btn, "Ignorer");
     gfx.render(&d);
 }
 
 fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
     match state.screen {
-        Screen::Auth => login::draw_auth(app, gfx, state),
-        Screen::Menu => menu::draw_menu(app, gfx, state),
-        Screen::Settings => menu::draw_settings(app, gfx, state),
-        Screen::RoomBrowser => rooms::draw_browser(app, gfx, state),
-        Screen::CreateRoom => rooms::draw_create_room(app, gfx, state),
-        Screen::JoinById => rooms::draw_join_by_id(app, gfx, state),
-        Screen::RoomLobby => rooms::draw_lobby(app, gfx, state),
-        Screen::Profile => profile::draw_profile(app, gfx, state),
-        Screen::Friends => friends::draw_friends(app, gfx, state),
-        Screen::OtherProfile => profile::draw_other_profile(app, gfx, state),
+        Screen::Auth => login::draw_auth(gfx, state),
+        Screen::Menu => menu::draw_menu(gfx, state),
+        Screen::Settings => menu::draw_settings(gfx, state),
+        Screen::RoomBrowser => rooms::draw_browser(gfx, state),
+        Screen::CreateRoom => rooms::draw_create_room(gfx, state),
+        Screen::JoinById => rooms::draw_join_by_id(gfx, state),
+        Screen::RoomLobby => rooms::draw_lobby(gfx, state),
+        Screen::Profile => profile::draw_profile(gfx, state),
+        Screen::Friends => friends::draw_friends(gfx, state),
+        Screen::OtherProfile => profile::draw_other_profile(gfx, state),
         Screen::Game => {
             let role = draw::Role {
                 is_host: state.lobby.as_ref().is_some_and(|l| l.is_host),
                 can_pause: state.lobby.as_ref().is_some_and(|l| l.settings.pause.allows(l.is_host)),
             };
             if let Some(session) = state.session.as_ref() {
-                draw::draw_game(app, gfx, session, &state.ui, &state.font, role);
+                draw::draw_game(app, gfx, session, &state.ui, &state.fonts, role);
             }
         }
     }
-    draw_invitation_banner(app, gfx, state);
+    draw_invitation_banner(gfx, state);
     draw_reconnect_banner(app, gfx, state);
 }
 
@@ -235,15 +236,15 @@ fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
     let Some((attempts, secs_left)) = state.conn.recovering(connection::now_secs()) else {
         return;
     };
-    let ww = app.window().width() as f32;
-    let mut d = gfx.create_draw();
+    let ww = state.ui.view().w;
+    let mut d = state.ui.canvas(gfx);
     d.rect((0.0, 0.0), (ww, 44.0)).color(theme::WARNING_BANNER);
     d.rect((0.0, 44.0), (ww, 2.0)).color(theme::WARNING);
     let dots = ".".repeat(1 + (app.timer.elapsed_f32() * 2.0) as usize % 3);
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
-    d.text(&state.font, &msg)
+    d.text(&state.fonts.text, &msg)
         .position(ww / 2.0, 22.0)
-        .size(20.0)
+        .size(theme::size::LABEL)
         .h_align_center()
         .v_align_middle()
         .color(theme::WARNING_TEXT);

@@ -1,11 +1,11 @@
-use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
+use notan::draw::{Draw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 use shared::{Board, GameState, PuyoType, Settle};
 
+use crate::config;
 use crate::state::GameSession;
 use crate::theme::{self, game};
-use crate::ui::{Rect, Ui};
-use crate::{config, Font};
+use crate::ui::{Fonts, Rect, Ui, View};
 
 struct GameLayout {
     win_w: f32,
@@ -16,7 +16,8 @@ struct GameLayout {
 }
 
 impl GameLayout {
-    fn new(win_w: f32, win_h: f32) -> Self {
+    fn new(view: View) -> Self {
+        let (win_w, win_h) = view.size();
         let board_w = config::GRID_WIDTH as f32 * config::CELL_SIZE;
         let board_h = (config::GRID_HEIGHT - config::VISIBLE_ROW_OFFSET) as f32 * config::CELL_SIZE;
         let gap = 250.0;
@@ -59,25 +60,25 @@ impl Overlay {
     }
 }
 
-pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &Ui, font: &Font, role: Role) {
-    let layout = GameLayout::new(app.window().width() as f32, app.window().height() as f32);
-    let mut draw = gfx.create_draw();
+pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &Ui, fonts: &Fonts, role: Role) {
+    let layout = GameLayout::new(ui.view());
+    let mut draw = ui.canvas(gfx);
     draw.clear(game::BACKGROUND);
 
-    draw_boards(&mut draw, font, session, &layout);
+    draw_boards(&mut draw, fonts, session, &layout);
     draw_sidebar(
         &mut draw,
-        font,
+        fonts,
         &session.predicted_board,
         layout.sidebar_x,
         layout.mine.y,
     );
-    draw_chain_anim(&mut draw, font, session.chain_display, layout.mine);
+    draw_chain_anim(&mut draw, fonts, session.chain_display, layout.mine);
     if session.all_clear_timer > 0.0 {
         let alpha = (session.all_clear_timer / 3.0).min(1.0);
-        draw.text(font, "ALL CLEAR!")
+        draw.text(&fonts.display, "ALL CLEAR!")
             .position(layout.mine.x + layout.mine.w / 2.0, layout.mine.y + layout.mine.h / 2.0)
-            .size(48.0)
+            .size(theme::size::TITLE)
             .h_align_center()
             .v_align_middle()
             .color(game::ALL_CLEAR.with_alpha(alpha));
@@ -85,16 +86,16 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
     if let Some(overlay) = Overlay::of(session) {
         let game_over = matches!(overlay, Overlay::GameOver { .. });
         let leaving_forfeits = !game_over && !session.opponent_disconnected;
-        draw_overlay(&mut draw, font, &overlay, &layout, role, app.timer.elapsed_f32());
-        draw_exit_buttons(&mut draw, ui, font, &layout, role.is_host, leaving_forfeits);
+        draw_overlay(&mut draw, fonts, &overlay, &layout, role, app.timer.elapsed_f32());
+        draw_exit_buttons(&mut draw, ui, fonts, &layout, role.is_host, leaving_forfeits);
     }
     #[cfg(debug_assertions)]
-    draw_debug(&mut draw, font, session, layout.win_h);
+    draw_debug(&mut draw, fonts, session, layout.win_h);
 
     gfx.render(&draw);
 }
 
-fn draw_boards(draw: &mut Draw, font: &Font, session: &GameSession, layout: &GameLayout) {
+fn draw_boards(draw: &mut Draw, fonts: &Fonts, session: &GameSession, layout: &GameLayout) {
     let me = &session.predicted_board;
     let (row_off, col_off) = session.piece_visual_offset;
     draw_board(
@@ -104,45 +105,45 @@ fn draw_boards(draw: &mut Draw, font: &Font, session: &GameSession, layout: &Gam
         (row_off + fall_step(me), col_off),
         session.my_turn.satellite(),
     );
-    draw.text(font, "YOU")
+    draw.text(&fonts.text, "YOU")
         .position(layout.mine.x, layout.mine.y - 50.0)
-        .size(20.0)
+        .size(theme::size::LABEL)
         .color(theme::TEXT);
-    draw_nuisance_bar(draw, font, session.my_nuisance(), layout.mine);
+    draw_nuisance_bar(draw, fonts, session.my_nuisance(), layout.mine);
 
     let (opp_board, opp_offset) = session
         .opponent_view
         .frame()
         .unwrap_or((&session.other_board, (0.0, 0.0)));
     draw_board(draw, opp_board, layout.theirs, opp_offset, session.opp_turn.satellite());
-    draw.text(font, "OPPONENT")
+    draw.text(&fonts.text, "OPPONENT")
         .position(layout.theirs.x, layout.theirs.y - 50.0)
-        .size(20.0)
+        .size(theme::size::LABEL)
         .color(theme::TEXT_MUTED);
-    draw_nuisance_bar(draw, font, session.opp_nuisance(), layout.theirs);
+    draw_nuisance_bar(draw, fonts, session.opp_nuisance(), layout.theirs);
 }
 
-fn draw_sidebar(draw: &mut Draw, font: &Font, me: &Board, x: f32, top: f32) {
-    draw.text(font, &format!("Score: {}", me.score))
+fn draw_sidebar(draw: &mut Draw, fonts: &Fonts, me: &Board, x: f32, top: f32) {
+    draw.text(&fonts.display, &format!("Score: {}", me.score))
         .position(x, top + 20.0)
-        .size(30.0)
+        .size(theme::size::HEADING)
         .color(theme::TEXT);
-    draw.text(font, &format!("Level: {}", me.level()))
+    draw.text(&fonts.display, &format!("Level: {}", me.level()))
         .position(x, top + 60.0)
-        .size(30.0)
+        .size(theme::size::HEADING)
         .color(theme::GOLD);
 
     let next_y = top + 140.0;
-    draw.text(font, "Next:")
+    draw.text(&fonts.display, "Next:")
         .position(x, next_y - 30.0)
-        .size(30.0)
+        .size(theme::size::HEADING)
         .color(theme::TEXT_MUTED);
     draw_preview(draw, (x, next_y), me.next_types, game::PREVIEW);
 
     let next_next_y = top + 170.0 + (config::CELL_SIZE * 2.5);
-    draw.text(font, "Next Next:")
+    draw.text(&fonts.text, "Next Next:")
         .position(x, next_next_y - 25.0)
-        .size(20.0)
+        .size(theme::size::LABEL)
         .color(theme::TEXT_MUTED);
     draw_preview(draw, (x, next_next_y), me.next_next_types, game::PREVIEW_NEXT);
 
@@ -161,10 +162,10 @@ fn draw_preview(draw: &mut Draw, origin: (f32, f32), (axis, satellite): (PuyoTyp
     draw_puyo(draw, origin, Sprite::solid(1.0, 0.0, axis));
 }
 
-fn draw_overlay(draw: &mut Draw, font: &Font, overlay: &Overlay, layout: &GameLayout, role: Role, elapsed: f32) {
+fn draw_overlay(draw: &mut Draw, fonts: &Fonts, overlay: &Overlay, layout: &GameLayout, role: Role, elapsed: f32) {
     let (cx, cy) = (layout.win_w / 2.0, layout.win_h / 2.0);
     let centered = |draw: &mut Draw, text: &str, y: f32, size: f32, color: Color| {
-        draw.text(font, text)
+        draw.text(&fonts.display, text)
             .position(cx, y)
             .size(size)
             .h_align_center()
@@ -179,14 +180,20 @@ fn draw_overlay(draw: &mut Draw, font: &Font, overlay: &Overlay, layout: &GameLa
     draw.rect((0.0, 0.0), (layout.win_w, layout.win_h)).color(scrim);
     match overlay {
         Overlay::GameOver { i_lost: true } => {
-            centered(draw, "GAME OVER", cy - 20.0, 60.0, theme::DANGER);
-            centered(draw, "Press R to Restart", cy + 50.0, 28.0, theme::TEXT);
+            centered(draw, "GAME OVER", cy - 20.0, theme::size::HERO, theme::DANGER);
+            centered(draw, "Press R to Restart", cy + 50.0, theme::size::HEADING, theme::TEXT);
         }
         Overlay::GameOver { i_lost: false } => {
-            centered(draw, "YOU WIN !", cy - 20.0, 80.0, theme::GOLD);
-            centered(draw, "Press R to Restart", cy + 50.0, 28.0, theme::TEXT);
+            centered(draw, "YOU WIN !", cy - 20.0, theme::size::HERO, theme::GOLD);
+            centered(draw, "Press R to Restart", cy + 50.0, theme::size::HEADING, theme::TEXT);
         }
-        Overlay::OpponentGone => centered(draw, "OPPONENT DISCONNECTED", cy - 20.0, 40.0, theme::DANGER),
+        Overlay::OpponentGone => centered(
+            draw,
+            "OPPONENT DISCONNECTED",
+            cy - 20.0,
+            theme::size::TITLE,
+            theme::DANGER,
+        ),
         Overlay::Paused => {
             let blink = 0.2 + (elapsed * 2.0).sin().abs() * 0.8;
             let hint = if role.can_pause {
@@ -194,14 +201,26 @@ fn draw_overlay(draw: &mut Draw, font: &Font, overlay: &Overlay, layout: &GameLa
             } else {
                 "Seul l'hôte peut reprendre"
             };
-            centered(draw, "PAUSED", cy - 40.0, 60.0, theme::TEXT.with_alpha(blink));
-            centered(draw, hint, cy + 30.0, 28.0, theme::TEXT.with_alpha(blink));
+            centered(
+                draw,
+                "PAUSED",
+                cy - 40.0,
+                theme::size::HERO,
+                theme::TEXT.with_alpha(blink),
+            );
+            centered(
+                draw,
+                hint,
+                cy + 30.0,
+                theme::size::HEADING,
+                theme::TEXT.with_alpha(blink),
+            );
         }
     }
 }
 
 #[cfg(debug_assertions)]
-fn draw_debug(draw: &mut Draw, font: &Font, session: &GameSession, win_h: f32) {
+fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32) {
     let ping = session
         .ping_rtt_ms
         .map_or_else(|| "--".to_string(), |ms| format!("{ms:.0} ms"));
@@ -229,23 +248,23 @@ fn draw_debug(draw: &mut Draw, font: &Font, session: &GameSession, win_h: f32) {
         (board("OPP", &session.other_board), game::DEBUG_BOARDS),
     ];
     for (i, (text, color)) in lines.iter().enumerate() {
-        draw.text(font, text)
+        draw.text(&fonts.text, text)
             .position(10.0, win_h - 30.0 - i as f32 * 25.0)
-            .size(20.0)
+            .size(theme::size::LABEL)
             .color(*color);
     }
 }
 
-fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, font: &Font, layout: &GameLayout, is_host: bool, forfeits: bool) {
+fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, fonts: &Fonts, layout: &GameLayout, is_host: bool, forfeits: bool) {
     let (ww, wh) = (layout.win_w, layout.win_h);
     let (leave, back) = if forfeits {
         ("Abandonner (défaite)", "Lobby (défaite)")
     } else {
         ("Leave Room", "Back to Lobby")
     };
-    ui.button(draw, font, crate::rooms::leave_room_button(ww, wh), leave);
+    ui.button(draw, fonts, crate::rooms::leave_room_button(ww, wh), leave);
     if is_host {
-        ui.button(draw, font, crate::rooms::back_to_lobby_button(ww, wh), back);
+        ui.button(draw, fonts, crate::rooms::back_to_lobby_button(ww, wh), back);
     }
 }
 
@@ -419,7 +438,7 @@ fn draw_puyo(draw: &mut Draw, (dx, dy): (f32, f32), sprite: Sprite) {
     }
 }
 
-fn draw_nuisance_bar(draw: &mut Draw, font: &Font, nuisance: u32, board: Rect) {
+fn draw_nuisance_bar(draw: &mut Draw, fonts: &Fonts, nuisance: u32, board: Rect) {
     if nuisance == 0 {
         return;
     }
@@ -444,27 +463,27 @@ fn draw_nuisance_bar(draw: &mut Draw, font: &Font, nuisance: u32, board: Rect) {
     }
 
     if nuisance > config::GRID_WIDTH as u32 * 6 {
-        draw.text(font, &format!("+{nuisance}"))
+        draw.text(&fonts.text, &format!("+{nuisance}"))
             .position(board_x + board_w - 2.0, bar_y - 1.0)
-            .size(14.0)
+            .size(theme::size::SMALL)
             .h_align_right()
             .color(theme::TEXT);
     }
 }
 
-fn draw_chain_anim(draw: &mut Draw, font: &Font, chain_display: Option<(u32, f32)>, board: Rect) {
+fn draw_chain_anim(draw: &mut Draw, fonts: &Fonts, chain_display: Option<(u32, f32)>, board: Rect) {
     let Some((count, t)) = chain_display else {
         return;
     };
     let alpha = (t / 0.5).min(1.0_f32);
     let scale = 1.0 + ((t - 1.7).max(0.0) / 0.3 * 0.4).min(0.4_f32);
-    let size = 42.0 * scale;
+    let size = theme::size::TITLE * scale;
 
     let cx = board.x + board.w / 2.0;
     let cy = board.y + board.h * 0.35;
 
     let chain_color = game::chain(count).with_alpha(alpha);
-    draw.text(font, &format!("{count}  CHAIN!"))
+    draw.text(&fonts.display, &format!("{count}  CHAIN!"))
         .position(cx, cy)
         .size(size)
         .h_align_center()
