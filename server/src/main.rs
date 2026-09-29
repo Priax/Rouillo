@@ -167,6 +167,30 @@ struct Sim {
 }
 
 impl Sim {
+    /// Updates the per-player match statistics after a step.
+    fn record_stats(&mut self) {
+        for i in 0..2 {
+            let cc = self.boards[i].chain_count;
+            if cc > 0 && self.prev_chain[i] == 0 {
+                self.total_chains[i] += 1;
+            }
+            self.max_chain[i] = self.max_chain[i].max(cc);
+            self.prev_chain[i] = cc;
+
+            let ac = self.boards[i].last_was_all_clear;
+            if ac && !self.prev_all_clear[i] {
+                self.all_clears[i] += 1;
+            }
+            self.prev_all_clear[i] = ac;
+
+            let pid = self.boards[i].piece_id;
+            if pid != self.prev_piece_id[i] {
+                self.pieces_placed[i] += 1;
+                self.prev_piece_id[i] = pid;
+            }
+        }
+    }
+
     fn new(settings: &RoomSettings) -> Self {
         Self {
             boards: Self::fresh_boards(settings),
@@ -352,6 +376,86 @@ struct Room {
 }
 
 impl Room {
+    fn send_to_members(&self, payload: &[u8], outgoing: &mut Vec<(ConnId, Vec<u8>)>) {
+        for m in &self.members {
+            if let Some(c) = m.conn {
+                outgoing.push((c, payload.to_vec()));
+            }
+        }
+    }
+
+    /// Returns whether the room list changed (the game started).
+    fn tick_countdown(&mut self, dt: f32, outgoing: &mut Vec<(ConnId, Vec<u8>)>) -> bool {
+        let Phase::CountingDown(t) = &mut self.phase else {
+            return false;
+        };
+        let before = t.ceil() as u8;
+        *t -= dt;
+        if *t <= 0.0 {
+            self.phase = Phase::Playing;
+            self.sim.reset_boards(&self.settings);
+            match shared::encode(&ServerMessage::GameStart) {
+                Ok(payload) => self.send_to_members(&payload, outgoing),
+                Err(e) => error!("encode GameStart failed: {e}"),
+            }
+            return true;
+        }
+        if t.ceil() as u8 != before {
+            for (i, m) in self.members.iter().enumerate() {
+                if let Some(c) = m.conn {
+                    let msg = ServerMessage::Lobby {
+                        info: self.lobby_info_for(i),
+                    };
+                    match shared::encode(&msg) {
+                        Ok(payload) => outgoing.push((c, payload)),
+                        Err(e) => error!("encode Lobby failed: {e}"),
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Advances a running game by one step and sends its state. Returns the
+    /// match record when this step ended the game.
+    fn tick_game(&mut self, do_broadcast: bool, outgoing: &mut Vec<(ConnId, Vec<u8>)>) -> Option<db::MatchRecord> {
+        if !matches!(self.phase, Phase::Playing) {
+            return None;
+        }
+        let advanced = !self.sim.paused && !self.sim.finished;
+        let mut record = None;
+        if advanced {
+            self.sim.advance();
+            self.sim.record_stats();
+            if self.sim.boards.iter().any(|b| b.state == GameState::GameOver) {
+                self.sim.finished = true;
+                let winner_slot = if self.sim.boards[0].state == GameState::GameOver
+                    && self.sim.boards[1].state != GameState::GameOver
+                {
+                    2u8
+                } else {
+                    1u8
+                };
+                let rec = self.match_record(winner_slot);
+                info!(
+                    "Match terminé room #{} → slot {winner_slot} gagne ({:.0}s, inputs en retard {:?})",
+                    self.id, rec.duration_secs, self.sim.late_inputs
+                );
+                record = Some(rec);
+            }
+        }
+        let just_finished = record.is_some();
+        if (do_broadcast && advanced) || just_finished {
+            let msg = self.sim.state_update(just_finished);
+            self.sim.last_sent_rng = Some(self.sim.rng_positions());
+            match shared::encode(&msg) {
+                Ok(upd) => self.send_to_members(&upd, outgoing),
+                Err(e) => error!("encode StateUpdate failed: {e}"),
+            }
+        }
+        record
+    }
+
     fn slot_of_conn(&self, conn: ConnId) -> Option<usize> {
         self.members.iter().position(|m| m.conn == Some(conn))
     }
@@ -849,198 +953,217 @@ impl Manager {
                 user_id,
                 username,
                 last_disconnect_reason,
-            } => {
-                if let Some(reason) = last_disconnect_reason {
-                    warn!("WS {conn} reconnecte après coupure client: {reason}");
-                }
-                self.conn_token.insert(conn, token.clone());
-                if let Some(uid) = user_id {
-                    self.conn_user_id.insert(conn, uid);
-                }
-                if let Some(name) = username {
-                    self.conn_username.insert(conn, name);
-                }
-                if let Some(id) = self.room_of_token(&token) {
-                    self.rejoin(conn, id);
-                } else {
-                    self.send_room_list_to(conn);
-                }
-            }
-            Command::Unregister { conn } => {
-                self.drop_connection(conn);
-            }
-            Command::RequestRoomList { conn } => {
-                self.send_room_list_to(conn);
-            }
-            Command::CreateRoom { conn, name } => {
-                let token = match self.conn_token.get(&conn) {
-                    Some(t) => t.clone(),
-                    None => return,
-                };
-                self.leave_current(conn);
-                let id = self.next_id;
-                self.next_id += 1;
-                let settings = RoomSettings::default();
-                let user_id = self.conn_user_id.get(&conn).copied();
-                let room = Room {
-                    id,
-                    name: clean_name(&name),
-                    host: token.clone(),
-                    members: vec![Member {
-                        token,
-                        conn: Some(conn),
-                        disconnect_at: None,
-                        user_id,
-                    }],
-                    settings,
-                    phase: Phase::Lobby,
-                    sim: Sim::new(&settings),
-                };
-                self.rooms.insert(id, room);
-                self.clients.insert(conn, Some(id));
-                self.send_lobby(id);
-                self.room_list_dirty = true;
-                info!("Room #{id} créée (conn {conn})");
-            }
+            } => self.on_hello(conn, token, user_id, username, last_disconnect_reason.as_deref()),
+            Command::Unregister { conn } => self.drop_connection(conn),
+            Command::RequestRoomList { conn } => self.send_room_list_to(conn),
+            Command::CreateRoom { conn, name } => self.create_room(conn, &name),
             Command::JoinRoom { conn, id } => self.request_join(conn, id),
             Command::LeaveRoom { conn } => {
                 self.leave_current(conn);
                 self.send_room_list_to(conn);
             }
-            Command::SetSetting { conn, index, dir } => {
-                if let Some(id) = self.room_of(conn) {
-                    let changed = self
-                        .with_room(id, |room| {
-                            if room.is_host_conn(conn) && matches!(room.phase, Phase::Lobby) {
-                                room.settings.adjust(index as usize, dir);
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if changed {
-                        self.send_lobby(id);
+            Command::SetSetting { conn, index, dir } => self.set_setting(conn, index, dir),
+            Command::ToggleCountdown { conn } => self.toggle_countdown(conn),
+            Command::ReturnToLobby { conn } => self.return_to_lobby(conn),
+            Command::Input { conn, kind, seq, tick } => self.on_input(conn, kind, seq, tick),
+            Command::TogglePause { conn } => self.toggle_pause(conn),
+            Command::Restart { conn } => self.restart(conn),
+            Command::InviteFriend { conn, target_user_id } => self.request_invite(conn, &target_user_id),
+            Command::FriendCheckDone { check, friends } => self.friend_check_done(check, friends),
+        }
+    }
+
+    fn on_hello(
+        &mut self,
+        conn: ConnId,
+        token: Token,
+        user_id: Option<Uuid>,
+        username: Option<String>,
+        last_disconnect_reason: Option<&str>,
+    ) {
+        if let Some(reason) = last_disconnect_reason {
+            warn!("WS {conn} reconnecte après coupure client: {reason}");
+        }
+        let room = self.room_of_token(&token);
+        self.conn_token.insert(conn, token);
+        if let Some(uid) = user_id {
+            self.conn_user_id.insert(conn, uid);
+        }
+        if let Some(name) = username {
+            self.conn_username.insert(conn, name);
+        }
+        if let Some(id) = room {
+            self.rejoin(conn, id);
+        } else {
+            self.send_room_list_to(conn);
+        }
+    }
+
+    fn create_room(&mut self, conn: ConnId, name: &str) {
+        let token = match self.conn_token.get(&conn) {
+            Some(t) => t.clone(),
+            None => return,
+        };
+        self.leave_current(conn);
+        let id = self.next_id;
+        self.next_id += 1;
+        let settings = RoomSettings::default();
+        let user_id = self.conn_user_id.get(&conn).copied();
+        let room = Room {
+            id,
+            name: clean_name(name),
+            host: token.clone(),
+            members: vec![Member {
+                token,
+                conn: Some(conn),
+                disconnect_at: None,
+                user_id,
+            }],
+            settings,
+            phase: Phase::Lobby,
+            sim: Sim::new(&settings),
+        };
+        self.rooms.insert(id, room);
+        self.clients.insert(conn, Some(id));
+        self.send_lobby(id);
+        self.room_list_dirty = true;
+        info!("Room #{id} créée (conn {conn})");
+    }
+
+    fn set_setting(&mut self, conn: ConnId, index: u8, dir: i32) {
+        if let Some(id) = self.room_of(conn) {
+            let changed = self
+                .with_room(id, |room| {
+                    if room.is_host_conn(conn) && matches!(room.phase, Phase::Lobby) {
+                        room.settings.adjust(index as usize, dir);
+                        true
+                    } else {
+                        false
                     }
-                }
+                })
+                .unwrap_or(false);
+            if changed {
+                self.send_lobby(id);
             }
-            Command::ToggleCountdown { conn } => {
-                if let Some(id) = self.room_of(conn) {
-                    let toggled = self
-                        .with_room(id, |room| {
-                            if room.is_host_conn(conn) {
-                                room.phase = match room.phase {
-                                    Phase::Lobby if room.members.len() >= 2 && room.all_connected() => {
-                                        Phase::CountingDown(3.0)
-                                    }
-                                    Phase::Lobby => Phase::Lobby,
-                                    Phase::CountingDown(_) => Phase::Lobby,
-                                    Phase::Playing => Phase::Playing,
-                                };
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if toggled {
-                        self.send_lobby(id);
-                        self.room_list_dirty = true;
+        }
+    }
+
+    fn toggle_countdown(&mut self, conn: ConnId) {
+        if let Some(id) = self.room_of(conn) {
+            let toggled = self
+                .with_room(id, |room| {
+                    if room.is_host_conn(conn) {
+                        room.phase = match room.phase {
+                            Phase::Lobby if room.members.len() >= 2 && room.all_connected() => Phase::CountingDown(3.0),
+                            Phase::Lobby => Phase::Lobby,
+                            Phase::CountingDown(_) => Phase::Lobby,
+                            Phase::Playing => Phase::Playing,
+                        };
+                        true
+                    } else {
+                        false
                     }
-                }
-            }
-            Command::ReturnToLobby { conn } => {
-                let Some(id) = self.room_of(conn) else { return };
-                let host_slot = self
-                    .rooms
-                    .get(&id)
-                    .filter(|room| room.is_host_conn(conn))
-                    .and_then(|room| room.slot_of_conn(conn));
-                let Some(slot) = host_slot else { return };
-                self.record_forfeit(id, slot, "l'hôte a interrompu la partie");
-                if let Some(room) = self.rooms.get_mut(&id) {
-                    room.phase = Phase::Lobby;
-                    room.sim.finished = false;
-                    room.sim.paused = false;
-                }
+                })
+                .unwrap_or(false);
+            if toggled {
                 self.send_lobby(id);
                 self.room_list_dirty = true;
             }
-            Command::Input { conn, kind, seq, tick } => {
-                if let Some(id) = self.room_of(conn) {
-                    self.with_room(id, |room| {
-                        let Some(idx) = room.slot_of_conn(conn) else {
-                            return;
-                        };
-                        if matches!(room.phase, Phase::Playing) && !room.sim.paused && !room.sim.finished {
-                            room.sim.queue_input(idx, tick, seq, kind);
-                        } else {
-                            room.sim.last_seq[idx] = seq;
-                        }
-                    });
-                }
-            }
-            Command::TogglePause { conn } => {
-                if let Some(id) = self.room_of(conn) {
-                    let toggled = self
-                        .with_room(id, |room| {
-                            let allowed = room.game_running()
-                                && room.all_connected()
-                                && room.settings.pause.allows(room.is_host_conn(conn));
-                            if allowed {
-                                room.sim.paused = !room.sim.paused;
-                                let p = room.sim.paused;
-                                room.sim.boards.iter_mut().for_each(|b| b.set_paused(p));
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if toggled {
-                        self.send_snapshot(id);
-                    }
-                }
-            }
+        }
+    }
 
-            Command::Restart { conn } => {
-                if let Some(id) = self.room_of(conn) {
-                    let restarted = self
-                        .with_room(id, |room| {
-                            if matches!(room.phase, Phase::Playing) && room.sim.finished && room.all_connected() {
-                                let now = Instant::now();
-                                let in_cooldown = room
-                                    .sim
-                                    .last_restart
-                                    .is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
-                                if in_cooldown {
-                                    false
-                                } else {
-                                    room.sim.last_restart = Some(now);
-                                    room.sim.reset_boards(&room.settings);
-                                    true
-                                }
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if restarted {
-                        self.send_room_msg(id, &ServerMessage::Restart);
-                    }
+    fn return_to_lobby(&mut self, conn: ConnId) {
+        let Some(id) = self.room_of(conn) else { return };
+        let host_slot = self
+            .rooms
+            .get(&id)
+            .filter(|room| room.is_host_conn(conn))
+            .and_then(|room| room.slot_of_conn(conn));
+        let Some(slot) = host_slot else { return };
+        self.record_forfeit(id, slot, "l'hôte a interrompu la partie");
+        if let Some(room) = self.rooms.get_mut(&id) {
+            room.phase = Phase::Lobby;
+            room.sim.finished = false;
+            room.sim.paused = false;
+        }
+        self.send_lobby(id);
+        self.room_list_dirty = true;
+    }
+
+    fn on_input(&mut self, conn: ConnId, kind: InputKind, seq: u32, tick: u32) {
+        if let Some(id) = self.room_of(conn) {
+            self.with_room(id, |room| {
+                let Some(idx) = room.slot_of_conn(conn) else {
+                    return;
+                };
+                if matches!(room.phase, Phase::Playing) && !room.sim.paused && !room.sim.finished {
+                    room.sim.queue_input(idx, tick, seq, kind);
+                } else {
+                    room.sim.last_seq[idx] = seq;
                 }
+            });
+        }
+    }
+
+    fn toggle_pause(&mut self, conn: ConnId) {
+        if let Some(id) = self.room_of(conn) {
+            let toggled = self
+                .with_room(id, |room| {
+                    let allowed = room.game_running()
+                        && room.all_connected()
+                        && room.settings.pause.allows(room.is_host_conn(conn));
+                    if allowed {
+                        room.sim.paused = !room.sim.paused;
+                        let p = room.sim.paused;
+                        room.sim.boards.iter_mut().for_each(|b| b.set_paused(p));
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false);
+            if toggled {
+                self.send_snapshot(id);
             }
-            Command::InviteFriend { conn, target_user_id } => self.request_invite(conn, &target_user_id),
-            Command::FriendCheckDone { check, friends } => {
-                self.checks_in_flight.remove(&check.conn());
-                match check {
-                    FriendCheck::Join {
-                        conn, room, host, from, ..
-                    } => self.finish_join_check(conn, room, &host, from, friends),
-                    FriendCheck::Invite { conn, room, target, .. } => {
-                        self.finish_invite_check(conn, room, target, friends);
+        }
+    }
+
+    fn restart(&mut self, conn: ConnId) {
+        if let Some(id) = self.room_of(conn) {
+            let restarted = self
+                .with_room(id, |room| {
+                    if matches!(room.phase, Phase::Playing) && room.sim.finished && room.all_connected() {
+                        let now = Instant::now();
+                        let in_cooldown = room
+                            .sim
+                            .last_restart
+                            .is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
+                        if in_cooldown {
+                            false
+                        } else {
+                            room.sim.last_restart = Some(now);
+                            room.sim.reset_boards(&room.settings);
+                            true
+                        }
+                    } else {
+                        false
                     }
-                }
+                })
+                .unwrap_or(false);
+            if restarted {
+                self.send_room_msg(id, &ServerMessage::Restart);
+            }
+        }
+    }
+
+    fn friend_check_done(&mut self, check: FriendCheck, friends: bool) {
+        self.checks_in_flight.remove(&check.conn());
+        match check {
+            FriendCheck::Join {
+                conn, room, host, from, ..
+            } => self.finish_join_check(conn, room, &host, from, friends),
+            FriendCheck::Invite { conn, room, target, .. } => {
+                self.finish_invite_check(conn, room, target, friends);
             }
         }
     }
@@ -1205,7 +1328,26 @@ impl Manager {
             self.room_list_dirty = false;
             self.last_room_list = Instant::now();
         }
+        self.expire_grace_periods();
 
+        let mut outgoing: Vec<(ConnId, Vec<u8>)> = Vec::new();
+        let mut list_changed = false;
+        for room in self.rooms.values_mut() {
+            list_changed |= room.tick_countdown(dt, &mut outgoing);
+            if let Some(rec) = room.tick_game(do_broadcast, &mut outgoing) {
+                self.unsaved_matches.push(rec);
+            }
+        }
+
+        for (conn, payload) in outgoing {
+            self.deliver(conn, payload);
+        }
+        if list_changed {
+            self.room_list_dirty = true;
+        }
+    }
+
+    fn expire_grace_periods(&mut self) {
         let now = Instant::now();
         let expired: Vec<(RoomId, Token)> = self
             .rooms
@@ -1227,124 +1369,6 @@ impl Manager {
                 self.record_forfeit(id, slot, "jamais revenu après sa déconnexion");
                 self.remove_member(id, slot);
             }
-        }
-
-        let mut outgoing: Vec<(ConnId, Vec<u8>)> = Vec::new();
-        let mut list_changed = false;
-
-        for room in self.rooms.values_mut() {
-            if matches!(room.phase, Phase::Lobby) {
-                continue;
-            }
-
-            let mut start_now = false;
-            let mut cd_changed = false;
-            if let Phase::CountingDown(t) = &mut room.phase {
-                let before = t.ceil() as u8;
-                *t -= dt;
-                if *t <= 0.0 {
-                    start_now = true;
-                } else if t.ceil() as u8 != before {
-                    cd_changed = true;
-                }
-            }
-            if start_now {
-                room.phase = Phase::Playing;
-                room.sim.reset_boards(&room.settings);
-                match shared::encode(&ServerMessage::GameStart) {
-                    Ok(payload) => {
-                        for m in &room.members {
-                            if let Some(c) = m.conn {
-                                outgoing.push((c, payload.clone()));
-                            }
-                        }
-                    }
-                    Err(e) => error!("encode GameStart failed: {e}"),
-                }
-                list_changed = true;
-            } else if cd_changed {
-                for (i, m) in room.members.iter().enumerate() {
-                    if let Some(c) = m.conn {
-                        let msg = ServerMessage::Lobby {
-                            info: room.lobby_info_for(i),
-                        };
-                        match shared::encode(&msg) {
-                            Ok(payload) => outgoing.push((c, payload)),
-                            Err(e) => error!("encode Lobby failed: {e}"),
-                        }
-                    }
-                }
-            }
-
-            if matches!(room.phase, Phase::Playing) {
-                let advanced = !room.sim.paused && !room.sim.finished;
-                let mut just_finished = false;
-                if advanced {
-                    room.sim.advance();
-
-                    for i in 0..2 {
-                        let cc = room.sim.boards[i].chain_count;
-                        if cc > 0 && room.sim.prev_chain[i] == 0 {
-                            room.sim.total_chains[i] += 1;
-                        }
-                        room.sim.max_chain[i] = room.sim.max_chain[i].max(cc);
-                        room.sim.prev_chain[i] = cc;
-
-                        let ac = room.sim.boards[i].last_was_all_clear;
-                        if ac && !room.sim.prev_all_clear[i] {
-                            room.sim.all_clears[i] += 1;
-                        }
-                        room.sim.prev_all_clear[i] = ac;
-
-                        let pid = room.sim.boards[i].piece_id;
-                        if pid != room.sim.prev_piece_id[i] {
-                            room.sim.pieces_placed[i] += 1;
-                            room.sim.prev_piece_id[i] = pid;
-                        }
-                    }
-
-                    if room.sim.boards[0].state == GameState::GameOver
-                        || room.sim.boards[1].state == GameState::GameOver
-                    {
-                        room.sim.finished = true;
-                        just_finished = true;
-                        let winner_slot = if room.sim.boards[0].state == GameState::GameOver
-                            && room.sim.boards[1].state != GameState::GameOver
-                        {
-                            2u8
-                        } else {
-                            1u8
-                        };
-                        let rec = room.match_record(winner_slot);
-                        info!(
-                            "Match terminé room #{} → slot {winner_slot} gagne ({:.0}s, inputs en retard {:?})",
-                            room.id, rec.duration_secs, room.sim.late_inputs
-                        );
-                        self.unsaved_matches.push(rec);
-                    }
-                }
-                if (do_broadcast && advanced) || just_finished {
-                    let msg = room.sim.state_update(just_finished);
-                    room.sim.last_sent_rng = Some(room.sim.rng_positions());
-                    match shared::encode(&msg) {
-                        Ok(upd) => {
-                            for m in &room.members {
-                                if let Some(c) = m.conn {
-                                    outgoing.push((c, upd.clone()));
-                                }
-                            }
-                        }
-                        Err(e) => error!("encode StateUpdate failed: {e}"),
-                    }
-                }
-            }
-        }
-
-        for (conn, payload) in outgoing {
-            self.deliver(conn, payload);
-        }
-        if list_changed {
-            self.room_list_dirty = true;
         }
     }
 }
