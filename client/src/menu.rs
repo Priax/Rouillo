@@ -143,7 +143,7 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
             .color(color);
     }
 
-    gfx.render(&draw);
+    state.ui.render(gfx, &draw);
 }
 
 struct SettingsLayout {
@@ -220,7 +220,7 @@ pub fn draw_settings(gfx: &mut Graphics, state: &State) {
     }
 
     state.ui.button(&mut draw, &state.fonts, layout.back, "Retour");
-    gfx.render(&draw);
+    state.ui.render(gfx, &draw);
 }
 
 fn start_play(state: &mut State) {

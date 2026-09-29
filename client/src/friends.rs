@@ -461,7 +461,7 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
             .ui
             .button_enabled(&mut draw, &state.fonts, refresh_btn(wh), label, can_refresh(f));
     }
-    gfx.render(&draw);
+    state.ui.render(gfx, &draw);
 }
 
 fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {

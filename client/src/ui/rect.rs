@@ -11,6 +11,11 @@ impl Rect {
         Self { x, y, w, h }
     }
 
+    pub fn corners(&self) -> [(f32, f32); 4] {
+        let (right, bottom) = (self.x + self.w, self.y + self.h);
+        [(self.x, self.y), (right, self.y), (right, bottom), (self.x, bottom)]
+    }
+
     /// Half-open, so rects that share an edge never both contain a point.
     pub fn contains(&self, mx: f32, my: f32) -> bool {
         mx >= self.x && mx < self.x + self.w && my >= self.y && my < self.y + self.h

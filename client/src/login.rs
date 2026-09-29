@@ -231,5 +231,5 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
             .color(color);
     }
 
-    gfx.render(&draw);
+    state.ui.render(gfx, &draw);
 }

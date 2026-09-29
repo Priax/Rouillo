@@ -518,7 +518,7 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
     let mut draw = state.ui.screen_canvas(gfx);
 
     let Some(profile) = &state.profile else {
-        gfx.render(&draw);
+        state.ui.render(gfx, &draw);
         return;
     };
 
@@ -536,7 +536,7 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
         state.ui.button(&mut draw, &state.fonts, logout_btn, "Déconnexion");
     }
 
-    gfx.render(&draw);
+    state.ui.render(gfx, &draw);
 }
 
 fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &ProfileData, cx: f32) {
@@ -737,7 +737,7 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
     let mut draw = state.ui.screen_canvas(gfx);
 
     let Some(p) = &state.other_profile else {
-        gfx.render(&draw);
+        state.ui.render(gfx, &draw);
         return;
     };
 
@@ -767,5 +767,5 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
             .color(color);
     }
 
-    gfx.render(&draw);
+    state.ui.render(gfx, &draw);
 }

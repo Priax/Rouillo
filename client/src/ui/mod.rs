@@ -23,8 +23,9 @@ pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge,
 pub use field::{text_field, Field};
 pub use fonts::{Face, Fonts};
 pub use keys::KeyRepeat;
-use notan::draw::Draw;
-use notan::prelude::{App, Graphics};
+use notan::draw::{CreateDraw, Draw, DrawImages};
+use notan::math::{vec2, Mat3};
+use notan::prelude::{App, BlendMode, Color, Graphics, RenderTexture, TextureFilter};
 pub use rect::Rect;
 pub use status::Status;
 pub use stepper::Stepper;
@@ -35,7 +36,8 @@ pub use view::View;
 use crate::theme::{hue, Palette};
 
 const MAX_DT: f32 = 0.1;
-/// How long a screen takes to come in, colours included.
+const SUPERSAMPLE: f32 = 2.0;
+const MAX_TARGET: f32 = 4096.0;
 const TRANSITION: f32 = 0.3;
 
 const HOVER_SPEED: f32 = 18.0;
@@ -48,6 +50,7 @@ pub struct Ui {
 }
 
 struct Inner {
+    target: Option<RenderTexture>,
     dt: f32,
     time: f64,
     view: View,
@@ -66,6 +69,7 @@ struct Inner {
 impl Default for Inner {
     fn default() -> Self {
         Self {
+            target: None,
             dt: 0.0,
             time: 0.0,
             view: View::default(),
@@ -198,8 +202,60 @@ impl Ui {
         self.inner.borrow().view
     }
 
+    /// A canvas for this frame. Everything is drawn into a texture
+    /// `SUPERSAMPLE` times the window's size and scaled down by `present`,
+    /// which smooths every edge: notan draws shapes as bare triangles, and
+    /// multisampling cannot be relied on (Wayland's EGL refuses it here).
     pub fn canvas(&self, gfx: &mut Graphics) -> Draw {
-        self.view().canvas(gfx)
+        let view = self.view();
+        let mut draw = self.target(gfx).create_draw();
+        let scale = view.scale * supersample(view);
+        draw.transform().push(Mat3::from_scale(vec2(scale, scale)));
+        // Blend translucent shapes into the colour only. With notan's default
+        // the alpha channel is blended like a colour and drops below 1 under
+        // every translucent shape; a compositor that honours the window's
+        // alpha (KWin while it draws its enlarged cursor, say) then shows the
+        // desktop through those pixels.
+        draw.set_alpha_mode(Some(BlendMode::OVER));
+        draw
+    }
+
+    /// Draws `draw` into this frame's texture.
+    pub fn render(&self, gfx: &mut Graphics, draw: &Draw) {
+        let target = self.target(gfx);
+        gfx.render_to(&target, draw);
+    }
+
+    /// Shows the frame: its texture scaled down to the window.
+    pub fn present(&self, gfx: &mut Graphics) {
+        let view = self.view();
+        let target = self.target(gfx);
+        let mut draw = gfx.create_draw();
+        draw.clear(Color::BLACK);
+        draw.image(&target).size(view.w * view.scale, view.h * view.scale);
+        gfx.render(&draw);
+    }
+
+    /// The frame's texture, made again when the window changes size.
+    fn target(&self, gfx: &mut Graphics) -> RenderTexture {
+        let view = self.view();
+        let factor = view.scale * supersample(view);
+        let size = ((view.w * factor).ceil() as u32, (view.h * factor).ceil() as u32);
+        let mut inner = self.inner.borrow_mut();
+        if let Some(target) = inner
+            .target
+            .as_ref()
+            .filter(|t| t.size() == (size.0 as f32, size.1 as f32))
+        {
+            return target.clone();
+        }
+        let target = gfx
+            .create_render_texture(size.0.max(1), size.1.max(1))
+            .with_filter(TextureFilter::Linear, TextureFilter::Linear)
+            .build()
+            .expect("a render texture the size of the window");
+        inner.target = Some(target.clone());
+        target
     }
 
     pub fn clicked(&self, r: Rect) -> bool {
@@ -214,6 +270,7 @@ impl Ui {
     fn interact(&self, label: &str, rect: Rect, enabled: bool) -> Response {
         let mut inner = self.inner.borrow_mut();
         let Inner {
+            target: _,
             dt,
             time: _,
             view: _,
@@ -265,6 +322,11 @@ impl Ui {
     }
 }
 
+fn supersample(view: View) -> f32 {
+    let largest = (view.w * view.scale).max(view.h * view.scale).max(1.0);
+    SUPERSAMPLE.min(MAX_TARGET / largest)
+}
+
 fn transition_progress(time: f64, entered_at: f64) -> f32 {
     ((time - entered_at) / f64::from(TRANSITION)).clamp(0.0, 1.0) as f32
 }
@@ -304,6 +366,13 @@ mod tests {
     fn frame(ui: &mut Ui, mouse: Mouse, draws: &[(&str, Rect)]) -> Vec<Response> {
         ui.begin_frame(1.0 / 60.0, View::default(), mouse);
         draws.iter().map(|(label, r)| ui.interact(label, *r, true)).collect()
+    }
+
+    #[test]
+    fn supersampling_stays_within_texture_limits() {
+        assert!((supersample(View::fit(1280.0, 800.0)) - 2.0).abs() < f32::EPSILON);
+        let big = View::fit(3840.0, 2160.0);
+        assert!(3840.0 * supersample(big) <= MAX_TARGET + 0.5);
     }
 
     #[test]

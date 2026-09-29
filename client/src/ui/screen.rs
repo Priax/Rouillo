@@ -44,7 +44,7 @@ impl Ui {
             speed: 0.03,
             color: pal.accent.with_alpha(0.08),
         };
-        triangles.draw(draw, rect, self.time());
+        triangles.draw_clipped(draw, rect, self.time(), Some(&rect.corners()));
         draw.rect((rect.x, rect.y + rect.h - 2.0), (rect.w, 2.0))
             .color(pal.accent);
     }

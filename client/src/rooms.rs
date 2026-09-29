@@ -130,7 +130,7 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
             .color(color);
     }
 
-    gfx.render(&draw);
+    state.ui.render(gfx, &draw);
 }
 
 fn draw_room_row(draw: &mut Draw, state: &State, row: Rect, index: usize, room: &RoomInfo) {
@@ -259,7 +259,7 @@ fn draw_entry(gfx: &mut Graphics, state: &State, title: &str, confirm: &str, pla
     state.ui.button(&mut draw, &state.fonts, cbtn, confirm);
     state.ui.button(&mut draw, &state.fonts, back, "Retour");
 
-    gfx.render(&draw);
+    state.ui.render(gfx, &draw);
 }
 
 pub fn draw_create_room(gfx: &mut Graphics, state: &State) {
@@ -478,7 +478,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
         draw_invite_overlay(&mut draw, state);
     }
 
-    gfx.render(&draw);
+    state.ui.render(gfx, &draw);
 }
 
 /// The launch bar's label, colour and whether it can be pressed: it says

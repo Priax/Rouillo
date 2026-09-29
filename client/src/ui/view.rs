@@ -1,6 +1,4 @@
-use notan::draw::{CreateDraw, Draw};
-use notan::math::{vec2, Mat3};
-use notan::prelude::{App, BlendMode, Graphics};
+use notan::prelude::App;
 
 const REFERENCE_W: f32 = 1280.0;
 const REFERENCE_H: f32 = 800.0;
@@ -42,18 +40,6 @@ impl View {
 
     pub fn size(self) -> (f32, f32) {
         (self.w, self.h)
-    }
-
-    pub fn canvas(self, gfx: &mut Graphics) -> Draw {
-        let mut draw = gfx.create_draw();
-        draw.transform().push(Mat3::from_scale(vec2(self.scale, self.scale)));
-        // Blend translucent shapes into the colour only. With notan's default
-        // the alpha channel is blended like a colour and drops below 1 under
-        // every translucent shape; a compositor that honours the window's
-        // alpha (KWin while it draws its enlarged cursor, say) then shows the
-        // desktop through those pixels.
-        draw.set_alpha_mode(Some(BlendMode::OVER));
-        draw
     }
 }
 

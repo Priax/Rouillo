@@ -94,7 +94,7 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
     #[cfg(debug_assertions)]
     draw_debug(&mut draw, fonts, session, layout.win_h);
 
-    gfx.render(&draw);
+    ui.render(gfx, &draw);
 }
 
 fn draw_boards(draw: &mut Draw, pal: &Palette, fonts: &Fonts, session: &GameSession, layout: &GameLayout) {

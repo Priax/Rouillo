@@ -55,10 +55,6 @@ impl Ui {
         glow(draw, bar, color.with_alpha(0.45 * r.hover));
         bar.fill(draw, color);
 
-        let mut mask = Draw::new(draw.width() as u32, draw.height() as u32);
-        mask.transform().set(*draw.transform().matrix());
-        bar.fill(&mut mask, Color::WHITE);
-        draw.mask(Some(&mask));
         let triangles = Triangles {
             seed: seed_of(label),
             size: row.h * 1.2,
@@ -66,12 +62,8 @@ impl Ui {
             speed: 0.15,
             color: Color::WHITE.with_alpha(0.13),
         };
-        triangles.draw(
-            draw,
-            Rect::at(bar.left - slant, row.y, bar.right - bar.left + 2.0 * slant, row.h),
-            self.time(),
-        );
-        draw.mask(None);
+        let area = Rect::at(bar.left - slant, row.y, bar.right - bar.left + 2.0 * slant, row.h);
+        triangles.draw_clipped(draw, area, self.time(), Some(&bar.corners()));
 
         if r.flash > 0.0 {
             bar.fill(draw, Color::WHITE.with_alpha(0.3 * r.flash));
@@ -96,7 +88,7 @@ struct Slanted {
 }
 
 impl Slanted {
-    fn fill(self, draw: &mut Draw, color: Color) {
+    fn corners(self) -> [(f32, f32); 4] {
         let Self {
             left,
             right,
@@ -104,11 +96,21 @@ impl Slanted {
             bottom,
             slant,
         } = self;
+        [
+            (left + slant, top),
+            (right + slant, top),
+            (right - slant, bottom),
+            (left - slant, bottom),
+        ]
+    }
+
+    fn fill(self, draw: &mut Draw, color: Color) {
+        let [a, b, c, d] = self.corners();
         draw.path()
-            .move_to(left + slant, top)
-            .line_to(right + slant, top)
-            .line_to(right - slant, bottom)
-            .line_to(left - slant, bottom)
+            .move_to(a.0, a.1)
+            .line_to(b.0, b.1)
+            .line_to(c.0, c.1)
+            .line_to(d.0, d.1)
             .close()
             .fill()
             .color(color);

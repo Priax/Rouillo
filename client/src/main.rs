@@ -210,7 +210,7 @@ fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
     state.ui.button(&mut d, &state.fonts, accept_btn, "Rejoindre");
     state.ui.button(&mut d, &state.fonts, decline_btn, "Ignorer");
-    gfx.render(&d);
+    state.ui.render(gfx, &d);
 }
 
 fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
@@ -237,6 +237,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
     }
     draw_invitation_banner(gfx, state);
     draw_reconnect_banner(app, gfx, state);
+    state.ui.present(gfx);
 }
 
 fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
@@ -260,7 +261,7 @@ fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
         .h_align_center()
         .v_align_middle()
         .color(theme::WARNING_TEXT);
-    gfx.render(&d);
+    state.ui.render(gfx, &d);
 }
 
 #[notan_main]
