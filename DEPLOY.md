@@ -1,4 +1,4 @@
-# Déployer le backend Puyorust sur Oracle Cloud (Always Free) — de A à Z
+# Déployer le backend Puyorust sur Oracle Cloud (Always Free), de A à Z
 
 Procédure complète, telle que réalisée le 2026-09-17. À suivre si la VM est perdue
 (supprimée, récupérée par Oracle, compte recréé…).
@@ -12,7 +12,7 @@ Client ──wss://puyo.priax.org/ws / https://puyo.priax.org/api──▶ Caddy
 
 | Élément | Valeur actuelle |
 |---|---|
-| Région Oracle | France South (Marseille) — `eu-marseille-1`, AD-1 |
+| Région Oracle | France South (Marseille), `eu-marseille-1`, AD-1 |
 | Shape | `VM.Standard.A1.Flex` (ARM aarch64), 2 OCPU / 12 Go |
 | OS | Canonical Ubuntu 24.04 (pas « Minimal ») |
 | Utilisateur SSH | `ubuntu` (clé `~/.ssh/id_ed25519`) |
@@ -31,11 +31,11 @@ Client ──wss://puyo.priax.org/ws / https://puyo.priax.org/api──▶ Caddy
 
 **Compute → Instances → Create instance.** Le formulaire a 4 étapes + Review.
 
-### Étape 1 — Basic information
+### Étape 1 : Basic information
 - **Name** : `Instance VM Puyorust` (libre).
 - **Compartment** : racine (`Priax (root)`).
 - **Availability domain** : AD-1 (Marseille n'en a qu'un).
-- **Image and shape** — changer le **shape d'abord**, puis l'image :
+- **Image and shape** : changer le **shape d'abord**, puis l'image :
   1. **Change shape** → onglet **Ampere** (ARM) → `VM.Standard.A1.Flex` (*Always Free-eligible*).
      Déplier la ligne avec la **petite flèche ▸** à gauche du nom pour régler
      **OCPUs = 2**, **Memory = 12 GB** (max gratuit : 4 / 24 au total) → **Select shape**.
@@ -46,10 +46,10 @@ Client ──wss://puyo.priax.org/ws / https://puyo.priax.org/api──▶ Caddy
   (x86, 1 Go RAM) : ça tient, mais **impossible de compiler dessus** → compiler sur le PC
   (`cargo build --release -p server --target x86_64-unknown-linux-musl`) et `scp` le binaire.
 
-### Étape 2 — Security
+### Étape 2 : Security
 Ne rien toucher → **Next**.
 
-### Étape 3 — Networking
+### Étape 3 : Networking
 - **Primary network** : *Create new virtual cloud network* → `puyo-vcn`.
 - **Subnet** : *Create new public subnet* → `puyo-subnet` (CIDR `10.0.0.0/24`).
 - **Private IPv4** : automatique.
@@ -58,7 +58,7 @@ Ne rien toucher → **Next**.
 - **IPv6** : non.
 - **Add SSH keys** → *Paste public key* → coller la sortie de `cat ~/.ssh/id_ed25519.pub`.
 
-### Étape 4 — Storage
+### Étape 4 : Storage
 Tout par défaut (boot volume 46,6 Go, inclus dans les 200 Go gratuits) → **Next**.
 
 ### Review
@@ -75,7 +75,7 @@ Page de l'instance → onglet **Networking** → section **Attached VNICs** → 
 
 Noter l'IP publique (→ `IP_VM` dans la suite).
 
-## 3. Ouvrir les ports 80/443 — pare-feu Oracle (Security List)
+## 3. Ouvrir les ports 80/443 : pare-feu Oracle (Security List)
 
 Onglet Networking de l'instance → lien **`puyo-subnet`** → **Security** →
 **Default Security List for puyo-vcn** → **Security rules** → **Add Ingress Rules** :
@@ -96,7 +96,7 @@ sudo apt update && sudo apt upgrade -y
 Si SSH refuse à cause d'une ancienne empreinte (VM recréée avec une IP déjà connue) :
 `ssh-keygen -R IP_VM`.
 
-## 5. Ouvrir 80/443 — pare-feu de la VM (iptables)
+## 5. Ouvrir 80/443 : pare-feu de la VM (iptables)
 
 Les images Ubuntu d'Oracle ont un `REJECT` en fin de chaîne. **Ne pas utiliser `ufw`.**
 
@@ -293,8 +293,8 @@ l'ancien client proprement : celui-ci affiche un bouton « Mettre à jour » à 
 |---|---|---|
 | Interrupteur « public IPv4 » grisé à la création | Subnet créé en même temps que la VM | Ajouter l'IP éphémère après (§2) |
 | Règles iptables sans effet | Insérées après le `REJECT` | Insérer au numéro de ligne du REJECT (§5) |
-| Client natif : « Not found » à l'inscription | Double `Content-Type` envoyé par ehttp/ureq | Corrigé dans `client/src/http.rs` (`push_header` remplace) — v0.7.0 |
-| Client natif : « connexion au serveur perdue » sur Play | ewebsock compilé sans TLS → pas de `wss://` | `ewebsock = { features = ["tls"] }` — v0.7.0 |
+| Client natif : « Not found » à l'inscription | Double `Content-Type` envoyé par ehttp/ureq | Corrigé dans `client/src/http.rs` (`push_header` remplace), v0.7.0 |
+| Client natif : « connexion au serveur perdue » sur Play | ewebsock compilé sans TLS → pas de `wss://` | `ewebsock = { features = ["tls"] }`, v0.7.0 |
 | `ping puyo.priax.org` ne répond pas | ICMP echo bloqué par la Security List | Normal, tester avec `curl` (§9) |
 | Caddy n'obtient pas de certificat | DNS absent ou proxy Cloudflare orange | Enregistrement A en *DNS only* (§8) |
 | `cp: cannot create regular file '/opt/puyorust/server': Text file busy` | Binaire en cours d'exécution | Copier en `.new` puis `mv` (§12) |

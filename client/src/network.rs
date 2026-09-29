@@ -11,7 +11,7 @@ pub fn handle_server_messages(state: &mut State) {
             ConnEvent::Message(msg) => process_message(state, *msg),
             ConnEvent::Retrying => {
                 if state.screen.needs_connection() {
-                    state.notice = "Connexion perdue — reconnexion…".to_string();
+                    state.notice = "Connexion perdue, reconnexion…".to_string();
                 } else {
                     state.conn.disconnect();
                     reset_to_menu(state, "Connexion au serveur perdue.");

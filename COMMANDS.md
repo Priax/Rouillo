@@ -32,7 +32,7 @@ DATABASE_URL=postgres://USER:PASSWORD@localhost/puyorust sqlx migrate run --sour
 ## Lancer le jeu (dev)
 
 ```bash
-# 1) Le serveur (écoute sur ws://0.0.0.0:8080/ws — cf. shared/src/config.rs)
+# 1) Le serveur (écoute sur ws://0.0.0.0:8080/ws, cf. shared/src/config.rs)
 cargo run -p server
 
 # 2a) Le client dans le NAVIGATEUR (WASM), servi sur http://localhost:8000
@@ -43,7 +43,7 @@ cargo run -p client
 ```
 
 **À quel serveur le client se connecte-t-il ?** (`client/src/main.rs::server_url`)
-- WASM **release** : même hôte que la page (`ws[s]://<host>/ws`) — pour la prod.
+- WASM **release** : même hôte que la page (`ws[s]://<host>/ws`), pour la prod.
 - Natif, ou WASM **debug** (donc `trunk serve`) : `config::SERVER_URL` = `ws://127.0.0.1:8080/ws`.
 
 ---
@@ -54,7 +54,7 @@ cargo run -p client
 |-------------------|-------|---------|
 | `PUYO_PROFILE=1`  | Le serveur imprime toutes les 5 s une ligne `[tick] rooms=N avg=.. max=.. budget=16.6ms peak_load=X%`. Sans la variable : silencieux. | `PUYO_PROFILE=1 cargo run -p server --release` |
 | `PUYO_LOAD_ROOMS` | Nombre de rooms du test de charge (défaut 500). | `PUYO_LOAD_ROOMS=2000 cargo test -p server --release -- --ignored --nocapture load_many_rooms` |
-| `RUST_LOG`        | (non câblé pour l'instant — le serveur logge via `println!`). | — |
+| `RUST_LOG`        | (non câblé pour l'instant : le serveur logge via `println!`). | (aucun) |
 
 ---
 

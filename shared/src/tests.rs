@@ -537,7 +537,7 @@ fn unknown_setting_index_changes_nothing() {
 
 /// Corrupted but well-framed messages must be rejected or decoded, never allowed
 /// to allocate wildly. The size prefix is bounded by `decode` itself; this covers
-/// what comes after it — lengths inside the bitcode payload. `CappedAlloc` turns
+/// what comes after it: lengths inside the bitcode payload. `CappedAlloc` turns
 /// any runaway allocation into an abort. (Measured once over 200k iterations: the
 /// largest allocation was 26 KB.)
 #[test]
@@ -588,7 +588,7 @@ fn decode_survives_corrupted_messages() {
 // and the same inputs must land on the same state, tick for tick. Everything a
 // tick-stamped protocol could later be built on rests on that holding.
 
-/// A deterministic input schedule. Not random play — just enough variety to
+/// A deterministic input schedule. Not random play, just enough variety to
 /// reach locks, chains, garbage drops and game overs.
 fn scripted_input(step: u64) -> Option<InputKind> {
     // SplitMix64, so the schedule depends only on `step` and never on a
@@ -669,8 +669,8 @@ fn first_divergence(a: &[u64], b: &[u64]) -> Option<usize> {
 ///
 /// Less tautological than it looks: each run builds its own `HashSet`s inside
 /// `check_matches` and `flood_fill`, and `RandomState` seeds every instance
-/// differently. If clearing order ever leaked into the result — through the
-/// score, the RNG draw order, anything — the two runs would part company here.
+/// differently. If clearing order ever leaked into the result (through the
+/// score, the RNG draw order, anything), the two runs would part company here.
 #[test]
 fn the_same_script_replays_to_the_same_states() {
     let a = run_script(SCRIPT_SEED, 6_000, None);
@@ -695,11 +695,11 @@ fn the_script_exercises_the_whole_simulation() {
 }
 
 /// The detector has to be able to fail: dropping a single input, once, must
-/// show up — and must not be silently absorbed.
+/// show up, and must not be silently absorbed.
 #[test]
 fn one_dropped_input_diverges() {
     // Skipping a step the schedule leaves empty would prove nothing, so pick a
-    // real one — a hard drop, which cannot fail to change the board.
+    // real one: a hard drop, which cannot fail to change the board.
     let at = (0..100)
         .find(|s| scripted_input(*s) == Some(InputKind::HardDrop))
         .expect("the schedule never hard drops");
