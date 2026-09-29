@@ -9,6 +9,8 @@ use super::Rect;
 #[derive(Clone, Copy)]
 pub struct Triangles {
     pub seed: u64,
+    /// The side of the largest triangles; the smallest are a quarter of it.
+    pub size: f32,
     /// Triangles per 10 000 square units of area.
     pub density: f32,
     /// Cycles through the area per second, before per-triangle variation.
@@ -19,16 +21,17 @@ pub struct Triangles {
 }
 
 impl Triangles {
-    pub fn draw(self, draw: &mut Draw, area: Rect, time: f32) {
+    pub fn draw(self, draw: &mut Draw, area: Rect, time: f64) {
         let count = ((area.w * area.h / 10_000.0) * self.density).round().max(1.0) as u64;
         for i in 0..count {
             let mut rng = self.seed ^ i.wrapping_mul(0x9E37_79B9_7F4A_7C15);
             let mut next = || unit(splitmix(&mut rng));
             let (u, phase, size, speed, alpha) = (next(), next(), next(), next(), next());
 
-            let side = area.h * (0.3 + 0.9 * size);
+            let side = self.size * (0.25 + 0.75 * size);
             let travel = area.h + 2.0 * side;
-            let progress = (phase + time * self.speed * (0.5 + speed)).fract();
+            let cycles = time * f64::from(self.speed * (0.5 + speed));
+            let progress = (f64::from(phase) + cycles).fract() as f32;
             let (x, y) = (area.x + u * area.w, area.y + area.h + side - progress * travel);
             let half = side * 0.577;
             draw.triangle(

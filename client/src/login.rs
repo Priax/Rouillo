@@ -168,8 +168,7 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
     let layout = auth_layout(state.ui.view());
     let AuthLayout { cx, base_y, .. } = layout;
 
-    let mut draw = state.ui.canvas(gfx);
-    draw.clear(pal.background);
+    let mut draw = state.ui.screen_canvas(gfx);
 
     draw.sharp_text(&state.fonts.display, "ROUILLO")
         .position(cx, base_y - 80.0)

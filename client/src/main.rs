@@ -183,7 +183,7 @@ fn update(app: &mut App, state: &mut State) {
             }
         }
     }
-    state.ui.set_hue(state.screen.hue());
+    state.ui.set_screen(state.screen as usize, state.screen.hue());
 }
 
 fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {

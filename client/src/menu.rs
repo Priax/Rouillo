@@ -103,8 +103,7 @@ pub fn do_logout(state: &mut State) {
 pub fn draw_menu(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
     let (ww, wh) = state.ui.view().size();
-    let mut draw = state.ui.canvas(gfx);
-    draw.clear(pal.background);
+    let mut draw = state.ui.screen_canvas(gfx);
 
     draw.sharp_text(&state.fonts.display, "Rouillo")
         .position(ww / 2.0, wh / 2.0 - 140.0)
@@ -188,8 +187,7 @@ pub fn update_settings(app: &mut App, state: &mut State) {
 pub fn draw_settings(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
     let (ww, wh) = state.ui.view().size();
-    let mut draw = state.ui.canvas(gfx);
-    draw.clear(pal.background);
+    let mut draw = state.ui.screen_canvas(gfx);
 
     draw.sharp_text(&state.fonts.display, "SETTINGS")
         .position(ww / 2.0, wh / 2.0 - 170.0)

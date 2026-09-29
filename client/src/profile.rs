@@ -508,8 +508,7 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
     let (ww, wh) = state.ui.view().size();
     let cx = ww / 2.0;
-    let mut draw = state.ui.canvas(gfx);
-    draw.clear(pal.background);
+    let mut draw = state.ui.screen_canvas(gfx);
 
     let Some(profile) = &state.profile else {
         gfx.render(&draw);
@@ -728,8 +727,7 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
     let wh = state.ui.view().h;
     let cx = ww / 2.0;
 
-    let mut draw = state.ui.canvas(gfx);
-    draw.clear(pal.background);
+    let mut draw = state.ui.screen_canvas(gfx);
 
     let Some(p) = &state.other_profile else {
         gfx.render(&draw);

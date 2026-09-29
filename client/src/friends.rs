@@ -432,8 +432,7 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
     let ww = state.ui.view().w;
     let wh = state.ui.view().h;
 
-    let mut draw = state.ui.canvas(gfx);
-    draw.clear(pal.background);
+    let mut draw = state.ui.screen_canvas(gfx);
     draw.sharp_text(&state.fonts.display, "Amis")
         .position(ww / 2.0, 58.0)
         .size(theme::size::TITLE)

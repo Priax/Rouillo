@@ -70,8 +70,7 @@ pub fn update_browser(state: &mut State) {
 pub fn draw_browser(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
     let (w, h) = state.ui.view().size();
-    let mut draw = state.ui.canvas(gfx);
-    draw.clear(pal.background);
+    let mut draw = state.ui.screen_canvas(gfx);
 
     draw.sharp_text(&state.fonts.display, "ROOMS")
         .position(w / 2.0, 70.0)
@@ -171,8 +170,7 @@ pub fn update_join_by_id(app: &mut App, state: &mut State) {
 fn draw_entry(gfx: &mut Graphics, state: &State, title: &str, confirm: &str, placeholder: &str) {
     let pal = state.ui.palette();
     let (w, h) = state.ui.view().size();
-    let mut draw = state.ui.canvas(gfx);
-    draw.clear(pal.background);
+    let mut draw = state.ui.screen_canvas(gfx);
 
     draw.sharp_text(&state.fonts.display, title)
         .position(w / 2.0, h / 2.0 - 120.0)
@@ -326,9 +324,8 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
         return;
     };
     let (w, h) = state.ui.view().size();
-    let mut draw = state.ui.canvas(gfx);
+    let mut draw = state.ui.screen_canvas(gfx);
     state.ui.set_input(!state.invite_overlay);
-    draw.clear(pal.background);
 
     draw.sharp_text(&state.fonts.display, &info.name)
         .position(w / 2.0, 70.0)

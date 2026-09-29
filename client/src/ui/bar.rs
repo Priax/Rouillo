@@ -45,6 +45,7 @@ impl Ui {
         draw.mask(Some(&mask));
         let triangles = Triangles {
             seed: seed_of(label),
+            size: row.h * 1.2,
             density: 2.5,
             speed: 0.15,
             color: Color::WHITE.with_alpha(0.13),
