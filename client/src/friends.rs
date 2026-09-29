@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use notan::draw::{Draw, DrawShapes, DrawTextSection};
+use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
-use crate::ui::{text_field, Field, Fonts, Rect, Status, Ui};
+use crate::ui::{text_field, Field, Fonts, Rect, SharpText, Status, Ui};
 use crate::{http, theme};
 
 const SEARCH_Y: f32 = 112.0;
@@ -432,7 +432,7 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
 
     let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
-    draw.text(&state.fonts.display, "Amis")
+    draw.sharp_text(&state.fonts.display, "Amis")
         .position(ww / 2.0, 58.0)
         .size(theme::size::TITLE)
         .h_align_center()
@@ -454,7 +454,7 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
 
 fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {
     let field = search_box(ww);
-    draw.text(&fonts.text, "Rechercher un ami:")
+    draw.sharp_text(&fonts.text, "Rechercher un ami:")
         .position(field.x, 96.0)
         .size(theme::size::BODY)
         .v_align_middle()
@@ -478,7 +478,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
 
     if f.search_results.is_empty() {
         if let Some((msg, color)) = f.search_status.shown() {
-            draw.text(&fonts.text, msg)
+            draw.sharp_text(&fonts.text, msg)
                 .position(field.x, SEARCH_RESULT_Y + 16.0)
                 .size(theme::size::BODY)
                 .v_align_middle()
@@ -490,12 +490,12 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
         let y = SEARCH_RESULT_Y + i as f32 * RESULT_ROW_H;
         let bg = if i % 2 == 0 { theme::SURFACE } else { theme::SURFACE_ALT };
         draw.rect((field.x, y), (600.0, RESULT_ROW_H - 2.0)).color(bg);
-        draw.text(&fonts.text, &e.username)
+        draw.sharp_text(&fonts.text, &e.username)
             .position(field.x + 12.0, y + RESULT_ROW_H / 2.0)
             .size(theme::size::LABEL)
             .v_align_middle()
             .color(theme::TEXT);
-        draw.text(&fonts.text, &format!("ELO {}", e.elo))
+        draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
             .position(field.x + 170.0, y + RESULT_ROW_H / 2.0)
             .size(theme::size::BODY)
             .v_align_middle()
@@ -507,7 +507,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
     }
 
     if let Some((msg, color)) = f.add_status.shown() {
-        draw.text(&fonts.text, msg)
+        draw.sharp_text(&fonts.text, msg)
             .position(ww / 2.0, ADD_ERROR_Y)
             .size(theme::size::BODY)
             .h_align_center()
@@ -521,7 +521,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
         .color(theme::DIVIDER);
     let headers = ["Amis", "Demandes reçues", "Envoyées"];
     for (col, header) in headers.iter().enumerate() {
-        draw.text(&fonts.text, header)
+        draw.sharp_text(&fonts.text, header)
             .position(col_x(ww, col) + COL_W / 2.0, COL_HEADER_Y)
             .size(theme::size::LABEL)
             .h_align_center()
@@ -532,7 +532,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
     }
 
     if f.list_slot.is_some() {
-        draw.text(&fonts.text, "Chargement...")
+        draw.sharp_text(&fonts.text, "Chargement...")
             .position(ww / 2.0, LIST_Y + 16.0)
             .size(theme::size::LABEL)
             .h_align_center()
@@ -581,7 +581,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
     }
 
     if let Some((msg, color)) = f.action_status.shown() {
-        draw.text(&fonts.text, msg)
+        draw.sharp_text(&fonts.text, msg)
             .position(ww / 2.0, LIST_Y + MAX_ROWS as f32 * ROW_H + 18.0)
             .size(theme::size::SMALL)
             .h_align_center()
@@ -595,7 +595,7 @@ where
     F: Fn(&mut Draw, &Fonts, &FriendEntry, usize),
 {
     if list.is_empty() {
-        draw.text(&fonts.text, empty_msg)
+        draw.sharp_text(&fonts.text, empty_msg)
             .position(x + COL_W / 2.0, LIST_Y + 18.0)
             .size(theme::size::SMALL)
             .h_align_center()
@@ -607,12 +607,12 @@ where
         let y = LIST_Y + i as f32 * ROW_H;
         let bg = if i % 2 == 0 { theme::SURFACE } else { theme::SURFACE_ALT };
         draw.rect((x, y), (COL_W, ROW_H - 3.0)).color(bg);
-        draw.text(&fonts.text, &e.username)
+        draw.sharp_text(&fonts.text, &e.username)
             .position(x + 10.0, y + ROW_H / 2.0 - 8.0)
             .size(theme::size::BODY)
             .v_align_middle()
             .color(theme::TEXT);
-        draw.text(&fonts.text, &format!("ELO {}", e.elo))
+        draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
             .position(x + 10.0, y + ROW_H / 2.0 + 10.0)
             .size(theme::size::SMALL)
             .v_align_middle()

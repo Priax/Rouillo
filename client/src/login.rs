@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use notan::draw::{DrawShapes, DrawTextSection};
+use notan::draw::DrawShapes;
 use notan::prelude::*;
 
 use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, State};
-use crate::ui::{text_field, Field, Rect, Status, View};
+use crate::ui::{text_field, Field, Rect, SharpText, Status, View};
 use crate::{http, theme};
 
 struct AuthLayout {
@@ -171,7 +171,7 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
     let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
 
-    draw.text(&state.fonts.display, "ROUILLO")
+    draw.sharp_text(&state.fonts.display, "ROUILLO")
         .position(cx, base_y - 80.0)
         .size(theme::size::HERO)
         .h_align_center()
@@ -190,7 +190,7 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
             .corner_radius(theme::RADIUS)
             .stroke(2.0)
             .color(border);
-        draw.text(&state.fonts.text, label)
+        draw.sharp_text(&state.fonts.text, label)
             .position(tab.x + tab.w / 2.0, tab.y + tab.h / 2.0)
             .size(theme::size::EMPHASIS)
             .h_align_center()
@@ -235,7 +235,7 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
         .button(&mut draw, &state.fonts, layout.guest, "Jouer en invité");
 
     if let Some((msg, color)) = state.auth_form.status.shown() {
-        draw.text(&state.fonts.text, msg)
+        draw.sharp_text(&state.fonts.text, msg)
             .position(cx, base_y + 370.0)
             .size(theme::size::LABEL)
             .h_align_center()

@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
-use notan::draw::{Draw, DrawShapes, DrawTextSection};
+use notan::draw::{Draw, DrawShapes};
 
-use super::{Fonts, Rect};
+use super::{Fonts, Rect, SharpText};
 use crate::theme;
 
 pub struct Field<'a> {
@@ -31,7 +31,7 @@ pub fn text_field(draw: &mut Draw, fonts: &Fonts, r: Rect, field: &Field) {
     } else {
         (Cow::Borrowed(field.value), theme::TEXT)
     };
-    draw.text(&fonts.text, &text)
+    draw.sharp_text(&fonts.text, &text)
         .position(r.x + PADDING, r.y + r.h / 2.0)
         .size((r.h * 0.45).clamp(16.0, 24.0))
         .v_align_middle()

@@ -5,6 +5,7 @@ mod keys;
 mod rect;
 mod status;
 mod stepper;
+mod text;
 mod view;
 
 use std::cell::RefCell;
@@ -21,6 +22,7 @@ use notan::prelude::{App, Graphics};
 pub use rect::Rect;
 pub use status::Status;
 pub use stepper::Stepper;
+pub use text::SharpText;
 pub use view::View;
 
 const MAX_DT: f32 = 0.1;

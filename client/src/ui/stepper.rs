@@ -1,6 +1,6 @@
-use notan::draw::{Draw, DrawTextSection};
+use notan::draw::Draw;
 
-use super::{Fonts, Icon, Rect, Ui};
+use super::{Fonts, Icon, Rect, SharpText, Ui};
 use crate::theme;
 
 const BUTTON: f32 = 50.0;
@@ -38,13 +38,13 @@ impl Stepper {
 impl Ui {
     /// Draws the stepper; its buttons only when `editable`.
     pub fn stepper(&self, draw: &mut Draw, fonts: &Fonts, s: Stepper, label: &str, value: &str, editable: bool) {
-        draw.text(&fonts.text, label)
+        draw.sharp_text(&fonts.text, label)
             .position(s.label_x(), s.mid_y())
             .size(theme::size::EMPHASIS)
             .h_align_right()
             .v_align_middle()
             .color(theme::TEXT_DIM);
-        draw.text(&fonts.display, value)
+        draw.sharp_text(&fonts.display, value)
             .position(s.value_x(), s.mid_y())
             .size(theme::size::EMPHASIS)
             .h_align_center()

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use notan::draw::{Draw, DrawShapes, DrawTextSection};
+use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 
 use crate::state::{
     ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, OtherProfileData, ProfileCore,
     ProfileData, ProfileEditField, Screen, State,
 };
-use crate::ui::{text_field, Field, Fonts, Rect, Status, Ui};
+use crate::ui::{text_field, Field, Fonts, Rect, SharpText, Status, Ui};
 use crate::{http, theme};
 
 const HISTORY_Y: f32 = 175.0;
@@ -88,13 +88,13 @@ fn friendship_with(
 }
 
 fn draw_header(draw: &mut Draw, fonts: &Fonts, cx: f32, core: &ProfileCore) {
-    draw.text(&fonts.display, &core.username)
+    draw.sharp_text(&fonts.display, &core.username)
         .position(cx, 90.0)
         .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
         .color(theme::TITLE);
-    draw.text(&fonts.display, &format!("ELO {}", core.elo))
+    draw.sharp_text(&fonts.display, &format!("ELO {}", core.elo))
         .position(cx, 140.0)
         .size(theme::size::EMPHASIS)
         .h_align_center()
@@ -108,7 +108,7 @@ fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32,
     let val_x = left_x + left_w - 10.0;
 
     if load_failed {
-        draw.text(&fonts.text, "Profil introuvable.")
+        draw.sharp_text(&fonts.text, "Profil introuvable.")
             .position(left_x + left_w / 2.0, STATS_Y + 40.0)
             .size(theme::size::LABEL)
             .h_align_center()
@@ -117,7 +117,7 @@ fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32,
         return;
     }
     if core.profile_slot.is_some() {
-        draw.text(&fonts.text, "Chargement des stats...")
+        draw.sharp_text(&fonts.text, "Chargement des stats...")
             .position(left_x + left_w / 2.0, STATS_Y + 40.0)
             .size(theme::size::LABEL)
             .h_align_center()
@@ -140,12 +140,12 @@ fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32,
     ];
     for (i, (label, val)) in stats.iter().enumerate() {
         let y = STATS_Y + i as f32 * 30.0;
-        draw.text(&fonts.text, label)
+        draw.sharp_text(&fonts.text, label)
             .position(label_x, y)
             .size(theme::size::LABEL)
             .v_align_middle()
             .color(theme::TEXT_MUTED);
-        draw.text(&fonts.text, val)
+        draw.sharp_text(&fonts.text, val)
             .position(val_x, y)
             .size(theme::size::LABEL)
             .h_align_right()
@@ -159,13 +159,13 @@ fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32,
     let mut info_y = sep_y + 22.0;
     if let Some(bio) = &core.bio {
         if !bio.is_empty() {
-            draw.text(&fonts.text, "Bio")
+            draw.sharp_text(&fonts.text, "Bio")
                 .position(label_x, info_y)
                 .size(theme::size::SMALL)
                 .v_align_middle()
                 .color(theme::TEXT_DIM);
             info_y += 22.0;
-            draw.text(&fonts.text, &truncate_display(bio, 55))
+            draw.sharp_text(&fonts.text, &truncate_display(bio, 55))
                 .position(label_x, info_y)
                 .size(theme::size::BODY)
                 .v_align_middle()
@@ -175,13 +175,13 @@ fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32,
     }
     if let Some(music) = &core.favorite_music {
         if !music.is_empty() {
-            draw.text(&fonts.text, "Musique")
+            draw.sharp_text(&fonts.text, "Musique")
                 .position(label_x, info_y)
                 .size(theme::size::SMALL)
                 .v_align_middle()
                 .color(theme::TEXT_DIM);
             info_y += 22.0;
-            draw.text(&fonts.text, &truncate_display(music, 45))
+            draw.sharp_text(&fonts.text, &truncate_display(music, 45))
                 .position(label_x, info_y)
                 .size(theme::size::BODY)
                 .v_align_middle()
@@ -192,7 +192,7 @@ fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32,
 
 fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore, ww: f32, clickable: bool) {
     let (_, _, right_x, right_w) = panels(ww);
-    draw.text(&fonts.text, "Derniers matchs")
+    draw.sharp_text(&fonts.text, "Derniers matchs")
         .position(right_x + right_w / 2.0, HISTORY_Y)
         .size(theme::size::EMPHASIS)
         .h_align_center()
@@ -202,14 +202,14 @@ fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCor
         .color(theme::DIVIDER);
 
     if core.history_slot.is_some() {
-        draw.text(&fonts.text, "Chargement...")
+        draw.sharp_text(&fonts.text, "Chargement...")
             .position(right_x + right_w / 2.0, HISTORY_Y + 48.0)
             .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT_MUTED);
     } else if core.match_history.is_empty() {
-        draw.text(&fonts.text, "Aucun match pour l'instant.")
+        draw.sharp_text(&fonts.text, "Aucun match pour l'instant.")
             .position(right_x + right_w / 2.0, HISTORY_Y + 48.0)
             .size(theme::size::LABEL)
             .h_align_center()
@@ -264,7 +264,7 @@ fn draw_match_row(
         .color(if won { theme::SUCCESS_BG } else { theme::DANGER_BG });
 
     let result_color = if won { theme::SUCCESS } else { theme::DANGER };
-    draw.text(&fonts.text, if won { "VICTOIRE" } else { "DEFAITE" })
+    draw.sharp_text(&fonts.text, if won { "VICTOIRE" } else { "DEFAITE" })
         .position(row_x + row_w * 0.09, y)
         .size(theme::size::SMALL)
         .h_align_center()
@@ -272,14 +272,14 @@ fn draw_match_row(
         .color(result_color);
 
     let opp_hover = clickable && opp.user_id.is_some() && ui.hovered(opponent_zone(row));
-    draw.text(&fonts.text, &format!("vs {opp_name}"))
+    draw.sharp_text(&fonts.text, &format!("vs {opp_name}"))
         .position(row_x + row_w * 0.33, y)
         .size(theme::size::BODY)
         .h_align_center()
         .v_align_middle()
         .color(if opp_hover { theme::LINK } else { theme::TEXT });
 
-    draw.text(
+    draw.sharp_text(
         &fonts.text,
         &format!("Chain x{}  Nuis {}", me.max_chain, me.nuisance_sent),
     )
@@ -290,7 +290,7 @@ fn draw_match_row(
     .color(theme::GOLD);
 
     let secs = m.duration_secs as u32;
-    draw.text(&fonts.text, &format!("{}:{:02}", secs / 60, secs % 60))
+    draw.sharp_text(&fonts.text, &format!("{}:{:02}", secs / 60, secs % 60))
         .position(row_x + row_w * 0.88, y)
         .size(theme::size::SMALL)
         .h_align_center()
@@ -554,7 +554,7 @@ fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &
         ),
     ];
     for (rect, label, placeholder, value, which) in fields {
-        draw.text(&fonts.text, label)
+        draw.sharp_text(&fonts.text, label)
             .position(rect.x, rect.y - 15.0)
             .size(theme::size::LABEL)
             .v_align_middle()
@@ -580,7 +580,7 @@ fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &
     ui.button(draw, fonts, cancel_btn, "Annuler");
 
     if let Some((msg, color)) = profile.edit_status.shown() {
-        draw.text(&fonts.text, msg)
+        draw.sharp_text(&fonts.text, msg)
             .position(cx, 465.0)
             .size(theme::size::LABEL)
             .h_align_center()
@@ -754,7 +754,7 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
     state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
 
     if let Some((msg, color)) = p.friend_status.shown() {
-        draw.text(&state.fonts.text, msg)
+        draw.sharp_text(&state.fonts.text, msg)
             .position(cx, btn_y - 50.0)
             .size(theme::size::BODY)
             .h_align_center()

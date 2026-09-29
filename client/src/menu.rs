@@ -1,8 +1,8 @@
-use notan::draw::{DrawShapes, DrawTextSection};
+use notan::draw::DrawShapes;
 use notan::prelude::*;
 
 use crate::state::{AuthForm, Screen, Settings, State};
-use crate::ui::{Rect, Stepper, Ui, View};
+use crate::ui::{Rect, SharpText, Stepper, Ui, View};
 use crate::{http, theme};
 
 struct MenuLayout {
@@ -108,7 +108,7 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
     let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
 
-    draw.text(&state.fonts.display, "Rouillo")
+    draw.sharp_text(&state.fonts.display, "Rouillo")
         .position(ww / 2.0, wh / 2.0 - 140.0)
         .size(theme::size::HERO)
         .h_align_center()
@@ -143,13 +143,13 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
             .next()
             .map(|c| c.to_uppercase().collect())
             .unwrap_or_default();
-        draw.text(&state.fonts.display, &initial)
+        draw.sharp_text(&state.fonts.display, &initial)
             .position(acx, acy)
             .size(theme::size::HEADING)
             .h_align_center()
             .v_align_middle()
             .color(theme::TEXT);
-        draw.text(&state.fonts.text, &auth.username)
+        draw.sharp_text(&state.fonts.text, &auth.username)
             .position(acx, acy + ar + 16.0)
             .size(theme::size::BODY)
             .h_align_center()
@@ -158,7 +158,7 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
     }
 
     if let Some((msg, color)) = state.notice.shown() {
-        draw.text(&state.fonts.text, msg)
+        draw.sharp_text(&state.fonts.text, msg)
             .position(ww / 2.0, wh - 60.0)
             .size(theme::size::EMPHASIS)
             .h_align_center()
@@ -212,7 +212,7 @@ pub fn draw_settings(gfx: &mut Graphics, state: &State) {
     let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
 
-    draw.text(&state.fonts.display, "SETTINGS")
+    draw.sharp_text(&state.fonts.display, "SETTINGS")
         .position(ww / 2.0, wh / 2.0 - 170.0)
         .size(theme::size::TITLE)
         .h_align_center()

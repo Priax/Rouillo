@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use notan::app::Event;
-use notan::draw::{DrawConfig, DrawShapes, DrawTextSection};
+use notan::draw::{DrawConfig, DrawShapes};
 use notan::prelude::*;
 use shared::{config, ClientMessage};
 
@@ -23,7 +23,7 @@ mod ui;
 mod update;
 
 use state::{Screen, State};
-use ui::Rect;
+use ui::{Rect, SharpText};
 
 pub fn server_url() -> String {
     #[cfg(all(target_arch = "wasm32", not(debug_assertions)))]
@@ -195,7 +195,7 @@ fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
     d.rect((0.0, banner_y), (ww, BANNER_H)).color(theme::BANNER);
     d.rect((0.0, banner_y), (ww, 2.0)).color(theme::ACCENT);
     let msg = format!("{from} t'invite dans \"{room_name}\"");
-    d.text(&state.fonts.text, &msg)
+    d.sharp_text(&state.fonts.text, &msg)
         .position(20.0, banner_y + 40.0)
         .size(theme::size::LABEL)
         .v_align_middle()
@@ -242,7 +242,7 @@ fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
     d.rect((0.0, 44.0), (ww, 2.0)).color(theme::WARNING);
     let dots = ".".repeat(1 + (app.timer.elapsed_f32() * 2.0) as usize % 3);
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
-    d.text(&state.fonts.text, &msg)
+    d.sharp_text(&state.fonts.text, &msg)
         .position(ww / 2.0, 22.0)
         .size(theme::size::LABEL)
         .h_align_center()

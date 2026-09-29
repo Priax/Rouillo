@@ -1,11 +1,11 @@
-use notan::draw::{Draw, DrawShapes, DrawTextSection};
+use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 use shared::{Board, GameState, PuyoType, Settle};
 
 use crate::config;
 use crate::state::GameSession;
 use crate::theme::{self, game};
-use crate::ui::{Fonts, Rect, Ui, View};
+use crate::ui::{Fonts, Rect, SharpText, Ui, View};
 
 struct GameLayout {
     win_w: f32,
@@ -76,7 +76,7 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
     draw_chain_anim(&mut draw, fonts, session.chain_display, layout.mine);
     if session.all_clear_timer > 0.0 {
         let alpha = (session.all_clear_timer / 3.0).min(1.0);
-        draw.text(&fonts.display, "ALL CLEAR!")
+        draw.sharp_text(&fonts.display, "ALL CLEAR!")
             .position(layout.mine.x + layout.mine.w / 2.0, layout.mine.y + layout.mine.h / 2.0)
             .size(theme::size::TITLE)
             .h_align_center()
@@ -105,7 +105,7 @@ fn draw_boards(draw: &mut Draw, fonts: &Fonts, session: &GameSession, layout: &G
         (row_off + fall_step(me), col_off),
         session.my_turn.satellite(),
     );
-    draw.text(&fonts.text, "YOU")
+    draw.sharp_text(&fonts.text, "YOU")
         .position(layout.mine.x, layout.mine.y - 50.0)
         .size(theme::size::LABEL)
         .color(theme::TEXT);
@@ -116,7 +116,7 @@ fn draw_boards(draw: &mut Draw, fonts: &Fonts, session: &GameSession, layout: &G
         .frame()
         .unwrap_or((&session.other_board, (0.0, 0.0)));
     draw_board(draw, opp_board, layout.theirs, opp_offset, session.opp_turn.satellite());
-    draw.text(&fonts.text, "OPPONENT")
+    draw.sharp_text(&fonts.text, "OPPONENT")
         .position(layout.theirs.x, layout.theirs.y - 50.0)
         .size(theme::size::LABEL)
         .color(theme::TEXT_MUTED);
@@ -124,24 +124,24 @@ fn draw_boards(draw: &mut Draw, fonts: &Fonts, session: &GameSession, layout: &G
 }
 
 fn draw_sidebar(draw: &mut Draw, fonts: &Fonts, me: &Board, x: f32, top: f32) {
-    draw.text(&fonts.display, &format!("Score: {}", me.score))
+    draw.sharp_text(&fonts.display, &format!("Score: {}", me.score))
         .position(x, top + 20.0)
         .size(theme::size::HEADING)
         .color(theme::TEXT);
-    draw.text(&fonts.display, &format!("Level: {}", me.level()))
+    draw.sharp_text(&fonts.display, &format!("Level: {}", me.level()))
         .position(x, top + 60.0)
         .size(theme::size::HEADING)
         .color(theme::GOLD);
 
     let next_y = top + 140.0;
-    draw.text(&fonts.display, "Next:")
+    draw.sharp_text(&fonts.display, "Next:")
         .position(x, next_y - 30.0)
         .size(theme::size::HEADING)
         .color(theme::TEXT_MUTED);
     draw_preview(draw, (x, next_y), me.next_types, game::PREVIEW);
 
     let next_next_y = top + 170.0 + (config::CELL_SIZE * 2.5);
-    draw.text(&fonts.text, "Next Next:")
+    draw.sharp_text(&fonts.text, "Next Next:")
         .position(x, next_next_y - 25.0)
         .size(theme::size::LABEL)
         .color(theme::TEXT_MUTED);
@@ -165,7 +165,7 @@ fn draw_preview(draw: &mut Draw, origin: (f32, f32), (axis, satellite): (PuyoTyp
 fn draw_overlay(draw: &mut Draw, fonts: &Fonts, overlay: &Overlay, layout: &GameLayout, role: Role, elapsed: f32) {
     let (cx, cy) = (layout.win_w / 2.0, layout.win_h / 2.0);
     let centered = |draw: &mut Draw, text: &str, y: f32, size: f32, color: Color| {
-        draw.text(&fonts.display, text)
+        draw.sharp_text(&fonts.display, text)
             .position(cx, y)
             .size(size)
             .h_align_center()
@@ -248,7 +248,7 @@ fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32)
         (board("OPP", &session.other_board), game::DEBUG_BOARDS),
     ];
     for (i, (text, color)) in lines.iter().enumerate() {
-        draw.text(&fonts.text, text)
+        draw.sharp_text(&fonts.text, text)
             .position(10.0, win_h - 30.0 - i as f32 * 25.0)
             .size(theme::size::LABEL)
             .color(*color);
@@ -463,7 +463,7 @@ fn draw_nuisance_bar(draw: &mut Draw, fonts: &Fonts, nuisance: u32, board: Rect)
     }
 
     if nuisance > config::GRID_WIDTH as u32 * 6 {
-        draw.text(&fonts.text, &format!("+{nuisance}"))
+        draw.sharp_text(&fonts.text, &format!("+{nuisance}"))
             .position(board_x + board_w - 2.0, bar_y - 1.0)
             .size(theme::size::SMALL)
             .h_align_right()
@@ -483,7 +483,7 @@ fn draw_chain_anim(draw: &mut Draw, fonts: &Fonts, chain_display: Option<(u32, f
     let cy = board.y + board.h * 0.35;
 
     let chain_color = game::chain(count).with_alpha(alpha);
-    draw.text(&fonts.display, &format!("{count}  CHAIN!"))
+    draw.sharp_text(&fonts.display, &format!("{count}  CHAIN!"))
         .position(cx, cy)
         .size(size)
         .h_align_center()

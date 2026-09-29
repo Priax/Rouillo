@@ -1,8 +1,8 @@
-use notan::draw::{Draw, DrawShapes, DrawTextSection, Font};
+use notan::draw::{Draw, DrawShapes, Font};
 use notan::math::{vec2, Mat3};
 use notan::prelude::*;
 
-use super::{Fonts, Rect, Response, Ui};
+use super::{Fonts, Rect, Response, SharpText, Ui};
 use crate::theme;
 
 const HOVER_GROW: f32 = 0.03;
@@ -125,7 +125,7 @@ fn paint(draw: &mut Draw, font: &Font, b: Rect, label: Label, r: Response, enabl
             let n = label.chars().count().max(1) as f32;
             let fits = (b.w - TEXT_PADDING) / (n * CHAR_WIDTH);
             let size = (b.h * TEXT_HEIGHT).min(fits).max(TEXT_MIN);
-            draw.text(font, label)
+            draw.sharp_text(font, label)
                 .position(center.x, center.y)
                 .size(size)
                 .h_align_center()

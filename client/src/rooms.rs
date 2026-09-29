@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use notan::draw::{DrawShapes, DrawTextSection};
+use notan::draw::DrawShapes;
 use notan::prelude::*;
 use shared::{ClientMessage, LobbyInfo, RoomSettings};
 
 use crate::state::{ApiFriendsResponse, Screen, State};
-use crate::ui::{text_field, Field, Rect, Stepper};
+use crate::ui::{text_field, Field, Rect, SharpText, Stepper};
 use crate::{http, theme};
 
 fn send(state: &mut State, msg: &ClientMessage) {
@@ -80,7 +80,7 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
     let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
 
-    draw.text(&state.fonts.display, "ROOMS")
+    draw.sharp_text(&state.fonts.display, "ROOMS")
         .position(w / 2.0, 70.0)
         .size(theme::size::TITLE)
         .h_align_center()
@@ -88,7 +88,7 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
         .color(theme::TEXT);
 
     if state.rooms.is_empty() {
-        draw.text(&state.fonts.text, "Aucune room. Crees-en une !")
+        draw.sharp_text(&state.fonts.text, "Aucune room. Crees-en une !")
             .position(w / 2.0, 200.0)
             .size(theme::size::EMPHASIS)
             .h_align_center()
@@ -115,7 +115,7 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
     state.ui.button(&mut draw, &state.fonts, b.back, "Back");
 
     if let Some((msg, color)) = state.notice.shown() {
-        draw.text(&state.fonts.text, msg)
+        draw.sharp_text(&state.fonts.text, msg)
             .position(w / 2.0, h - 130.0)
             .size(theme::size::EMPHASIS)
             .h_align_center()
@@ -180,7 +180,7 @@ fn draw_entry(gfx: &mut Graphics, state: &State, title: &str, confirm: &str, pla
     let mut draw = state.ui.canvas(gfx);
     draw.clear(theme::BACKGROUND);
 
-    draw.text(&state.fonts.display, title)
+    draw.sharp_text(&state.fonts.display, title)
         .position(w / 2.0, h / 2.0 - 120.0)
         .size(theme::size::TITLE)
         .h_align_center()
@@ -335,13 +335,13 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     state.ui.set_input(!state.invite_overlay);
     draw.clear(theme::BACKGROUND);
 
-    draw.text(&state.fonts.display, &info.name)
+    draw.sharp_text(&state.fonts.display, &info.name)
         .position(w / 2.0, 70.0)
         .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
         .color(theme::TITLE);
-    draw.text(&state.fonts.text, &lobby_headline(info))
+    draw.sharp_text(&state.fonts.text, &lobby_headline(info))
         .position(w / 2.0, 120.0)
         .size(theme::size::EMPHASIS)
         .h_align_center()
@@ -376,7 +376,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
         };
         if let (Some(msg), None) = (waiting, info.countdown) {
             let y = LOBBY_FIRST_Y + RoomSettings::COUNT as f32 * LOBBY_ROW_H + 165.0;
-            draw.text(&state.fonts.text, msg)
+            draw.sharp_text(&state.fonts.text, msg)
                 .position(w / 2.0, y)
                 .size(theme::size::LABEL)
                 .h_align_center()
@@ -385,7 +385,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
         }
     } else {
         let y = LOBBY_FIRST_Y + RoomSettings::COUNT as f32 * LOBBY_ROW_H + 58.0;
-        draw.text(&state.fonts.text, "En attente du host...")
+        draw.sharp_text(&state.fonts.text, "En attente du host...")
             .position(w / 2.0, y)
             .size(theme::size::EMPHASIS)
             .h_align_center()
@@ -402,7 +402,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
 
     if let Some(n) = info.countdown {
         draw.rect((0.0, 0.0), (w, h)).color(theme::SCRIM);
-        draw.text(&state.fonts.display, &n.to_string())
+        draw.sharp_text(&state.fonts.display, &n.to_string())
             .position(w / 2.0, h / 2.0)
             .size(theme::size::HUGE)
             .h_align_center()
@@ -413,7 +413,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     if state.invite_overlay {
         state.ui.set_input(true);
         draw.rect((0.0, 0.0), (w, h)).color(theme::SCRIM_STRONG);
-        draw.text(&state.fonts.display, "Inviter un ami")
+        draw.sharp_text(&state.fonts.display, "Inviter un ami")
             .position(w / 2.0, 100.0)
             .size(theme::size::HEADING)
             .h_align_center()
@@ -421,14 +421,14 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
             .color(theme::TITLE);
         state.ui.button(&mut draw, &state.fonts, invite_close(w), "X");
         if state.invite_slot.is_some() {
-            draw.text(&state.fonts.text, "Chargement...")
+            draw.sharp_text(&state.fonts.text, "Chargement...")
                 .position(w / 2.0, 200.0)
                 .size(theme::size::EMPHASIS)
                 .h_align_center()
                 .v_align_middle()
                 .color(theme::TEXT_MUTED);
         } else if state.invite_friends.is_empty() {
-            draw.text(&state.fonts.text, "Aucun ami pour l'instant.")
+            draw.sharp_text(&state.fonts.text, "Aucun ami pour l'instant.")
                 .position(w / 2.0, 200.0)
                 .size(theme::size::EMPHASIS)
                 .h_align_center()
@@ -437,7 +437,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
         } else {
             for (i, friend) in state.invite_friends.iter().enumerate() {
                 let row = invite_row(w, i);
-                draw.text(&state.fonts.text, &friend.username)
+                draw.sharp_text(&state.fonts.text, &friend.username)
                     .position(row.x - 20.0, row.y + row.h / 2.0)
                     .size(theme::size::LABEL)
                     .h_align_right()
