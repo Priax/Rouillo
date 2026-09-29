@@ -562,7 +562,7 @@ impl Manager {
 
     fn record_forfeit(&mut self, id: RoomId, slot: usize, why: &str) {
         if let Some(rec) = self.rooms.get_mut(&id).and_then(|r| r.forfeit(slot)) {
-            info!("Forfait room #{id} : slot {} perd ({why})", slot + 1);
+            info!("Forfait room #{id}: slot {} perd ({why})", slot + 1);
             self.unsaved_matches.push(rec);
         }
     }
@@ -851,7 +851,7 @@ impl Manager {
                 last_disconnect_reason,
             } => {
                 if let Some(reason) = last_disconnect_reason {
-                    warn!("WS {conn} reconnecte après coupure client : {reason}");
+                    warn!("WS {conn} reconnecte après coupure client: {reason}");
                 }
                 self.conn_token.insert(conn, token.clone());
                 if let Some(uid) = user_id {
@@ -1484,7 +1484,7 @@ async fn main() {
         loop {
             ticker.tick().await;
             match db::cleanup_expired_sessions(&pool_cleanup).await {
-                Ok(n) if n > 0 => info!("Sessions expirées : {n} supprimées"),
+                Ok(n) if n > 0 => info!("Sessions expirées: {n} supprimées"),
                 Err(e) => error!("Session cleanup: {e}"),
                 _ => {}
             }
@@ -1548,7 +1548,7 @@ fn ws_route(
                         .into_response()
                 } else {
                     info!(
-                        "WS {conn} refusé : protocole {:?}, attendu {}",
+                        "WS {conn} refusé: protocole {:?}, attendu {}",
                         query.v,
                         shared::PROTOCOL_VERSION
                     );

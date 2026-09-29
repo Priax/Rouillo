@@ -23,6 +23,6 @@ pub fn apply() {
         Command::new("xdg-open").arg(RELEASES).spawn()
     };
     if let Err(e) = opened {
-        eprintln!("[update] impossible d'ouvrir {RELEASES} : {e}");
+        eprintln!("[update] impossible d'ouvrir {RELEASES}: {e}");
     }
 }

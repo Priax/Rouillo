@@ -248,7 +248,7 @@ impl Connection {
                         retry,
                     },
                     Err(e) => {
-                        eprintln!("[ws] tentative {} impossible : {e}", retry.attempts);
+                        eprintln!("[ws] tentative {} impossible: {e}", retry.attempts);
                         Link::Waiting { retry }
                     }
                 }
@@ -292,7 +292,7 @@ impl Connection {
 
     fn outdated(&mut self, events: &mut Vec<ConnEvent>) -> Link {
         events.clear();
-        eprintln!("[ws] refusé : le serveur attend une autre version du protocole");
+        eprintln!("[ws] refusé: le serveur attend une autre version du protocole");
         self.unreported_drop = None;
         self.heartbeat = Heartbeat::new(0.0);
         events.push(ConnEvent::Outdated);
@@ -301,7 +301,7 @@ impl Connection {
 
     fn drop_link(&mut self, reason: String, retry: Retry, now: f64, events: &mut Vec<ConnEvent>) -> Link {
         events.clear();
-        eprintln!("[ws] connexion perdue : {reason}");
+        eprintln!("[ws] connexion perdue: {reason}");
         self.unreported_drop = Some(reason);
         if retry.expired(now) {
             events.push(ConnEvent::GaveUp);

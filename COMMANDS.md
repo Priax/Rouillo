@@ -1,12 +1,12 @@
 # Commandes utiles
 
-Aide-mémoire de tout ce qu'on peut lancer sur le projet. Workspace Cargo à 3 crates :
+Aide-mémoire de tout ce qu'on peut lancer sur le projet. Workspace Cargo à 3 crates:
 
 | Crate    | Rôle                          | Cible            |
 |----------|-------------------------------|------------------|
 | `shared` | logique de jeu + protocole    | lib (+ benches)  |
 | `server` | serveur autoritatif warp+tokio| binaire natif    |
-| `client` | jeu : **natif (notan)** OU **WASM (navigateur)** | bin natif + WASM |
+| `client` | jeu: **natif (notan)** OU **WASM (navigateur)** | bin natif + WASM |
 
 ---
 
@@ -16,7 +16,7 @@ Aide-mémoire de tout ce qu'on peut lancer sur le projet. Workspace Cargo à 3 c
 # Cible WASM pour le client navigateur
 rustup target add wasm32-unknown-unknown
 
-# Trunk : sert/compile le client WASM
+# Trunk: sert/compile le client WASM
 cargo install trunk
 
 # Dépendances système pour le client NATIF (Linux ; cf. CI release.yml)
@@ -43,8 +43,8 @@ cargo run -p client
 ```
 
 **À quel serveur le client se connecte-t-il ?** (`client/src/main.rs::server_url`)
-- WASM **release** : même hôte que la page (`ws[s]://<host>/ws`), pour la prod.
-- Natif, ou WASM **debug** (donc `trunk serve`) : `config::SERVER_URL` = `ws://127.0.0.1:8080/ws`.
+- WASM **release**: même hôte que la page (`ws[s]://<host>/ws`), pour la prod.
+- Natif, ou WASM **debug** (donc `trunk serve`): `config::SERVER_URL` = `ws://127.0.0.1:8080/ws`.
 
 ---
 
@@ -52,9 +52,9 @@ cargo run -p client
 
 | Variable          | Effet | Exemple |
 |-------------------|-------|---------|
-| `PUYO_PROFILE=1`  | Le serveur imprime toutes les 5 s une ligne `[tick] rooms=N avg=.. max=.. budget=16.6ms peak_load=X%`. Sans la variable : silencieux. | `PUYO_PROFILE=1 cargo run -p server --release` |
+| `PUYO_PROFILE=1`  | Le serveur imprime toutes les 5 s une ligne `[tick] rooms=N avg=.. max=.. budget=16.6ms peak_load=X%`. Sans la variable: silencieux. | `PUYO_PROFILE=1 cargo run -p server --release` |
 | `PUYO_LOAD_ROOMS` | Nombre de rooms du test de charge (défaut 500). | `PUYO_LOAD_ROOMS=2000 cargo test -p server --release -- --ignored --nocapture load_many_rooms` |
-| `RUST_LOG`        | (non câblé pour l'instant : le serveur logge via `println!`). | (aucun) |
+| `RUST_LOG`        | Niveau de logs du serveur (défaut `info`, syntaxe `EnvFilter` de tracing). Sans effet avec la feature `console`. | `RUST_LOG=debug cargo run -p server` |
 
 ---
 
@@ -87,7 +87,7 @@ Affiche `tick avg/max`, coût par room, `peak_load` et l'estimation du nb de roo
 ```bash
 cargo bench -p shared             # encode/decode, board_tick, check_matches, room_step…
 ```
-- Rapport HTML détaillé : `target/criterion/<bench>/report/index.html`.
+- Rapport HTML détaillé: `target/criterion/<bench>/report/index.html`.
 - Toujours significatif **en release** (Criterion compile déjà optimisé).
 - Benches définis dans `shared/benches/sim.rs`.
 
@@ -96,7 +96,7 @@ cargo bench -p shared             # encode/decode, board_tick, check_matches, ro
 ## Qualité / lint
 
 ```bash
-cargo clippy --workspace --tests          # lint tout, tests inclus (objectif : 0 warning)
+cargo clippy --workspace --tests          # lint tout, tests inclus (objectif: 0 warning)
 cargo clippy --workspace --tests --fix     # applique les corrections auto sûres
 cargo fmt                                  # formatage
 cargo fmt --check                          # vérifie sans modifier (utile en CI)
@@ -117,7 +117,7 @@ cd client && trunk build --release
 
 ### Publier une release GitHub
 Le workflow `.github/workflows/release.yml` se déclenche sur un tag `v*` et construit les
-binaires **natifs** du client (Linux + Windows) attachés à une release brouillon :
+binaires **natifs** du client (Linux + Windows) attachés à une release brouillon:
 
 ```bash
 git tag v0.5.0
@@ -128,10 +128,10 @@ git push origin v0.5.0
 
 ## Profilage
 
-Prérequis : `perf` installé + `kernel.perf_event_paranoid <= 2` (sinon
+Prérequis: `perf` installé + `kernel.perf_event_paranoid <= 2` (sinon
 `sudo sysctl kernel.perf_event_paranoid=1`), et `cargo install flamegraph`.
 
-> **Pas** `cargo flamegraph --bin server` : le serveur est une boucle infinie qui ne se
+> **Pas** `cargo flamegraph --bin server`: le serveur est une boucle infinie qui ne se
 > termine jamais → perf profilerait un serveur **inactif**. On profile une cible **bornée**.
 
 ### Flamegraph (hotspots CPU)
@@ -145,17 +145,17 @@ cargo flamegraph -p shared --bench sim -o flamegraph-room.svg -- --profile-time 
 ```
 Ouvrir le `.svg` dans un navigateur (zoom interactif). Le profil `bench` garde les symboles
 (`[profile.bench] strip=false, debug=true` dans le Cargo.toml racine).
-NB : profiler à travers Criterion ajoute du bruit de harnais (`serde_json`, `clap`) à ignorer.
+NB: profiler à travers Criterion ajoute du bruit de harnais (`serde_json`, `clap`) à ignorer.
 
 ### tokio-console
 
 ```bash
 cargo install tokio-console   # une fois
 
-# Terminal 1 : serveur instrumenté (feature + cfg unstable obligatoires)
+# Terminal 1: serveur instrumenté (feature + cfg unstable obligatoires)
 RUSTFLAGS="--cfg tokio_unstable" cargo run -p server --features console
 
-# Terminal 2 : l'UI temps réel
+# Terminal 2: l'UI temps réel
 tokio-console
 ```
 Sans `--features console`, `console-subscriber` n'est pas compilé (zéro coût en prod).
