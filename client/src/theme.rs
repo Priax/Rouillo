@@ -1,10 +1,24 @@
 use notan::prelude::Color;
 
-const HUE: f32 = 255.0;
+/// Section hues, after osu!lazer's colour schemes.
+pub mod hue {
+    pub const PURPLE: f32 = 255.0;
+    pub const BLUE: f32 = 200.0;
+    pub const GREEN: f32 = 125.0;
+    pub const PINK: f32 = 333.0;
+    pub const ORANGE: f32 = 45.0;
+}
 
 // HSL to RGB, `h` in degrees, `s` and `l` in `0..=1`. `const` so the palette
 // below is computed at compile time.
 const fn hsl(h: f32, s: f32, l: f32) -> Color {
+    let mut h = h;
+    while h < 0.0 {
+        h += 360.0;
+    }
+    while h >= 360.0 {
+        h -= 360.0;
+    }
     const fn abs(v: f32) -> f32 {
         if v < 0.0 {
             -v
@@ -36,29 +50,54 @@ const fn hsl(h: f32, s: f32, l: f32) -> Color {
     Color::from_rgb(r + m, g + m, b + m)
 }
 
-const fn tone(s: f32, l: f32) -> Color {
-    hsl(HUE, s, l)
+/// Every colour that follows a section's hue. The tones differ only in
+/// saturation and lightness, the way osu!lazer's colour provider works.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Palette {
+    pub background: Color,
+    pub surface_alt: Color,
+    pub surface: Color,
+    pub disabled: Color,
+    pub raised: Color,
+    pub raised_hover: Color,
+    pub divider: Color,
+    pub border: Color,
+    pub accent: Color,
+    pub title: Color,
+    pub avatar: Color,
+    pub avatar_hover: Color,
+    pub banner: Color,
+    pub text: Color,
+    pub text_dim: Color,
+    pub text_muted: Color,
+    pub text_disabled: Color,
+    pub scrim_strong: Color,
 }
 
-pub const BACKGROUND: Color = tone(0.10, 0.08);
-pub const SURFACE_ALT: Color = tone(0.10, 0.11);
-pub const SURFACE: Color = tone(0.10, 0.15);
-pub const DISABLED: Color = tone(0.08, 0.13);
-pub const RAISED: Color = tone(0.12, 0.22);
-pub const RAISED_HOVER: Color = tone(0.15, 0.30);
-pub const DIVIDER: Color = tone(0.15, 0.24);
-pub const BORDER: Color = tone(0.20, 0.38);
-
-pub const ACCENT: Color = tone(1.0, 0.70);
-pub const TITLE: Color = tone(0.90, 0.85);
-pub const AVATAR: Color = tone(0.35, 0.30);
-pub const AVATAR_HOVER: Color = tone(0.40, 0.40);
-pub const BANNER: Color = tone(0.35, 0.14).with_alpha(0.96);
-
-pub const TEXT: Color = tone(0.30, 0.95);
-pub const TEXT_DIM: Color = tone(0.25, 0.75);
-pub const TEXT_MUTED: Color = tone(0.10, 0.55);
-pub const TEXT_DISABLED: Color = tone(0.08, 0.38);
+impl Palette {
+    pub const fn new(hue: f32) -> Self {
+        Self {
+            background: hsl(hue, 0.10, 0.08),
+            surface_alt: hsl(hue, 0.10, 0.11),
+            surface: hsl(hue, 0.10, 0.15),
+            disabled: hsl(hue, 0.08, 0.13),
+            raised: hsl(hue, 0.12, 0.22),
+            raised_hover: hsl(hue, 0.15, 0.30),
+            divider: hsl(hue, 0.15, 0.24),
+            border: hsl(hue, 0.20, 0.38),
+            accent: hsl(hue, 1.0, 0.70),
+            title: hsl(hue, 0.90, 0.85),
+            avatar: hsl(hue, 0.35, 0.30),
+            avatar_hover: hsl(hue, 0.40, 0.40),
+            banner: hsl(hue, 0.35, 0.14).with_alpha(0.96),
+            text: hsl(hue, 0.30, 0.95),
+            text_dim: hsl(hue, 0.25, 0.75),
+            text_muted: hsl(hue, 0.10, 0.55),
+            text_disabled: hsl(hue, 0.08, 0.38),
+            scrim_strong: hsl(hue, 0.30, 0.03).with_alpha(0.88),
+        }
+    }
+}
 
 pub const GOLD: Color = Color::from_rgb(1.0, 0.8, 0.13);
 pub const SUCCESS: Color = Color::from_rgb(0.45, 0.88, 0.5);
@@ -73,7 +112,6 @@ pub const LINK: Color = Color::from_rgb(0.6, 0.8, 1.0);
 pub const SCRIM_LIGHT: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.5);
 pub const SCRIM: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.6);
 pub const SCRIM_DARK: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.7);
-pub const SCRIM_STRONG: Color = tone(0.30, 0.03).with_alpha(0.88);
 
 pub const RADIUS: f32 = 8.0;
 
@@ -155,9 +193,25 @@ mod tests {
     }
 
     #[test]
-    fn surfaces_get_lighter_in_order() {
+    fn hues_wrap_around() {
+        assert!(close(hsl(-60.0, 1.0, 0.5), hsl(300.0, 1.0, 0.5)));
+        assert!(close(hsl(420.0, 1.0, 0.5), hsl(60.0, 1.0, 0.5)));
+    }
+
+    #[test]
+    fn surfaces_get_lighter_in_order_in_every_section() {
         let luma = |c: Color| 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-        let order = [BACKGROUND, SURFACE_ALT, SURFACE, RAISED, RAISED_HOVER, BORDER];
-        assert!(order.windows(2).all(|w| luma(w[0]) < luma(w[1])));
+        for h in [hue::PURPLE, hue::BLUE, hue::GREEN, hue::PINK, hue::ORANGE] {
+            let p = Palette::new(h);
+            let order = [
+                p.background,
+                p.surface_alt,
+                p.surface,
+                p.raised,
+                p.raised_hover,
+                p.border,
+            ];
+            assert!(order.windows(2).all(|w| luma(w[0]) < luma(w[1])), "hue {h}");
+        }
     }
 }

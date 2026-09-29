@@ -21,6 +21,18 @@ pub enum Screen {
 }
 
 impl Screen {
+    /// The hue of the section this screen belongs to.
+    pub fn hue(self) -> f32 {
+        use crate::theme::hue;
+        match self {
+            Self::Auth | Self::Menu => hue::PURPLE,
+            Self::RoomBrowser | Self::CreateRoom | Self::JoinById | Self::RoomLobby | Self::Game => hue::BLUE,
+            Self::Friends => hue::GREEN,
+            Self::Profile | Self::OtherProfile => hue::PINK,
+            Self::Settings => hue::ORANGE,
+        }
+    }
+
     pub fn needs_connection(self) -> bool {
         matches!(
             self,

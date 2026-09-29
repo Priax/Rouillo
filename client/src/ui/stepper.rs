@@ -38,12 +38,13 @@ impl Stepper {
 impl Ui {
     /// Draws the stepper; its buttons only when `editable`.
     pub fn stepper(&self, draw: &mut Draw, fonts: &Fonts, s: Stepper, label: &str, value: &str, editable: bool) {
+        let pal = self.palette();
         draw.sharp_text(&fonts.text, label)
             .position(s.label_x(), s.mid_y())
             .size(theme::size::EMPHASIS)
             .h_align_right()
             .v_align_middle()
-            .color(theme::TEXT_DIM);
+            .color(pal.text_dim);
         draw.sharp_text(&fonts.display, value)
             .position(s.value_x(), s.mid_y())
             .size(theme::size::EMPHASIS)

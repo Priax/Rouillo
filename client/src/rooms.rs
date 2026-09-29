@@ -76,16 +76,17 @@ pub fn update_browser(state: &mut State) {
 }
 
 pub fn draw_browser(gfx: &mut Graphics, state: &State) {
+    let pal = state.ui.palette();
     let (w, h) = state.ui.view().size();
     let mut draw = state.ui.canvas(gfx);
-    draw.clear(theme::BACKGROUND);
+    draw.clear(pal.background);
 
     draw.sharp_text(&state.fonts.display, "ROOMS")
         .position(w / 2.0, 70.0)
         .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TEXT);
+        .color(pal.text);
 
     if state.rooms.is_empty() {
         draw.sharp_text(&state.fonts.text, "Aucune room. Crees-en une !")
@@ -93,7 +94,7 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
             .size(theme::size::EMPHASIS)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT_MUTED);
+            .color(pal.text_muted);
     }
     for (i, room) in state.rooms.iter().enumerate() {
         let btn = room_row(i, w);
@@ -114,7 +115,7 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
     state.ui.button(&mut draw, &state.fonts, b.refresh, "Refresh");
     state.ui.button(&mut draw, &state.fonts, b.back, "Back");
 
-    if let Some((msg, color)) = state.notice.shown() {
+    if let Some((msg, color)) = state.notice.shown(&pal) {
         draw.sharp_text(&state.fonts.text, msg)
             .position(w / 2.0, h - 130.0)
             .size(theme::size::EMPHASIS)
@@ -176,16 +177,17 @@ pub fn update_join_by_id(app: &mut App, state: &mut State) {
 }
 
 fn draw_entry(gfx: &mut Graphics, state: &State, title: &str, confirm: &str, placeholder: &str) {
+    let pal = state.ui.palette();
     let (w, h) = state.ui.view().size();
     let mut draw = state.ui.canvas(gfx);
-    draw.clear(theme::BACKGROUND);
+    draw.clear(pal.background);
 
     draw.sharp_text(&state.fonts.display, title)
         .position(w / 2.0, h / 2.0 - 120.0)
         .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TEXT);
+        .color(pal.text);
 
     let field = Field {
         placeholder,
@@ -193,7 +195,7 @@ fn draw_entry(gfx: &mut Graphics, state: &State, title: &str, confirm: &str, pla
         focused: true,
         secret: false,
     };
-    text_field(&mut draw, &state.fonts, entry_box(w, h), &field);
+    text_field(&mut draw, &pal, &state.fonts, entry_box(w, h), &field);
 
     let (cbtn, back) = entry_buttons(w, h);
     state.ui.button(&mut draw, &state.fonts, cbtn, confirm);
@@ -327,26 +329,27 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
 }
 
 pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
+    let pal = state.ui.palette();
     let Some(info) = &state.lobby else {
         return;
     };
     let (w, h) = state.ui.view().size();
     let mut draw = state.ui.canvas(gfx);
     state.ui.set_input(!state.invite_overlay);
-    draw.clear(theme::BACKGROUND);
+    draw.clear(pal.background);
 
     draw.sharp_text(&state.fonts.display, &info.name)
         .position(w / 2.0, 70.0)
         .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TITLE);
+        .color(pal.title);
     draw.sharp_text(&state.fonts.text, &lobby_headline(info))
         .position(w / 2.0, 120.0)
         .size(theme::size::EMPHASIS)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TEXT_MUTED);
+        .color(pal.text_muted);
 
     let editable = info.is_host && info.countdown.is_none();
     for i in 0..RoomSettings::COUNT {
@@ -381,7 +384,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
                 .size(theme::size::LABEL)
                 .h_align_center()
                 .v_align_middle()
-                .color(theme::TEXT_MUTED);
+                .color(pal.text_muted);
         }
     } else {
         let y = LOBBY_FIRST_Y + RoomSettings::COUNT as f32 * LOBBY_ROW_H + 58.0;
@@ -390,7 +393,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
             .size(theme::size::EMPHASIS)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT_MUTED);
+            .color(pal.text_muted);
     }
     state.ui.button(&mut draw, &state.fonts, lobby_leave(w), "Leave");
 
@@ -412,13 +415,13 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
 
     if state.invite_overlay {
         state.ui.set_input(true);
-        draw.rect((0.0, 0.0), (w, h)).color(theme::SCRIM_STRONG);
+        draw.rect((0.0, 0.0), (w, h)).color(pal.scrim_strong);
         draw.sharp_text(&state.fonts.display, "Inviter un ami")
             .position(w / 2.0, 100.0)
             .size(theme::size::HEADING)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TITLE);
+            .color(pal.title);
         state.ui.button(&mut draw, &state.fonts, invite_close(w), "X");
         if state.invite_slot.is_some() {
             draw.sharp_text(&state.fonts.text, "Chargement...")
@@ -426,14 +429,14 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
                 .size(theme::size::EMPHASIS)
                 .h_align_center()
                 .v_align_middle()
-                .color(theme::TEXT_MUTED);
+                .color(pal.text_muted);
         } else if state.invite_friends.is_empty() {
             draw.sharp_text(&state.fonts.text, "Aucun ami pour l'instant.")
                 .position(w / 2.0, 200.0)
                 .size(theme::size::EMPHASIS)
                 .h_align_center()
                 .v_align_middle()
-                .color(theme::TEXT_MUTED);
+                .color(pal.text_muted);
         } else {
             for (i, friend) in state.invite_friends.iter().enumerate() {
                 let row = invite_row(w, i);
@@ -442,7 +445,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
                     .size(theme::size::LABEL)
                     .h_align_right()
                     .v_align_middle()
-                    .color(theme::TEXT);
+                    .color(pal.text);
                 state.ui.button(&mut draw, &state.fonts, row, "Inviter");
             }
         }

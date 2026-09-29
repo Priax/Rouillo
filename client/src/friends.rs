@@ -3,9 +3,10 @@ use std::sync::Arc;
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 
+use crate::http;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
+use crate::theme::{self, Palette};
 use crate::ui::{text_field, Field, Fonts, Rect, SharpText, Status, Ui};
-use crate::{http, theme};
 
 const SEARCH_Y: f32 = 112.0;
 const SEARCH_RESULT_Y: f32 = 168.0;
@@ -427,17 +428,18 @@ fn apply_action(state: &mut State, action: FriendAction) {
 }
 
 pub fn draw_friends(gfx: &mut Graphics, state: &State) {
+    let pal = state.ui.palette();
     let ww = state.ui.view().w;
     let wh = state.ui.view().h;
 
     let mut draw = state.ui.canvas(gfx);
-    draw.clear(theme::BACKGROUND);
+    draw.clear(pal.background);
     draw.sharp_text(&state.fonts.display, "Amis")
         .position(ww / 2.0, 58.0)
         .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TITLE);
+        .color(pal.title);
 
     if let Some(f) = &state.friends {
         draw_search(&mut draw, &state.ui, &state.fonts, f, ww);
@@ -453,12 +455,13 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
 }
 
 fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {
+    let pal = ui.palette();
     let field = search_box(ww);
     draw.sharp_text(&fonts.text, "Rechercher un ami:")
         .position(field.x, 96.0)
         .size(theme::size::BODY)
         .v_align_middle()
-        .color(theme::TEXT_DIM);
+        .color(pal.text_dim);
 
     let searching = f.search_slot.is_some();
     let search = Field {
@@ -467,7 +470,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
         focused: true,
         secret: false,
     };
-    text_field(draw, fonts, field, &search);
+    text_field(draw, &pal, fonts, field, &search);
     ui.button_enabled(
         draw,
         fonts,
@@ -477,7 +480,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
     );
 
     if f.search_results.is_empty() {
-        if let Some((msg, color)) = f.search_status.shown() {
+        if let Some((msg, color)) = f.search_status.shown(&pal) {
             draw.sharp_text(&fonts.text, msg)
                 .position(field.x, SEARCH_RESULT_Y + 16.0)
                 .size(theme::size::BODY)
@@ -488,13 +491,13 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
     let adding = f.add_pending.is_some();
     for (i, e) in f.search_results.iter().take(MAX_SEARCH_RESULTS).enumerate() {
         let y = SEARCH_RESULT_Y + i as f32 * RESULT_ROW_H;
-        let bg = if i % 2 == 0 { theme::SURFACE } else { theme::SURFACE_ALT };
+        let bg = if i % 2 == 0 { pal.surface } else { pal.surface_alt };
         draw.rect((field.x, y), (600.0, RESULT_ROW_H - 2.0)).color(bg);
         draw.sharp_text(&fonts.text, &e.username)
             .position(field.x + 12.0, y + RESULT_ROW_H / 2.0)
             .size(theme::size::LABEL)
             .v_align_middle()
-            .color(theme::TEXT);
+            .color(pal.text);
         draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
             .position(field.x + 170.0, y + RESULT_ROW_H / 2.0)
             .size(theme::size::BODY)
@@ -506,7 +509,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
         ui.button(draw, fonts, result_view_btn(ww, i), "Profil");
     }
 
-    if let Some((msg, color)) = f.add_status.shown() {
+    if let Some((msg, color)) = f.add_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
             .position(ww / 2.0, ADD_ERROR_Y)
             .size(theme::size::BODY)
@@ -517,8 +520,9 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
 }
 
 fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {
+    let pal = ui.palette();
     draw.rect((40.0, COL_HEADER_Y - 12.0), (ww - 80.0, 1.0))
-        .color(theme::DIVIDER);
+        .color(pal.divider);
     let headers = ["Amis", "Demandes reçues", "Envoyées"];
     for (col, header) in headers.iter().enumerate() {
         draw.sharp_text(&fonts.text, header)
@@ -526,9 +530,9 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT_DIM);
+            .color(pal.text_dim);
         draw.rect((col_x(ww, col), COL_HEADER_Y + 12.0), (COL_W, 1.0))
-            .color(theme::DIVIDER);
+            .color(pal.divider);
     }
 
     if f.list_slot.is_some() {
@@ -537,12 +541,13 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT_MUTED);
+            .color(pal.text_muted);
     } else {
         let busy = f.action_pending.is_some();
         let confirm = f.confirm_remove.as_deref();
         draw_col(
             draw,
+            &pal,
             fonts,
             col_x(ww, 0),
             &f.friends,
@@ -559,6 +564,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
         );
         draw_col(
             draw,
+            &pal,
             fonts,
             col_x(ww, 1),
             &f.received,
@@ -570,6 +576,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
         );
         draw_col(
             draw,
+            &pal,
             fonts,
             col_x(ww, 2),
             &f.sent,
@@ -580,7 +587,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
         );
     }
 
-    if let Some((msg, color)) = f.action_status.shown() {
+    if let Some((msg, color)) = f.action_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
             .position(ww / 2.0, LIST_Y + MAX_ROWS as f32 * ROW_H + 18.0)
             .size(theme::size::SMALL)
@@ -590,8 +597,15 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
     }
 }
 
-fn draw_col<F>(draw: &mut Draw, fonts: &Fonts, x: f32, list: &[FriendEntry], empty_msg: &str, draw_buttons: F)
-where
+fn draw_col<F>(
+    draw: &mut Draw,
+    pal: &Palette,
+    fonts: &Fonts,
+    x: f32,
+    list: &[FriendEntry],
+    empty_msg: &str,
+    draw_buttons: F,
+) where
     F: Fn(&mut Draw, &Fonts, &FriendEntry, usize),
 {
     if list.is_empty() {
@@ -600,18 +614,18 @@ where
             .size(theme::size::SMALL)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT_MUTED);
+            .color(pal.text_muted);
         return;
     }
     for (i, e) in list.iter().take(MAX_ROWS).enumerate() {
         let y = LIST_Y + i as f32 * ROW_H;
-        let bg = if i % 2 == 0 { theme::SURFACE } else { theme::SURFACE_ALT };
+        let bg = if i % 2 == 0 { pal.surface } else { pal.surface_alt };
         draw.rect((x, y), (COL_W, ROW_H - 3.0)).color(bg);
         draw.sharp_text(&fonts.text, &e.username)
             .position(x + 10.0, y + ROW_H / 2.0 - 8.0)
             .size(theme::size::BODY)
             .v_align_middle()
-            .color(theme::TEXT);
+            .color(pal.text);
         draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
             .position(x + 10.0, y + ROW_H / 2.0 + 10.0)
             .size(theme::size::SMALL)

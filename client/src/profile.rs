@@ -3,12 +3,13 @@ use std::sync::Arc;
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 
+use crate::http;
 use crate::state::{
     ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, OtherProfileData, ProfileCore,
     ProfileData, ProfileEditField, Screen, State,
 };
+use crate::theme::{self, Palette};
 use crate::ui::{text_field, Field, Fonts, Rect, SharpText, Status, Ui};
-use crate::{http, theme};
 
 const HISTORY_Y: f32 = 175.0;
 const STATS_Y: f32 = 207.0;
@@ -87,13 +88,13 @@ fn friendship_with(
     }
 }
 
-fn draw_header(draw: &mut Draw, fonts: &Fonts, cx: f32, core: &ProfileCore) {
+fn draw_header(draw: &mut Draw, pal: &Palette, fonts: &Fonts, cx: f32, core: &ProfileCore) {
     draw.sharp_text(&fonts.display, &core.username)
         .position(cx, 90.0)
         .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TITLE);
+        .color(pal.title);
     draw.sharp_text(&fonts.display, &format!("ELO {}", core.elo))
         .position(cx, 140.0)
         .size(theme::size::EMPHASIS)
@@ -102,7 +103,7 @@ fn draw_header(draw: &mut Draw, fonts: &Fonts, cx: f32, core: &ProfileCore) {
         .color(theme::GOLD);
 }
 
-fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32, load_failed: bool) {
+fn draw_stats_panel(draw: &mut Draw, pal: &Palette, fonts: &Fonts, core: &ProfileCore, ww: f32, load_failed: bool) {
     let (left_x, left_w, _, _) = panels(ww);
     let label_x = left_x + 10.0;
     let val_x = left_x + left_w - 10.0;
@@ -122,7 +123,7 @@ fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32,
             .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT_MUTED);
+            .color(pal.text_muted);
         return;
     }
 
@@ -144,17 +145,17 @@ fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32,
             .position(label_x, y)
             .size(theme::size::LABEL)
             .v_align_middle()
-            .color(theme::TEXT_MUTED);
+            .color(pal.text_muted);
         draw.sharp_text(&fonts.text, val)
             .position(val_x, y)
             .size(theme::size::LABEL)
             .h_align_right()
             .v_align_middle()
-            .color(theme::TEXT);
+            .color(pal.text);
     }
 
     let sep_y = STATS_Y + stats.len() as f32 * 30.0 + 14.0;
-    draw.rect((label_x, sep_y), (left_w - 20.0, 1.0)).color(theme::DIVIDER);
+    draw.rect((label_x, sep_y), (left_w - 20.0, 1.0)).color(pal.divider);
 
     let mut info_y = sep_y + 22.0;
     if let Some(bio) = &core.bio {
@@ -163,13 +164,13 @@ fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32,
                 .position(label_x, info_y)
                 .size(theme::size::SMALL)
                 .v_align_middle()
-                .color(theme::TEXT_DIM);
+                .color(pal.text_dim);
             info_y += 22.0;
             draw.sharp_text(&fonts.text, &truncate_display(bio, 55))
                 .position(label_x, info_y)
                 .size(theme::size::BODY)
                 .v_align_middle()
-                .color(theme::TEXT);
+                .color(pal.text);
             info_y += 28.0;
         }
     }
@@ -179,27 +180,28 @@ fn draw_stats_panel(draw: &mut Draw, fonts: &Fonts, core: &ProfileCore, ww: f32,
                 .position(label_x, info_y)
                 .size(theme::size::SMALL)
                 .v_align_middle()
-                .color(theme::TEXT_DIM);
+                .color(pal.text_dim);
             info_y += 22.0;
             draw.sharp_text(&fonts.text, &truncate_display(music, 45))
                 .position(label_x, info_y)
                 .size(theme::size::BODY)
                 .v_align_middle()
-                .color(theme::ACCENT);
+                .color(pal.accent);
         }
     }
 }
 
 fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore, ww: f32, clickable: bool) {
+    let pal = ui.palette();
     let (_, _, right_x, right_w) = panels(ww);
     draw.sharp_text(&fonts.text, "Derniers matchs")
         .position(right_x + right_w / 2.0, HISTORY_Y)
         .size(theme::size::EMPHASIS)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TEXT_DIM);
+        .color(pal.text_dim);
     draw.rect((right_x, HISTORY_Y + 14.0), (right_w, 1.0))
-        .color(theme::DIVIDER);
+        .color(pal.divider);
 
     if core.history_slot.is_some() {
         draw.sharp_text(&fonts.text, "Chargement...")
@@ -207,14 +209,14 @@ fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCor
             .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT_MUTED);
+            .color(pal.text_muted);
     } else if core.match_history.is_empty() {
         draw.sharp_text(&fonts.text, "Aucun match pour l'instant.")
             .position(right_x + right_w / 2.0, HISTORY_Y + 48.0)
             .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT_MUTED);
+            .color(pal.text_muted);
     } else {
         for (i, m) in core.match_history.iter().enumerate().take(7) {
             draw_match_row(
@@ -252,6 +254,7 @@ fn draw_match_row(
     viewed_id: &str,
     clickable: bool,
 ) {
+    let pal = ui.palette();
     let (row_x, row_w) = (row.x, row.w);
     let y = row.y + 20.0;
     let i_am_p1 = m.player1.user_id.as_deref() == Some(viewed_id);
@@ -277,7 +280,7 @@ fn draw_match_row(
         .size(theme::size::BODY)
         .h_align_center()
         .v_align_middle()
-        .color(if opp_hover { theme::LINK } else { theme::TEXT });
+        .color(if opp_hover { theme::LINK } else { pal.text });
 
     draw.sharp_text(
         &fonts.text,
@@ -295,7 +298,7 @@ fn draw_match_row(
         .size(theme::size::SMALL)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TEXT_MUTED);
+        .color(pal.text_muted);
 }
 
 pub fn enter_profile(state: &mut State) {
@@ -508,22 +511,23 @@ pub fn update_profile(app: &mut App, state: &mut State) {
 }
 
 pub fn draw_profile(gfx: &mut Graphics, state: &State) {
+    let pal = state.ui.palette();
     let (ww, wh) = state.ui.view().size();
     let cx = ww / 2.0;
     let mut draw = state.ui.canvas(gfx);
-    draw.clear(theme::BACKGROUND);
+    draw.clear(pal.background);
 
     let Some(profile) = &state.profile else {
         gfx.render(&draw);
         return;
     };
 
-    draw_header(&mut draw, &state.fonts, cx, &profile.core);
+    draw_header(&mut draw, &pal, &state.fonts, cx, &profile.core);
 
     if profile.editing {
         draw_edit_form(&state.ui, &mut draw, &state.fonts, profile, cx);
     } else {
-        draw_stats_panel(&mut draw, &state.fonts, &profile.core, ww, false);
+        draw_stats_panel(&mut draw, &pal, &state.fonts, &profile.core, ww, false);
         draw_history_panel(&mut draw, &state.ui, &state.fonts, &profile.core, ww, true);
 
         let (back_btn, edit_btn, logout_btn) = own_buttons(cx, wh);
@@ -536,6 +540,7 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
 }
 
 fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &ProfileData, cx: f32) {
+    let pal = ui.palette();
     let (bio_box, music_box) = edit_boxes(cx);
     let fields = [
         (
@@ -558,14 +563,14 @@ fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &
             .position(rect.x, rect.y - 15.0)
             .size(theme::size::LABEL)
             .v_align_middle()
-            .color(theme::TEXT_DIM);
+            .color(pal.text_dim);
         let field = Field {
             placeholder,
             value,
             focused: profile.edit_focused == which,
             secret: false,
         };
-        text_field(draw, fonts, rect, &field);
+        text_field(draw, &pal, fonts, rect, &field);
     }
 
     let (save_btn, cancel_btn) = edit_buttons(cx);
@@ -579,7 +584,7 @@ fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &
     );
     ui.button(draw, fonts, cancel_btn, "Annuler");
 
-    if let Some((msg, color)) = profile.edit_status.shown() {
+    if let Some((msg, color)) = profile.edit_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
             .position(cx, 465.0)
             .size(theme::size::LABEL)
@@ -724,20 +729,21 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
 }
 
 pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
+    let pal = state.ui.palette();
     let ww = state.ui.view().w;
     let wh = state.ui.view().h;
     let cx = ww / 2.0;
 
     let mut draw = state.ui.canvas(gfx);
-    draw.clear(theme::BACKGROUND);
+    draw.clear(pal.background);
 
     let Some(p) = &state.other_profile else {
         gfx.render(&draw);
         return;
     };
 
-    draw_header(&mut draw, &state.fonts, cx, &p.core);
-    draw_stats_panel(&mut draw, &state.fonts, &p.core, ww, p.load_failed);
+    draw_header(&mut draw, &pal, &state.fonts, cx, &p.core);
+    draw_stats_panel(&mut draw, &pal, &state.fonts, &p.core, ww, p.load_failed);
     draw_history_panel(&mut draw, &state.ui, &state.fonts, &p.core, ww, false);
 
     let btn_y = button_row_y(wh);
@@ -753,7 +759,7 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
     }
     state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
 
-    if let Some((msg, color)) = p.friend_status.shown() {
+    if let Some((msg, color)) = p.friend_status.shown(&pal) {
         draw.sharp_text(&state.fonts.text, msg)
             .position(cx, btn_y - 50.0)
             .size(theme::size::BODY)

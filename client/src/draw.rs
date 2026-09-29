@@ -4,7 +4,7 @@ use shared::{Board, GameState, PuyoType, Settle};
 
 use crate::config;
 use crate::state::GameSession;
-use crate::theme::{self, game};
+use crate::theme::{self, game, Palette};
 use crate::ui::{Fonts, Rect, SharpText, Ui, View};
 
 struct GameLayout {
@@ -62,12 +62,14 @@ impl Overlay {
 
 pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &Ui, fonts: &Fonts, role: Role) {
     let layout = GameLayout::new(ui.view());
+    let pal = ui.palette();
     let mut draw = ui.canvas(gfx);
     draw.clear(game::BACKGROUND);
 
-    draw_boards(&mut draw, fonts, session, &layout);
+    draw_boards(&mut draw, &pal, fonts, session, &layout);
     draw_sidebar(
         &mut draw,
+        &pal,
         fonts,
         &session.predicted_board,
         layout.sidebar_x,
@@ -86,7 +88,7 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
     if let Some(overlay) = Overlay::of(session) {
         let game_over = matches!(overlay, Overlay::GameOver { .. });
         let leaving_forfeits = !game_over && !session.opponent_disconnected;
-        draw_overlay(&mut draw, fonts, &overlay, &layout, role, app.timer.elapsed_f32());
+        draw_overlay(&mut draw, &pal, fonts, &overlay, &layout, role, app.timer.elapsed_f32());
         draw_exit_buttons(&mut draw, ui, fonts, &layout, role.is_host, leaving_forfeits);
     }
     #[cfg(debug_assertions)]
@@ -95,7 +97,7 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
     gfx.render(&draw);
 }
 
-fn draw_boards(draw: &mut Draw, fonts: &Fonts, session: &GameSession, layout: &GameLayout) {
+fn draw_boards(draw: &mut Draw, pal: &Palette, fonts: &Fonts, session: &GameSession, layout: &GameLayout) {
     let me = &session.predicted_board;
     let (row_off, col_off) = session.piece_visual_offset;
     draw_board(
@@ -108,8 +110,8 @@ fn draw_boards(draw: &mut Draw, fonts: &Fonts, session: &GameSession, layout: &G
     draw.sharp_text(&fonts.text, "YOU")
         .position(layout.mine.x, layout.mine.y - 50.0)
         .size(theme::size::LABEL)
-        .color(theme::TEXT);
-    draw_nuisance_bar(draw, fonts, session.my_nuisance(), layout.mine);
+        .color(pal.text);
+    draw_nuisance_bar(draw, pal, fonts, session.my_nuisance(), layout.mine);
 
     let (opp_board, opp_offset) = session
         .opponent_view
@@ -119,15 +121,15 @@ fn draw_boards(draw: &mut Draw, fonts: &Fonts, session: &GameSession, layout: &G
     draw.sharp_text(&fonts.text, "OPPONENT")
         .position(layout.theirs.x, layout.theirs.y - 50.0)
         .size(theme::size::LABEL)
-        .color(theme::TEXT_MUTED);
-    draw_nuisance_bar(draw, fonts, session.opp_nuisance(), layout.theirs);
+        .color(pal.text_muted);
+    draw_nuisance_bar(draw, pal, fonts, session.opp_nuisance(), layout.theirs);
 }
 
-fn draw_sidebar(draw: &mut Draw, fonts: &Fonts, me: &Board, x: f32, top: f32) {
+fn draw_sidebar(draw: &mut Draw, pal: &Palette, fonts: &Fonts, me: &Board, x: f32, top: f32) {
     draw.sharp_text(&fonts.display, &format!("Score: {}", me.score))
         .position(x, top + 20.0)
         .size(theme::size::HEADING)
-        .color(theme::TEXT);
+        .color(pal.text);
     draw.sharp_text(&fonts.display, &format!("Level: {}", me.level()))
         .position(x, top + 60.0)
         .size(theme::size::HEADING)
@@ -137,14 +139,14 @@ fn draw_sidebar(draw: &mut Draw, fonts: &Fonts, me: &Board, x: f32, top: f32) {
     draw.sharp_text(&fonts.display, "Next:")
         .position(x, next_y - 30.0)
         .size(theme::size::HEADING)
-        .color(theme::TEXT_MUTED);
+        .color(pal.text_muted);
     draw_preview(draw, (x, next_y), me.next_types, game::PREVIEW);
 
     let next_next_y = top + 170.0 + (config::CELL_SIZE * 2.5);
     draw.sharp_text(&fonts.text, "Next Next:")
         .position(x, next_next_y - 25.0)
         .size(theme::size::LABEL)
-        .color(theme::TEXT_MUTED);
+        .color(pal.text_muted);
     draw_preview(draw, (x, next_next_y), me.next_next_types, game::PREVIEW_NEXT);
 
     if me.state == GameState::Playing && me.active_piece.is_some() && !me.can_fall() {
@@ -162,7 +164,15 @@ fn draw_preview(draw: &mut Draw, origin: (f32, f32), (axis, satellite): (PuyoTyp
     draw_puyo(draw, origin, Sprite::solid(1.0, 0.0, axis));
 }
 
-fn draw_overlay(draw: &mut Draw, fonts: &Fonts, overlay: &Overlay, layout: &GameLayout, role: Role, elapsed: f32) {
+fn draw_overlay(
+    draw: &mut Draw,
+    pal: &Palette,
+    fonts: &Fonts,
+    overlay: &Overlay,
+    layout: &GameLayout,
+    role: Role,
+    elapsed: f32,
+) {
     let (cx, cy) = (layout.win_w / 2.0, layout.win_h / 2.0);
     let centered = |draw: &mut Draw, text: &str, y: f32, size: f32, color: Color| {
         draw.sharp_text(&fonts.display, text)
@@ -181,11 +191,11 @@ fn draw_overlay(draw: &mut Draw, fonts: &Fonts, overlay: &Overlay, layout: &Game
     match overlay {
         Overlay::GameOver { i_lost: true } => {
             centered(draw, "GAME OVER", cy - 20.0, theme::size::HERO, theme::DANGER);
-            centered(draw, "Press R to Restart", cy + 50.0, theme::size::HEADING, theme::TEXT);
+            centered(draw, "Press R to Restart", cy + 50.0, theme::size::HEADING, pal.text);
         }
         Overlay::GameOver { i_lost: false } => {
             centered(draw, "YOU WIN !", cy - 20.0, theme::size::HERO, theme::GOLD);
-            centered(draw, "Press R to Restart", cy + 50.0, theme::size::HEADING, theme::TEXT);
+            centered(draw, "Press R to Restart", cy + 50.0, theme::size::HEADING, pal.text);
         }
         Overlay::OpponentGone => centered(
             draw,
@@ -201,20 +211,8 @@ fn draw_overlay(draw: &mut Draw, fonts: &Fonts, overlay: &Overlay, layout: &Game
             } else {
                 "Seul l'hôte peut reprendre"
             };
-            centered(
-                draw,
-                "PAUSED",
-                cy - 40.0,
-                theme::size::HERO,
-                theme::TEXT.with_alpha(blink),
-            );
-            centered(
-                draw,
-                hint,
-                cy + 30.0,
-                theme::size::HEADING,
-                theme::TEXT.with_alpha(blink),
-            );
+            centered(draw, "PAUSED", cy - 40.0, theme::size::HERO, pal.text.with_alpha(blink));
+            centered(draw, hint, cy + 30.0, theme::size::HEADING, pal.text.with_alpha(blink));
         }
     }
 }
@@ -438,7 +436,7 @@ fn draw_puyo(draw: &mut Draw, (dx, dy): (f32, f32), sprite: Sprite) {
     }
 }
 
-fn draw_nuisance_bar(draw: &mut Draw, fonts: &Fonts, nuisance: u32, board: Rect) {
+fn draw_nuisance_bar(draw: &mut Draw, pal: &Palette, fonts: &Fonts, nuisance: u32, board: Rect) {
     if nuisance == 0 {
         return;
     }
@@ -467,7 +465,7 @@ fn draw_nuisance_bar(draw: &mut Draw, fonts: &Fonts, nuisance: u32, board: Rect)
             .position(board_x + board_w - 2.0, bar_y - 1.0)
             .size(theme::size::SMALL)
             .h_align_right()
-            .color(theme::TEXT);
+            .color(pal.text);
     }
 }
 

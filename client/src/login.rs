@@ -165,24 +165,25 @@ pub fn update_auth(app: &mut App, state: &mut State) {
 }
 
 pub fn draw_auth(gfx: &mut Graphics, state: &State) {
+    let pal = state.ui.palette();
     let layout = auth_layout(state.ui.view());
     let AuthLayout { cx, base_y, .. } = layout;
 
     let mut draw = state.ui.canvas(gfx);
-    draw.clear(theme::BACKGROUND);
+    draw.clear(pal.background);
 
     draw.sharp_text(&state.fonts.display, "ROUILLO")
         .position(cx, base_y - 80.0)
         .size(theme::size::HERO)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TITLE);
+        .color(pal.title);
 
     let modes = [("Connexion", AuthMode::Login), ("Inscription", AuthMode::Register)];
     for (tab, (label, mode)) in layout.tabs.iter().zip(modes) {
         let active = state.auth_form.mode == mode;
-        let bg = if active { theme::RAISED_HOVER } else { theme::SURFACE };
-        let border = if active { theme::ACCENT } else { theme::BORDER };
+        let bg = if active { pal.raised_hover } else { pal.surface };
+        let border = if active { pal.accent } else { pal.border };
         draw.rect((tab.x, tab.y), (tab.w, tab.h))
             .corner_radius(theme::RADIUS)
             .color(bg);
@@ -195,7 +196,7 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
             .size(theme::size::EMPHASIS)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT);
+            .color(pal.text);
     }
 
     let form = &state.auth_form;
@@ -215,7 +216,7 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
             focused: form.focused == which,
             secret: which == AuthField::Password,
         };
-        text_field(&mut draw, &state.fonts, rect, &field);
+        text_field(&mut draw, &pal, &state.fonts, rect, &field);
     }
 
     let loading = state.auth_form.pending.is_some();
@@ -234,7 +235,7 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
         .ui
         .button(&mut draw, &state.fonts, layout.guest, "Jouer en invité");
 
-    if let Some((msg, color)) = state.auth_form.status.shown() {
+    if let Some((msg, color)) = state.auth_form.status.shown(&pal) {
         draw.sharp_text(&state.fonts.text, msg)
             .position(cx, base_y + 370.0)
             .size(theme::size::LABEL)

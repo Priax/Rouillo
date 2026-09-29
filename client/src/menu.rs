@@ -104,16 +104,17 @@ pub fn do_logout(state: &mut State) {
 }
 
 pub fn draw_menu(gfx: &mut Graphics, state: &State) {
+    let pal = state.ui.palette();
     let (ww, wh) = state.ui.view().size();
     let mut draw = state.ui.canvas(gfx);
-    draw.clear(theme::BACKGROUND);
+    draw.clear(pal.background);
 
     draw.sharp_text(&state.fonts.display, "Rouillo")
         .position(ww / 2.0, wh / 2.0 - 140.0)
         .size(theme::size::HERO)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TITLE);
+        .color(pal.title);
 
     let logged_in = state.auth.is_some();
     let layout = menu_layout(ww, wh, logged_in);
@@ -134,9 +135,9 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
     if let Some(auth) = &state.auth {
         let (acx, acy, ar) = avatar_pos(ww);
         let hover = avatar_hovered(&state.ui, acx, acy, ar);
-        let fill = if hover { theme::AVATAR_HOVER } else { theme::AVATAR };
+        let fill = if hover { pal.avatar_hover } else { pal.avatar };
         draw.circle(ar).position(acx, acy).color(fill);
-        draw.circle(ar).position(acx, acy).stroke(2.0).color(theme::ACCENT);
+        draw.circle(ar).position(acx, acy).stroke(2.0).color(pal.accent);
         let initial: String = auth
             .username
             .chars()
@@ -148,16 +149,16 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
             .size(theme::size::HEADING)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT);
+            .color(pal.text);
         draw.sharp_text(&state.fonts.text, &auth.username)
             .position(acx, acy + ar + 16.0)
             .size(theme::size::BODY)
             .h_align_center()
             .v_align_middle()
-            .color(theme::TEXT_DIM);
+            .color(pal.text_dim);
     }
 
-    if let Some((msg, color)) = state.notice.shown() {
+    if let Some((msg, color)) = state.notice.shown(&pal) {
         draw.sharp_text(&state.fonts.text, msg)
             .position(ww / 2.0, wh - 60.0)
             .size(theme::size::EMPHASIS)
@@ -208,16 +209,17 @@ pub fn update_settings(app: &mut App, state: &mut State) {
 }
 
 pub fn draw_settings(gfx: &mut Graphics, state: &State) {
+    let pal = state.ui.palette();
     let (ww, wh) = state.ui.view().size();
     let mut draw = state.ui.canvas(gfx);
-    draw.clear(theme::BACKGROUND);
+    draw.clear(pal.background);
 
     draw.sharp_text(&state.fonts.display, "SETTINGS")
         .position(ww / 2.0, wh / 2.0 - 170.0)
         .size(theme::size::TITLE)
         .h_align_center()
         .v_align_middle()
-        .color(theme::TEXT);
+        .color(pal.text);
 
     let layout = settings_layout(state.ui.view());
     for (i, stepper) in layout.steppers.into_iter().enumerate() {

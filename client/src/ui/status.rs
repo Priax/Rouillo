@@ -1,6 +1,6 @@
 use notan::prelude::Color;
 
-use crate::theme;
+use crate::theme::{self, Palette};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Status {
@@ -28,10 +28,10 @@ impl Status {
         *self = Self::Empty;
     }
 
-    pub fn shown(&self) -> Option<(&str, Color)> {
+    pub fn shown(&self, pal: &Palette) -> Option<(&str, Color)> {
         match self {
             Self::Empty => None,
-            Self::Info(m) => Some((m, theme::TEXT_MUTED)),
+            Self::Info(m) => Some((m, pal.text_muted)),
             Self::Success(m) => Some((m, theme::SUCCESS)),
             Self::Error(m) => Some((m, theme::DANGER)),
         }
@@ -44,13 +44,11 @@ mod tests {
 
     #[test]
     fn the_kind_of_message_decides_its_colour() {
-        assert_eq!(Status::Empty.shown(), None);
-        let colour = |s: Status| s.shown().map(|(_, c)| c);
+        let pal = Palette::new(theme::hue::PURPLE);
+        assert_eq!(Status::Empty.shown(&pal), None);
+        let colour = |s: Status| s.shown(&pal).map(|(_, c)| c);
         assert_eq!(colour(Status::error("Erreur réseau")), Some(theme::DANGER));
         assert_eq!(colour(Status::success("Demande envoyée !")), Some(theme::SUCCESS));
-        assert_eq!(
-            colour(Status::info("Erreur n'est qu'un mot ici")),
-            Some(theme::TEXT_MUTED)
-        );
+        assert_eq!(colour(Status::info("Erreur n'est qu'un mot ici")), Some(pal.text_muted));
     }
 }

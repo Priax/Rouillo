@@ -3,7 +3,7 @@ use notan::math::{vec2, Mat3};
 use notan::prelude::*;
 
 use super::{Fonts, Rect, Response, SharpText, Ui};
-use crate::theme;
+use crate::theme::{self, Palette};
 
 const HOVER_GROW: f32 = 0.03;
 const PRESS_SHRINK: f32 = 0.04;
@@ -71,11 +71,11 @@ impl Ui {
         if r.entered {
             crate::audio::play_ui_hover();
         }
-        paint(draw, &fonts.display, rect, label, r, enabled);
+        paint(draw, &self.palette(), &fonts.display, rect, label, r, enabled);
     }
 }
 
-fn paint(draw: &mut Draw, font: &Font, b: Rect, label: Label, r: Response, enabled: bool) {
+fn paint(draw: &mut Draw, pal: &Palette, font: &Font, b: Rect, label: Label, r: Response, enabled: bool) {
     let center = vec2(b.x + b.w / 2.0, b.y + b.h / 2.0);
     let scale = 1.0 + HOVER_GROW * r.hover - PRESS_SHRINK * r.press;
     draw.transform()
@@ -96,12 +96,12 @@ fn paint(draw: &mut Draw, font: &Font, b: Rect, label: Label, r: Response, enabl
 
     let (fill, border, text) = if enabled {
         (
-            mix(theme::RAISED, theme::RAISED_HOVER, r.hover),
-            mix(theme::BORDER, theme::ACCENT, r.hover),
-            theme::TEXT,
+            mix(pal.raised, pal.raised_hover, r.hover),
+            mix(pal.border, pal.accent, r.hover),
+            pal.text,
         )
     } else {
-        (theme::DISABLED, theme::DIVIDER, theme::TEXT_DISABLED)
+        (pal.disabled, pal.divider, pal.text_disabled)
     };
     draw.rect((b.x, b.y), (b.w, b.h))
         .corner_radius(theme::RADIUS)

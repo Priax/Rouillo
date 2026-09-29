@@ -25,7 +25,10 @@ pub use stepper::Stepper;
 pub use text::SharpText;
 pub use view::View;
 
+use crate::theme::{hue, Palette};
+
 const MAX_DT: f32 = 0.1;
+const HUE_SPEED: f32 = 6.0;
 
 const HOVER_SPEED: f32 = 18.0;
 const PRESS_SPEED: f32 = 30.0;
@@ -36,14 +39,32 @@ pub struct Ui {
     inner: RefCell<Inner>,
 }
 
-#[derive(Default)]
 struct Inner {
     dt: f32,
     view: View,
+    hue: f32,
+    target_hue: f32,
+    palette: Palette,
     mouse: Mouse,
     input_off: bool,
     widgets: HashMap<(u64, u32), Widget>,
     drawn: HashMap<u64, u32>,
+}
+
+impl Default for Inner {
+    fn default() -> Self {
+        Self {
+            dt: 0.0,
+            view: View::default(),
+            hue: hue::PURPLE,
+            target_hue: hue::PURPLE,
+            palette: Palette::new(hue::PURPLE),
+            mouse: Mouse::default(),
+            input_off: false,
+            widgets: HashMap::new(),
+            drawn: HashMap::new(),
+        }
+    }
 }
 
 struct Widget {
@@ -92,6 +113,9 @@ impl Ui {
         let inner = self.inner.get_mut();
         inner.dt = dt.clamp(0.0, MAX_DT);
         inner.view = view;
+        let turn = (inner.target_hue - inner.hue + 540.0).rem_euclid(360.0) - 180.0;
+        inner.hue = (inner.hue + approach(0.0, turn, HUE_SPEED, inner.dt)).rem_euclid(360.0);
+        inner.palette = Palette::new(inner.hue);
         inner.mouse = mouse;
         inner.input_off = false;
         inner.widgets.retain(|_, w| std::mem::take(&mut w.touched));
@@ -110,6 +134,15 @@ impl Ui {
             crate::audio::play_ui_click();
         }
         clicked
+    }
+
+    /// Sets the hue the palette glides towards: the current section's.
+    pub fn set_hue(&self, hue: f32) {
+        self.inner.borrow_mut().target_hue = hue;
+    }
+
+    pub fn palette(&self) -> Palette {
+        self.inner.borrow().palette
     }
 
     pub fn view(&self) -> View {
@@ -147,6 +180,9 @@ impl Ui {
         let Inner {
             dt,
             view: _,
+            hue: _,
+            target_hue: _,
+            palette: _,
             mouse,
             input_off,
             widgets,
@@ -220,6 +256,23 @@ mod tests {
     fn frame(ui: &mut Ui, mouse: Mouse, draws: &[(&str, Rect)]) -> Vec<Response> {
         ui.begin_frame(1.0 / 60.0, View::default(), mouse);
         draws.iter().map(|(label, r)| ui.interact(label, *r, true)).collect()
+    }
+
+    #[test]
+    fn the_palette_glides_the_short_way_round() {
+        let mut ui = Ui::default();
+        ui.set_hue(hue::PINK);
+        ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
+        let h = ui.inner.borrow().hue;
+        assert!(h > hue::PURPLE && h < hue::PINK, "from 255 towards 333, got {h}");
+        for _ in 0..120 {
+            ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
+        }
+        assert!((ui.inner.borrow().hue - hue::PINK).abs() < 0.5);
+        ui.set_hue(hue::ORANGE);
+        ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
+        let h = ui.inner.borrow().hue;
+        assert!(h > hue::PINK || h < hue::ORANGE, "333 to 45 crosses 360, got {h}");
     }
 
     #[test]

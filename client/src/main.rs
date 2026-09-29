@@ -183,23 +183,25 @@ fn update(app: &mut App, state: &mut State) {
             }
         }
     }
+    state.ui.set_hue(state.screen.hue());
 }
 
 fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
+    let pal = state.ui.palette();
     let Some((ref from, _, ref room_name)) = state.pending_invitation else {
         return;
     };
     let (ww, wh) = state.ui.view().size();
     let banner_y = wh - BANNER_H;
     let mut d = state.ui.canvas(gfx);
-    d.rect((0.0, banner_y), (ww, BANNER_H)).color(theme::BANNER);
-    d.rect((0.0, banner_y), (ww, 2.0)).color(theme::ACCENT);
+    d.rect((0.0, banner_y), (ww, BANNER_H)).color(pal.banner);
+    d.rect((0.0, banner_y), (ww, 2.0)).color(pal.accent);
     let msg = format!("{from} t'invite dans \"{room_name}\"");
     d.sharp_text(&state.fonts.text, &msg)
         .position(20.0, banner_y + 40.0)
         .size(theme::size::LABEL)
         .v_align_middle()
-        .color(theme::TEXT);
+        .color(pal.text);
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
     state.ui.button(&mut d, &state.fonts, accept_btn, "Rejoindre");
     state.ui.button(&mut d, &state.fonts, decline_btn, "Ignorer");
