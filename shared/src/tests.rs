@@ -1113,3 +1113,191 @@ fn turning_down_against_the_floor_pushes_up_not_sideways() {
     let p = b.active_piece.unwrap();
     assert_eq!((p.row, p.col, p.rotation), ((floor - 2) as i32, 2, 2));
 }
+
+/// One sample of every `ClientMessage` variant. The match in `client_variant`
+/// has no wildcard, so a new variant does not compile until it gets an index,
+/// and `protocol_samples_cover_every_variant` fails until it gets a sample.
+fn client_samples() -> Vec<ClientMessage> {
+    vec![
+        ClientMessage::Hello {
+            player_id: "p".into(),
+            auth_token: Some("t".into()),
+            username: Some("u".into()),
+            last_disconnect_reason: Some("r".into()),
+        },
+        ClientMessage::Input {
+            kind: InputKind::HardDrop,
+            seq: 7,
+            tick: 9,
+        },
+        ClientMessage::TogglePause,
+        ClientMessage::RequestRestart,
+        ClientMessage::RequestRoomList,
+        ClientMessage::CreateRoom { name: "n".into() },
+        ClientMessage::JoinRoom { id: 3 },
+        ClientMessage::LeaveRoom,
+        ClientMessage::SetRoomSetting { index: 1, dir: -1 },
+        ClientMessage::ToggleCountdown,
+        ClientMessage::ReturnToLobby,
+        ClientMessage::InviteFriend { user_id: "f".into() },
+        ClientMessage::Ping { id: 5 },
+    ]
+}
+
+const CLIENT_VARIANTS: usize = 13;
+
+fn client_variant(m: &ClientMessage) -> usize {
+    match m {
+        ClientMessage::Hello { .. } => 0,
+        ClientMessage::Input { .. } => 1,
+        ClientMessage::TogglePause => 2,
+        ClientMessage::RequestRestart => 3,
+        ClientMessage::RequestRoomList => 4,
+        ClientMessage::CreateRoom { .. } => 5,
+        ClientMessage::JoinRoom { .. } => 6,
+        ClientMessage::LeaveRoom => 7,
+        ClientMessage::SetRoomSetting { .. } => 8,
+        ClientMessage::ToggleCountdown => 9,
+        ClientMessage::ReturnToLobby => 10,
+        ClientMessage::InviteFriend { .. } => 11,
+        ClientMessage::Ping { .. } => 12,
+    }
+}
+
+/// A board with every optional and repeated part filled in: a `None` or an
+/// empty `Vec` encodes the same whatever the type inside, so an empty board
+/// would let a field added to `ActivePuyo` or `CellFall` go unnoticed.
+fn busy_board() -> Board {
+    let mut b = empty_board();
+    b.spawn_piece();
+    b.cells[GRID_HEIGHT - 1][0] = Some(PuyoType::Garbage);
+    b.previous_state = Some(GameState::DroppingGarbage);
+    b.settle = Settle::Falling { frame: 1, frames: 4 };
+    b.falls.push(CellFall {
+        row: 2,
+        col: 3,
+        cells_fallen: 4,
+        delay: 1,
+        ojama: true,
+    });
+    b.popping.push((5, 1));
+    b
+}
+
+fn server_samples() -> Vec<ServerMessage> {
+    let board = busy_board();
+    let settings = RoomSettings::default();
+    vec![
+        ServerMessage::GameStart,
+        ServerMessage::StateUpdate {
+            p1_board: Box::new(board.clone()),
+            p2_board: Box::new(board.clone()),
+            p1_rng: Some(Box::new(board.rng_state())),
+            p2_rng: Some(Box::new(board.rng_state())),
+            p1_ack: 1,
+            p2_ack: 2,
+            tick: 3,
+            p1_incoming: vec![IncomingGarbage { at: 4, amount: 5 }],
+            p2_incoming: vec![IncomingGarbage { at: 6, amount: 7 }],
+        },
+        ServerMessage::Restart,
+        ServerMessage::OpponentDisconnected,
+        ServerMessage::RoomList {
+            rooms: vec![RoomInfo {
+                id: 1,
+                name: "r".into(),
+                players: 1,
+                max: 2,
+                in_game: false,
+                friends_only: true,
+            }],
+        },
+        ServerMessage::Lobby {
+            info: LobbyInfo {
+                id: 1,
+                name: "l".into(),
+                settings,
+                players: 2,
+                connected: 1,
+                your_slot: 1,
+                is_host: true,
+                countdown: Some(3),
+            },
+        },
+        ServerMessage::JoinFailed { reason: "x".into() },
+        ServerMessage::FriendInvitation {
+            from_username: "f".into(),
+            room_id: 2,
+            room_name: "r".into(),
+        },
+        ServerMessage::Pong { id: 8 },
+    ]
+}
+
+const SERVER_VARIANTS: usize = 9;
+
+fn server_variant(m: &ServerMessage) -> usize {
+    match m {
+        ServerMessage::GameStart => 0,
+        ServerMessage::StateUpdate { .. } => 1,
+        ServerMessage::Restart => 2,
+        ServerMessage::OpponentDisconnected => 3,
+        ServerMessage::RoomList { .. } => 4,
+        ServerMessage::Lobby { .. } => 5,
+        ServerMessage::JoinFailed { .. } => 6,
+        ServerMessage::FriendInvitation { .. } => 7,
+        ServerMessage::Pong { .. } => 8,
+    }
+}
+
+#[test]
+fn protocol_samples_cover_every_variant() {
+    let client: HashSet<usize> = client_samples().iter().map(client_variant).collect();
+    let server: HashSet<usize> = server_samples().iter().map(server_variant).collect();
+    assert_eq!(
+        client,
+        (0..CLIENT_VARIANTS).collect(),
+        "a ClientMessage variant has no sample"
+    );
+    assert_eq!(
+        server,
+        (0..SERVER_VARIANTS).collect(),
+        "a ServerMessage variant has no sample"
+    );
+}
+
+/// Digest of the raw (uncompressed) encoding of every sample: it moves whenever
+/// the wire layout does, in a way an old peer would misread.
+fn protocol_digest() -> u64 {
+    let mut h = Fnv::new();
+    for m in client_samples() {
+        h.bytes(&bitcode::serialize(&m).expect("encode"));
+    }
+    for m in server_samples() {
+        h.bytes(&bitcode::serialize(&m).expect("encode"));
+    }
+    h.finish()
+}
+
+/// Pins the wire format to `PROTOCOL_VERSION`.
+///
+/// If this fails, a message (or something it carries) changed shape, and a peer
+/// built before the change can no longer talk to one built after. Increment
+/// `PROTOCOL_VERSION`, then record the new digest under it here.
+///
+/// What it cannot see: a variant appended to an enum nested inside a message
+/// (`InputKind`, `PuyoType`…) leaves every sample's bytes as they were. Bump
+/// the version by hand for those.
+const PROTOCOL_DIGEST: (u32, u64) = (1, 6_548_698_159_580_308_123);
+
+#[test]
+fn protocol_changes_bump_the_version() {
+    let digest = protocol_digest();
+    assert_eq!(
+        (PROTOCOL_VERSION, digest),
+        PROTOCOL_DIGEST,
+        "the wire format changed: increment PROTOCOL_VERSION in shared/src/lib.rs, \
+         then set PROTOCOL_DIGEST to ({}, {digest})",
+        PROTOCOL_VERSION + u32::from(PROTOCOL_DIGEST.0 == PROTOCOL_VERSION),
+    );
+}
