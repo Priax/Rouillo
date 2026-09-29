@@ -9,17 +9,9 @@ use crate::state::{
     ProfileData, ProfileEditField, Screen, State,
 };
 use crate::theme::{self, Palette};
-use crate::ui::{self, divider, list_row, portrait, text_field, Field, Fonts, Pill, Rect, SharpText, Status, Ui, View};
-
-pub(crate) fn truncate_display(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_owned()
-    } else {
-        let mut t: String = s.chars().take(max_chars).collect();
-        t.push('…');
-        t
-    }
-}
+use crate::ui::{
+    self, divider, list_row, portrait, text_field, Face, Field, Fonts, Pill, Rect, SharpText, Status, Ui, View,
+};
 
 fn panels(ww: f32) -> (f32, f32, f32, f32) {
     let left_x = 40.0;
@@ -85,7 +77,7 @@ fn friendship_with(
     }
 }
 
-const HEADER_H: f32 = 150.0;
+const PROFILE_HEADER_H: f32 = 150.0;
 const CARD_TOP: f32 = 180.0;
 const CARD_PAD: f32 = 20.0;
 const CARD_TITLE_H: f32 = 56.0;
@@ -97,12 +89,18 @@ const STATUS_GAP: f32 = 56.0;
 fn draw_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
     let pal = ui.palette();
     let view = ui.view();
-    ui.header_band(draw, Rect::at(0.0, 0.0, view.w, HEADER_H));
+    ui.header_band(draw, Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H));
     let radius = 48.0;
-    let (px, py) = (60.0 + radius, HEADER_H / 2.0);
+    let (px, py) = (60.0 + radius, PROFILE_HEADER_H / 2.0);
     portrait(draw, &pal, fonts, (px, py), radius, &core.username, 0.0);
     let text_x = px + radius + 28.0;
-    draw.sharp_text(&fonts.display, &core.username)
+    let name = fonts.fit(
+        Face::Display,
+        &core.username,
+        theme::size::TITLE,
+        view.w - text_x - 60.0,
+    );
+    draw.sharp_text(&fonts.display, &name)
         .position(text_x, py - 16.0)
         .size(theme::size::TITLE)
         .v_align_middle()
@@ -200,10 +198,11 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
 
     let mut info_y = sep_y + 24.0;
     let about = [
-        ("Bio", core.bio.as_deref(), 55, pal.text),
-        ("Musique", core.favorite_music.as_deref(), 45, pal.accent),
+        ("Bio", core.bio.as_deref(), pal.text),
+        ("Musique", core.favorite_music.as_deref(), pal.accent),
     ];
-    for (label, value, max_chars, color) in about {
+    let room = card.w - 2.0 * CARD_PAD;
+    for (label, value, color) in about {
         let Some(value) = value.filter(|v| !v.is_empty()) else {
             continue;
         };
@@ -212,7 +211,7 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
             .size(theme::size::SMALL)
             .v_align_middle()
             .color(pal.text_dim);
-        draw.sharp_text(&fonts.text, &truncate_display(value, max_chars))
+        draw.sharp_text(&fonts.text, &fonts.fit(Face::Text, value, theme::size::BODY, room))
             .position(label_x, info_y + 22.0)
             .size(theme::size::BODY)
             .v_align_middle()
@@ -280,7 +279,7 @@ fn draw_match_row(
         color: if won { theme::SUCCESS } else { theme::DANGER },
         size: theme::size::SMALL,
     };
-    result.draw(draw, fonts, (row.x + row.w * 0.1 - result.width() / 2.0, mid));
+    result.draw(draw, fonts, (row.x + row.w * 0.1 - result.width(fonts) / 2.0, mid));
 
     let linked = clickable && opp.user_id.is_some();
     ui.link(draw, fonts, opponent_zone(row), &format!("vs {opp_name}"), linked);

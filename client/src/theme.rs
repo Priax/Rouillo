@@ -123,6 +123,9 @@ pub const SCRIM_DARK: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.7);
 
 pub const RADIUS: f32 = 8.0;
 
+/// Height of the header band that opens most screens.
+pub const HEADER_H: f32 = 110.0;
+
 /// Colours of the full-width menu bars, one per kind of action.
 pub mod bar {
     use notan::prelude::Color;

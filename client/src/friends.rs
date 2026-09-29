@@ -4,12 +4,10 @@ use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::http;
-use crate::profile::truncate_display;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
 use crate::theme::{self, Palette};
-use crate::ui::{self, divider, list_row, text_field, Field, Fonts, Pill, Rect, SharpText, Status, Ui};
+use crate::ui::{self, divider, list_row, text_field, Face, Field, Fonts, Pill, Rect, SharpText, Status, Ui};
 
-const HEADER_H: f32 = 110.0;
 const FIELD_H: f32 = 44.0;
 const RESULTS_TOP: f32 = 128.0;
 const RESULT_ROW_H: f32 = 44.0;
@@ -52,7 +50,12 @@ fn row_button(row: Rect, from_right: f32, w: f32) -> Rect {
 }
 
 fn search_submit_btn(ww: f32) -> Rect {
-    Rect::at(ww - 60.0 - 160.0, (HEADER_H - FIELD_H) / 2.0 + 12.0, 160.0, FIELD_H)
+    Rect::at(
+        ww - 60.0 - 160.0,
+        (theme::HEADER_H - FIELD_H) / 2.0 + 12.0,
+        160.0,
+        FIELD_H,
+    )
 }
 
 fn search_box(ww: f32) -> Rect {
@@ -441,9 +444,9 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
     let (ww, wh) = state.ui.view().size();
 
     let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, ww, HEADER_H));
+    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, ww, theme::HEADER_H));
     draw.sharp_text(&state.fonts.display, "Amis")
-        .position(60.0, HEADER_H / 2.0)
+        .position(60.0, theme::HEADER_H / 2.0)
         .size(theme::size::TITLE)
         .v_align_middle()
         .color(pal.text);
@@ -555,7 +558,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             color: pal.accent,
             size: theme::size::SMALL,
         };
-        tally.draw(draw, fonts, (card.x + card.w - 16.0 - tally.width(), mid));
+        tally.draw(draw, fonts, (card.x + card.w - 16.0 - tally.width(fonts), mid));
         divider(draw, &pal, card.x + 16.0, card.y + CARD_TITLE_H, card.w - 32.0);
     }
 
@@ -642,18 +645,20 @@ fn draw_col<F>(
             .color(pal.text_muted);
         return;
     }
-    // Names stop short of the row's first button: about 0.55 em a character.
+    // Names stop short of the row's first button.
     let first_button = [remove_btn(ww, 0, 0), accept_btn(ww, 0), remove_btn(ww, 2, 0)][col];
     let room = first_button.x - list_row_rect(ww, col, 0).x - 20.0;
-    let max_chars = (room / (theme::size::BODY * 0.55)).floor().max(1.0) as usize;
     for (i, e) in list.iter().take(MAX_ROWS).enumerate() {
         let row = list_row_rect(ww, col, i);
         list_row(draw, pal, row, i);
-        draw.sharp_text(&fonts.text, &truncate_display(&e.username, max_chars))
-            .position(row.x + 10.0, row.y + row.h / 2.0 - 8.0)
-            .size(theme::size::BODY)
-            .v_align_middle()
-            .color(pal.text);
+        draw.sharp_text(
+            &fonts.text,
+            &fonts.fit(Face::Text, &e.username, theme::size::BODY, room),
+        )
+        .position(row.x + 10.0, row.y + row.h / 2.0 - 8.0)
+        .size(theme::size::BODY)
+        .v_align_middle()
+        .color(pal.text);
         draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
             .position(row.x + 10.0, row.y + row.h / 2.0 + 10.0)
             .size(theme::size::SMALL)

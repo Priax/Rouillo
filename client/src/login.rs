@@ -3,12 +3,13 @@ use std::sync::Arc;
 use notan::prelude::*;
 
 use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, State};
-use crate::ui::{text_field, Field, Rect, SharpText, Status, View};
+use crate::ui::{self, text_field, Field, Rect, SharpText, Status, View};
 use crate::{http, theme};
 
 struct AuthLayout {
     cx: f32,
     base_y: f32,
+    card: Rect,
     tabs: [Rect; 2],
     username: Rect,
     password: Rect,
@@ -24,6 +25,7 @@ fn auth_layout(view: View) -> AuthLayout {
     AuthLayout {
         cx,
         base_y,
+        card: Rect::at(cx - 260.0, base_y - 40.0, 520.0, 440.0),
         tabs: [
             Rect::at(cx - 230.0, base_y - 10.0, 220.0, 50.0),
             Rect::at(cx + 10.0, base_y - 10.0, 220.0, 50.0),
@@ -170,13 +172,14 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
 
     let mut draw = state.ui.screen_canvas(gfx);
 
-    draw.sharp_text(&state.fonts.display, "ROUILLO")
-        .position(cx, base_y - 80.0)
+    draw.sharp_text(&state.fonts.display, "Rouillo")
+        .position(cx, base_y - 110.0)
         .size(theme::size::HERO)
         .h_align_center()
         .v_align_middle()
         .color(pal.title);
 
+    ui::card(&mut draw, &pal, layout.card);
     let modes = [("Connexion", AuthMode::Login), ("Inscription", AuthMode::Register)];
     for (&tab, (label, mode)) in layout.tabs.iter().zip(modes) {
         let active = state.auth_form.mode == mode;

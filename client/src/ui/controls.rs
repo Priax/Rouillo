@@ -1,6 +1,6 @@
 use notan::draw::{Draw, DrawShapes};
 
-use super::{portrait, Fonts, Rect, SharpText, Ui};
+use super::{list_row, portrait, Fonts, Rect, SharpText, Ui};
 use crate::theme;
 
 const UNDERLINE: f32 = 3.0;
@@ -66,6 +66,26 @@ impl Ui {
             let w = rect.w * 0.6 * r.hover;
             draw.rect((cx - w / 2.0, cy + 12.0), (w, 1.5))
                 .color(theme::LINK.with_alpha(r.hover));
+        }
+    }
+
+    /// A list row that reacts to the pointer: it lights up and grows an
+    /// accent bar on its left edge. The caller draws what the row holds.
+    pub fn row(&self, draw: &mut Draw, rect: Rect, index: usize, id: &str) {
+        let pal = self.palette();
+        let r = self.interact(id, rect, true);
+        if r.entered {
+            crate::audio::play_ui_hover();
+        }
+        list_row(draw, &pal, rect, index);
+        if r.hover > 0.0 {
+            draw.rect((rect.x, rect.y), (rect.w, rect.h))
+                .color(pal.raised_hover.with_alpha(0.7 * r.hover));
+            draw.rect((rect.x, rect.y), (4.0 * r.hover, rect.h)).color(pal.accent);
+        }
+        if r.flash > 0.0 {
+            draw.rect((rect.x, rect.y), (rect.w, rect.h))
+                .color(notan::prelude::Color::WHITE.with_alpha(0.2 * r.flash));
         }
     }
 }

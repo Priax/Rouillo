@@ -1,8 +1,8 @@
-use notan::draw::{Draw, DrawShapes, Font};
+use notan::draw::{Draw, DrawShapes};
 use notan::math::{vec2, Mat3};
 use notan::prelude::*;
 
-use super::{Fonts, Rect, Response, SharpText, Ui};
+use super::{Face, Fonts, Rect, Response, SharpText, Ui};
 use crate::theme::{self, Palette};
 
 const HOVER_GROW: f32 = 0.03;
@@ -13,7 +13,6 @@ const SHEEN_ALPHA: f32 = 0.05;
 const BORDER_WIDTH: f32 = 1.5;
 const TEXT_HEIGHT: f32 = 0.52;
 const TEXT_MIN: f32 = 12.0;
-const CHAR_WIDTH: f32 = 0.46;
 const TEXT_PADDING: f32 = 24.0;
 
 const ICON_LENGTH: f32 = 0.36;
@@ -71,11 +70,11 @@ impl Ui {
         if r.entered {
             crate::audio::play_ui_hover();
         }
-        paint(draw, &self.palette(), &fonts.display, rect, label, r, enabled);
+        paint(draw, &self.palette(), fonts, rect, label, r, enabled);
     }
 }
 
-fn paint(draw: &mut Draw, pal: &Palette, font: &Font, b: Rect, label: Label, r: Response, enabled: bool) {
+fn paint(draw: &mut Draw, pal: &Palette, fonts: &Fonts, b: Rect, label: Label, r: Response, enabled: bool) {
     let center = vec2(b.x + b.w / 2.0, b.y + b.h / 2.0);
     let scale = 1.0 + HOVER_GROW * r.hover - PRESS_SHRINK * r.press;
     draw.transform()
@@ -122,10 +121,12 @@ fn paint(draw: &mut Draw, pal: &Palette, font: &Font, b: Rect, label: Label, r: 
 
     match label {
         Label::Text(label) => {
-            let n = label.chars().count().max(1) as f32;
-            let fits = (b.w - TEXT_PADDING) / (n * CHAR_WIDTH);
-            let size = (b.h * TEXT_HEIGHT).min(fits).max(TEXT_MIN);
-            draw.sharp_text(font, label)
+            // As tall as the button allows, narrowed only if it would overflow.
+            let tall = b.h * TEXT_HEIGHT;
+            let width = fonts.width(Face::Display, label, tall);
+            let room = b.w - TEXT_PADDING;
+            let size = if width > room { tall * room / width } else { tall }.max(TEXT_MIN);
+            draw.sharp_text(&fonts.display, label)
                 .position(center.x, center.y)
                 .size(size)
                 .h_align_center()

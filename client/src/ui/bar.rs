@@ -18,7 +18,23 @@ impl Ui {
     /// slanted bar of `color` over a dark band, with triangles drifting
     /// through it. The whole row reacts to the pointer.
     pub fn menu_bar(&self, draw: &mut Draw, fonts: &Fonts, row: Rect, label: &str, color: Color) {
-        let r = self.interact(label, row, true);
+        self.menu_bar_enabled(draw, fonts, row, label, color, true);
+    }
+
+    /// A menu bar that can be greyed out: it then ignores the pointer and
+    /// its label says why nothing can be done yet.
+    pub fn menu_bar_enabled(
+        &self,
+        draw: &mut Draw,
+        fonts: &Fonts,
+        row: Rect,
+        label: &str,
+        color: Color,
+        enabled: bool,
+    ) {
+        let pal = self.palette();
+        let color = if enabled { color } else { pal.disabled };
+        let r = self.interact(label, row, enabled);
         if r.entered {
             crate::audio::play_ui_hover();
         }
@@ -66,7 +82,7 @@ impl Ui {
             .size(row.h * TEXT_HEIGHT * shrink)
             .h_align_center()
             .v_align_middle()
-            .color(Color::WHITE);
+            .color(if enabled { Color::WHITE } else { pal.text_disabled });
     }
 }
 

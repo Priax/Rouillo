@@ -1,7 +1,7 @@
 use notan::prelude::*;
 
 use crate::state::{AuthForm, Screen, Settings, State};
-use crate::ui::{Rect, SharpText, Stepper, View};
+use crate::ui::{self, Rect, SharpText, Stepper, View};
 use crate::{http, theme};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -151,21 +151,25 @@ struct SettingsLayout {
     back: Rect,
 }
 
-fn settings_layout(view: View) -> SettingsLayout {
-    let (win_w, win_h) = view.size();
-    let row_h = 70.0;
-    let first_y = win_h / 2.0 - (Settings::COUNT as f32 * row_h) / 2.0;
-    let center_x = win_w / 2.0;
-    let steppers = std::array::from_fn(|i| Stepper::at(center_x + 20.0, first_y + i as f32 * row_h));
+const SETTINGS_TITLE_H: f32 = 56.0;
+const SETTING_ROW_H: f32 = 70.0;
 
+fn settings_card(view: View) -> Rect {
+    let h = SETTINGS_TITLE_H + Settings::COUNT as f32 * SETTING_ROW_H + 16.0;
+    Rect::at(view.w / 2.0 - 320.0, theme::HEADER_H + 30.0, 640.0, h)
+}
+
+fn settings_layout(view: View) -> SettingsLayout {
+    let card = settings_card(view);
+    let steppers = std::array::from_fn(|i| {
+        Stepper::at(
+            card.x + card.w / 2.0 + 20.0,
+            card.y + SETTINGS_TITLE_H + 10.0 + i as f32 * SETTING_ROW_H,
+        )
+    });
     SettingsLayout {
         steppers,
-        back: Rect::at(
-            center_x - 100.0,
-            first_y + Settings::COUNT as f32 * row_h + 40.0,
-            200.0,
-            60.0,
-        ),
+        back: Rect::at(40.0, view.h - 80.0, 200.0, 54.0),
     }
 }
 
@@ -186,17 +190,28 @@ pub fn update_settings(app: &mut App, state: &mut State) {
 
 pub fn draw_settings(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
-    let (ww, wh) = state.ui.view().size();
+    let view = state.ui.view();
     let mut draw = state.ui.screen_canvas(gfx);
 
-    draw.sharp_text(&state.fonts.display, "SETTINGS")
-        .position(ww / 2.0, wh / 2.0 - 170.0)
+    state
+        .ui
+        .header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    draw.sharp_text(&state.fonts.display, "Paramètres")
+        .position(60.0, theme::HEADER_H / 2.0)
         .size(theme::size::TITLE)
-        .h_align_center()
         .v_align_middle()
         .color(pal.text);
 
-    let layout = settings_layout(state.ui.view());
+    let card = settings_card(view);
+    ui::card(&mut draw, &pal, card);
+    draw.sharp_text(&state.fonts.display, "Contrôles")
+        .position(card.x + 20.0, card.y + SETTINGS_TITLE_H / 2.0)
+        .size(theme::size::EMPHASIS)
+        .v_align_middle()
+        .color(pal.text_dim);
+    ui::divider(&mut draw, &pal, card.x + 20.0, card.y + SETTINGS_TITLE_H, card.w - 40.0);
+
+    let layout = settings_layout(view);
     for (i, stepper) in layout.steppers.into_iter().enumerate() {
         let value = format!("{:.0} ms", state.settings.value(i) * 1000.0);
         state
@@ -204,7 +219,7 @@ pub fn draw_settings(gfx: &mut Graphics, state: &State) {
             .stepper(&mut draw, &state.fonts, stepper, Settings::label(i), &value, true);
     }
 
-    state.ui.button(&mut draw, &state.fonts, layout.back, "Back");
+    state.ui.button(&mut draw, &state.fonts, layout.back, "Retour");
     gfx.render(&draw);
 }
 

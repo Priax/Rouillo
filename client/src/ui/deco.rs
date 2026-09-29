@@ -1,7 +1,7 @@
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::Color;
 
-use super::{Fonts, Rect, SharpText};
+use super::{Face, Fonts, Rect, SharpText};
 use crate::theme::{self, Palette};
 
 /// A line of a list, its background alternating so rows read apart.
@@ -63,15 +63,13 @@ pub struct Pill<'a> {
 }
 
 impl Pill<'_> {
-    /// Estimated from Nunito's width, about 0.58 em a character in
-    /// capitals; generous so the pill never clips its label.
-    pub fn width(&self) -> f32 {
-        self.text.chars().count() as f32 * self.size * 0.58 + self.size * 1.4
+    pub fn width(&self, fonts: &Fonts) -> f32 {
+        fonts.width(Face::Text, self.text, self.size) + self.size * 1.4
     }
 
     /// Draws the pill from its left edge `x`, centred on `cy`.
     pub fn draw(&self, draw: &mut Draw, fonts: &Fonts, (x, cy): (f32, f32)) {
-        let (w, h) = (self.width(), self.size * 1.7);
+        let (w, h) = (self.width(fonts), self.size * 1.7);
         draw.rect((x, cy - h / 2.0), (w, h))
             .corner_radius(h / 2.0)
             .color(self.color.with_alpha(0.18));
@@ -87,6 +85,22 @@ impl Pill<'_> {
             .color(self.color);
     }
 }
+
+/// Draws `pills` in a row ending at `right`, centred on `cy`, and returns
+/// where the row starts, so the text before it can stop short.
+pub fn pills_ending_at(draw: &mut Draw, fonts: &Fonts, pills: &[Pill], right: f32, cy: f32) -> f32 {
+    let mut x = right;
+    for (i, pill) in pills.iter().rev().enumerate() {
+        if i > 0 {
+            x -= PILL_GAP;
+        }
+        x -= pill.width(fonts);
+        pill.draw(draw, fonts, (x, cy));
+    }
+    x
+}
+
+const PILL_GAP: f32 = 10.0;
 
 /// A player's round portrait with their initial. `glow` in `0..=1` lightens
 /// it, for avatars that react to the pointer.
