@@ -18,10 +18,12 @@ mod network;
 mod profile;
 mod rooms;
 mod state;
+mod theme;
+mod ui;
 mod update;
 
-use menu::Btn;
 use state::{Screen, State};
+use ui::Rect;
 
 pub fn server_url() -> String {
     #[cfg(all(target_arch = "wasm32", not(debug_assertions)))]
@@ -29,7 +31,7 @@ pub fn server_url() -> String {
         let loc = web_sys::window().expect("window").location();
         let is_https = loc.protocol().map(|p| p == "https:").unwrap_or(false);
         let proto = if is_https { "wss" } else { "ws" };
-        return format!("{}://{}/ws", proto, loc.host().expect("host"));
+        format!("{}://{}/ws", proto, loc.host().expect("host"))
     }
     #[cfg(not(all(target_arch = "wasm32", not(debug_assertions))))]
     {
@@ -107,13 +109,22 @@ fn event(state: &mut State, evt: Event) {
     }
 }
 
+const BANNER_H: f32 = 80.0;
+
+fn banner_buttons(ww: f32, wh: f32) -> (Rect, Rect) {
+    let y = wh - BANNER_H + 15.0;
+    (
+        Rect::at(ww - 270.0, y, 120.0, 50.0),
+        Rect::at(ww - 140.0, y, 110.0, 50.0),
+    )
+}
+
 fn update_invitation(app: &mut App, state: &mut State) {
     if state.pending_invitation.is_none() {
         return;
     }
     let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
-    let accept_btn = Btn::at(ww - 270.0, wh - 70.0, 120.0, 50.0);
-    let decline_btn = Btn::at(ww - 140.0, wh - 70.0, 110.0, 50.0);
+    let (accept_btn, decline_btn) = banner_buttons(ww, wh);
     if accept_btn.clicked(app) {
         if let Some((_, room_id, _)) = state.pending_invitation.take() {
             if state.conn.is_live() {
@@ -131,6 +142,7 @@ fn update_invitation(app: &mut App, state: &mut State) {
 }
 
 fn update(app: &mut App, state: &mut State) {
+    state.ui.begin_frame(app.timer.delta_f32(), ui::Mouse::of(app));
     let State { session, conn, .. } = state;
     if let Some(session) = session.as_mut() {
         session.clock += app.timer.delta_f32() as f64;
@@ -175,21 +187,19 @@ fn draw_invitation_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
         return;
     };
     let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
-    let banner_y = wh - 80.0;
+    let banner_y = wh - BANNER_H;
     let mut d = gfx.create_draw();
-    d.rect((0.0, banner_y), (ww, 80.0))
-        .color(Color::from_rgba(0.08, 0.10, 0.20, 0.96));
-    d.rect((0.0, banner_y), (ww, 2.0)).color(Color::from_rgb(0.4, 0.4, 0.7));
+    d.rect((0.0, banner_y), (ww, BANNER_H)).color(theme::BANNER);
+    d.rect((0.0, banner_y), (ww, 2.0)).color(theme::ACCENT);
     let msg = format!("{from} t'invite dans \"{room_name}\"");
     d.text(&state.font, &msg)
         .position(20.0, banner_y + 40.0)
         .size(20.0)
         .v_align_middle()
-        .color(Color::WHITE);
-    let accept_btn = Btn::at(ww - 270.0, banner_y + 15.0, 120.0, 50.0);
-    let decline_btn = Btn::at(ww - 140.0, banner_y + 15.0, 110.0, 50.0);
-    accept_btn.draw_styled(&mut d, app, &state.font, "Rejoindre", true);
-    decline_btn.draw(&mut d, app, &state.font, "Ignorer");
+        .color(theme::TEXT);
+    let (accept_btn, decline_btn) = banner_buttons(ww, wh);
+    state.ui.button(&mut d, &state.font, accept_btn, "Rejoindre");
+    state.ui.button(&mut d, &state.font, decline_btn, "Ignorer");
     gfx.render(&d);
 }
 
@@ -206,10 +216,12 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         Screen::Friends => friends::draw_friends(app, gfx, state),
         Screen::OtherProfile => profile::draw_other_profile(app, gfx, state),
         Screen::Game => {
-            let is_host = state.lobby.as_ref().is_some_and(|l| l.is_host);
-            let can_pause = state.lobby.as_ref().is_some_and(|l| l.settings.pause.allows(l.is_host));
+            let role = draw::Role {
+                is_host: state.lobby.as_ref().is_some_and(|l| l.is_host),
+                can_pause: state.lobby.as_ref().is_some_and(|l| l.settings.pause.allows(l.is_host)),
+            };
             if let Some(session) = state.session.as_ref() {
-                draw::draw_game(app, gfx, session, &state.font, is_host, can_pause);
+                draw::draw_game(app, gfx, session, &state.ui, &state.font, role);
             }
         }
     }
@@ -223,9 +235,8 @@ fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
     };
     let ww = app.window().width() as f32;
     let mut d = gfx.create_draw();
-    d.rect((0.0, 0.0), (ww, 44.0))
-        .color(Color::from_rgba(0.35, 0.18, 0.05, 0.96));
-    d.rect((0.0, 44.0), (ww, 2.0)).color(Color::from_rgb(0.9, 0.6, 0.2));
+    d.rect((0.0, 0.0), (ww, 44.0)).color(theme::WARNING_BANNER);
+    d.rect((0.0, 44.0), (ww, 2.0)).color(theme::WARNING);
     let dots = ".".repeat(1 + (app.timer.elapsed_f32() * 2.0) as usize % 3);
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
     d.text(&state.font, &msg)
@@ -233,7 +244,7 @@ fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
         .size(20.0)
         .h_align_center()
         .v_align_middle()
-        .color(Color::from_rgb(1.0, 0.85, 0.6));
+        .color(theme::WARNING_TEXT);
     gfx.render(&d);
 }
 

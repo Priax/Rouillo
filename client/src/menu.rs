@@ -1,102 +1,15 @@
-use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
+use notan::draw::{CreateDraw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
-use crate::http;
 use crate::state::{AuthForm, Screen, Settings, State};
-
-#[derive(Clone, Copy)]
-pub struct Btn {
-    pub x: f32,
-    pub y: f32,
-    pub w: f32,
-    pub h: f32,
-}
-
-impl Btn {
-    pub fn at(x: f32, y: f32, w: f32, h: f32) -> Self {
-        Self { x, y, w, h }
-    }
-
-    pub fn contains(&self, mx: f32, my: f32) -> bool {
-        mx >= self.x && mx <= self.x + self.w && my >= self.y && my <= self.y + self.h
-    }
-
-    pub fn clicked(&self, app: &App) -> bool {
-        self.contains(app.mouse.x, app.mouse.y) && app.mouse.left_was_pressed()
-    }
-
-    pub fn draw(&self, draw: &mut Draw, app: &App, font: &crate::Font, label: &str) {
-        self.draw_styled(draw, app, font, label, true);
-    }
-
-    pub fn draw_styled(&self, draw: &mut Draw, app: &App, font: &crate::Font, label: &str, enabled: bool) {
-        let hover = enabled && self.contains(app.mouse.x, app.mouse.y);
-        let bg = if !enabled {
-            Color::from_rgb(0.11, 0.11, 0.14)
-        } else if hover {
-            Color::from_rgb(0.28, 0.30, 0.42)
-        } else {
-            Color::from_rgb(0.18, 0.19, 0.26)
-        };
-        let border = if enabled {
-            Color::from_rgb(0.45, 0.47, 0.6)
-        } else {
-            Color::from_rgb(0.28, 0.28, 0.33)
-        };
-        let text = if enabled {
-            Color::WHITE
-        } else {
-            Color::from_rgb(0.45, 0.45, 0.5)
-        };
-        draw.rect((self.x, self.y), (self.w, self.h)).color(bg);
-        draw.rect((self.x, self.y), (self.w, self.h)).stroke(2.0).color(border);
-        let n = label.chars().count().max(1) as f32;
-        let font_size = (28.0_f32 * (self.w - 20.0) / (n * 17.5)).clamp(11.0, 28.0);
-        draw.text(font, label)
-            .position(self.x + self.w / 2.0, self.y + self.h / 2.0)
-            .size(font_size)
-            .h_align_center()
-            .v_align_middle()
-            .color(text);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn draw_text_box(
-    draw: &mut Draw,
-    font: &crate::Font,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    placeholder: &str,
-    value: &str,
-    focused: bool,
-) {
-    let border = if focused {
-        Color::from_rgb(0.6, 0.5, 0.9)
-    } else {
-        Color::from_rgb(0.35, 0.37, 0.5)
-    };
-    draw.rect((x, y), (w, h)).color(Color::from_rgb(0.12, 0.13, 0.20));
-    draw.rect((x, y), (w, h)).stroke(2.0).color(border);
-    let (text, col) = if value.is_empty() {
-        (placeholder, Color::from_rgb(0.45, 0.45, 0.55))
-    } else {
-        (value, Color::WHITE)
-    };
-    draw.text(font, text)
-        .position(x + 12.0, y + h / 2.0)
-        .size(20.0)
-        .v_align_middle()
-        .color(col);
-}
+use crate::ui::Rect;
+use crate::{http, theme};
 
 struct MenuLayout {
-    play: Btn,
-    settings: Btn,
-    friends: Option<Btn>,
-    logout: Option<Btn>,
+    play: Rect,
+    settings: Rect,
+    friends: Option<Rect>,
+    logout: Option<Rect>,
 }
 
 fn menu_layout(win_w: f32, win_h: f32, logged_in: bool) -> MenuLayout {
@@ -106,15 +19,15 @@ fn menu_layout(win_w: f32, win_h: f32, logged_in: bool) -> MenuLayout {
     let cy = win_h / 2.0;
     let (friends, logout) = if logged_in {
         (
-            Some(Btn::at(x, cy + 160.0, w, 56.0)),
-            Some(Btn::at(x, cy + 240.0, w, 56.0)),
+            Some(Rect::at(x, cy + 160.0, w, 56.0)),
+            Some(Rect::at(x, cy + 240.0, w, 56.0)),
         )
     } else {
         (None, None)
     };
     MenuLayout {
-        play: Btn::at(x, cy - 20.0, w, h),
-        settings: Btn::at(x, cy + 70.0, w, h),
+        play: Rect::at(x, cy - 20.0, w, h),
+        settings: Rect::at(x, cy + 70.0, w, h),
         friends,
         logout,
     }
@@ -124,10 +37,10 @@ fn avatar_pos(ww: f32) -> (f32, f32, f32) {
     (ww - 70.0, 70.0, 38.0)
 }
 
-fn update_btn(ww: f32) -> Btn {
+fn outdated_btn(ww: f32) -> Rect {
     let (acx, acy, ar) = avatar_pos(ww);
     let (w, h) = (190.0, 50.0);
-    Btn::at(acx - ar - 20.0 - w, acy - h / 2.0, w, h)
+    Rect::at(acx - ar - 20.0 - w, acy - h / 2.0, w, h)
 }
 
 fn avatar_hovered(app: &App, cx: f32, cy: f32, r: f32) -> bool {
@@ -164,7 +77,7 @@ pub fn update_menu(app: &mut App, state: &mut State) {
         }
     }
 
-    if state.outdated && update_btn(ww).clicked(app) {
+    if state.outdated && outdated_btn(ww).clicked(app) {
         crate::update::apply();
     }
 
@@ -193,42 +106,37 @@ pub fn do_logout(state: &mut State) {
 pub fn draw_menu(app: &mut App, gfx: &mut Graphics, state: &State) {
     let (ww, wh) = (win_w(app), win_h(app));
     let mut draw = gfx.create_draw();
-    draw.clear(Color::from_rgb(0.05, 0.05, 0.08));
+    draw.clear(theme::BACKGROUND);
 
     draw.text(&state.font, "Rouillo")
         .position(ww / 2.0, wh / 2.0 - 140.0)
         .size(80.0)
         .h_align_center()
         .v_align_middle()
-        .color(Color::from_rgb(0.9, 0.7, 1.0));
+        .color(theme::TITLE);
 
     let logged_in = state.auth.is_some();
     let layout = menu_layout(ww, wh, logged_in);
-    layout.play.draw(&mut draw, app, &state.font, "Jouer");
+    state.ui.button(&mut draw, &state.font, layout.play, "Jouer");
     if state.outdated {
-        update_btn(ww).draw(&mut draw, app, &state.font, "Mettre à jour");
+        state
+            .ui
+            .button(&mut draw, &state.font, outdated_btn(ww), "Mettre à jour");
     }
-    layout.settings.draw(&mut draw, app, &state.font, "Paramètres");
+    state.ui.button(&mut draw, &state.font, layout.settings, "Paramètres");
     if let Some(btn) = layout.friends {
-        btn.draw(&mut draw, app, &state.font, "Amis");
+        state.ui.button(&mut draw, &state.font, btn, "Amis");
     }
     if let Some(btn) = layout.logout {
-        btn.draw(&mut draw, app, &state.font, "Déconnexion");
+        state.ui.button(&mut draw, &state.font, btn, "Déconnexion");
     }
 
     if let Some(auth) = &state.auth {
         let (acx, acy, ar) = avatar_pos(ww);
         let hover = avatar_hovered(app, acx, acy, ar);
-        let fill = if hover {
-            Color::from_rgb(0.38, 0.28, 0.55)
-        } else {
-            Color::from_rgb(0.25, 0.18, 0.40)
-        };
+        let fill = if hover { theme::AVATAR_HOVER } else { theme::AVATAR };
         draw.circle(ar).position(acx, acy).color(fill);
-        draw.circle(ar)
-            .position(acx, acy)
-            .stroke(2.0)
-            .color(Color::from_rgb(0.65, 0.45, 0.85));
+        draw.circle(ar).position(acx, acy).stroke(2.0).color(theme::ACCENT);
         let initial: String = auth
             .username
             .chars()
@@ -240,31 +148,31 @@ pub fn draw_menu(app: &mut App, gfx: &mut Graphics, state: &State) {
             .size(30.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::WHITE);
+            .color(theme::TEXT);
         draw.text(&state.font, &auth.username)
             .position(acx, acy + ar + 16.0)
             .size(17.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::from_rgb(0.65, 0.65, 0.80));
+            .color(theme::TEXT_DIM);
     }
 
-    if !state.notice.is_empty() {
-        draw.text(&state.font, &state.notice)
+    if let Some((msg, color)) = state.notice.shown() {
+        draw.text(&state.font, msg)
             .position(ww / 2.0, wh - 60.0)
             .size(22.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::from_rgb(0.9, 0.4, 0.4));
+            .color(color);
     }
 
     gfx.render(&draw);
 }
 
 struct SettingsLayout {
-    minus: [Btn; Settings::COUNT],
-    plus: [Btn; Settings::COUNT],
-    back: Btn,
+    minus: [Rect; Settings::COUNT],
+    plus: [Rect; Settings::COUNT],
+    back: Rect,
 }
 
 fn settings_layout(win_w: f32, win_h: f32) -> SettingsLayout {
@@ -275,18 +183,18 @@ fn settings_layout(win_w: f32, win_h: f32) -> SettingsLayout {
     let minus_x = center_x + 60.0;
     let plus_x = center_x + 200.0;
 
-    let mut minus = [Btn::at(0.0, 0.0, btn, btn); Settings::COUNT];
+    let mut minus = [Rect::at(0.0, 0.0, btn, btn); Settings::COUNT];
     let mut plus = minus;
     for i in 0..Settings::COUNT {
         let y = first_y + i as f32 * row_h;
-        minus[i] = Btn::at(minus_x, y, btn, btn);
-        plus[i] = Btn::at(plus_x, y, btn, btn);
+        minus[i] = Rect::at(minus_x, y, btn, btn);
+        plus[i] = Rect::at(plus_x, y, btn, btn);
     }
 
     SettingsLayout {
         minus,
         plus,
-        back: Btn::at(
+        back: Rect::at(
             center_x - 100.0,
             first_y + Settings::COUNT as f32 * row_h + 40.0,
             200.0,
@@ -313,14 +221,14 @@ pub fn update_settings(app: &mut App, state: &mut State) {
 pub fn draw_settings(app: &mut App, gfx: &mut Graphics, state: &State) {
     let (ww, wh) = (win_w(app), win_h(app));
     let mut draw = gfx.create_draw();
-    draw.clear(Color::from_rgb(0.05, 0.05, 0.08));
+    draw.clear(theme::BACKGROUND);
 
     draw.text(&state.font, "SETTINGS")
         .position(ww / 2.0, wh / 2.0 - 170.0)
         .size(50.0)
         .h_align_center()
         .v_align_middle()
-        .color(Color::WHITE);
+        .color(theme::TEXT);
 
     let layout = settings_layout(ww, wh);
     let center_x = ww / 2.0;
@@ -332,18 +240,18 @@ pub fn draw_settings(app: &mut App, gfx: &mut Graphics, state: &State) {
             .size(24.0)
             .h_align_right()
             .v_align_middle()
-            .color(Color::from_rgb(0.8, 0.8, 0.85));
-        layout.minus[i].draw(&mut draw, app, &state.font, "-");
-        layout.plus[i].draw(&mut draw, app, &state.font, "+");
+            .color(theme::TEXT_DIM);
+        state.ui.button(&mut draw, &state.font, layout.minus[i], "-");
+        state.ui.button(&mut draw, &state.font, layout.plus[i], "+");
         draw.text(&state.font, &format!("{:.0} ms", state.settings.value(i) * 1000.0))
             .position(center_x + 130.0, mid)
             .size(22.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::YELLOW);
+            .color(theme::GOLD);
     }
 
-    layout.back.draw(&mut draw, app, &state.font, "Back");
+    state.ui.button(&mut draw, &state.font, layout.back, "Back");
     gfx.render(&draw);
 }
 

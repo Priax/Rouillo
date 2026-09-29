@@ -3,12 +3,12 @@ use std::sync::Arc;
 use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
-use crate::http;
-use crate::menu::{draw_text_box, Btn};
 use crate::state::{
     ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, OtherProfileData, ProfileCore,
     ProfileData, ProfileEditField, Screen, State,
 };
+use crate::ui::{text_field, Field, Rect, Status};
+use crate::{http, theme};
 
 const HISTORY_Y: f32 = 175.0;
 const STATS_Y: f32 = 207.0;
@@ -93,13 +93,13 @@ fn draw_header(draw: &mut Draw, font: &crate::Font, cx: f32, core: &ProfileCore)
         .size(52.0)
         .h_align_center()
         .v_align_middle()
-        .color(Color::from_rgb(0.9, 0.7, 1.0));
+        .color(theme::TITLE);
     draw.text(font, &format!("ELO {}", core.elo))
         .position(cx, 140.0)
         .size(26.0)
         .h_align_center()
         .v_align_middle()
-        .color(Color::YELLOW);
+        .color(theme::GOLD);
 }
 
 fn draw_stats_panel(
@@ -120,7 +120,7 @@ fn draw_stats_panel(
             .size(20.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::from_rgb(0.9, 0.4, 0.4));
+            .color(theme::DANGER);
         return;
     }
     if core.profile_slot.is_some() {
@@ -129,7 +129,7 @@ fn draw_stats_panel(
             .size(20.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::GRAY);
+            .color(theme::TEXT_MUTED);
         return;
     }
 
@@ -151,18 +151,17 @@ fn draw_stats_panel(
             .position(label_x, y)
             .size(20.0)
             .v_align_middle()
-            .color(Color::GRAY);
+            .color(theme::TEXT_MUTED);
         draw.text(font, val)
             .position(val_x, y)
             .size(20.0)
             .h_align_right()
             .v_align_middle()
-            .color(Color::WHITE);
+            .color(theme::TEXT);
     }
 
     let sep_y = STATS_Y + stats.len() as f32 * 30.0 + 14.0;
-    draw.rect((label_x, sep_y), (left_w - 20.0, 1.0))
-        .color(Color::from_rgb(0.25, 0.25, 0.35));
+    draw.rect((label_x, sep_y), (left_w - 20.0, 1.0)).color(theme::DIVIDER);
 
     let mut info_y = sep_y + 22.0;
     if let Some(bio) = &core.bio {
@@ -171,13 +170,13 @@ fn draw_stats_panel(
                 .position(label_x, info_y)
                 .size(16.0)
                 .v_align_middle()
-                .color(Color::from_rgb(0.55, 0.55, 0.7));
+                .color(theme::TEXT_DIM);
             info_y += 22.0;
             draw.text(ui_font, &truncate_display(bio, 55))
                 .position(label_x, info_y)
                 .size(17.0)
                 .v_align_middle()
-                .color(Color::from_rgb(0.85, 0.85, 0.95));
+                .color(theme::TEXT);
             info_y += 28.0;
         }
     }
@@ -187,7 +186,7 @@ fn draw_stats_panel(
                 .position(label_x, info_y)
                 .size(17.0)
                 .v_align_middle()
-                .color(Color::from_rgb(0.6, 0.85, 0.65));
+                .color(theme::ACCENT);
         }
     }
 }
@@ -199,9 +198,9 @@ fn draw_history_panel(draw: &mut Draw, app: &App, font: &crate::Font, core: &Pro
         .size(22.0)
         .h_align_center()
         .v_align_middle()
-        .color(Color::from_rgb(0.7, 0.7, 0.9));
+        .color(theme::TEXT_DIM);
     draw.rect((right_x, HISTORY_Y + 14.0), (right_w, 1.0))
-        .color(Color::from_rgb(0.25, 0.25, 0.4));
+        .color(theme::DIVIDER);
 
     if core.history_slot.is_some() {
         draw.text(font, "Chargement...")
@@ -209,61 +208,63 @@ fn draw_history_panel(draw: &mut Draw, app: &App, font: &crate::Font, core: &Pro
             .size(20.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::GRAY);
+            .color(theme::TEXT_MUTED);
     } else if core.match_history.is_empty() {
         draw.text(font, "Aucun match pour l'instant.")
             .position(right_x + right_w / 2.0, HISTORY_Y + 48.0)
             .size(20.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::GRAY);
+            .color(theme::TEXT_MUTED);
     } else {
         for (i, m) in core.match_history.iter().enumerate().take(7) {
-            let row_y = HISTORY_Y + 32.0 + i as f32 * 48.0;
-            draw_match_row(draw, app, font, right_x, right_w, row_y, m, &core.user_id, clickable);
+            draw_match_row(
+                draw,
+                app,
+                font,
+                history_row(right_x, right_w, i),
+                m,
+                &core.user_id,
+                clickable,
+            );
         }
     }
 }
 
-fn history_row_zone(ww: f32, i: usize) -> Btn {
-    let (_, _, right_x, right_w) = panels(ww);
-    Btn::at(
-        right_x + right_w * 0.17,
-        HISTORY_Y + 32.0 + i as f32 * 48.0 - 20.0,
-        right_w * 0.32,
-        42.0,
-    )
+fn history_row(right_x: f32, right_w: f32, i: usize) -> Rect {
+    Rect::at(right_x, HISTORY_Y + 12.0 + i as f32 * 48.0, right_w, 42.0)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_match_row(
+fn opponent_zone(row: Rect) -> Rect {
+    Rect::at(row.x + row.w * 0.17, row.y, row.w * 0.32, row.h)
+}
+
+fn history_row_zone(ww: f32, i: usize) -> Rect {
+    let (_, _, right_x, right_w) = panels(ww);
+    opponent_zone(history_row(right_x, right_w, i))
+}
+
+fn draw_match_row(
     draw: &mut Draw,
     app: &App,
     font: &crate::Font,
-    row_x: f32,
-    row_w: f32,
-    y: f32,
+    row: Rect,
     m: &ApiMatchEntry,
     viewed_id: &str,
     clickable: bool,
 ) {
+    let (row_x, row_w) = (row.x, row.w);
+    let y = row.y + 20.0;
     let i_am_p1 = m.player1.user_id.as_deref() == Some(viewed_id);
     let won = m.winner_slot == if i_am_p1 { 1i16 } else { 2i16 };
     let opp = if i_am_p1 { &m.player2 } else { &m.player1 };
     let me = if i_am_p1 { &m.player1 } else { &m.player2 };
     let opp_name = opp.username.as_deref().unwrap_or("Invité");
 
-    draw.rect((row_x, y - 20.0), (row_w, 42.0)).color(if won {
-        Color::from_rgba(0.1, 0.3, 0.1, 0.6)
-    } else {
-        Color::from_rgba(0.3, 0.1, 0.1, 0.6)
-    });
+    draw.rect((row.x, row.y), (row.w, row.h))
+        .color(if won { theme::SUCCESS_BG } else { theme::DANGER_BG });
 
-    let result_color = if won {
-        Color::from_rgb(0.4, 0.9, 0.4)
-    } else {
-        Color::from_rgb(0.9, 0.4, 0.4)
-    };
+    let result_color = if won { theme::SUCCESS } else { theme::DANGER };
     draw.text(font, if won { "VICTOIRE" } else { "DEFAITE" })
         .position(row_x + row_w * 0.09, y)
         .size(16.0)
@@ -271,32 +272,20 @@ pub(crate) fn draw_match_row(
         .v_align_middle()
         .color(result_color);
 
-    let opp_has_id = opp.user_id.is_some();
-    let zone_x = row_x + row_w * 0.17;
-    let zone_w = row_w * 0.32;
-    let opp_hover = clickable
-        && opp_has_id
-        && app.mouse.x >= zone_x
-        && app.mouse.x <= zone_x + zone_w
-        && app.mouse.y >= y - 20.0
-        && app.mouse.y <= y + 22.0;
+    let opp_hover = clickable && opp.user_id.is_some() && opponent_zone(row).contains(app.mouse.x, app.mouse.y);
     draw.text(font, &format!("vs {opp_name}"))
         .position(row_x + row_w * 0.33, y)
         .size(17.0)
         .h_align_center()
         .v_align_middle()
-        .color(if opp_hover {
-            Color::from_rgb(0.6, 0.8, 1.0)
-        } else {
-            Color::WHITE
-        });
+        .color(if opp_hover { theme::LINK } else { theme::TEXT });
 
     draw.text(font, &format!("Chain x{}  Nuis {}", me.max_chain, me.nuisance_sent))
         .position(row_x + row_w * 0.65, y)
         .size(15.0)
         .h_align_center()
         .v_align_middle()
-        .color(Color::YELLOW);
+        .color(theme::GOLD);
 
     let secs = m.duration_secs as u32;
     draw.text(font, &format!("{}:{:02}", secs / 60, secs % 60))
@@ -304,7 +293,7 @@ pub(crate) fn draw_match_row(
         .size(15.0)
         .h_align_center()
         .v_align_middle()
-        .color(Color::GRAY);
+        .color(theme::TEXT_MUTED);
 }
 
 pub fn enter_profile(state: &mut State) {
@@ -335,7 +324,7 @@ pub fn enter_profile(state: &mut State) {
         edit_music: String::new(),
         edit_focused: ProfileEditField::Bio,
         edit_pending: None,
-        edit_error: String::new(),
+        edit_status: Status::Empty,
     });
 }
 
@@ -357,11 +346,11 @@ fn poll_edit(state: &mut State) {
                 p.editing = false;
                 p.edit_bio.clear();
                 p.edit_music.clear();
-                p.edit_error.clear();
+                p.edit_status.clear();
             }
         }
-        Ok(resp) => p.edit_error = http::error_message(&resp),
-        Err(e) => p.edit_error = format!("Erreur réseau: {e}"),
+        Ok(resp) => p.edit_status = Status::error(http::error_message(&resp)),
+        Err(e) => p.edit_status = Status::error(format!("Erreur réseau: {e}")),
     }
 }
 
@@ -389,30 +378,30 @@ fn save_profile(state: &mut State) {
     http::patch_json(http::api_url("me"), body, token, Arc::clone(&slot));
     if let Some(p) = state.profile.as_mut() {
         p.edit_pending = Some(slot);
-        p.edit_error.clear();
+        p.edit_status.clear();
     }
 }
 
-fn edit_boxes(cx: f32) -> (Btn, Btn) {
+fn edit_boxes(cx: f32) -> (Rect, Rect) {
     (
-        Btn::at(cx - 300.0, 220.0, 600.0, 46.0),
-        Btn::at(cx - 300.0, 310.0, 600.0, 46.0),
+        Rect::at(cx - 300.0, 215.0, 600.0, 46.0),
+        Rect::at(cx - 300.0, 305.0, 600.0, 46.0),
     )
 }
 
-fn edit_buttons(cx: f32) -> (Btn, Btn) {
+fn edit_buttons(cx: f32) -> (Rect, Rect) {
     (
-        Btn::at(cx - 220.0, 390.0, 200.0, 54.0),
-        Btn::at(cx + 20.0, 390.0, 200.0, 54.0),
+        Rect::at(cx - 220.0, 390.0, 200.0, 54.0),
+        Rect::at(cx + 20.0, 390.0, 200.0, 54.0),
     )
 }
 
-fn own_buttons(cx: f32, wh: f32) -> (Btn, Btn, Btn) {
+fn own_buttons(cx: f32, wh: f32) -> (Rect, Rect, Rect) {
     let y = button_row_y(wh);
     (
-        Btn::at(cx - 390.0, y, 200.0, 54.0),
-        Btn::at(cx - 100.0, y, 200.0, 54.0),
-        Btn::at(cx + 190.0, y, 200.0, 54.0),
+        Rect::at(cx - 390.0, y, 200.0, 54.0),
+        Rect::at(cx - 100.0, y, 200.0, 54.0),
+        Rect::at(cx + 190.0, y, 200.0, 54.0),
     )
 }
 
@@ -468,7 +457,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
         if cancel_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Escape) {
             if let Some(p) = state.profile.as_mut() {
                 p.editing = false;
-                p.edit_error.clear();
+                p.edit_status.clear();
             }
         }
     } else {
@@ -485,7 +474,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
                 p.edit_music = p.core.favorite_music.clone().unwrap_or_default();
                 p.edit_focused = ProfileEditField::Bio;
                 p.editing = true;
-                p.edit_error.clear();
+                p.edit_status.clear();
             }
         }
         if logout_btn.clicked(app) {
@@ -520,7 +509,7 @@ pub fn draw_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
     let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
     let cx = ww / 2.0;
     let mut draw = gfx.create_draw();
-    draw.clear(Color::from_rgb(0.05, 0.05, 0.08));
+    draw.clear(theme::BACKGROUND);
 
     let Some(profile) = &state.profile else {
         gfx.render(&draw);
@@ -530,80 +519,78 @@ pub fn draw_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
     draw_header(&mut draw, &state.font, cx, &profile.core);
 
     if profile.editing {
-        draw_edit_form(app, &mut draw, &state.font, &state.ui_font, profile, cx);
+        draw_edit_form(&state.ui, &mut draw, &state.font, &state.ui_font, profile, cx);
     } else {
         draw_stats_panel(&mut draw, &state.font, &state.ui_font, &profile.core, ww, false);
         draw_history_panel(&mut draw, app, &state.font, &profile.core, ww, true);
 
         let (back_btn, edit_btn, logout_btn) = own_buttons(cx, wh);
-        back_btn.draw(&mut draw, app, &state.font, "Retour");
-        edit_btn.draw(&mut draw, app, &state.font, "Modifier");
-        logout_btn.draw(&mut draw, app, &state.font, "Déconnexion");
+        state.ui.button(&mut draw, &state.font, back_btn, "Retour");
+        state.ui.button(&mut draw, &state.font, edit_btn, "Modifier");
+        state.ui.button(&mut draw, &state.font, logout_btn, "Déconnexion");
     }
 
     gfx.render(&draw);
 }
 
 fn draw_edit_form(
-    app: &App,
+    ui: &crate::ui::Ui,
     draw: &mut Draw,
     font: &crate::Font,
     ui_font: &crate::Font,
     profile: &ProfileData,
     cx: f32,
 ) {
-    draw.text(font, "Bio")
-        .position(cx - 300.0, 200.0)
-        .size(20.0)
-        .v_align_middle()
-        .color(Color::from_rgb(0.7, 0.7, 0.9));
-    draw_text_box(
-        draw,
-        ui_font,
-        cx - 300.0,
-        215.0,
-        600.0,
-        46.0,
-        "Ta bio (max 500 caractères)",
-        &profile.edit_bio,
-        profile.edit_focused == ProfileEditField::Bio,
-    );
-
-    draw.text(font, "Musique préférée")
-        .position(cx - 300.0, 290.0)
-        .size(20.0)
-        .v_align_middle()
-        .color(Color::from_rgb(0.7, 0.7, 0.9));
-    draw_text_box(
-        draw,
-        ui_font,
-        cx - 300.0,
-        305.0,
-        600.0,
-        46.0,
-        "Ta musique préférée (max 200 caractères)",
-        &profile.edit_music,
-        profile.edit_focused == ProfileEditField::Music,
-    );
+    let (bio_box, music_box) = edit_boxes(cx);
+    let fields = [
+        (
+            bio_box,
+            "Bio",
+            "Ta bio (max 500 caractères)",
+            &profile.edit_bio,
+            ProfileEditField::Bio,
+        ),
+        (
+            music_box,
+            "Musique préférée",
+            "Ta musique préférée (max 200 caractères)",
+            &profile.edit_music,
+            ProfileEditField::Music,
+        ),
+    ];
+    for (rect, label, placeholder, value, which) in fields {
+        draw.text(font, label)
+            .position(rect.x, rect.y - 15.0)
+            .size(20.0)
+            .v_align_middle()
+            .color(theme::TEXT_DIM);
+        let field = Field {
+            placeholder,
+            value,
+            focused: profile.edit_focused == which,
+            secret: false,
+        };
+        text_field(draw, ui_font, rect, &field);
+    }
 
     let (save_btn, cancel_btn) = edit_buttons(cx);
     let saving = profile.edit_pending.is_some();
-    save_btn.draw_styled(
+    ui.button_enabled(
         draw,
-        app,
         font,
+        save_btn,
         if saving { "Sauvegarde..." } else { "Enregistrer" },
         !saving,
     );
-    cancel_btn.draw(draw, app, font, "Annuler");
+    ui.button(draw, font, cancel_btn, "Annuler");
 
-    if !profile.edit_error.is_empty() {
-        draw.text(font, &profile.edit_error)
+    if let Some((msg, color)) = profile.edit_status.shown() {
+        draw.text(font, msg)
             .position(cx, 465.0)
             .size(20.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::from_rgb(0.9, 0.3, 0.3));
+            .color(color);
     }
 }
 
@@ -639,8 +626,7 @@ pub fn enter_other_profile(state: &mut State, user_id: String, username: String,
         load_failed: false,
         friendship,
         friend_slot: None,
-        friend_msg: String::new(),
-        friend_success: false,
+        friend_status: Status::Empty,
         prev_screen: prev,
     });
 }
@@ -662,17 +648,14 @@ fn poll_friend(state: &mut State) {
     };
     match result {
         Ok(resp) if resp.status == 201 => {
-            p.friend_msg = "Demande envoyée !".to_owned();
-            p.friend_success = true;
+            p.friend_status = Status::success("Demande envoyée !");
             p.friendship = FriendshipStatus::RequestSent;
         }
         Ok(resp) => {
-            p.friend_msg = http::error_message(&resp);
-            p.friend_success = false;
+            p.friend_status = Status::error(http::error_message(&resp));
         }
         Err(e) => {
-            p.friend_msg = format!("Erreur réseau: {e}");
-            p.friend_success = false;
+            p.friend_status = Status::error(format!("Erreur réseau: {e}"));
         }
     }
 }
@@ -694,13 +677,16 @@ fn add_friend(state: &mut State) {
     http::post_json(http::api_url("friends"), body, token, Arc::clone(&slot));
     if let Some(p) = state.other_profile.as_mut() {
         p.friend_slot = Some(slot);
-        p.friend_msg.clear();
+        p.friend_status.clear();
     }
 }
 
-fn other_buttons(cx: f32, wh: f32) -> (Btn, Btn) {
+fn other_buttons(cx: f32, wh: f32) -> (Rect, Rect) {
     let y = button_row_y(wh);
-    (Btn::at(cx - 110.0, y, 220.0, 54.0), Btn::at(cx + 140.0, y, 200.0, 54.0))
+    (
+        Rect::at(cx - 110.0, y, 220.0, 54.0),
+        Rect::at(cx + 140.0, y, 200.0, 54.0),
+    )
 }
 
 pub fn update_other_profile(app: &mut App, state: &mut State) {
@@ -748,7 +734,7 @@ pub fn draw_other_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
     let cx = ww / 2.0;
 
     let mut draw = gfx.create_draw();
-    draw.clear(Color::from_rgb(0.05, 0.05, 0.08));
+    draw.clear(theme::BACKGROUND);
 
     let Some(p) = &state.other_profile else {
         gfx.render(&draw);
@@ -766,21 +752,19 @@ pub fn draw_other_profile(app: &mut App, gfx: &mut Graphics, state: &State) {
     let can_add = !p.load_failed && p.friendship == FriendshipStatus::NotFriends;
     if can_add {
         let label = if sending { "Envoi..." } else { "Ajouter en ami" };
-        add_btn.draw_styled(&mut draw, app, &state.font, label, !sending);
+        state
+            .ui
+            .button_enabled(&mut draw, &state.font, add_btn, label, !sending);
     }
-    back_btn.draw(&mut draw, app, &state.font, "Retour");
+    state.ui.button(&mut draw, &state.font, back_btn, "Retour");
 
-    if !p.friend_msg.is_empty() {
-        draw.text(&state.font, &p.friend_msg)
+    if let Some((msg, color)) = p.friend_status.shown() {
+        draw.text(&state.font, msg)
             .position(cx, btn_y - 50.0)
             .size(19.0)
             .h_align_center()
             .v_align_middle()
-            .color(if p.friend_success {
-                Color::from_rgb(0.4, 0.9, 0.4)
-            } else {
-                Color::from_rgb(0.9, 0.4, 0.4)
-            });
+            .color(color);
     }
 
     gfx.render(&draw);

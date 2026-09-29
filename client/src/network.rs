@@ -2,6 +2,7 @@ use shared::{config, Board, ClientMessage, IncomingGarbage, ServerMessage, Stamp
 
 use crate::connection::ConnEvent;
 use crate::state::{GameSession, Screen, State};
+use crate::ui::Status;
 
 pub fn handle_server_messages(state: &mut State) {
     let now = crate::connection::now_secs();
@@ -11,16 +12,16 @@ pub fn handle_server_messages(state: &mut State) {
             ConnEvent::Message(msg) => process_message(state, *msg),
             ConnEvent::Retrying => {
                 if state.screen.needs_connection() {
-                    state.notice = "Connexion perdue, reconnexion…".to_string();
+                    state.notice = Status::info("Connexion perdue, reconnexion…");
                 } else {
                     state.conn.disconnect();
-                    reset_to_menu(state, "Connexion au serveur perdue.");
+                    reset_to_menu(state, Status::error("Connexion au serveur perdue."));
                 }
             }
-            ConnEvent::GaveUp => reset_to_menu(state, "Connexion au serveur perdue."),
+            ConnEvent::GaveUp => reset_to_menu(state, Status::error("Connexion au serveur perdue.")),
             ConnEvent::Outdated => {
                 state.outdated = true;
-                reset_to_menu(state, crate::update::NOTICE);
+                reset_to_menu(state, Status::info(crate::update::NOTICE));
             }
         }
     }
@@ -42,12 +43,12 @@ fn on_opened(state: &mut State, recovered: bool) {
     }
 }
 
-fn reset_to_menu(state: &mut State, notice: &str) {
+fn reset_to_menu(state: &mut State, notice: Status) {
     state.session = None;
     state.lobby = None;
     state.rooms.clear();
     state.screen = Screen::Menu;
-    state.notice = notice.to_string();
+    state.notice = notice;
 }
 
 fn lead_ticks(rtt_ms: Option<f32>) -> u32 {
@@ -162,7 +163,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             state.screen = Screen::RoomLobby;
         }
         ServerMessage::JoinFailed { reason } => {
-            state.notice = reason;
+            state.notice = Status::error(reason);
         }
         ServerMessage::GameStart => {
             let slot = state.lobby.as_ref().map_or(1, |l| l.your_slot);

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
+use notan::draw::{CreateDraw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
-use crate::http;
-use crate::menu::Btn;
 use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, State};
+use crate::ui::{text_field, Field, Rect, Status};
+use crate::{http, theme};
 
 fn win_w(app: &mut App) -> f32 {
     app.window().width() as f32
@@ -14,10 +14,32 @@ fn win_h(app: &mut App) -> f32 {
     app.window().height() as f32
 }
 
-fn input_box(cx: f32, y: f32) -> (f32, f32, f32, f32) {
-    let w = 420.0;
-    let h = 50.0;
-    (cx - w / 2.0, y, w, h)
+struct AuthLayout {
+    cx: f32,
+    base_y: f32,
+    tabs: [Rect; 2],
+    username: Rect,
+    password: Rect,
+    submit: Rect,
+    guest: Rect,
+}
+
+fn auth_layout(ww: f32, wh: f32) -> AuthLayout {
+    let cx = ww / 2.0;
+    let base_y = wh / 2.0 - 160.0;
+    let field = |y: f32| Rect::at(cx - 210.0, y, 420.0, 50.0);
+    AuthLayout {
+        cx,
+        base_y,
+        tabs: [
+            Rect::at(cx - 230.0, base_y - 10.0, 220.0, 50.0),
+            Rect::at(cx + 10.0, base_y - 10.0, 220.0, 50.0),
+        ],
+        username: field(base_y + 60.0),
+        password: field(base_y + 140.0),
+        submit: Rect::at(cx - 180.0, base_y + 220.0, 360.0, 56.0),
+        guest: Rect::at(cx - 180.0, base_y + 296.0, 360.0, 50.0),
+    }
 }
 
 fn submit(form: &mut AuthForm) {
@@ -27,7 +49,7 @@ fn submit(form: &mut AuthForm) {
     let username = form.username.trim().to_owned();
     let password = form.password.clone();
     if username.is_empty() || password.is_empty() {
-        form.error = "Remplis tous les champs.".to_owned();
+        form.status = Status::error("Remplis tous les champs.");
         return;
     }
     let body = serde_json::json!({ "username": username, "password": password }).to_string();
@@ -37,7 +59,7 @@ fn submit(form: &mut AuthForm) {
         AuthMode::Register => "register",
     };
     http::post_json(http::api_url(path), body, None, Arc::clone(&slot));
-    form.error.clear();
+    form.status.clear();
     form.pending = Some(slot);
 }
 
@@ -47,7 +69,7 @@ fn poll_auth(state: &mut State) {
     };
     match result {
         Err(e) => {
-            state.auth_form.error = format!("Erreur réseau: {e}");
+            state.auth_form.status = Status::error(format!("Erreur réseau: {e}"));
         }
         Ok(resp) => {
             if resp.status == 200 || resp.status == 201 {
@@ -64,11 +86,11 @@ fn poll_auth(state: &mut State) {
                         state.screen = Screen::Menu;
                     }
                     None => {
-                        state.auth_form.error = "Réponse serveur invalide.".to_owned();
+                        state.auth_form.status = Status::error("Réponse serveur invalide.");
                     }
                 }
             } else {
-                state.auth_form.error = http::error_message(&resp);
+                state.auth_form.status = Status::error(http::error_message(&resp));
             }
         }
     }
@@ -101,9 +123,7 @@ pub fn poll_startup_check(state: &mut State) {
 pub fn update_auth(app: &mut App, state: &mut State) {
     poll_auth(state);
 
-    let (ww, wh) = (win_w(app), win_h(app));
-    let cx = ww / 2.0;
-    let base_y = wh / 2.0 - 160.0;
+    let layout = auth_layout(win_w(app), win_h(app));
 
     if app.keyboard.was_pressed(KeyCode::Backspace) {
         match state.auth_form.focused {
@@ -123,36 +143,25 @@ pub fn update_auth(app: &mut App, state: &mut State) {
         };
     }
 
-    let login_tab = Btn::at(cx - 230.0, base_y - 10.0, 220.0, 50.0);
-    let register_tab = Btn::at(cx + 10.0, base_y - 10.0, 220.0, 50.0);
-    if login_tab.clicked(app) {
-        state.auth_form.mode = AuthMode::Login;
-        state.auth_form.error.clear();
-    }
-    if register_tab.clicked(app) {
-        state.auth_form.mode = AuthMode::Register;
-        state.auth_form.error.clear();
+    for (tab, mode) in layout.tabs.iter().zip([AuthMode::Login, AuthMode::Register]) {
+        if tab.clicked(app) {
+            state.auth_form.mode = mode;
+            state.auth_form.status.clear();
+        }
     }
 
-    let (ux, uy, uw, uh) = input_box(cx, base_y + 60.0);
-    let username_box = Btn::at(ux, uy, uw, uh);
-    if username_box.clicked(app) {
+    if layout.username.clicked(app) {
         state.auth_form.focused = AuthField::Username;
     }
-
-    let (px, py, pw, ph) = input_box(cx, base_y + 140.0);
-    let password_box = Btn::at(px, py, pw, ph);
-    if password_box.clicked(app) {
+    if layout.password.clicked(app) {
         state.auth_form.focused = AuthField::Password;
     }
 
-    let submit_btn = Btn::at(cx - 180.0, base_y + 220.0, 360.0, 56.0);
-    if (submit_btn.clicked(app) || app.keyboard.was_pressed(KeyCode::Enter)) && state.auth_form.pending.is_none() {
+    if (layout.submit.clicked(app) || app.keyboard.was_pressed(KeyCode::Enter)) && state.auth_form.pending.is_none() {
         submit(&mut state.auth_form);
     }
 
-    let guest_btn = Btn::at(cx - 180.0, base_y + 296.0, 360.0, 50.0);
-    if guest_btn.clicked(app) {
+    if layout.guest.clicked(app) {
         state.auth = None;
         state.auth_form = AuthForm::default();
         state.screen = Screen::Menu;
@@ -160,64 +169,58 @@ pub fn update_auth(app: &mut App, state: &mut State) {
 }
 
 pub fn draw_auth(app: &mut App, gfx: &mut Graphics, state: &State) {
-    let (ww, wh) = (app.window().width() as f32, app.window().height() as f32);
-    let cx = ww / 2.0;
-    let base_y = wh / 2.0 - 160.0;
+    let layout = auth_layout(win_w(app), win_h(app));
+    let AuthLayout { cx, base_y, .. } = layout;
 
     let mut draw = gfx.create_draw();
-    draw.clear(Color::from_rgb(0.05, 0.05, 0.08));
+    draw.clear(theme::BACKGROUND);
 
     draw.text(&state.font, "ROUILLO")
         .position(cx, base_y - 80.0)
         .size(64.0)
         .h_align_center()
         .v_align_middle()
-        .color(Color::from_rgb(0.9, 0.7, 1.0));
+        .color(theme::TITLE);
 
     let modes = [("Connexion", AuthMode::Login), ("Inscription", AuthMode::Register)];
-    for (i, (label, mode)) in modes.iter().enumerate() {
-        let x = cx - 230.0 + i as f32 * 240.0;
-        let active = state.auth_form.mode == *mode;
-        let bg = if active {
-            Color::from_rgb(0.28, 0.30, 0.42)
-        } else {
-            Color::from_rgb(0.12, 0.12, 0.18)
-        };
-        let border = if active {
-            Color::from_rgb(0.6, 0.5, 0.9)
-        } else {
-            Color::from_rgb(0.3, 0.3, 0.4)
-        };
-        draw.rect((x, base_y - 10.0), (220.0, 50.0)).color(bg);
-        draw.rect((x, base_y - 10.0), (220.0, 50.0)).stroke(2.0).color(border);
+    for (tab, (label, mode)) in layout.tabs.iter().zip(modes) {
+        let active = state.auth_form.mode == mode;
+        let bg = if active { theme::RAISED_HOVER } else { theme::SURFACE };
+        let border = if active { theme::ACCENT } else { theme::BORDER };
+        draw.rect((tab.x, tab.y), (tab.w, tab.h))
+            .corner_radius(theme::RADIUS)
+            .color(bg);
+        draw.rect((tab.x, tab.y), (tab.w, tab.h))
+            .corner_radius(theme::RADIUS)
+            .stroke(2.0)
+            .color(border);
         draw.text(&state.font, label)
-            .position(x + 110.0, base_y + 15.0)
+            .position(tab.x + tab.w / 2.0, tab.y + tab.h / 2.0)
             .size(24.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::WHITE);
+            .color(theme::TEXT);
     }
 
-    draw_input_field(
-        &mut draw,
-        &state.font,
-        cx,
-        base_y + 60.0,
-        "Nom d'utilisateur",
-        &state.auth_form.username,
-        false,
-        state.auth_form.focused == AuthField::Username,
-    );
-    draw_input_field(
-        &mut draw,
-        &state.font,
-        cx,
-        base_y + 140.0,
-        "Mot de passe",
-        &state.auth_form.password,
-        true,
-        state.auth_form.focused == AuthField::Password,
-    );
+    let form = &state.auth_form;
+    let fields = [
+        (
+            layout.username,
+            "Nom d'utilisateur",
+            &form.username,
+            AuthField::Username,
+        ),
+        (layout.password, "Mot de passe", &form.password, AuthField::Password),
+    ];
+    for (rect, placeholder, value, which) in fields {
+        let field = Field {
+            placeholder,
+            value,
+            focused: form.focused == which,
+            secret: which == AuthField::Password,
+        };
+        text_field(&mut draw, &state.font, rect, &field);
+    }
 
     let loading = state.auth_form.pending.is_some();
     let submit_label = if loading {
@@ -228,59 +231,19 @@ pub fn draw_auth(app: &mut App, gfx: &mut Graphics, state: &State) {
             AuthMode::Register => "S'inscrire",
         }
     };
-    let submit_btn = Btn::at(cx - 180.0, base_y + 220.0, 360.0, 56.0);
-    submit_btn.draw_styled(&mut draw, app, &state.font, submit_label, !loading);
+    state
+        .ui
+        .button_enabled(&mut draw, &state.font, layout.submit, submit_label, !loading);
+    state.ui.button(&mut draw, &state.font, layout.guest, "Jouer en invité");
 
-    let guest_btn = Btn::at(cx - 180.0, base_y + 296.0, 360.0, 50.0);
-    guest_btn.draw(&mut draw, app, &state.font, "Jouer en invité");
-
-    if !state.auth_form.error.is_empty() {
-        draw.text(&state.font, &state.auth_form.error)
+    if let Some((msg, color)) = state.auth_form.status.shown() {
+        draw.text(&state.font, msg)
             .position(cx, base_y + 370.0)
             .size(20.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::from_rgb(0.9, 0.3, 0.3));
+            .color(color);
     }
 
     gfx.render(&draw);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_input_field(
-    draw: &mut Draw,
-    font: &crate::Font,
-    cx: f32,
-    y: f32,
-    placeholder: &str,
-    value: &str,
-    secret: bool,
-    focused: bool,
-) {
-    let w = 420.0;
-    let h = 50.0;
-    let x = cx - w / 2.0;
-
-    let border_color = if focused {
-        Color::from_rgb(0.6, 0.5, 0.9)
-    } else {
-        Color::from_rgb(0.35, 0.37, 0.5)
-    };
-
-    draw.rect((x, y), (w, h)).color(Color::from_rgb(0.12, 0.13, 0.20));
-    draw.rect((x, y), (w, h)).stroke(2.0).color(border_color);
-
-    let (shown, col) = if value.is_empty() {
-        (placeholder.to_owned(), Color::from_rgb(0.45, 0.45, 0.55))
-    } else if secret {
-        ("*".repeat(value.chars().count()), Color::WHITE)
-    } else {
-        (value.to_owned(), Color::WHITE)
-    };
-
-    draw.text(font, &shown)
-        .position(x + 14.0, y + h / 2.0)
-        .size(24.0)
-        .v_align_middle()
-        .color(col);
 }

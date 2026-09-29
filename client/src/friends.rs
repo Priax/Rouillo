@@ -3,9 +3,9 @@ use std::sync::Arc;
 use notan::draw::{CreateDraw, Draw, DrawShapes, DrawTextSection};
 use notan::prelude::*;
 
-use crate::http;
-use crate::menu::{draw_text_box, Btn};
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
+use crate::ui::{text_field, Field, Rect, Status, Ui};
+use crate::{http, theme};
 
 const SEARCH_Y: f32 = 112.0;
 const SEARCH_RESULT_Y: f32 = 168.0;
@@ -27,12 +27,16 @@ fn col_x(ww: f32, col: usize) -> f32 {
     margin + col as f32 * (COL_W + COL_GAP)
 }
 
-fn search_submit_btn(ww: f32) -> Btn {
-    Btn::at(ww / 2.0 + 155.0, SEARCH_Y, 160.0, 44.0)
+fn search_box(ww: f32) -> Rect {
+    Rect::at(ww / 2.0 - 280.0, SEARCH_Y, 430.0, 44.0)
 }
 
-fn result_add_btn(ww: f32, row: usize) -> Btn {
-    Btn::at(
+fn search_submit_btn(ww: f32) -> Rect {
+    Rect::at(ww / 2.0 + 155.0, SEARCH_Y, 160.0, 44.0)
+}
+
+fn result_add_btn(ww: f32, row: usize) -> Rect {
+    Rect::at(
         ww / 2.0 + 110.0,
         SEARCH_RESULT_Y + row as f32 * RESULT_ROW_H + 5.0,
         120.0,
@@ -40,8 +44,8 @@ fn result_add_btn(ww: f32, row: usize) -> Btn {
     )
 }
 
-fn result_view_btn(ww: f32, row: usize) -> Btn {
-    Btn::at(
+fn result_view_btn(ww: f32, row: usize) -> Rect {
+    Rect::at(
         ww / 2.0 + 235.0,
         SEARCH_RESULT_Y + row as f32 * RESULT_ROW_H + 5.0,
         115.0,
@@ -49,8 +53,8 @@ fn result_view_btn(ww: f32, row: usize) -> Btn {
     )
 }
 
-fn remove_btn(ww: f32, col: usize, row: usize) -> Btn {
-    Btn::at(
+fn remove_btn(ww: f32, col: usize, row: usize) -> Rect {
+    Rect::at(
         col_x(ww, col) + COL_W - 114.0,
         LIST_Y + row as f32 * ROW_H + 8.0,
         110.0,
@@ -58,8 +62,8 @@ fn remove_btn(ww: f32, col: usize, row: usize) -> Btn {
     )
 }
 
-fn accept_btn(ww: f32, row: usize) -> Btn {
-    Btn::at(
+fn accept_btn(ww: f32, row: usize) -> Rect {
+    Rect::at(
         col_x(ww, 1) + COL_W - 238.0,
         LIST_Y + row as f32 * ROW_H + 8.0,
         120.0,
@@ -67,8 +71,8 @@ fn accept_btn(ww: f32, row: usize) -> Btn {
     )
 }
 
-fn reject_btn(ww: f32, row: usize) -> Btn {
-    Btn::at(
+fn reject_btn(ww: f32, row: usize) -> Rect {
+    Rect::at(
         col_x(ww, 1) + COL_W - 114.0,
         LIST_Y + row as f32 * ROW_H + 8.0,
         110.0,
@@ -76,8 +80,8 @@ fn reject_btn(ww: f32, row: usize) -> Btn {
     )
 }
 
-fn confirm_yes_btn(ww: f32, row: usize) -> Btn {
-    Btn::at(
+fn confirm_yes_btn(ww: f32, row: usize) -> Rect {
+    Rect::at(
         col_x(ww, 0) + COL_W - 112.0,
         LIST_Y + row as f32 * ROW_H + 8.0,
         52.0,
@@ -85,8 +89,8 @@ fn confirm_yes_btn(ww: f32, row: usize) -> Btn {
     )
 }
 
-fn confirm_no_btn(ww: f32, row: usize) -> Btn {
-    Btn::at(
+fn confirm_no_btn(ww: f32, row: usize) -> Rect {
+    Rect::at(
         col_x(ww, 0) + COL_W - 56.0,
         LIST_Y + row as f32 * ROW_H + 8.0,
         52.0,
@@ -94,12 +98,12 @@ fn confirm_no_btn(ww: f32, row: usize) -> Btn {
     )
 }
 
-fn back_btn(wh: f32) -> Btn {
-    Btn::at(40.0, wh - 80.0, 200.0, 54.0)
+fn back_btn(wh: f32) -> Rect {
+    Rect::at(40.0, wh - 80.0, 200.0, 54.0)
 }
 
-fn refresh_btn(wh: f32) -> Btn {
-    Btn::at(254.0, wh - 80.0, 160.0, 54.0)
+fn refresh_btn(wh: f32) -> Rect {
+    Rect::at(254.0, wh - 80.0, 160.0, 54.0)
 }
 
 pub fn enter_friends(state: &mut State) {
@@ -114,13 +118,12 @@ pub fn enter_friends(state: &mut State) {
         search_input: String::new(),
         search_results: Vec::new(),
         search_slot: None,
-        search_error: String::new(),
+        search_status: Status::Empty,
         add_pending: None,
-        add_error: String::new(),
-        add_success: false,
+        add_status: Status::Empty,
         confirm_remove: None,
         action_pending: None,
-        action_error: String::new(),
+        action_status: Status::Empty,
     });
 }
 
@@ -157,7 +160,7 @@ fn try_search(state: &mut State) {
         .unwrap_or_default();
     if q.len() < 2 {
         if let Some(f) = state.friends.as_mut() {
-            f.search_error = "Saisir au moins 2 caractères.".to_owned();
+            f.search_status = Status::info("Saisir au moins 2 caractères.");
             f.search_results.clear();
         }
         return;
@@ -172,7 +175,7 @@ fn try_search(state: &mut State) {
     );
     if let Some(f) = state.friends.as_mut() {
         f.search_slot = Some(slot);
-        f.search_error.clear();
+        f.search_status.clear();
         f.search_results.clear();
     }
 }
@@ -188,7 +191,7 @@ fn send_add_request(state: &mut State, user_id: &str) {
     http::post_json(http::api_url("friends"), body, token, Arc::clone(&slot));
     if let Some(f) = state.friends.as_mut() {
         f.add_pending = Some(slot);
-        f.add_error.clear();
+        f.add_status.clear();
     }
 }
 
@@ -214,13 +217,13 @@ fn poll_search(state: &mut State) {
         Ok(resp) if resp.status == 200 => {
             if let Some(entries) = http::json::<Vec<UserSearchEntry>>(&resp) {
                 if entries.is_empty() {
-                    f.search_error = "Aucun résultat.".to_owned();
+                    f.search_status = Status::info("Aucun résultat.");
                 }
                 f.search_results = entries;
             }
         }
-        Ok(resp) => f.search_error = format!("Erreur {}", resp.status),
-        Err(e) => f.search_error = format!("Erreur réseau: {e}"),
+        Ok(resp) => f.search_status = Status::error(format!("Erreur {}", resp.status)),
+        Err(e) => f.search_status = Status::error(format!("Erreur réseau: {e}")),
     }
 }
 
@@ -231,18 +234,15 @@ fn poll_add(state: &mut State) {
     };
     let refresh = match result {
         Ok(resp) if resp.status == 201 => {
-            f.add_error = "Demande envoyée !".to_owned();
-            f.add_success = true;
+            f.add_status = Status::success("Demande envoyée !");
             true
         }
         Ok(resp) => {
-            f.add_error = http::error_message(&resp);
-            f.add_success = false;
+            f.add_status = Status::error(http::error_message(&resp));
             false
         }
         Err(e) => {
-            f.add_error = format!("Erreur réseau: {e}");
-            f.add_success = false;
+            f.add_status = Status::error(format!("Erreur réseau: {e}"));
             false
         }
     };
@@ -258,15 +258,15 @@ fn poll_action(state: &mut State) {
     };
     let refresh = match result {
         Ok(resp) if resp.status < 300 => {
-            f.action_error.clear();
+            f.action_status.clear();
             true
         }
         Ok(resp) => {
-            f.action_error = http::error_message(&resp);
+            f.action_status = Status::error(http::error_message(&resp));
             true
         }
         Err(e) => {
-            f.action_error = format!("Erreur réseau: {e}");
+            f.action_status = Status::error(format!("Erreur réseau: {e}"));
             false
         }
     };
@@ -319,128 +319,109 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         return;
     }
 
-    let can_refresh = state
-        .friends
-        .as_ref()
-        .is_some_and(|f| f.list_slot.is_none() && f.action_pending.is_none());
-    if can_refresh && refresh_btn(wh).clicked(app) {
+    if state.friends.as_ref().is_some_and(can_refresh) && refresh_btn(wh).clicked(app) {
         refresh_list(state);
     }
 
-    let view_target: Option<(String, String)> = 'detect: {
-        let Some(f) = &state.friends else {
-            break 'detect None;
-        };
-        for (i, e) in f.search_results.iter().take(MAX_SEARCH_RESULTS).enumerate() {
-            if result_view_btn(ww, i).clicked(app) {
-                break 'detect Some((e.user_id.clone(), e.username.clone()));
-            }
-        }
-        None
+    let Some(f) = &state.friends else {
+        return;
     };
-    if let Some((uid, uname)) = view_target {
+    if let Some((uid, uname)) = clicked_profile(f, app, ww) {
         crate::profile::enter_other_profile(state, uid, uname, Screen::Friends);
         state.screen = Screen::OtherProfile;
         return;
     }
-
-    let add_target: Option<String> = 'detect: {
-        let Some(f) = &state.friends else {
-            break 'detect None;
-        };
-        if f.add_pending.is_some() {
-            break 'detect None;
-        }
-        for (i, e) in f.search_results.iter().take(MAX_SEARCH_RESULTS).enumerate() {
-            if result_add_btn(ww, i).clicked(app) && !f.friends.iter().any(|fr| fr.user_id == e.user_id) {
-                break 'detect Some(e.user_id.clone());
-            }
-        }
-        None
-    };
-    if let Some(uid) = add_target {
+    let add = clicked_add(f, app, ww);
+    let action = clicked_action(f, app, ww);
+    if let Some(uid) = add {
         send_add_request(state, &uid);
     }
-
-    let action: Option<FriendAction> = 'detect: {
-        let Some(f) = &state.friends else {
-            break 'detect None;
-        };
-        if f.action_pending.is_some() {
-            break 'detect None;
-        }
-
-        if let Some(confirm_id) = &f.confirm_remove {
-            let confirm_row = f
-                .friends
-                .iter()
-                .take(MAX_ROWS)
-                .enumerate()
-                .find(|(_, e)| &e.user_id == confirm_id)
-                .map(|(i, _)| i);
-            if let Some(row) = confirm_row {
-                if confirm_yes_btn(ww, row).clicked(app) {
-                    break 'detect Some(FriendAction::ConfirmRemove(confirm_id.clone()));
-                }
-                if confirm_no_btn(ww, row).clicked(app) {
-                    break 'detect Some(FriendAction::CancelRemove);
-                }
-            }
-            break 'detect None;
-        }
-
-        for (i, e) in f.friends.iter().take(MAX_ROWS).enumerate() {
-            if remove_btn(ww, 0, i).clicked(app) {
-                break 'detect Some(FriendAction::StartRemove(e.user_id.clone()));
-            }
-        }
-        for (i, e) in f.received.iter().take(MAX_ROWS).enumerate() {
-            if accept_btn(ww, i).clicked(app) {
-                break 'detect Some(FriendAction::Accept(e.user_id.clone()));
-            }
-            if reject_btn(ww, i).clicked(app) {
-                break 'detect Some(FriendAction::Reject(e.user_id.clone()));
-            }
-        }
-        for (i, e) in f.sent.iter().take(MAX_ROWS).enumerate() {
-            if remove_btn(ww, 2, i).clicked(app) {
-                break 'detect Some(FriendAction::Cancel(e.user_id.clone()));
-            }
-        }
-        None
-    };
-
     if let Some(action) = action {
-        match action {
-            FriendAction::StartRemove(id) => {
-                if let Some(f) = state.friends.as_mut() {
-                    f.confirm_remove = Some(id);
-                }
-            }
-            FriendAction::CancelRemove => {
-                if let Some(f) = state.friends.as_mut() {
-                    f.confirm_remove = None;
-                }
-            }
-            FriendAction::ConfirmRemove(id) | FriendAction::Reject(id) | FriendAction::Cancel(id) => {
-                let token = state.auth.as_ref().map(|a| a.token.clone());
-                let slot = http::new_slot();
-                http::delete_req(http::api_url(&format!("friends/{id}")), token, Arc::clone(&slot));
-                if let Some(f) = state.friends.as_mut() {
-                    f.action_pending = Some(slot);
-                    f.action_error.clear();
-                    f.confirm_remove = None;
-                }
-            }
-            FriendAction::Accept(id) => {
-                let token = state.auth.as_ref().map(|a| a.token.clone());
-                let slot = http::new_slot();
-                http::post_empty(http::api_url(&format!("friends/{id}/accept")), token, Arc::clone(&slot));
-                if let Some(f) = state.friends.as_mut() {
-                    f.action_pending = Some(slot);
-                    f.action_error.clear();
-                }
-            }
+        apply_action(state, action);
+    }
+}
+
+fn can_refresh(f: &FriendsData) -> bool {
+    f.list_slot.is_none() && f.action_pending.is_none()
+}
+
+fn clicked_profile(f: &FriendsData, app: &App, ww: f32) -> Option<(String, String)> {
+    let (_, e) = f
+        .search_results
+        .iter()
+        .take(MAX_SEARCH_RESULTS)
+        .enumerate()
+        .find(|&(i, _)| result_view_btn(ww, i).clicked(app))?;
+    Some((e.user_id.clone(), e.username.clone()))
+}
+
+fn clicked_add(f: &FriendsData, app: &App, ww: f32) -> Option<String> {
+    if f.add_pending.is_some() {
+        return None;
+    }
+    f.search_results
+        .iter()
+        .take(MAX_SEARCH_RESULTS)
+        .enumerate()
+        .find(|&(i, e)| result_add_btn(ww, i).clicked(app) && !f.friends.iter().any(|fr| fr.user_id == e.user_id))
+        .map(|(_, e)| e.user_id.clone())
+}
+
+fn clicked_action(f: &FriendsData, app: &App, ww: f32) -> Option<FriendAction> {
+    if f.action_pending.is_some() {
+        return None;
+    }
+    if let Some(confirm_id) = &f.confirm_remove {
+        let row = f.friends.iter().take(MAX_ROWS).position(|e| &e.user_id == confirm_id)?;
+        if confirm_yes_btn(ww, row).clicked(app) {
+            return Some(FriendAction::ConfirmRemove(confirm_id.clone()));
+        }
+        if confirm_no_btn(ww, row).clicked(app) {
+            return Some(FriendAction::CancelRemove);
+        }
+        return None;
+    }
+    for (i, e) in f.friends.iter().take(MAX_ROWS).enumerate() {
+        if remove_btn(ww, 0, i).clicked(app) {
+            return Some(FriendAction::StartRemove(e.user_id.clone()));
+        }
+    }
+    for (i, e) in f.received.iter().take(MAX_ROWS).enumerate() {
+        if accept_btn(ww, i).clicked(app) {
+            return Some(FriendAction::Accept(e.user_id.clone()));
+        }
+        if reject_btn(ww, i).clicked(app) {
+            return Some(FriendAction::Reject(e.user_id.clone()));
+        }
+    }
+    for (i, e) in f.sent.iter().take(MAX_ROWS).enumerate() {
+        if remove_btn(ww, 2, i).clicked(app) {
+            return Some(FriendAction::Cancel(e.user_id.clone()));
+        }
+    }
+    None
+}
+
+fn apply_action(state: &mut State, action: FriendAction) {
+    let token = state.auth.as_ref().map(|a| a.token.clone());
+    let Some(f) = state.friends.as_mut() else {
+        return;
+    };
+    match action {
+        FriendAction::StartRemove(id) => f.confirm_remove = Some(id),
+        FriendAction::CancelRemove => f.confirm_remove = None,
+        FriendAction::ConfirmRemove(id) | FriendAction::Reject(id) | FriendAction::Cancel(id) => {
+            let slot = http::new_slot();
+            http::delete_req(http::api_url(&format!("friends/{id}")), token, Arc::clone(&slot));
+            f.action_pending = Some(slot);
+            f.action_status.clear();
+            f.confirm_remove = None;
+        }
+        FriendAction::Accept(id) => {
+            let slot = http::new_slot();
+            http::post_empty(http::api_url(&format!("friends/{id}/accept")), token, Arc::clone(&slot));
+            f.action_pending = Some(slot);
+            f.action_status.clear();
         }
     }
 }
@@ -448,243 +429,194 @@ pub fn update_friends(app: &mut App, state: &mut State) {
 pub fn draw_friends(app: &mut App, gfx: &mut Graphics, state: &State) {
     let ww = app.window().width() as f32;
     let wh = app.window().height() as f32;
-    let cx = ww / 2.0;
 
     let mut draw = gfx.create_draw();
-    draw.clear(Color::from_rgb(0.05, 0.05, 0.08));
-
+    draw.clear(theme::BACKGROUND);
     draw.text(&state.font, "Amis")
-        .position(cx, 58.0)
+        .position(ww / 2.0, 58.0)
         .size(52.0)
         .h_align_center()
         .v_align_middle()
-        .color(Color::from_rgb(0.9, 0.7, 1.0));
+        .color(theme::TITLE);
 
-    let Some(f) = &state.friends else {
-        gfx.render(&draw);
-        return;
-    };
+    if let Some(f) = &state.friends {
+        draw_search(&mut draw, &state.ui, &state.font, f, ww);
+        draw_lists(&mut draw, &state.ui, &state.font, f, ww);
 
-    draw.text(&state.font, "Rechercher un ami :")
-        .position(ww / 2.0 - 280.0, 96.0)
+        state.ui.button(&mut draw, &state.font, back_btn(wh), "Retour");
+        let label = if f.list_slot.is_some() { "..." } else { "Rafraîchir" };
+        state
+            .ui
+            .button_enabled(&mut draw, &state.font, refresh_btn(wh), label, can_refresh(f));
+    }
+    gfx.render(&draw);
+}
+
+fn draw_search(draw: &mut Draw, ui: &Ui, font: &crate::Font, f: &FriendsData, ww: f32) {
+    let field = search_box(ww);
+    draw.text(font, "Rechercher un ami:")
+        .position(field.x, 96.0)
         .size(17.0)
         .v_align_middle()
-        .color(Color::from_rgb(0.65, 0.65, 0.80));
+        .color(theme::TEXT_DIM);
 
     let searching = f.search_slot.is_some();
-    draw_text_box(
-        &mut draw,
-        &state.font,
-        ww / 2.0 - 280.0,
-        SEARCH_Y,
-        430.0,
-        44.0,
-        "Pseudo ou UUID",
-        &f.search_input,
-        true,
-    );
-    search_submit_btn(ww).draw_styled(
-        &mut draw,
-        app,
-        &state.font,
+    let search = Field {
+        placeholder: "Pseudo ou UUID",
+        value: &f.search_input,
+        focused: true,
+        secret: false,
+    };
+    text_field(draw, font, field, &search);
+    ui.button_enabled(
+        draw,
+        font,
+        search_submit_btn(ww),
         if searching { "..." } else { "Rechercher" },
         !searching,
     );
 
-    if !f.search_results.is_empty() {
-        for (i, e) in f.search_results.iter().take(MAX_SEARCH_RESULTS).enumerate() {
-            let y = SEARCH_RESULT_Y + i as f32 * RESULT_ROW_H;
-            let bg = if i % 2 == 0 {
-                Color::from_rgba(0.12, 0.12, 0.20, 0.9)
-            } else {
-                Color::from_rgba(0.09, 0.09, 0.15, 0.9)
-            };
-            draw.rect((ww / 2.0 - 280.0, y), (600.0, RESULT_ROW_H - 2.0)).color(bg);
-            draw.text(&state.font, &e.username)
-                .position(ww / 2.0 - 268.0, y + RESULT_ROW_H / 2.0)
-                .size(20.0)
+    if f.search_results.is_empty() {
+        if let Some((msg, color)) = f.search_status.shown() {
+            draw.text(font, msg)
+                .position(field.x, SEARCH_RESULT_Y + 16.0)
+                .size(18.0)
                 .v_align_middle()
-                .color(Color::WHITE);
-            draw.text(&state.font, &format!("ELO {}", e.elo))
-                .position(ww / 2.0 - 110.0, y + RESULT_ROW_H / 2.0)
-                .size(17.0)
-                .v_align_middle()
-                .color(Color::YELLOW);
-            let adding = f.add_pending.is_some();
-            let already_friend = f.friends.iter().any(|fr| fr.user_id == e.user_id);
-            if !already_friend {
-                result_add_btn(ww, i).draw_styled(&mut draw, app, &state.font, "Ajouter", !adding);
-            }
-            result_view_btn(ww, i).draw(&mut draw, app, &state.font, "Profil");
+                .color(color);
         }
-    } else if !f.search_error.is_empty() {
-        let color = if f.search_error.starts_with("Erreur") {
-            Color::from_rgb(0.9, 0.4, 0.4)
-        } else {
-            Color::GRAY
-        };
-        draw.text(&state.font, &f.search_error)
-            .position(ww / 2.0 - 280.0, SEARCH_RESULT_Y + 16.0)
-            .size(18.0)
+    }
+    let adding = f.add_pending.is_some();
+    for (i, e) in f.search_results.iter().take(MAX_SEARCH_RESULTS).enumerate() {
+        let y = SEARCH_RESULT_Y + i as f32 * RESULT_ROW_H;
+        let bg = if i % 2 == 0 { theme::SURFACE } else { theme::SURFACE_ALT };
+        draw.rect((field.x, y), (600.0, RESULT_ROW_H - 2.0)).color(bg);
+        draw.text(font, &e.username)
+            .position(field.x + 12.0, y + RESULT_ROW_H / 2.0)
+            .size(20.0)
             .v_align_middle()
-            .color(color);
+            .color(theme::TEXT);
+        draw.text(font, &format!("ELO {}", e.elo))
+            .position(field.x + 170.0, y + RESULT_ROW_H / 2.0)
+            .size(17.0)
+            .v_align_middle()
+            .color(theme::GOLD);
+        if !f.friends.iter().any(|fr| fr.user_id == e.user_id) {
+            ui.button_enabled(draw, font, result_add_btn(ww, i), "Ajouter", !adding);
+        }
+        ui.button(draw, font, result_view_btn(ww, i), "Profil");
     }
 
-    if !f.add_error.is_empty() {
-        draw.text(&state.font, &f.add_error)
-            .position(cx, ADD_ERROR_Y)
+    if let Some((msg, color)) = f.add_status.shown() {
+        draw.text(font, msg)
+            .position(ww / 2.0, ADD_ERROR_Y)
             .size(17.0)
             .h_align_center()
             .v_align_middle()
-            .color(if f.add_success {
-                Color::from_rgb(0.4, 0.9, 0.4)
-            } else {
-                Color::from_rgb(0.9, 0.4, 0.4)
-            });
+            .color(color);
     }
+}
 
+fn draw_lists(draw: &mut Draw, ui: &Ui, font: &crate::Font, f: &FriendsData, ww: f32) {
     draw.rect((40.0, COL_HEADER_Y - 12.0), (ww - 80.0, 1.0))
-        .color(Color::from_rgb(0.2, 0.2, 0.3));
-
+        .color(theme::DIVIDER);
     let headers = ["Amis", "Demandes reçues", "Envoyées"];
     for (col, header) in headers.iter().enumerate() {
-        let hx = col_x(ww, col) + COL_W / 2.0;
-        draw.text(&state.font, header)
-            .position(hx, COL_HEADER_Y)
+        draw.text(font, header)
+            .position(col_x(ww, col) + COL_W / 2.0, COL_HEADER_Y)
             .size(20.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::from_rgb(0.7, 0.7, 0.9));
+            .color(theme::TEXT_DIM);
         draw.rect((col_x(ww, col), COL_HEADER_Y + 12.0), (COL_W, 1.0))
-            .color(Color::from_rgb(0.3, 0.3, 0.45));
+            .color(theme::DIVIDER);
     }
 
-    let loading = f.list_slot.is_some();
-    let busy = f.action_pending.is_some();
-
-    if loading {
-        draw.text(&state.font, "Chargement...")
-            .position(cx, LIST_Y + 16.0)
+    if f.list_slot.is_some() {
+        draw.text(font, "Chargement...")
+            .position(ww / 2.0, LIST_Y + 16.0)
             .size(20.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::GRAY);
+            .color(theme::TEXT_MUTED);
     } else {
-        let confirm = f.confirm_remove.clone();
-
+        let busy = f.action_pending.is_some();
+        let confirm = f.confirm_remove.as_deref();
         draw_col(
-            &mut draw,
-            app,
-            &state.font,
-            ww,
-            0,
+            draw,
+            font,
+            col_x(ww, 0),
             &f.friends,
-            busy,
             "Aucun ami pour l'instant",
-            |draw, app, font, entry, i, busy| {
-                if confirm.as_deref() == Some(entry.user_id.as_str()) {
-                    confirm_yes_btn(ww, i).draw_styled(draw, app, font, "Oui", !busy);
-                    confirm_no_btn(ww, i).draw(draw, app, font, "Non");
+            |draw, font, entry, i| {
+                if confirm == Some(entry.user_id.as_str()) {
+                    ui.button_enabled(draw, font, confirm_yes_btn(ww, i), "Oui", !busy);
+                    ui.button(draw, font, confirm_no_btn(ww, i), "Non");
                 } else {
                     let active = !busy && confirm.is_none();
-                    remove_btn(ww, 0, i).draw_styled(draw, app, font, "Retirer", active);
+                    ui.button_enabled(draw, font, remove_btn(ww, 0, i), "Retirer", active);
                 }
             },
         );
-
         draw_col(
-            &mut draw,
-            app,
-            &state.font,
-            ww,
-            1,
+            draw,
+            font,
+            col_x(ww, 1),
             &f.received,
-            busy,
             "Aucune demande reçue",
-            |draw, app, font, _, i, busy| {
-                accept_btn(ww, i).draw_styled(draw, app, font, "Accepter", !busy);
-                reject_btn(ww, i).draw_styled(draw, app, font, "Refuser", !busy);
+            |draw, font, _, i| {
+                ui.button_enabled(draw, font, accept_btn(ww, i), "Accepter", !busy);
+                ui.button_enabled(draw, font, reject_btn(ww, i), "Refuser", !busy);
             },
         );
-
         draw_col(
-            &mut draw,
-            app,
-            &state.font,
-            ww,
-            2,
+            draw,
+            font,
+            col_x(ww, 2),
             &f.sent,
-            busy,
             "Aucune demande envoyée",
-            |draw, app, font, _, i, busy| {
-                remove_btn(ww, 2, i).draw_styled(draw, app, font, "Annuler", !busy);
+            |draw, font, _, i| {
+                ui.button_enabled(draw, font, remove_btn(ww, 2, i), "Annuler", !busy);
             },
         );
     }
 
-    if !f.action_error.is_empty() {
-        draw.text(&state.font, &f.action_error)
-            .position(cx, LIST_Y + MAX_ROWS as f32 * ROW_H + 18.0)
+    if let Some((msg, color)) = f.action_status.shown() {
+        draw.text(font, msg)
+            .position(ww / 2.0, LIST_Y + MAX_ROWS as f32 * ROW_H + 18.0)
             .size(16.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::from_rgb(0.9, 0.4, 0.4));
+            .color(color);
     }
-
-    back_btn(wh).draw(&mut draw, app, &state.font, "Retour");
-    let loading = f.list_slot.is_some();
-    refresh_btn(wh).draw_styled(
-        &mut draw,
-        app,
-        &state.font,
-        if loading { "..." } else { "Rafraîchir" },
-        !loading,
-    );
-    gfx.render(&draw);
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_col<F>(
-    draw: &mut Draw,
-    app: &App,
-    font: &crate::Font,
-    ww: f32,
-    col: usize,
-    list: &[FriendEntry],
-    busy: bool,
-    empty_msg: &str,
-    draw_buttons: F,
-) where
-    F: Fn(&mut Draw, &App, &crate::Font, &FriendEntry, usize, bool),
+fn draw_col<F>(draw: &mut Draw, font: &crate::Font, x: f32, list: &[FriendEntry], empty_msg: &str, draw_buttons: F)
+where
+    F: Fn(&mut Draw, &crate::Font, &FriendEntry, usize),
 {
     if list.is_empty() {
         draw.text(font, empty_msg)
-            .position(col_x(ww, col) + COL_W / 2.0, LIST_Y + 18.0)
+            .position(x + COL_W / 2.0, LIST_Y + 18.0)
             .size(16.0)
             .h_align_center()
             .v_align_middle()
-            .color(Color::from_rgb(0.4, 0.4, 0.5));
+            .color(theme::TEXT_MUTED);
         return;
     }
     for (i, e) in list.iter().take(MAX_ROWS).enumerate() {
-        let x = col_x(ww, col);
         let y = LIST_Y + i as f32 * ROW_H;
-        let bg = if i % 2 == 0 {
-            Color::from_rgba(0.12, 0.12, 0.18, 0.8)
-        } else {
-            Color::from_rgba(0.09, 0.09, 0.14, 0.8)
-        };
+        let bg = if i % 2 == 0 { theme::SURFACE } else { theme::SURFACE_ALT };
         draw.rect((x, y), (COL_W, ROW_H - 3.0)).color(bg);
         draw.text(font, &e.username)
             .position(x + 10.0, y + ROW_H / 2.0 - 8.0)
             .size(19.0)
             .v_align_middle()
-            .color(Color::WHITE);
+            .color(theme::TEXT);
         draw.text(font, &format!("ELO {}", e.elo))
             .position(x + 10.0, y + ROW_H / 2.0 + 10.0)
             .size(14.0)
             .v_align_middle()
-            .color(Color::YELLOW);
-        draw_buttons(draw, app, font, e, i, busy);
+            .color(theme::GOLD);
+        draw_buttons(draw, font, e, i);
     }
 }

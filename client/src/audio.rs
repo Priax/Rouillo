@@ -1,7 +1,3 @@
-//! Sound effects: short synthesised tones, no audio files. The browser build
-//! plays them through Web Audio, the native build through rodio; both shape
-//! them the same way, a waveform whose volume falls linearly to silence.
-
 #[derive(Clone, Copy)]
 enum Wave {
     Sine,
@@ -40,7 +36,7 @@ mod imp {
             Wave::Sawtooth => OscillatorType::Sawtooth,
         };
         with_ctx(|ctx| {
-            let _ = ctx.resume(); // re-wake after tab backgrounding
+            let _ = ctx.resume();
             let Ok(osc) = ctx.create_oscillator() else {
                 return;
             };
@@ -74,14 +70,9 @@ mod imp {
     const RATE: u32 = 48_000;
 
     thread_local! {
-        /// The output device, opened on the first sound. `Some(None)` once
-        /// opening has failed (no sound card, no audio server): the game
-        /// then plays silently rather than retrying on every sound.
         static SINK: RefCell<Option<Option<MixerDeviceSink>>> = const { RefCell::new(None) };
     }
 
-    /// One tone, generated sample by sample, with the same shape as the Web
-    /// Audio version: `peak_gain` falling linearly to 0 over its duration.
     struct Tone {
         wave: Wave,
         freq: f32,
@@ -135,8 +126,6 @@ mod imp {
     }
 
     pub fn play(freq: f32, duration: f64, wave: Wave, peak_gain: f32) {
-        // Tests go through code that plays sounds; they must not open the
-        // sound card, nor beep at whoever runs them.
         if cfg!(test) {
             return;
         }
@@ -183,6 +172,15 @@ pub fn play_pop(chain: u32) {
 
 pub fn play_garbage() {
     play(65.0, 0.22, Wave::Sawtooth, 0.20);
+}
+
+/// The pointer arriving over a button: a faint, high tick.
+pub fn play_ui_hover() {
+    play(1400.0, 0.03, Wave::Sine, 0.04);
+}
+
+pub fn play_ui_click() {
+    play(700.0, 0.07, Wave::Sine, 0.12);
 }
 
 pub fn play_all_clear() {

@@ -3,6 +3,7 @@ use shared::{config, Board, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, Stampe
 
 use crate::connection::Connection;
 use crate::interp::OpponentView;
+use crate::ui::Status;
 use crate::Font;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -48,7 +49,7 @@ pub struct AuthForm {
     pub password: String,
     pub focused: AuthField,
     pub mode: AuthMode,
-    pub error: String,
+    pub status: Status,
     pub pending: Option<HttpSlot>,
 }
 
@@ -59,7 +60,7 @@ impl Default for AuthForm {
             password: String::new(),
             focused: AuthField::Username,
             mode: AuthMode::Login,
-            error: String::new(),
+            status: Status::Empty,
             pending: None,
         }
     }
@@ -128,13 +129,12 @@ pub struct FriendsData {
     pub search_input: String,
     pub search_results: Vec<UserSearchEntry>,
     pub search_slot: Option<HttpSlot>,
-    pub search_error: String,
+    pub search_status: Status,
     pub add_pending: Option<HttpSlot>,
-    pub add_error: String,
-    pub add_success: bool,
+    pub add_status: Status,
     pub confirm_remove: Option<String>,
     pub action_pending: Option<HttpSlot>,
-    pub action_error: String,
+    pub action_status: Status,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -152,8 +152,7 @@ pub struct OtherProfileData {
     pub load_failed: bool,
     pub friendship: FriendshipStatus,
     pub friend_slot: Option<HttpSlot>,
-    pub friend_msg: String,
-    pub friend_success: bool,
+    pub friend_status: Status,
     pub prev_screen: Screen,
 }
 
@@ -226,7 +225,7 @@ pub struct ProfileData {
     pub edit_music: String,
     pub edit_focused: ProfileEditField,
     pub edit_pending: Option<HttpSlot>,
-    pub edit_error: String,
+    pub edit_status: Status,
 }
 
 pub fn load_stored_token() -> Option<String> {
@@ -498,7 +497,7 @@ pub struct State {
     pub rooms: Vec<RoomInfo>,
     pub lobby: Option<LobbyInfo>,
     pub text_input: String,
-    pub notice: String,
+    pub notice: Status,
     pub session: Option<GameSession>,
     pub font: Font,
     pub ui_font: Font,
@@ -514,6 +513,7 @@ pub struct State {
     pub invite_slot: Option<HttpSlot>,
     pub invite_friends: Vec<FriendEntry>,
     pub outdated: bool,
+    pub ui: crate::ui::Ui,
 }
 
 impl State {
@@ -527,7 +527,7 @@ impl State {
             rooms: Vec::new(),
             lobby: None,
             text_input: String::new(),
-            notice: String::new(),
+            notice: Status::Empty,
             session: None,
             font,
             ui_font,
@@ -543,6 +543,7 @@ impl State {
             invite_slot: None,
             invite_friends: Vec::new(),
             outdated: false,
+            ui: crate::ui::Ui::default(),
         }
     }
 }
