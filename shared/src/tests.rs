@@ -68,6 +68,29 @@ fn same_seed_yields_identical_piece_sequence() {
 }
 
 #[test]
+fn garbage_placement_leaves_the_piece_sequence_alone() {
+    // Both players share a seed; only one takes nuisance. The leftover columns are
+    // drawn at random, and that draw must not shift the pairs they are dealt.
+    let mut a = Board::new(GRID_WIDTH, GRID_HEIGHT, 42, 1, 5);
+    let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, 42, 1, 5);
+    for i in 0..50 {
+        if i % 5 == 0 {
+            b.cells.iter_mut().for_each(|row| row.fill(None));
+            b.pending_garbage = 3; // not a multiple of 6: the leftover columns are drawn
+            b.state = GameState::DroppingGarbage;
+            b.drop_garbage();
+            b.state = GameState::Playing;
+        }
+        a.spawn_piece();
+        b.spawn_piece();
+        let pa = a.active_piece.take().expect("piece a");
+        let pb = b.active_piece.take().expect("piece b");
+        assert_eq!((pa.axis_type, pa.sat_type), (pb.axis_type, pb.sat_type), "pair {i}");
+    }
+    assert_ne!(a.rng_position(), b.rng_position(), "setup: the drops drew nothing");
+}
+
+#[test]
 fn four_connected_same_color_clears() {
     let mut b = empty_board();
     for r in 9..=12 {
@@ -598,7 +621,7 @@ struct Run {
 /// locking, chains and garbage instead of freezing on the first game over.
 /// A seed whose script reaches a chain of 3 within 6000 ticks: random play
 /// rarely chains, and the tests below need the resolution path exercised.
-const SCRIPT_SEED: u64 = 351;
+const SCRIPT_SEED: u64 = 63;
 
 fn run_script(seed: u64, ticks: u64, skip_input_at: Option<u64>) -> Run {
     let fresh = |s: u64| {
@@ -624,7 +647,7 @@ fn run_script(seed: u64, ticks: u64, skip_input_at: Option<u64>) -> Run {
                 board.apply_input(input);
             }
         }
-        // Hand it nuisance regularly: `drop_garbage` draws from the RNG too, so
+        // Hand it nuisance regularly: `drop_garbage` draws from its own RNG stream, so
         // a script that never took that path would not prove much about it.
         if step % 240 == 239 {
             board.pending_garbage += 9;
@@ -699,7 +722,7 @@ fn one_dropped_input_diverges() {
 ///
 /// It therefore fails whenever the simulation changes, deliberately or not. If
 /// the change was intended, re-read the diff, then paste the new value in.
-const GOLDEN_FINAL_HASH: u64 = 4_449_363_173_517_608_836;
+const GOLDEN_FINAL_HASH: u64 = 2_759_900_574_527_949_148;
 
 #[test]
 fn scripted_run_matches_its_recorded_outcome() {

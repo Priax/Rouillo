@@ -262,8 +262,8 @@ pub enum ServerMessage {
     StateUpdate {
         p1_board: Box<Board>,
         p2_board: Box<Board>,
-        p1_rng: Option<Box<rand_chacha::ChaCha12Rng>>,
-        p2_rng: Option<Box<rand_chacha::ChaCha12Rng>>,
+        p1_rng: Option<Box<BoardRng>>,
+        p2_rng: Option<Box<BoardRng>>,
         p1_ack: u32,
         p2_ack: u32,
         tick: u32,
@@ -427,26 +427,56 @@ pub struct Board {
     pub settle: Settle,
     pub falls: Vec<CellFall>,
     pub popping: Vec<(u8, u8)>,
-    #[serde(skip, default = "default_rng")]
-    rng: rand_chacha::ChaCha12Rng,
+    #[serde(skip)]
+    rng: BoardRng,
 }
 
-fn default_rng() -> rand_chacha::ChaCha12Rng {
-    use rand::SeedableRng;
-    rand_chacha::ChaCha12Rng::seed_from_u64(0)
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BoardRng {
+    pieces: rand_chacha::ChaCha12Rng,
+    garbage: rand_chacha::ChaCha12Rng,
+}
+
+impl BoardRng {
+    fn from_seed(seed: u64) -> Self {
+        use rand::SeedableRng;
+        let pieces = rand_chacha::ChaCha12Rng::seed_from_u64(seed);
+        let mut garbage = pieces.clone();
+        garbage.set_stream(1);
+        Self { pieces, garbage }
+    }
+
+    fn position(&self) -> RngPosition {
+        RngPosition {
+            pieces: self.pieces.get_word_pos(),
+            garbage: self.garbage.get_word_pos(),
+        }
+    }
+}
+
+impl Default for BoardRng {
+    fn default() -> Self {
+        Self::from_seed(0)
+    }
+}
+
+/// How far each of a board's random streams has advanced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RngPosition {
+    pub pieces: u128,
+    pub garbage: u128,
 }
 
 impl Board {
     pub fn new(width: usize, height: usize, seed: u64, start_level: u32, colors: u32) -> Self {
-        use rand::SeedableRng;
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(seed);
+        let mut rng = BoardRng::from_seed(seed);
         let n1 = (
-            PuyoType::random_with_seed(&mut rng, colors),
-            PuyoType::random_with_seed(&mut rng, colors),
+            PuyoType::random_with_seed(&mut rng.pieces, colors),
+            PuyoType::random_with_seed(&mut rng.pieces, colors),
         );
         let n2 = (
-            PuyoType::random_with_seed(&mut rng, colors),
-            PuyoType::random_with_seed(&mut rng, colors),
+            PuyoType::random_with_seed(&mut rng.pieces, colors),
+            PuyoType::random_with_seed(&mut rng.pieces, colors),
         );
 
         let mut board = Self {
@@ -492,8 +522,8 @@ impl Board {
         let (c1, c2) = self.next_types;
         self.next_types = self.next_next_types;
         self.next_next_types = (
-            PuyoType::random_with_seed(&mut self.rng, self.colors),
-            PuyoType::random_with_seed(&mut self.rng, self.colors),
+            PuyoType::random_with_seed(&mut self.rng.pieces, self.colors),
+            PuyoType::random_with_seed(&mut self.rng.pieces, self.colors),
         );
         let new_piece = ActivePuyo {
             row: 1,
@@ -841,7 +871,7 @@ impl Board {
         if leftover > 0 {
             let mut cols: Vec<usize> = (0..self.width).collect();
             for i in 0..leftover as usize {
-                let j = self.rng.random_range(i..self.width);
+                let j = self.rng.garbage.random_range(i..self.width);
                 cols.swap(i, j);
             }
             for &col in cols.iter().take(leftover as usize) {
@@ -1026,15 +1056,15 @@ impl Board {
         self.start_level + self.match_frames / LEVEL_FRAMES
     }
 
-    pub fn rng_position(&self) -> u128 {
-        self.rng.get_word_pos()
+    pub fn rng_position(&self) -> RngPosition {
+        self.rng.position()
     }
 
-    pub fn rng_state(&self) -> rand_chacha::ChaCha12Rng {
+    pub fn rng_state(&self) -> BoardRng {
         self.rng.clone()
     }
 
-    pub fn set_rng(&mut self, rng: rand_chacha::ChaCha12Rng) {
+    pub fn set_rng(&mut self, rng: BoardRng) {
         self.rng = rng;
     }
 
@@ -1155,9 +1185,11 @@ impl Board {
         for (r, c) in popping {
             h.bytes(&[*r, *c]);
         }
-        h.bytes(&rng.get_seed());
-        h.u64(rng.get_stream());
-        h.bytes(&rng.get_word_pos().to_le_bytes());
+        for r in [&rng.pieces, &rng.garbage] {
+            h.bytes(&r.get_seed());
+            h.u64(r.get_stream());
+            h.bytes(&r.get_word_pos().to_le_bytes());
+        }
 
         h.finish()
     }

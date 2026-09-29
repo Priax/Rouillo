@@ -9,8 +9,8 @@ use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
 use rand::RngExt;
 use shared::{
-    config, Board, ClientMessage, GameState, IncomingGarbage, InputKind, LobbyInfo, RoomId, RoomInfo, RoomSettings,
-    ServerMessage,
+    config, Board, ClientMessage, GameState, IncomingGarbage, InputKind, LobbyInfo, RngPosition, RoomId, RoomInfo,
+    RoomSettings, ServerMessage,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::mpsc;
@@ -163,7 +163,7 @@ struct Sim {
     prev_chain: [u32; 2],
     prev_all_clear: [bool; 2],
     prev_piece_id: [u32; 2],
-    last_sent_rng: Option<[u128; 2]>,
+    last_sent_rng: Option<[RngPosition; 2]>,
 }
 
 impl Sim {
@@ -267,7 +267,7 @@ impl Sim {
         }
     }
 
-    fn rng_positions(&self) -> [u128; 2] {
+    fn rng_positions(&self) -> [RngPosition; 2] {
         [self.boards[0].rng_position(), self.boards[1].rng_position()]
     }
 
