@@ -50,6 +50,16 @@ const fn hsl(h: f32, s: f32, l: f32) -> Color {
     Color::from_rgb(r + m, g + m, b + m)
 }
 
+/// The colour `t` of the way from `a` to `b`.
+pub fn mix(a: Color, b: Color, t: f32) -> Color {
+    Color::from_rgba(
+        a.r + (b.r - a.r) * t,
+        a.g + (b.g - a.g) * t,
+        a.b + (b.b - a.b) * t,
+        a.a + (b.a - a.a) * t,
+    )
+}
+
 /// Every colour that follows a section's hue. The tones differ only in
 /// saturation and lightness, the way osu!lazer's colour provider works.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,6 +124,16 @@ pub const SCRIM: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.6);
 pub const SCRIM_DARK: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.7);
 
 pub const RADIUS: f32 = 8.0;
+
+/// Colours of the full-width menu bars, one per kind of action.
+pub mod bar {
+    use notan::prelude::Color;
+
+    pub const GREEN: Color = Color::from_rgb(0.53, 0.72, 0.05);
+    pub const BLUE: Color = Color::from_rgb(0.2, 0.55, 0.85);
+    pub const YELLOW: Color = Color::from_rgb(0.95, 0.66, 0.05);
+    pub const RED: Color = Color::from_rgb(0.74, 0.14, 0.2);
+}
 
 pub mod size {
     pub const SMALL: f32 = 15.0;

@@ -89,7 +89,7 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
         let game_over = matches!(overlay, Overlay::GameOver { .. });
         let leaving_forfeits = !game_over && !session.opponent_disconnected;
         draw_overlay(&mut draw, &pal, fonts, &overlay, &layout, role, app.timer.elapsed_f32());
-        draw_exit_buttons(&mut draw, ui, fonts, &layout, role.is_host, leaving_forfeits);
+        draw_exit_buttons(&mut draw, ui, fonts, role.is_host, leaving_forfeits);
     }
     #[cfg(debug_assertions)]
     draw_debug(&mut draw, fonts, session, layout.win_h);
@@ -253,16 +253,27 @@ fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32)
     }
 }
 
-fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, fonts: &Fonts, layout: &GameLayout, is_host: bool, forfeits: bool) {
-    let (ww, wh) = (layout.win_w, layout.win_h);
+const EXIT_ROW_H: f32 = 60.0;
+
+/// The overlay's rows: leaving the room, then (host only) back to the lobby.
+pub fn exit_rows(view: View) -> (Rect, Rect) {
+    let top = view.h / 2.0 + 90.0;
+    (
+        Rect::at(0.0, top, view.w, EXIT_ROW_H),
+        Rect::at(0.0, top + EXIT_ROW_H, view.w, EXIT_ROW_H),
+    )
+}
+
+fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, fonts: &Fonts, is_host: bool, forfeits: bool) {
     let (leave, back) = if forfeits {
         ("Abandonner (défaite)", "Lobby (défaite)")
     } else {
-        ("Leave Room", "Back to Lobby")
+        ("Quitter la room", "Retour au lobby")
     };
-    ui.button(draw, fonts, crate::rooms::leave_room_button(ww, wh), leave);
+    let (leave_row, back_row) = exit_rows(ui.view());
+    ui.menu_bar(draw, fonts, leave_row, leave, theme::bar::RED);
     if is_host {
-        ui.button(draw, fonts, crate::rooms::back_to_lobby_button(ww, wh), back);
+        ui.menu_bar(draw, fonts, back_row, back, theme::bar::YELLOW);
     }
 }
 

@@ -21,12 +21,12 @@ pub fn update_game(
     let paused = session.board.state == GameState::Paused;
 
     if paused || game_over || session.opponent_disconnected {
-        let (ww, wh) = ui.view().size();
-        if ui.clicked(crate::rooms::leave_room_button(ww, wh)) {
+        let (leave_row, back_row) = crate::draw::exit_rows(ui.view());
+        if ui.clicked(leave_row) {
             conn.send(&ClientMessage::LeaveRoom);
             return;
         }
-        if is_host && ui.clicked(crate::rooms::back_to_lobby_button(ww, wh)) {
+        if is_host && ui.clicked(back_row) {
             conn.send(&ClientMessage::ReturnToLobby);
             return;
         }

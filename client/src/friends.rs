@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use notan::draw::{Draw, DrawShapes};
+use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::http;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
 use crate::theme::{self, Palette};
-use crate::ui::{text_field, Field, Fonts, Rect, SharpText, Status, Ui};
+use crate::ui::{divider, list_row, text_field, Field, Fonts, Rect, SharpText, Status, Ui};
 
 const SEARCH_Y: f32 = 112.0;
 const SEARCH_RESULT_Y: f32 = 168.0;
@@ -491,8 +491,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
     let adding = f.add_pending.is_some();
     for (i, e) in f.search_results.iter().take(MAX_SEARCH_RESULTS).enumerate() {
         let y = SEARCH_RESULT_Y + i as f32 * RESULT_ROW_H;
-        let bg = if i % 2 == 0 { pal.surface } else { pal.surface_alt };
-        draw.rect((field.x, y), (600.0, RESULT_ROW_H - 2.0)).color(bg);
+        list_row(draw, &pal, Rect::at(field.x, y, 600.0, RESULT_ROW_H - 2.0), i);
         draw.sharp_text(&fonts.text, &e.username)
             .position(field.x + 12.0, y + RESULT_ROW_H / 2.0)
             .size(theme::size::LABEL)
@@ -521,8 +520,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
 
 fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {
     let pal = ui.palette();
-    draw.rect((40.0, COL_HEADER_Y - 12.0), (ww - 80.0, 1.0))
-        .color(pal.divider);
+    divider(draw, &pal, 40.0, COL_HEADER_Y - 12.0, ww - 80.0);
     let headers = ["Amis", "Demandes reçues", "Envoyées"];
     for (col, header) in headers.iter().enumerate() {
         draw.sharp_text(&fonts.text, header)
@@ -531,8 +529,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             .h_align_center()
             .v_align_middle()
             .color(pal.text_dim);
-        draw.rect((col_x(ww, col), COL_HEADER_Y + 12.0), (COL_W, 1.0))
-            .color(pal.divider);
+        divider(draw, &pal, col_x(ww, col), COL_HEADER_Y + 12.0, COL_W);
     }
 
     if f.list_slot.is_some() {
@@ -619,8 +616,7 @@ fn draw_col<F>(
     }
     for (i, e) in list.iter().take(MAX_ROWS).enumerate() {
         let y = LIST_Y + i as f32 * ROW_H;
-        let bg = if i % 2 == 0 { pal.surface } else { pal.surface_alt };
-        draw.rect((x, y), (COL_W, ROW_H - 3.0)).color(bg);
+        list_row(draw, pal, Rect::at(x, y, COL_W, ROW_H - 3.0), i);
         draw.sharp_text(&fonts.text, &e.username)
             .position(x + 10.0, y + ROW_H / 2.0 - 8.0)
             .size(theme::size::BODY)

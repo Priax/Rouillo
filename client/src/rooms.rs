@@ -12,14 +12,6 @@ fn send(state: &mut State, msg: &ClientMessage) {
     state.conn.send(msg);
 }
 
-pub fn leave_room_button(w: f32, h: f32) -> Rect {
-    Rect::at(w / 2.0 - 130.0, h / 2.0 + 110.0, 260.0, 50.0)
-}
-
-pub fn back_to_lobby_button(w: f32, h: f32) -> Rect {
-    Rect::at(w / 2.0 - 130.0, h / 2.0 + 175.0, 260.0, 50.0)
-}
-
 fn room_row(i: usize, w: f32) -> Rect {
     Rect::at(w / 2.0 - 250.0, 150.0 + i as f32 * 56.0, 500.0, 48.0)
 }

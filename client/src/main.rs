@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use notan::app::Event;
-use notan::draw::{DrawConfig, DrawShapes};
+use notan::draw::DrawConfig;
 use notan::prelude::*;
 use shared::{config, ClientMessage};
 
@@ -194,8 +194,13 @@ fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
     let (ww, wh) = state.ui.view().size();
     let banner_y = wh - BANNER_H;
     let mut d = state.ui.canvas(gfx);
-    d.rect((0.0, banner_y), (ww, BANNER_H)).color(pal.banner);
-    d.rect((0.0, banner_y), (ww, 2.0)).color(pal.accent);
+    ui::banner(
+        &mut d,
+        Rect::at(0.0, banner_y, ww, BANNER_H),
+        pal.banner,
+        pal.accent,
+        ui::Edge::Top,
+    );
     let msg = format!("{from} t'invite dans \"{room_name}\"");
     d.sharp_text(&state.fonts.text, &msg)
         .position(20.0, banner_y + 40.0)
@@ -240,8 +245,13 @@ fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
     };
     let ww = state.ui.view().w;
     let mut d = state.ui.canvas(gfx);
-    d.rect((0.0, 0.0), (ww, 44.0)).color(theme::WARNING_BANNER);
-    d.rect((0.0, 44.0), (ww, 2.0)).color(theme::WARNING);
+    ui::banner(
+        &mut d,
+        Rect::at(0.0, 0.0, ww, 46.0),
+        theme::WARNING_BANNER,
+        theme::WARNING,
+        ui::Edge::Bottom,
+    );
     let dots = ".".repeat(1 + (app.timer.elapsed_f32() * 2.0) as usize % 3);
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
     d.sharp_text(&state.fonts.text, &msg)

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use notan::draw::DrawShapes;
 use notan::prelude::*;
 
 use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, State};
@@ -180,23 +179,9 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
         .color(pal.title);
 
     let modes = [("Connexion", AuthMode::Login), ("Inscription", AuthMode::Register)];
-    for (tab, (label, mode)) in layout.tabs.iter().zip(modes) {
+    for (&tab, (label, mode)) in layout.tabs.iter().zip(modes) {
         let active = state.auth_form.mode == mode;
-        let bg = if active { pal.raised_hover } else { pal.surface };
-        let border = if active { pal.accent } else { pal.border };
-        draw.rect((tab.x, tab.y), (tab.w, tab.h))
-            .corner_radius(theme::RADIUS)
-            .color(bg);
-        draw.rect((tab.x, tab.y), (tab.w, tab.h))
-            .corner_radius(theme::RADIUS)
-            .stroke(2.0)
-            .color(border);
-        draw.sharp_text(&state.fonts.text, label)
-            .position(tab.x + tab.w / 2.0, tab.y + tab.h / 2.0)
-            .size(theme::size::EMPHASIS)
-            .h_align_center()
-            .v_align_middle()
-            .color(pal.text);
+        state.ui.tab(&mut draw, &state.fonts, tab, label, active);
     }
 
     let form = &state.auth_form;

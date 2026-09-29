@@ -9,7 +9,7 @@ use crate::state::{
     ProfileData, ProfileEditField, Screen, State,
 };
 use crate::theme::{self, Palette};
-use crate::ui::{text_field, Field, Fonts, Rect, SharpText, Status, Ui};
+use crate::ui::{divider, text_field, Field, Fonts, Rect, SharpText, Status, Ui};
 
 const HISTORY_Y: f32 = 175.0;
 const STATS_Y: f32 = 207.0;
@@ -155,7 +155,7 @@ fn draw_stats_panel(draw: &mut Draw, pal: &Palette, fonts: &Fonts, core: &Profil
     }
 
     let sep_y = STATS_Y + stats.len() as f32 * 30.0 + 14.0;
-    draw.rect((label_x, sep_y), (left_w - 20.0, 1.0)).color(pal.divider);
+    divider(draw, pal, label_x, sep_y, left_w - 20.0);
 
     let mut info_y = sep_y + 22.0;
     if let Some(bio) = &core.bio {
@@ -200,8 +200,7 @@ fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCor
         .h_align_center()
         .v_align_middle()
         .color(pal.text_dim);
-    draw.rect((right_x, HISTORY_Y + 14.0), (right_w, 1.0))
-        .color(pal.divider);
+    divider(draw, &pal, right_x, HISTORY_Y + 14.0, right_w);
 
     if core.history_slot.is_some() {
         draw.sharp_text(&fonts.text, "Chargement...")
@@ -274,13 +273,8 @@ fn draw_match_row(
         .v_align_middle()
         .color(result_color);
 
-    let opp_hover = clickable && opp.user_id.is_some() && ui.hovered(opponent_zone(row));
-    draw.sharp_text(&fonts.text, &format!("vs {opp_name}"))
-        .position(row_x + row_w * 0.33, y)
-        .size(theme::size::BODY)
-        .h_align_center()
-        .v_align_middle()
-        .color(if opp_hover { theme::LINK } else { pal.text });
+    let linked = clickable && opp.user_id.is_some();
+    ui.link(draw, fonts, opponent_zone(row), &format!("vs {opp_name}"), linked);
 
     draw.sharp_text(
         &fonts.text,

@@ -1,92 +1,89 @@
-use notan::draw::DrawShapes;
 use notan::prelude::*;
 
 use crate::state::{AuthForm, Screen, Settings, State};
-use crate::ui::{Rect, SharpText, Stepper, Ui, View};
+use crate::ui::{Rect, SharpText, Stepper, View};
 use crate::{http, theme};
 
-struct MenuLayout {
-    play: Rect,
-    settings: Rect,
-    friends: Option<Rect>,
-    logout: Option<Rect>,
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuItem {
+    Play,
+    Friends,
+    Settings,
+    Logout,
 }
 
-fn menu_layout(win_w: f32, win_h: f32, logged_in: bool) -> MenuLayout {
-    let w = 280.0;
-    let h = 70.0;
-    let x = (win_w - w) / 2.0;
-    let cy = win_h / 2.0;
-    let (friends, logout) = if logged_in {
-        (
-            Some(Rect::at(x, cy + 160.0, w, 56.0)),
-            Some(Rect::at(x, cy + 240.0, w, 56.0)),
-        )
-    } else {
-        (None, None)
-    };
-    MenuLayout {
-        play: Rect::at(x, cy - 20.0, w, h),
-        settings: Rect::at(x, cy + 70.0, w, h),
-        friends,
-        logout,
+impl MenuItem {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Play => "Jouer",
+            Self::Friends => "Amis",
+            Self::Settings => "Paramètres",
+            Self::Logout => "Déconnexion",
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Self::Play => theme::bar::GREEN,
+            Self::Friends => theme::bar::BLUE,
+            Self::Settings => theme::bar::YELLOW,
+            Self::Logout => theme::bar::RED,
+        }
     }
 }
 
-fn avatar_pos(ww: f32) -> (f32, f32, f32) {
-    (ww - 70.0, 70.0, 38.0)
+const ROW_H: f32 = 64.0;
+
+/// The menu's rows, stacked with no gap under the title.
+fn menu_rows(view: View, logged_in: bool) -> impl Iterator<Item = (MenuItem, Rect)> {
+    let items: &[MenuItem] = if logged_in {
+        &[MenuItem::Play, MenuItem::Friends, MenuItem::Settings, MenuItem::Logout]
+    } else {
+        &[MenuItem::Play, MenuItem::Settings]
+    };
+    let top = view.h / 2.0 - 60.0;
+    items
+        .iter()
+        .enumerate()
+        .map(move |(i, &item)| (item, Rect::at(0.0, top + i as f32 * ROW_H, view.w, ROW_H)))
+}
+
+const AVATAR: f32 = 76.0;
+
+fn avatar_rect(ww: f32) -> Rect {
+    Rect::at(ww - 70.0 - AVATAR / 2.0, 70.0 - AVATAR / 2.0, AVATAR, AVATAR)
 }
 
 fn outdated_btn(ww: f32) -> Rect {
-    let (acx, acy, ar) = avatar_pos(ww);
+    let avatar = avatar_rect(ww);
     let (w, h) = (190.0, 50.0);
-    Rect::at(acx - ar - 20.0 - w, acy - h / 2.0, w, h)
-}
-
-fn avatar_hovered(ui: &Ui, cx: f32, cy: f32, r: f32) -> bool {
-    let (mx, my) = ui.mouse();
-    let (dx, dy) = (mx - cx, my - cy);
-    dx * dx + dy * dy <= r * r
-}
-
-fn avatar_clicked(ui: &Ui, cx: f32, cy: f32, r: f32) -> bool {
-    ui.pressed() && avatar_hovered(ui, cx, cy, r)
+    Rect::at(avatar.x - 20.0 - w, avatar.y + (avatar.h - h) / 2.0, w, h)
 }
 
 pub fn update_menu(state: &mut State) {
-    let (ww, wh) = state.ui.view().size();
+    let view = state.ui.view();
+    let ww = view.w;
     let logged_in = state.auth.is_some();
-    let layout = menu_layout(ww, wh, logged_in);
 
-    if state.ui.clicked(layout.play) {
-        start_play(state);
-    } else if state.ui.clicked(layout.settings) {
-        state.screen = Screen::Settings;
-    }
-
-    if let Some(btn) = layout.friends {
-        if state.ui.clicked(btn) {
+    let clicked = menu_rows(view, logged_in).find(|&(_, row)| state.ui.clicked(row));
+    match clicked.map(|(item, _)| item) {
+        Some(MenuItem::Play) => start_play(state),
+        Some(MenuItem::Friends) => {
             crate::friends::enter_friends(state);
             state.screen = Screen::Friends;
         }
-    }
-
-    if let Some(btn) = layout.logout {
-        if state.ui.clicked(btn) {
-            do_logout(state);
-        }
+        Some(MenuItem::Settings) => state.screen = Screen::Settings,
+        Some(MenuItem::Logout) => do_logout(state),
+        None => {}
     }
 
     if state.outdated && state.ui.clicked(outdated_btn(ww)) {
         crate::update::apply();
     }
 
-    if logged_in {
-        let (acx, acy, ar) = avatar_pos(ww);
-        if avatar_clicked(&state.ui, acx, acy, ar) {
-            crate::profile::enter_profile(state);
-            state.screen = Screen::Profile;
-        }
+    if logged_in && state.ui.clicked(avatar_rect(ww)) {
+        crate::profile::enter_profile(state);
+        state.screen = Screen::Profile;
     }
 }
 
@@ -116,42 +113,22 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
         .v_align_middle()
         .color(pal.title);
 
-    let logged_in = state.auth.is_some();
-    let layout = menu_layout(ww, wh, logged_in);
-    state.ui.button(&mut draw, &state.fonts, layout.play, "Jouer");
+    for (item, row) in menu_rows(state.ui.view(), state.auth.is_some()) {
+        state
+            .ui
+            .menu_bar(&mut draw, &state.fonts, row, item.label(), item.color());
+    }
     if state.outdated {
         state
             .ui
             .button(&mut draw, &state.fonts, outdated_btn(ww), "Mettre à jour");
     }
-    state.ui.button(&mut draw, &state.fonts, layout.settings, "Paramètres");
-    if let Some(btn) = layout.friends {
-        state.ui.button(&mut draw, &state.fonts, btn, "Amis");
-    }
-    if let Some(btn) = layout.logout {
-        state.ui.button(&mut draw, &state.fonts, btn, "Déconnexion");
-    }
 
     if let Some(auth) = &state.auth {
-        let (acx, acy, ar) = avatar_pos(ww);
-        let hover = avatar_hovered(&state.ui, acx, acy, ar);
-        let fill = if hover { pal.avatar_hover } else { pal.avatar };
-        draw.circle(ar).position(acx, acy).color(fill);
-        draw.circle(ar).position(acx, acy).stroke(2.0).color(pal.accent);
-        let initial: String = auth
-            .username
-            .chars()
-            .next()
-            .map(|c| c.to_uppercase().collect())
-            .unwrap_or_default();
-        draw.sharp_text(&state.fonts.display, &initial)
-            .position(acx, acy)
-            .size(theme::size::HEADING)
-            .h_align_center()
-            .v_align_middle()
-            .color(pal.text);
+        let avatar = avatar_rect(ww);
+        state.ui.avatar(&mut draw, &state.fonts, avatar, &auth.username);
         draw.sharp_text(&state.fonts.text, &auth.username)
-            .position(acx, acy + ar + 16.0)
+            .position(avatar.x + avatar.w / 2.0, avatar.y + avatar.h + 16.0)
             .size(theme::size::BODY)
             .h_align_center()
             .v_align_middle()

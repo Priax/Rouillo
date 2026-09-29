@@ -1,4 +1,7 @@
+mod bar;
 mod button;
+mod controls;
+mod deco;
 mod field;
 mod fonts;
 mod keys;
@@ -6,6 +9,7 @@ mod rect;
 mod status;
 mod stepper;
 mod text;
+mod triangles;
 mod view;
 
 use std::cell::RefCell;
@@ -14,6 +18,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 pub use button::Icon;
+pub use deco::{banner, divider, list_row, Edge};
 pub use field::{text_field, Field};
 pub use fonts::Fonts;
 pub use keys::KeyRepeat;
@@ -23,6 +28,7 @@ pub use rect::Rect;
 pub use status::Status;
 pub use stepper::Stepper;
 pub use text::SharpText;
+pub use triangles::Triangles;
 pub use view::View;
 
 use crate::theme::{hue, Palette};
@@ -41,6 +47,7 @@ pub struct Ui {
 
 struct Inner {
     dt: f32,
+    time: f32,
     view: View,
     hue: f32,
     target_hue: f32,
@@ -55,6 +62,7 @@ impl Default for Inner {
     fn default() -> Self {
         Self {
             dt: 0.0,
+            time: 0.0,
             view: View::default(),
             hue: hue::PURPLE,
             target_hue: hue::PURPLE,
@@ -112,6 +120,7 @@ impl Ui {
     pub fn begin_frame(&mut self, dt: f32, view: View, mouse: Mouse) -> bool {
         let inner = self.inner.get_mut();
         inner.dt = dt.clamp(0.0, MAX_DT);
+        inner.time += inner.dt;
         inner.view = view;
         let turn = (inner.target_hue - inner.hue + 540.0).rem_euclid(360.0) - 180.0;
         inner.hue = (inner.hue + approach(0.0, turn, HUE_SPEED, inner.dt)).rem_euclid(360.0);
@@ -141,6 +150,11 @@ impl Ui {
         self.inner.borrow_mut().target_hue = hue;
     }
 
+    /// Seconds since the interface started, for animations.
+    pub fn time(&self) -> f32 {
+        self.inner.borrow().time
+    }
+
     pub fn palette(&self) -> Palette {
         self.inner.borrow().palette
     }
@@ -153,22 +167,9 @@ impl Ui {
         self.view().canvas(gfx)
     }
 
-    pub fn mouse(&self) -> (f32, f32) {
-        let m = self.inner.borrow().mouse;
-        (m.x, m.y)
-    }
-
-    pub fn hovered(&self, r: Rect) -> bool {
-        let (x, y) = self.mouse();
-        r.contains(x, y)
-    }
-
-    pub fn pressed(&self) -> bool {
-        self.inner.borrow().mouse.pressed
-    }
-
     pub fn clicked(&self, r: Rect) -> bool {
-        self.pressed() && self.hovered(r)
+        let m = self.inner.borrow().mouse;
+        m.pressed && r.contains(m.x, m.y)
     }
 
     pub fn set_input(&self, on: bool) {
@@ -179,6 +180,7 @@ impl Ui {
         let mut inner = self.inner.borrow_mut();
         let Inner {
             dt,
+            time: _,
             view: _,
             hue: _,
             target_hue: _,

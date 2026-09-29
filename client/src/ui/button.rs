@@ -96,8 +96,8 @@ fn paint(draw: &mut Draw, pal: &Palette, font: &Font, b: Rect, label: Label, r: 
 
     let (fill, border, text) = if enabled {
         (
-            mix(pal.raised, pal.raised_hover, r.hover),
-            mix(pal.border, pal.accent, r.hover),
+            theme::mix(pal.raised, pal.raised_hover, r.hover),
+            theme::mix(pal.border, pal.accent, r.hover),
             pal.text,
         )
     } else {
@@ -149,13 +149,4 @@ fn paint_icon(draw: &mut Draw, icon: Icon, cx: f32, cy: f32, size: f32, color: C
     if icon == Icon::Plus {
         bar(draw, thick, long);
     }
-}
-
-fn mix(a: Color, b: Color, t: f32) -> Color {
-    Color::from_rgba(
-        a.r + (b.r - a.r) * t,
-        a.g + (b.g - a.g) * t,
-        a.b + (b.b - a.b) * t,
-        a.a + (b.a - a.a) * t,
-    )
 }
