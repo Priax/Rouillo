@@ -125,7 +125,7 @@ pub fn update_auth(app: &mut App, state: &mut State) {
 
     let layout = auth_layout(win_w(app), win_h(app));
 
-    if app.keyboard.was_pressed(KeyCode::Backspace) {
+    if state.backspace.fired() {
         match state.auth_form.focused {
             AuthField::Username => {
                 state.auth_form.username.pop();

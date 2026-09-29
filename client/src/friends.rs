@@ -293,7 +293,7 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     let ww = app.window().width() as f32;
     let wh = app.window().height() as f32;
 
-    if app.keyboard.was_pressed(KeyCode::Backspace) {
+    if state.backspace.fired() {
         if let Some(f) = state.friends.as_mut() {
             f.search_input.pop();
         }

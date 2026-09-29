@@ -417,7 +417,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
     let editing = state.profile.as_ref().is_some_and(|p| p.editing);
 
     if editing {
-        if app.keyboard.was_pressed(KeyCode::Backspace) {
+        if state.backspace.fired() {
             if let Some(p) = state.profile.as_mut() {
                 match p.edit_focused {
                     ProfileEditField::Bio => {

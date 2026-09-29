@@ -1,5 +1,6 @@
 mod button;
 mod field;
+mod keys;
 mod rect;
 mod status;
 
@@ -9,6 +10,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 pub use field::{text_field, Field};
+pub use keys::KeyRepeat;
 use notan::prelude::App;
 pub use rect::Rect;
 pub use status::Status;

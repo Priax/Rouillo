@@ -514,6 +514,7 @@ pub struct State {
     pub invite_friends: Vec<FriendEntry>,
     pub outdated: bool,
     pub ui: crate::ui::Ui,
+    pub backspace: crate::ui::KeyRepeat,
 }
 
 impl State {
@@ -544,6 +545,7 @@ impl State {
             invite_friends: Vec::new(),
             outdated: false,
             ui: crate::ui::Ui::default(),
+            backspace: crate::ui::KeyRepeat::default(),
         }
     }
 }

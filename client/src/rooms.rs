@@ -143,7 +143,7 @@ fn entry_buttons(w: f32, h: f32) -> (Rect, Rect) {
 }
 
 pub fn update_create_room(app: &mut App, state: &mut State) {
-    if app.keyboard.was_pressed(KeyCode::Backspace) {
+    if state.backspace.fired() {
         state.text_input.pop();
     }
     let (w, h) = (win_w(app), win_h(app));
@@ -161,7 +161,7 @@ pub fn update_create_room(app: &mut App, state: &mut State) {
 }
 
 pub fn update_join_by_id(app: &mut App, state: &mut State) {
-    if app.keyboard.was_pressed(KeyCode::Backspace) {
+    if state.backspace.fired() {
         state.text_input.pop();
     }
     let (w, h) = (win_w(app), win_h(app));

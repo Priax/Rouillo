@@ -142,7 +142,9 @@ fn update_invitation(app: &mut App, state: &mut State) {
 }
 
 fn update(app: &mut App, state: &mut State) {
-    state.ui.begin_frame(app.timer.delta_f32(), ui::Mouse::of(app));
+    let dt = app.timer.delta_f32();
+    state.ui.begin_frame(dt, ui::Mouse::of(app));
+    state.backspace.update(app.keyboard.is_down(KeyCode::Backspace), dt);
     let State { session, conn, .. } = state;
     if let Some(session) = session.as_mut() {
         session.clock += app.timer.delta_f32() as f64;
