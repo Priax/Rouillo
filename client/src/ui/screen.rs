@@ -1,4 +1,4 @@
-use notan::draw::Draw;
+use notan::draw::{Draw, DrawShapes};
 use notan::math::{vec2, Mat3};
 use notan::prelude::Graphics;
 
@@ -30,5 +30,22 @@ impl Ui {
         draw.transform()
             .push(Mat3::from_translation(vec2((1.0 - t) * SLIDE, 0.0)));
         draw
+    }
+
+    /// A page header: a band in the section's colour with triangles rising
+    /// through it and a line of accent along its foot.
+    pub fn header_band(&self, draw: &mut Draw, rect: Rect) {
+        let pal = self.palette();
+        draw.rect((rect.x, rect.y), (rect.w, rect.h)).color(pal.banner);
+        let triangles = Triangles {
+            seed: 0xba5d,
+            size: rect.h * 0.9,
+            density: 0.6,
+            speed: 0.03,
+            color: pal.accent.with_alpha(0.08),
+        };
+        triangles.draw(draw, rect, self.time());
+        draw.rect((rect.x, rect.y + rect.h - 2.0), (rect.w, 2.0))
+            .color(pal.accent);
     }
 }

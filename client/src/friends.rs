@@ -4,23 +4,26 @@ use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::http;
+use crate::profile::truncate_display;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
 use crate::theme::{self, Palette};
-use crate::ui::{divider, list_row, text_field, Field, Fonts, Rect, SharpText, Status, Ui};
+use crate::ui::{self, divider, list_row, text_field, Field, Fonts, Pill, Rect, SharpText, Status, Ui};
 
-const SEARCH_Y: f32 = 112.0;
-const SEARCH_RESULT_Y: f32 = 168.0;
+const HEADER_H: f32 = 110.0;
+const FIELD_H: f32 = 44.0;
+const RESULTS_TOP: f32 = 128.0;
 const RESULT_ROW_H: f32 = 44.0;
 const MAX_SEARCH_RESULTS: usize = 4;
-
-const ADD_ERROR_Y: f32 = SEARCH_RESULT_Y + RESULT_ROW_H * MAX_SEARCH_RESULTS as f32 + 6.0;
-
-const COL_HEADER_Y: f32 = ADD_ERROR_Y + 28.0;
-const LIST_Y: f32 = COL_HEADER_Y + 44.0;
-const ROW_H: f32 = 50.0;
+const ADD_STATUS_Y: f32 = 330.0;
+const COLUMNS_TOP: f32 = 344.0;
+const CARD_TITLE_H: f32 = 50.0;
+const LIST_Y: f32 = COLUMNS_TOP + CARD_TITLE_H + 6.0;
+const ROW_H: f32 = 48.0;
 const MAX_ROWS: usize = 6;
 const COL_W: f32 = 360.0;
 const COL_GAP: f32 = 30.0;
+const ACTION_STATUS_Y: f32 = 708.0;
+const SMALL_BTN_H: f32 = 32.0;
 
 fn col_x(ww: f32, col: usize) -> f32 {
     let total = 3.0 * COL_W + 2.0 * COL_GAP;
@@ -28,75 +31,80 @@ fn col_x(ww: f32, col: usize) -> f32 {
     margin + col as f32 * (COL_W + COL_GAP)
 }
 
-fn search_box(ww: f32) -> Rect {
-    Rect::at(ww / 2.0 - 280.0, SEARCH_Y, 430.0, 44.0)
+fn column_card(ww: f32, col: usize) -> Rect {
+    let bottom = LIST_Y + MAX_ROWS as f32 * ROW_H + 10.0;
+    Rect::at(col_x(ww, col), COLUMNS_TOP, COL_W, bottom - COLUMNS_TOP)
+}
+
+fn list_row_rect(ww: f32, col: usize, row: usize) -> Rect {
+    let card = column_card(ww, col);
+    Rect::at(card.x + 8.0, LIST_Y + row as f32 * ROW_H, card.w - 16.0, ROW_H - 4.0)
+}
+
+/// A button of width `w` whose right edge is `from_right` inside the row's.
+fn row_button(row: Rect, from_right: f32, w: f32) -> Rect {
+    Rect::at(
+        row.x + row.w - from_right - w,
+        row.y + (row.h - SMALL_BTN_H) / 2.0,
+        w,
+        SMALL_BTN_H,
+    )
 }
 
 fn search_submit_btn(ww: f32) -> Rect {
-    Rect::at(ww / 2.0 + 155.0, SEARCH_Y, 160.0, 44.0)
+    Rect::at(ww - 60.0 - 160.0, (HEADER_H - FIELD_H) / 2.0 + 12.0, 160.0, FIELD_H)
+}
+
+fn search_box(ww: f32) -> Rect {
+    let submit = search_submit_btn(ww);
+    Rect::at(submit.x - 12.0 - 430.0, submit.y, 430.0, FIELD_H)
+}
+
+fn results_card(ww: f32) -> Rect {
+    Rect::at(
+        ww / 2.0 - 420.0,
+        RESULTS_TOP,
+        840.0,
+        16.0 + MAX_SEARCH_RESULTS as f32 * RESULT_ROW_H,
+    )
+}
+
+fn result_row(ww: f32, row: usize) -> Rect {
+    let card = results_card(ww);
+    Rect::at(
+        card.x + 8.0,
+        card.y + 8.0 + row as f32 * RESULT_ROW_H,
+        card.w - 16.0,
+        RESULT_ROW_H - 4.0,
+    )
 }
 
 fn result_add_btn(ww: f32, row: usize) -> Rect {
-    Rect::at(
-        ww / 2.0 + 110.0,
-        SEARCH_RESULT_Y + row as f32 * RESULT_ROW_H + 5.0,
-        120.0,
-        34.0,
-    )
+    row_button(result_row(ww, row), 128.0, 120.0)
 }
 
 fn result_view_btn(ww: f32, row: usize) -> Rect {
-    Rect::at(
-        ww / 2.0 + 235.0,
-        SEARCH_RESULT_Y + row as f32 * RESULT_ROW_H + 5.0,
-        115.0,
-        34.0,
-    )
+    row_button(result_row(ww, row), 4.0, 116.0)
 }
 
 fn remove_btn(ww: f32, col: usize, row: usize) -> Rect {
-    Rect::at(
-        col_x(ww, col) + COL_W - 114.0,
-        LIST_Y + row as f32 * ROW_H + 8.0,
-        110.0,
-        34.0,
-    )
+    row_button(list_row_rect(ww, col, row), 6.0, 110.0)
 }
 
 fn accept_btn(ww: f32, row: usize) -> Rect {
-    Rect::at(
-        col_x(ww, 1) + COL_W - 238.0,
-        LIST_Y + row as f32 * ROW_H + 8.0,
-        120.0,
-        34.0,
-    )
+    row_button(list_row_rect(ww, 1, row), 122.0, 116.0)
 }
 
 fn reject_btn(ww: f32, row: usize) -> Rect {
-    Rect::at(
-        col_x(ww, 1) + COL_W - 114.0,
-        LIST_Y + row as f32 * ROW_H + 8.0,
-        110.0,
-        34.0,
-    )
+    row_button(list_row_rect(ww, 1, row), 6.0, 110.0)
 }
 
 fn confirm_yes_btn(ww: f32, row: usize) -> Rect {
-    Rect::at(
-        col_x(ww, 0) + COL_W - 112.0,
-        LIST_Y + row as f32 * ROW_H + 8.0,
-        52.0,
-        34.0,
-    )
+    row_button(list_row_rect(ww, 0, row), 62.0, 52.0)
 }
 
 fn confirm_no_btn(ww: f32, row: usize) -> Rect {
-    Rect::at(
-        col_x(ww, 0) + COL_W - 56.0,
-        LIST_Y + row as f32 * ROW_H + 8.0,
-        52.0,
-        34.0,
-    )
+    row_button(list_row_rect(ww, 0, row), 6.0, 52.0)
 }
 
 fn back_btn(wh: f32) -> Rect {
@@ -369,7 +377,8 @@ fn clicked_add(f: &FriendsData, ui: &Ui, ww: f32) -> Option<String> {
 }
 
 fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
-    if f.action_pending.is_some() {
+    // While the lists reload they are not drawn, so neither are their buttons.
+    if f.action_pending.is_some() || f.list_slot.is_some() {
         return None;
     }
     if let Some(confirm_id) = &f.confirm_remove {
@@ -429,16 +438,15 @@ fn apply_action(state: &mut State, action: FriendAction) {
 
 pub fn draw_friends(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
-    let ww = state.ui.view().w;
-    let wh = state.ui.view().h;
+    let (ww, wh) = state.ui.view().size();
 
     let mut draw = state.ui.screen_canvas(gfx);
+    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, ww, HEADER_H));
     draw.sharp_text(&state.fonts.display, "Amis")
-        .position(ww / 2.0, 58.0)
+        .position(60.0, HEADER_H / 2.0)
         .size(theme::size::TITLE)
-        .h_align_center()
         .v_align_middle()
-        .color(pal.title);
+        .color(pal.text);
 
     if let Some(f) = &state.friends {
         draw_search(&mut draw, &state.ui, &state.fonts, f, ww);
@@ -456,9 +464,9 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
 fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {
     let pal = ui.palette();
     let field = search_box(ww);
-    draw.sharp_text(&fonts.text, "Rechercher un ami:")
-        .position(field.x, 96.0)
-        .size(theme::size::BODY)
+    draw.sharp_text(&fonts.text, "Rechercher un ami")
+        .position(field.x, field.y - 14.0)
+        .size(theme::size::SMALL)
         .v_align_middle()
         .color(pal.text_dim);
 
@@ -478,29 +486,37 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
         !searching,
     );
 
-    if f.search_results.is_empty() {
-        if let Some((msg, color)) = f.search_status.shown(&pal) {
-            draw.sharp_text(&fonts.text, msg)
-                .position(field.x, SEARCH_RESULT_Y + 16.0)
-                .size(theme::size::BODY)
-                .v_align_middle()
-                .color(color);
-        }
+    let status = f.search_status.shown(&pal);
+    if f.search_results.is_empty() && status.is_none() {
+        return;
+    }
+    let card = results_card(ww);
+    ui::card(draw, &pal, card);
+    if let (true, Some((msg, color))) = (f.search_results.is_empty(), status) {
+        draw.sharp_text(&fonts.text, msg)
+            .position(card.x + card.w / 2.0, card.y + card.h / 2.0)
+            .size(theme::size::LABEL)
+            .h_align_center()
+            .v_align_middle()
+            .color(color);
     }
     let adding = f.add_pending.is_some();
     for (i, e) in f.search_results.iter().take(MAX_SEARCH_RESULTS).enumerate() {
-        let y = SEARCH_RESULT_Y + i as f32 * RESULT_ROW_H;
-        list_row(draw, &pal, Rect::at(field.x, y, 600.0, RESULT_ROW_H - 2.0), i);
+        let row = result_row(ww, i);
+        let mid = row.y + row.h / 2.0;
+        list_row(draw, &pal, row, i);
         draw.sharp_text(&fonts.text, &e.username)
-            .position(field.x + 12.0, y + RESULT_ROW_H / 2.0)
+            .position(row.x + 14.0, mid)
             .size(theme::size::LABEL)
             .v_align_middle()
             .color(pal.text);
-        draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
-            .position(field.x + 170.0, y + RESULT_ROW_H / 2.0)
-            .size(theme::size::BODY)
-            .v_align_middle()
-            .color(theme::GOLD);
+        let elo = format!("ELO {}", e.elo);
+        let rating = Pill {
+            text: &elo,
+            color: theme::GOLD,
+            size: theme::size::SMALL,
+        };
+        rating.draw(draw, fonts, (row.x + 260.0, mid));
         if !f.friends.iter().any(|fr| fr.user_id == e.user_id) {
             ui.button_enabled(draw, fonts, result_add_btn(ww, i), "Ajouter", !adding);
         }
@@ -509,7 +525,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
 
     if let Some((msg, color)) = f.add_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
-            .position(ww / 2.0, ADD_ERROR_Y)
+            .position(ww / 2.0, ADD_STATUS_Y)
             .size(theme::size::BODY)
             .h_align_center()
             .v_align_middle()
@@ -519,21 +535,33 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
 
 fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {
     let pal = ui.palette();
-    divider(draw, &pal, 40.0, COL_HEADER_Y - 12.0, ww - 80.0);
-    let headers = ["Amis", "Demandes reçues", "Envoyées"];
-    for (col, header) in headers.iter().enumerate() {
-        draw.sharp_text(&fonts.text, header)
-            .position(col_x(ww, col) + COL_W / 2.0, COL_HEADER_Y)
-            .size(theme::size::LABEL)
-            .h_align_center()
+    let columns = [
+        ("Amis", &f.friends, "Aucun ami pour l'instant"),
+        ("Demandes reçues", &f.received, "Aucune demande reçue"),
+        ("Envoyées", &f.sent, "Aucune demande envoyée"),
+    ];
+    for (col, (title, list, _)) in columns.iter().enumerate() {
+        let card = column_card(ww, col);
+        ui::card(draw, &pal, card);
+        let mid = card.y + CARD_TITLE_H / 2.0;
+        draw.sharp_text(&fonts.display, title)
+            .position(card.x + 16.0, mid)
+            .size(theme::size::EMPHASIS)
             .v_align_middle()
-            .color(pal.text_dim);
-        divider(draw, &pal, col_x(ww, col), COL_HEADER_Y + 12.0, COL_W);
+            .color(pal.text);
+        let count = list.len().to_string();
+        let tally = Pill {
+            text: &count,
+            color: pal.accent,
+            size: theme::size::SMALL,
+        };
+        tally.draw(draw, fonts, (card.x + card.w - 16.0 - tally.width(), mid));
+        divider(draw, &pal, card.x + 16.0, card.y + CARD_TITLE_H, card.w - 32.0);
     }
 
     if f.list_slot.is_some() {
         draw.sharp_text(&fonts.text, "Chargement...")
-            .position(ww / 2.0, LIST_Y + 16.0)
+            .position(ww / 2.0, LIST_Y + 24.0)
             .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
@@ -545,9 +573,9 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             draw,
             &pal,
             fonts,
-            col_x(ww, 0),
-            &f.friends,
-            "Aucun ami pour l'instant",
+            (ww, 0),
+            columns[0].1,
+            columns[0].2,
             |draw, fonts, entry, i| {
                 if confirm == Some(entry.user_id.as_str()) {
                     ui.button_enabled(draw, fonts, confirm_yes_btn(ww, i), "Oui", !busy);
@@ -562,9 +590,9 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             draw,
             &pal,
             fonts,
-            col_x(ww, 1),
-            &f.received,
-            "Aucune demande reçue",
+            (ww, 1),
+            columns[1].1,
+            columns[1].2,
             |draw, fonts, _, i| {
                 ui.button_enabled(draw, fonts, accept_btn(ww, i), "Accepter", !busy);
                 ui.button_enabled(draw, fonts, reject_btn(ww, i), "Refuser", !busy);
@@ -574,9 +602,9 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             draw,
             &pal,
             fonts,
-            col_x(ww, 2),
-            &f.sent,
-            "Aucune demande envoyée",
+            (ww, 2),
+            columns[2].1,
+            columns[2].2,
             |draw, fonts, _, i| {
                 ui.button_enabled(draw, fonts, remove_btn(ww, 2, i), "Annuler", !busy);
             },
@@ -585,7 +613,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
 
     if let Some((msg, color)) = f.action_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
-            .position(ww / 2.0, LIST_Y + MAX_ROWS as f32 * ROW_H + 18.0)
+            .position(ww / 2.0, ACTION_STATUS_Y)
             .size(theme::size::SMALL)
             .h_align_center()
             .v_align_middle()
@@ -597,7 +625,7 @@ fn draw_col<F>(
     draw: &mut Draw,
     pal: &Palette,
     fonts: &Fonts,
-    x: f32,
+    (ww, col): (f32, usize),
     list: &[FriendEntry],
     empty_msg: &str,
     draw_buttons: F,
@@ -605,24 +633,29 @@ fn draw_col<F>(
     F: Fn(&mut Draw, &Fonts, &FriendEntry, usize),
 {
     if list.is_empty() {
+        let card = column_card(ww, col);
         draw.sharp_text(&fonts.text, empty_msg)
-            .position(x + COL_W / 2.0, LIST_Y + 18.0)
+            .position(card.x + card.w / 2.0, LIST_Y + 24.0)
             .size(theme::size::SMALL)
             .h_align_center()
             .v_align_middle()
             .color(pal.text_muted);
         return;
     }
+    // Names stop short of the row's first button: about 0.55 em a character.
+    let first_button = [remove_btn(ww, 0, 0), accept_btn(ww, 0), remove_btn(ww, 2, 0)][col];
+    let room = first_button.x - list_row_rect(ww, col, 0).x - 20.0;
+    let max_chars = (room / (theme::size::BODY * 0.55)).floor().max(1.0) as usize;
     for (i, e) in list.iter().take(MAX_ROWS).enumerate() {
-        let y = LIST_Y + i as f32 * ROW_H;
-        list_row(draw, pal, Rect::at(x, y, COL_W, ROW_H - 3.0), i);
-        draw.sharp_text(&fonts.text, &e.username)
-            .position(x + 10.0, y + ROW_H / 2.0 - 8.0)
+        let row = list_row_rect(ww, col, i);
+        list_row(draw, pal, row, i);
+        draw.sharp_text(&fonts.text, &truncate_display(&e.username, max_chars))
+            .position(row.x + 10.0, row.y + row.h / 2.0 - 8.0)
             .size(theme::size::BODY)
             .v_align_middle()
             .color(pal.text);
         draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
-            .position(x + 10.0, y + ROW_H / 2.0 + 10.0)
+            .position(row.x + 10.0, row.y + row.h / 2.0 + 10.0)
             .size(theme::size::SMALL)
             .v_align_middle()
             .color(theme::GOLD);

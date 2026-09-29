@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use notan::draw::{Draw, DrawShapes};
+use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::http;
@@ -9,10 +9,7 @@ use crate::state::{
     ProfileData, ProfileEditField, Screen, State,
 };
 use crate::theme::{self, Palette};
-use crate::ui::{divider, text_field, Field, Fonts, Rect, SharpText, Status, Ui};
-
-const HISTORY_Y: f32 = 175.0;
-const STATS_Y: f32 = 207.0;
+use crate::ui::{self, divider, list_row, portrait, text_field, Field, Fonts, Pill, Rect, SharpText, Status, Ui, View};
 
 pub(crate) fn truncate_display(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
@@ -24,7 +21,7 @@ pub(crate) fn truncate_display(s: &str, max_chars: usize) -> String {
     }
 }
 
-pub(crate) fn panels(ww: f32) -> (f32, f32, f32, f32) {
+fn panels(ww: f32) -> (f32, f32, f32, f32) {
     let left_x = 40.0;
     let left_w = (ww * 0.36).max(280.0);
     let right_x = left_x + left_w + 30.0;
@@ -88,42 +85,84 @@ fn friendship_with(
     }
 }
 
-fn draw_header(draw: &mut Draw, pal: &Palette, fonts: &Fonts, cx: f32, core: &ProfileCore) {
+const HEADER_H: f32 = 150.0;
+const CARD_TOP: f32 = 180.0;
+const CARD_PAD: f32 = 20.0;
+const CARD_TITLE_H: f32 = 56.0;
+const HISTORY_ROWS: usize = 7;
+const HISTORY_ROW_H: f32 = 48.0;
+/// Room between the cards and the buttons, for a status line.
+const STATUS_GAP: f32 = 56.0;
+
+fn draw_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
+    let pal = ui.palette();
+    let view = ui.view();
+    ui.header_band(draw, Rect::at(0.0, 0.0, view.w, HEADER_H));
+    let radius = 48.0;
+    let (px, py) = (60.0 + radius, HEADER_H / 2.0);
+    portrait(draw, &pal, fonts, (px, py), radius, &core.username, 0.0);
+    let text_x = px + radius + 28.0;
     draw.sharp_text(&fonts.display, &core.username)
-        .position(cx, 90.0)
+        .position(text_x, py - 16.0)
         .size(theme::size::TITLE)
-        .h_align_center()
         .v_align_middle()
-        .color(pal.title);
-    draw.sharp_text(&fonts.display, &format!("ELO {}", core.elo))
-        .position(cx, 140.0)
-        .size(theme::size::EMPHASIS)
-        .h_align_center()
-        .v_align_middle()
-        .color(theme::GOLD);
+        .color(pal.text);
+    let elo = format!("ELO {}", core.elo);
+    let rating = Pill {
+        text: &elo,
+        color: theme::GOLD,
+        size: theme::size::BODY,
+    };
+    rating.draw(draw, fonts, (text_x, py + 30.0));
 }
 
-fn draw_stats_panel(draw: &mut Draw, pal: &Palette, fonts: &Fonts, core: &ProfileCore, ww: f32, load_failed: bool) {
-    let (left_x, left_w, _, _) = panels(ww);
-    let label_x = left_x + 10.0;
-    let val_x = left_x + left_w - 10.0;
+/// The two cards under the header: statistics on the left, the match
+/// history on the right, down to the button row.
+fn cards(view: View) -> (Rect, Rect) {
+    let (left_x, left_w, right_x, right_w) = panels(view.w);
+    let h = button_row_y(view.h) - STATUS_GAP - CARD_TOP;
+    (
+        Rect::at(left_x, CARD_TOP, left_w, h),
+        Rect::at(right_x, CARD_TOP, right_w, h),
+    )
+}
+
+fn card_title(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card: Rect, title: &str) {
+    draw.sharp_text(&fonts.display, title)
+        .position(card.x + CARD_PAD, card.y + CARD_TITLE_H / 2.0)
+        .size(theme::size::EMPHASIS)
+        .v_align_middle()
+        .color(pal.text_dim);
+    divider(
+        draw,
+        pal,
+        card.x + CARD_PAD,
+        card.y + CARD_TITLE_H,
+        card.w - 2.0 * CARD_PAD,
+    );
+}
+
+fn card_message(draw: &mut Draw, fonts: &Fonts, card: Rect, text: &str, color: Color) {
+    draw.sharp_text(&fonts.text, text)
+        .position(card.x + card.w / 2.0, card.y + CARD_TITLE_H + 40.0)
+        .size(theme::size::LABEL)
+        .h_align_center()
+        .v_align_middle()
+        .color(color);
+}
+
+fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore, load_failed: bool) {
+    let pal = ui.palette();
+    let (card, _) = cards(ui.view());
+    ui::card(draw, &pal, card);
+    card_title(draw, &pal, fonts, card, "Statistiques");
 
     if load_failed {
-        draw.sharp_text(&fonts.text, "Profil introuvable.")
-            .position(left_x + left_w / 2.0, STATS_Y + 40.0)
-            .size(theme::size::LABEL)
-            .h_align_center()
-            .v_align_middle()
-            .color(theme::DANGER);
+        card_message(draw, fonts, card, "Profil introuvable.", theme::DANGER);
         return;
     }
     if core.profile_slot.is_some() {
-        draw.sharp_text(&fonts.text, "Chargement des stats...")
-            .position(left_x + left_w / 2.0, STATS_Y + 40.0)
-            .size(theme::size::LABEL)
-            .h_align_center()
-            .v_align_middle()
-            .color(pal.text_muted);
+        card_message(draw, fonts, card, "Chargement des stats...", pal.text_muted);
         return;
     }
 
@@ -139,139 +178,109 @@ fn draw_stats_panel(draw: &mut Draw, pal: &Palette, fonts: &Fonts, core: &Profil
         ("Max chain", core.all_time_max_chain.to_string()),
         ("Nuisance", core.total_nuisance_sent.to_string()),
     ];
-    for (i, (label, val)) in stats.iter().enumerate() {
-        let y = STATS_Y + i as f32 * 30.0;
+    let (label_x, value_x) = (card.x + CARD_PAD, card.x + card.w - CARD_PAD);
+    let first = card.y + CARD_TITLE_H + 30.0;
+    for (i, (label, value)) in stats.iter().enumerate() {
+        let y = first + i as f32 * 32.0;
         draw.sharp_text(&fonts.text, label)
             .position(label_x, y)
             .size(theme::size::LABEL)
             .v_align_middle()
             .color(pal.text_muted);
-        draw.sharp_text(&fonts.text, val)
-            .position(val_x, y)
-            .size(theme::size::LABEL)
+        draw.sharp_text(&fonts.display, value)
+            .position(value_x, y)
+            .size(theme::size::EMPHASIS)
             .h_align_right()
             .v_align_middle()
             .color(pal.text);
     }
 
-    let sep_y = STATS_Y + stats.len() as f32 * 30.0 + 14.0;
-    divider(draw, pal, label_x, sep_y, left_w - 20.0);
+    let sep_y = first + stats.len() as f32 * 32.0 - 6.0;
+    divider(draw, &pal, label_x, sep_y, card.w - 2.0 * CARD_PAD);
 
-    let mut info_y = sep_y + 22.0;
-    if let Some(bio) = &core.bio {
-        if !bio.is_empty() {
-            draw.sharp_text(&fonts.text, "Bio")
-                .position(label_x, info_y)
-                .size(theme::size::SMALL)
-                .v_align_middle()
-                .color(pal.text_dim);
-            info_y += 22.0;
-            draw.sharp_text(&fonts.text, &truncate_display(bio, 55))
-                .position(label_x, info_y)
-                .size(theme::size::BODY)
-                .v_align_middle()
-                .color(pal.text);
-            info_y += 28.0;
-        }
-    }
-    if let Some(music) = &core.favorite_music {
-        if !music.is_empty() {
-            draw.sharp_text(&fonts.text, "Musique")
-                .position(label_x, info_y)
-                .size(theme::size::SMALL)
-                .v_align_middle()
-                .color(pal.text_dim);
-            info_y += 22.0;
-            draw.sharp_text(&fonts.text, &truncate_display(music, 45))
-                .position(label_x, info_y)
-                .size(theme::size::BODY)
-                .v_align_middle()
-                .color(pal.accent);
-        }
+    let mut info_y = sep_y + 24.0;
+    let about = [
+        ("Bio", core.bio.as_deref(), 55, pal.text),
+        ("Musique", core.favorite_music.as_deref(), 45, pal.accent),
+    ];
+    for (label, value, max_chars, color) in about {
+        let Some(value) = value.filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        draw.sharp_text(&fonts.text, label)
+            .position(label_x, info_y)
+            .size(theme::size::SMALL)
+            .v_align_middle()
+            .color(pal.text_dim);
+        draw.sharp_text(&fonts.text, &truncate_display(value, max_chars))
+            .position(label_x, info_y + 22.0)
+            .size(theme::size::BODY)
+            .v_align_middle()
+            .color(color);
+        info_y += 54.0;
     }
 }
 
-fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore, ww: f32, clickable: bool) {
+fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore, clickable: bool) {
     let pal = ui.palette();
-    let (_, _, right_x, right_w) = panels(ww);
-    draw.sharp_text(&fonts.text, "Derniers matchs")
-        .position(right_x + right_w / 2.0, HISTORY_Y)
-        .size(theme::size::EMPHASIS)
-        .h_align_center()
-        .v_align_middle()
-        .color(pal.text_dim);
-    divider(draw, &pal, right_x, HISTORY_Y + 14.0, right_w);
+    let (_, card) = cards(ui.view());
+    ui::card(draw, &pal, card);
+    card_title(draw, &pal, fonts, card, "Derniers matchs");
 
     if core.history_slot.is_some() {
-        draw.sharp_text(&fonts.text, "Chargement...")
-            .position(right_x + right_w / 2.0, HISTORY_Y + 48.0)
-            .size(theme::size::LABEL)
-            .h_align_center()
-            .v_align_middle()
-            .color(pal.text_muted);
+        card_message(draw, fonts, card, "Chargement...", pal.text_muted);
     } else if core.match_history.is_empty() {
-        draw.sharp_text(&fonts.text, "Aucun match pour l'instant.")
-            .position(right_x + right_w / 2.0, HISTORY_Y + 48.0)
-            .size(theme::size::LABEL)
-            .h_align_center()
-            .v_align_middle()
-            .color(pal.text_muted);
+        card_message(draw, fonts, card, "Aucun match pour l'instant.", pal.text_muted);
     } else {
-        for (i, m) in core.match_history.iter().enumerate().take(7) {
-            draw_match_row(
-                draw,
-                ui,
-                fonts,
-                history_row(right_x, right_w, i),
-                m,
-                &core.user_id,
-                clickable,
-            );
+        for (i, m) in core.match_history.iter().enumerate().take(HISTORY_ROWS) {
+            draw_match_row(draw, ui, fonts, (history_row(card, i), i), m, &core.user_id, clickable);
         }
     }
 }
 
-fn history_row(right_x: f32, right_w: f32, i: usize) -> Rect {
-    Rect::at(right_x, HISTORY_Y + 12.0 + i as f32 * 48.0, right_w, 42.0)
+fn history_row(card: Rect, i: usize) -> Rect {
+    Rect::at(
+        card.x + CARD_PAD / 2.0,
+        card.y + CARD_TITLE_H + 12.0 + i as f32 * HISTORY_ROW_H,
+        card.w - CARD_PAD,
+        HISTORY_ROW_H - 4.0,
+    )
 }
 
 fn opponent_zone(row: Rect) -> Rect {
-    Rect::at(row.x + row.w * 0.17, row.y, row.w * 0.32, row.h)
+    Rect::at(row.x + row.w * 0.2, row.y, row.w * 0.3, row.h)
 }
 
-fn history_row_zone(ww: f32, i: usize) -> Rect {
-    let (_, _, right_x, right_w) = panels(ww);
-    opponent_zone(history_row(right_x, right_w, i))
+fn history_row_zone(view: View, i: usize) -> Rect {
+    let (_, card) = cards(view);
+    opponent_zone(history_row(card, i))
 }
 
 fn draw_match_row(
     draw: &mut Draw,
     ui: &Ui,
     fonts: &Fonts,
-    row: Rect,
+    (row, index): (Rect, usize),
     m: &ApiMatchEntry,
     viewed_id: &str,
     clickable: bool,
 ) {
     let pal = ui.palette();
-    let (row_x, row_w) = (row.x, row.w);
-    let y = row.y + 20.0;
+    let mid = row.y + row.h / 2.0;
     let i_am_p1 = m.player1.user_id.as_deref() == Some(viewed_id);
     let won = m.winner_slot == if i_am_p1 { 1i16 } else { 2i16 };
     let opp = if i_am_p1 { &m.player2 } else { &m.player1 };
     let me = if i_am_p1 { &m.player1 } else { &m.player2 };
     let opp_name = opp.username.as_deref().unwrap_or("Invité");
 
-    draw.rect((row.x, row.y), (row.w, row.h))
-        .color(if won { theme::SUCCESS_BG } else { theme::DANGER_BG });
+    list_row(draw, &pal, row, index);
 
-    let result_color = if won { theme::SUCCESS } else { theme::DANGER };
-    draw.sharp_text(&fonts.text, if won { "VICTOIRE" } else { "DEFAITE" })
-        .position(row_x + row_w * 0.09, y)
-        .size(theme::size::SMALL)
-        .h_align_center()
-        .v_align_middle()
-        .color(result_color);
+    let result = Pill {
+        text: if won { "VICTOIRE" } else { "DÉFAITE" },
+        color: if won { theme::SUCCESS } else { theme::DANGER },
+        size: theme::size::SMALL,
+    };
+    result.draw(draw, fonts, (row.x + row.w * 0.1 - result.width() / 2.0, mid));
 
     let linked = clickable && opp.user_id.is_some();
     ui.link(draw, fonts, opponent_zone(row), &format!("vs {opp_name}"), linked);
@@ -280,7 +289,7 @@ fn draw_match_row(
         &fonts.text,
         &format!("Chain x{}  Nuis {}", me.max_chain, me.nuisance_sent),
     )
-    .position(row_x + row_w * 0.65, y)
+    .position(row.x + row.w * 0.68, mid)
     .size(theme::size::SMALL)
     .h_align_center()
     .v_align_middle()
@@ -288,9 +297,9 @@ fn draw_match_row(
 
     let secs = m.duration_secs as u32;
     draw.sharp_text(&fonts.text, &format!("{}:{:02}", secs / 60, secs % 60))
-        .position(row_x + row_w * 0.88, y)
+        .position(row.x + row.w - CARD_PAD, mid)
         .size(theme::size::SMALL)
-        .h_align_center()
+        .h_align_right()
         .v_align_middle()
         .color(pal.text_muted);
 }
@@ -486,11 +495,11 @@ pub fn update_profile(app: &mut App, state: &mut State) {
                 break 'find None;
             };
             let my_id = profile.core.user_id.as_str();
-            for (i, m) in profile.core.match_history.iter().enumerate().take(7) {
+            for (i, m) in profile.core.match_history.iter().enumerate().take(HISTORY_ROWS) {
                 let i_am_p1 = m.player1.user_id.as_deref() == Some(my_id);
                 let opp = if i_am_p1 { &m.player2 } else { &m.player1 };
                 if let (Some(opp_id), Some(opp_name)) = (&opp.user_id, &opp.username) {
-                    if state.ui.clicked(history_row_zone(ww, i)) {
+                    if state.ui.clicked(history_row_zone(state.ui.view(), i)) {
                         break 'find Some((opp_id.clone(), opp_name.clone()));
                     }
                 }
@@ -505,7 +514,6 @@ pub fn update_profile(app: &mut App, state: &mut State) {
 }
 
 pub fn draw_profile(gfx: &mut Graphics, state: &State) {
-    let pal = state.ui.palette();
     let (ww, wh) = state.ui.view().size();
     let cx = ww / 2.0;
     let mut draw = state.ui.screen_canvas(gfx);
@@ -515,13 +523,13 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
         return;
     };
 
-    draw_header(&mut draw, &pal, &state.fonts, cx, &profile.core);
+    draw_header(&mut draw, &state.ui, &state.fonts, &profile.core);
 
     if profile.editing {
         draw_edit_form(&state.ui, &mut draw, &state.fonts, profile, cx);
     } else {
-        draw_stats_panel(&mut draw, &pal, &state.fonts, &profile.core, ww, false);
-        draw_history_panel(&mut draw, &state.ui, &state.fonts, &profile.core, ww, true);
+        draw_stats_panel(&mut draw, &state.ui, &state.fonts, &profile.core, false);
+        draw_history_panel(&mut draw, &state.ui, &state.fonts, &profile.core, true);
 
         let (back_btn, edit_btn, logout_btn) = own_buttons(cx, wh);
         state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
@@ -734,9 +742,9 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
         return;
     };
 
-    draw_header(&mut draw, &pal, &state.fonts, cx, &p.core);
-    draw_stats_panel(&mut draw, &pal, &state.fonts, &p.core, ww, p.load_failed);
-    draw_history_panel(&mut draw, &state.ui, &state.fonts, &p.core, ww, false);
+    draw_header(&mut draw, &state.ui, &state.fonts, &p.core);
+    draw_stats_panel(&mut draw, &state.ui, &state.fonts, &p.core, p.load_failed);
+    draw_history_panel(&mut draw, &state.ui, &state.fonts, &p.core, false);
 
     let btn_y = button_row_y(wh);
     let sending = p.friend_slot.is_some();
@@ -753,7 +761,7 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
 
     if let Some((msg, color)) = p.friend_status.shown(&pal) {
         draw.sharp_text(&state.fonts.text, msg)
-            .position(cx, btn_y - 50.0)
+            .position(cx, btn_y - STATUS_GAP / 2.0)
             .size(theme::size::BODY)
             .h_align_center()
             .v_align_middle()

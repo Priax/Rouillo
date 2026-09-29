@@ -1,6 +1,6 @@
 use notan::draw::{Draw, DrawShapes};
 
-use super::{Fonts, Rect, SharpText, Ui};
+use super::{portrait, Fonts, Rect, SharpText, Ui};
 use crate::theme;
 
 const UNDERLINE: f32 = 3.0;
@@ -42,23 +42,9 @@ impl Ui {
         if r.entered {
             crate::audio::play_ui_hover();
         }
-        let (cx, cy) = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+        let center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
         let radius = rect.w.min(rect.h) / 2.0 * (1.0 + 0.05 * r.hover);
-        draw.circle(radius)
-            .position(cx, cy)
-            .color(theme::mix(pal.avatar, pal.avatar_hover, r.hover));
-        draw.circle(radius).position(cx, cy).stroke(2.0).color(pal.accent);
-        let initial: String = name
-            .chars()
-            .next()
-            .map(|c| c.to_uppercase().collect())
-            .unwrap_or_default();
-        draw.sharp_text(&fonts.display, &initial)
-            .position(cx, cy)
-            .size(theme::size::HEADING)
-            .h_align_center()
-            .v_align_middle()
-            .color(pal.text);
+        portrait(draw, &pal, fonts, center, radius, name, r.hover);
     }
 
     /// Text that can be clicked: it takes the link colour and an underline

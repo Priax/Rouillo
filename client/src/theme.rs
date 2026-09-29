@@ -111,9 +111,7 @@ impl Palette {
 
 pub const GOLD: Color = Color::from_rgb(1.0, 0.8, 0.13);
 pub const SUCCESS: Color = Color::from_rgb(0.45, 0.88, 0.5);
-pub const SUCCESS_BG: Color = Color::from_rgba(0.1, 0.3, 0.1, 0.6);
 pub const DANGER: Color = Color::from_rgb(0.95, 0.42, 0.42);
-pub const DANGER_BG: Color = Color::from_rgba(0.3, 0.1, 0.1, 0.6);
 pub const WARNING: Color = Color::from_rgb(0.95, 0.62, 0.22);
 pub const WARNING_TEXT: Color = Color::from_rgb(1.0, 0.85, 0.6);
 pub const WARNING_BANNER: Color = Color::from_rgba(0.35, 0.18, 0.05, 0.96);

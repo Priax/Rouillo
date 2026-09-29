@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 pub use button::Icon;
-pub use deco::{banner, divider, list_row, Edge};
+pub use deco::{banner, card, divider, list_row, portrait, Edge, Pill};
 pub use field::{text_field, Field};
 pub use fonts::Fonts;
 pub use keys::KeyRepeat;
