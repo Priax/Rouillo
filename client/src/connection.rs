@@ -162,6 +162,7 @@ pub enum ConnEvent {
     Message(Box<ServerMessage>),
     Retrying,
     GaveUp,
+    Outdated,
 }
 
 pub struct Connection {
@@ -240,7 +241,8 @@ impl Connection {
                     return Link::Waiting { retry };
                 }
                 retry.record_dial(now, next_frac(&mut self.jitter));
-                match ewebsock::connect(crate::server_url(), ewebsock::Options::default()) {
+                let url = format!("{}?v={}", crate::server_url(), shared::PROTOCOL_VERSION);
+                match ewebsock::connect(url, ewebsock::Options::default()) {
                     Ok((ws_sender, ws_receiver)) => Link::Dialing {
                         net: Net { ws_sender, ws_receiver },
                         retry,
@@ -255,6 +257,7 @@ impl Connection {
             Link::Dialing { net, retry } => {
                 let outcome = drain(&net, now, &mut self.heartbeat, events);
                 match dial_decision(&retry, outcome, now) {
+                    DialOutcome::Outdated => self.outdated(events),
                     DialOutcome::Drop(reason) => self.drop_link(reason, retry, now, events),
                     DialOutcome::GoLive { recovered } => {
                         events.push(ConnEvent::Opened { recovered });
@@ -270,8 +273,10 @@ impl Connection {
             }
 
             Link::Live { mut net } => {
-                if let Drained::Dropped(reason) = drain(&net, now, &mut self.heartbeat, events) {
-                    return self.drop_link(reason, Retry::recovering(now), now, events);
+                match drain(&net, now, &mut self.heartbeat, events) {
+                    Drained::Outdated => return self.outdated(events),
+                    Drained::Dropped(reason) => return self.drop_link(reason, Retry::recovering(now), now, events),
+                    Drained::Quiet | Drained::Opened => {}
                 }
                 if self.heartbeat.timed_out(now) {
                     let reason = format!("silence du serveur pendant {:.0}s", config::PING_TIMEOUT_SECS);
@@ -283,6 +288,15 @@ impl Connection {
                 Link::Live { net }
             }
         }
+    }
+
+    fn outdated(&mut self, events: &mut Vec<ConnEvent>) -> Link {
+        events.clear();
+        eprintln!("[ws] refusé : le serveur attend une autre version du protocole");
+        self.unreported_drop = None;
+        self.heartbeat = Heartbeat::new(0.0);
+        events.push(ConnEvent::Outdated);
+        Link::Offline
     }
 
     fn drop_link(&mut self, reason: String, retry: Retry, now: f64, events: &mut Vec<ConnEvent>) -> Link {
@@ -300,6 +314,7 @@ impl Connection {
 
 enum DialOutcome {
     KeepWaiting,
+    Outdated,
     GoLive { recovered: bool },
     Drop(String),
     GiveUp,
@@ -307,6 +322,7 @@ enum DialOutcome {
 
 fn dial_decision(retry: &Retry, outcome: Drained, now: f64) -> DialOutcome {
     match outcome {
+        Drained::Outdated => DialOutcome::Outdated,
         Drained::Dropped(reason) => DialOutcome::Drop(reason),
         Drained::Opened => DialOutcome::GoLive {
             recovered: retry.recovering,
@@ -320,12 +336,14 @@ enum Drained {
     Quiet,
     Opened,
     Dropped(String),
+    Outdated,
 }
 
 fn drain(net: &Net, now: f64, heartbeat: &mut Heartbeat, events: &mut Vec<ConnEvent>) -> Drained {
     let mut outcome = Drained::Quiet;
     while let Some(event) = net.ws_receiver.try_recv() {
         match event {
+            WsEvent::Message(WsMessage::Text(t)) if t == shared::OUTDATED_FRAME => return Drained::Outdated,
             WsEvent::Opened => outcome = Drained::Opened,
             WsEvent::Message(WsMessage::Binary(bytes)) => match shared::decode::<ServerMessage>(&bytes) {
                 Some(ServerMessage::Pong { id }) => heartbeat.on_pong(id, now),
@@ -334,7 +352,6 @@ fn drain(net: &Net, now: f64, heartbeat: &mut Heartbeat, events: &mut Vec<ConnEv
             },
             WsEvent::Closed => outcome = Drained::Dropped("fermée par le serveur".to_string()),
             WsEvent::Error(e) => outcome = Drained::Dropped(e),
-            // Text frames and pings: the protocol is binary only.
             WsEvent::Message(_) => {}
         }
     }
@@ -580,6 +597,23 @@ mod tests {
 
         assert!(matches!(link, Link::Offline));
         assert!(matches!(events.as_slice(), [ConnEvent::GaveUp]));
+    }
+
+    #[test]
+    fn outdated_goes_offline_without_retrying() {
+        let now = 4.0;
+        let mut c = Connection::new("test-player");
+        let mut events = vec![ConnEvent::Message(Box::new(ServerMessage::GameStart))];
+
+        let link = c.outdated(&mut events);
+
+        assert!(matches!(link, Link::Offline), "a retry would be refused again");
+        assert!(matches!(events.as_slice(), [ConnEvent::Outdated]));
+        assert_eq!(c.take_unreported_drop(), None);
+        assert!(matches!(
+            dial_decision(&Retry::initial(now), Drained::Outdated, now),
+            DialOutcome::Outdated
+        ));
     }
 
     #[test]

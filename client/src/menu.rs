@@ -124,6 +124,12 @@ fn avatar_pos(ww: f32) -> (f32, f32, f32) {
     (ww - 70.0, 70.0, 38.0)
 }
 
+fn update_btn(ww: f32) -> Btn {
+    let (acx, acy, ar) = avatar_pos(ww);
+    let (w, h) = (190.0, 50.0);
+    Btn::at(acx - ar - 20.0 - w, acy - h / 2.0, w, h)
+}
+
 fn avatar_hovered(app: &App, cx: f32, cy: f32, r: f32) -> bool {
     let dx = app.mouse.x - cx;
     let dy = app.mouse.y - cy;
@@ -156,6 +162,10 @@ pub fn update_menu(app: &mut App, state: &mut State) {
         if btn.clicked(app) {
             do_logout(state);
         }
+    }
+
+    if state.outdated && update_btn(ww).clicked(app) {
+        crate::update::apply();
     }
 
     if logged_in {
@@ -195,6 +205,9 @@ pub fn draw_menu(app: &mut App, gfx: &mut Graphics, state: &State) {
     let logged_in = state.auth.is_some();
     let layout = menu_layout(ww, wh, logged_in);
     layout.play.draw(&mut draw, app, &state.font, "Jouer");
+    if state.outdated {
+        update_btn(ww).draw(&mut draw, app, &state.font, "Mettre à jour");
+    }
     layout.settings.draw(&mut draw, app, &state.font, "Paramètres");
     if let Some(btn) = layout.friends {
         btn.draw(&mut draw, app, &state.font, "Amis");

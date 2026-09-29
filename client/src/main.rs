@@ -18,6 +18,7 @@ mod network;
 mod profile;
 mod rooms;
 mod state;
+mod update;
 
 use menu::Btn;
 use state::{Screen, State};

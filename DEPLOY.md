@@ -280,8 +280,11 @@ processus en cours garde l'ancien fichier jusqu'au `restart`).
 
 Le redémarrage **coupe les parties en cours** (rooms en mémoire) : déployer quand personne ne joue.
 
-Si `shared/` a changé (protocole), republier aussi le client (tag `vX.Y.Z`) : un ancien
-client ne peut plus parler au nouveau serveur (bitcode n'est pas auto-descriptif).
+Si `shared/` a changé (protocole), **incrémenter `PROTOCOL_VERSION`** (`shared/src/lib.rs`)
+et republier aussi le client (tag `vX.Y.Z`) : un ancien client ne peut plus parler au nouveau
+serveur (bitcode n'est pas auto-descriptif). Grâce au numéro de version, le serveur refuse
+l'ancien client proprement : celui-ci affiche un bouton « Mettre à jour » à côté du profil
+(rechargement de la page en web, ouverture de la page des releases en natif).
 
 ## Pièges rencontrés
 

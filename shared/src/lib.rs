@@ -219,6 +219,18 @@ pub struct LobbyInfo {
     pub countdown: Option<u8>,
 }
 
+/// Version of the wire protocol. bitcode is not self-describing, so a client and a
+/// server built from different `shared` crates misread each other's messages. Bump
+/// this whenever `ClientMessage`, `ServerMessage` or anything they carry (`Board`,
+/// `BoardRng`…) changes shape. The client sends it as `?v=` on the WebSocket URL.
+pub const PROTOCOL_VERSION: u32 = 1;
+
+/// The text frame a server sends, before closing, to a client whose
+/// `PROTOCOL_VERSION` differs from its own. A text frame because every other
+/// message is binary: a client of any version can recognise it without decoding
+/// anything. Never change it.
+pub const OUTDATED_FRAME: &str = "outdated";
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClientMessage {
     Hello {

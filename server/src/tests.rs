@@ -854,14 +854,42 @@ fn limiter_disconnects_a_sustained_flood() {
 }
 
 async fn connect() -> (warp::test::WsClient, mpsc::Receiver<Command>) {
+    connect_to(&format!("/ws?v={}", shared::PROTOCOL_VERSION)).await
+}
+
+async fn connect_to(path: &str) -> (warp::test::WsClient, mpsc::Receiver<Command>) {
     let (tx, rx) = mpsc::channel(CMD_CHAN_CAP);
     let pool = db::DbPool::connect_lazy("postgres://unused@localhost/unused").expect("lazy pool");
     let client = warp::test::ws()
-        .path("/ws")
+        .path(path)
         .handshake(ws_route(tx, pool))
         .await
         .expect("handshake");
     (client, rx)
+}
+
+#[tokio::test]
+async fn an_outdated_client_is_told_so_and_dropped() {
+    let other = shared::PROTOCOL_VERSION + 1;
+    for path in ["/ws".to_string(), format!("/ws?v={other}")] {
+        let (mut client, mut rx) = connect_to(&path).await;
+        let msg = tokio::time::timeout(Duration::from_secs(5), client.recv())
+            .await
+            .expect("no reply")
+            .expect("recv");
+        assert_eq!(msg.to_str(), Ok(shared::OUTDATED_FRAME), "{path}");
+        tokio::time::timeout(Duration::from_secs(5), client.recv_closed())
+            .await
+            .expect("the server kept the connection open")
+            .expect("closed cleanly");
+        assert!(rx.try_recv().is_err(), "{path}: an outdated client reached the manager");
+    }
+}
+
+#[tokio::test]
+async fn an_up_to_date_client_is_registered() {
+    let (_client, mut rx) = connect().await;
+    commands_until(&mut rx, |c| matches!(c, Command::Register { .. })).await;
 }
 
 fn frame(msg: &ClientMessage) -> warp::ws::Message {

@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, Duration, Instant};
 use tracing::{error, info, warn};
 use uuid::Uuid;
-use warp::Filter;
+use warp::{Filter, Reply};
 
 type ConnId = u64;
 type Token = String;
@@ -1533,15 +1533,46 @@ fn ws_route(
     let conn_counter = Arc::new(AtomicU64::new(1));
     warp::path("ws")
         .and(warp::ws())
+        .and(warp::query::<WsQuery>())
         .and(warp::any().map(move || cmd_tx.clone()))
         .and(warp::any().map(move || Arc::clone(&conn_counter)))
         .and(warp::any().map(move || pool.clone()))
-        .map(|ws: warp::ws::Ws, cmd_tx, counter: Arc<AtomicU64>, pool: db::DbPool| {
-            let conn = counter.fetch_add(1, Ordering::Relaxed);
-            ws.max_message_size(MAX_CLIENT_MESSAGE)
-                .max_frame_size(MAX_CLIENT_MESSAGE)
-                .on_upgrade(move |socket| handle_connection(socket, cmd_tx, conn, pool))
-        })
+        .map(
+            |ws: warp::ws::Ws, query: WsQuery, cmd_tx, counter: Arc<AtomicU64>, pool: db::DbPool| {
+                let conn = counter.fetch_add(1, Ordering::Relaxed);
+                let ws = ws
+                    .max_message_size(MAX_CLIENT_MESSAGE)
+                    .max_frame_size(MAX_CLIENT_MESSAGE);
+                if query.v == Some(shared::PROTOCOL_VERSION) {
+                    ws.on_upgrade(move |socket| handle_connection(socket, cmd_tx, conn, pool))
+                        .into_response()
+                } else {
+                    info!(
+                        "WS {conn} refusé : protocole {:?}, attendu {}",
+                        query.v,
+                        shared::PROTOCOL_VERSION
+                    );
+                    ws.on_upgrade(reject_outdated).into_response()
+                }
+            },
+        )
+}
+
+#[derive(serde::Deserialize)]
+struct WsQuery {
+    v: Option<u32>,
+}
+
+// Close code for an outdated client, in the range RFC 6455 leaves to applications
+// (426: HTTP's Upgrade Required).
+const CLOSE_OUTDATED: u16 = 4426;
+
+async fn reject_outdated(ws: warp::ws::WebSocket) {
+    let (mut tx, _rx) = ws.split();
+    let _ = tx.send(warp::ws::Message::text(shared::OUTDATED_FRAME)).await;
+    let _ = tx
+        .send(warp::ws::Message::close_with(CLOSE_OUTDATED, shared::OUTDATED_FRAME))
+        .await;
 }
 
 async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::Sender<Command>, conn: ConnId, pool: db::DbPool) {

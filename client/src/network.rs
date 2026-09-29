@@ -18,6 +18,10 @@ pub fn handle_server_messages(state: &mut State) {
                 }
             }
             ConnEvent::GaveUp => reset_to_menu(state, "Connexion au serveur perdue."),
+            ConnEvent::Outdated => {
+                state.outdated = true;
+                reset_to_menu(state, crate::update::NOTICE);
+            }
         }
     }
 }

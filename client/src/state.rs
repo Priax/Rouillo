@@ -513,6 +513,7 @@ pub struct State {
     pub invite_overlay: bool,
     pub invite_slot: Option<HttpSlot>,
     pub invite_friends: Vec<FriendEntry>,
+    pub outdated: bool,
 }
 
 impl State {
@@ -541,6 +542,7 @@ impl State {
             invite_overlay: false,
             invite_slot: None,
             invite_friends: Vec::new(),
+            outdated: false,
         }
     }
 }
