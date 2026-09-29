@@ -1,3 +1,13 @@
+// The simulation must run bit for bit alike on every peer, so a silent
+// truncation or sign flip here would be a desync: casts that can lose data
+// are refused, and conversions go through `From`, `try_from` or `small`.
+#![warn(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_lossless
+)]
+
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +35,13 @@ pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
     bitcode::deserialize(&raw).ok()
 }
 
+// Grid coordinates and cell counts are tiny (the grid is 6 by 13), so they fit
+// any integer type; this checks it rather than truncating silently, since a
+// wrong value here would desync the two players.
+fn small<T: TryFrom<usize>>(v: usize) -> T {
+    T::try_from(v).unwrap_or_else(|_| panic!("{v} is not a grid-sized value"))
+}
+
 struct Fnv(u64);
 
 impl Fnv {
@@ -37,7 +54,7 @@ impl Fnv {
     }
 
     fn byte(&mut self, b: u8) {
-        self.0 ^= b as u64;
+        self.0 ^= u64::from(b);
         self.0 = self.0.wrapping_mul(0x100_0000_01b3);
     }
 
@@ -48,7 +65,7 @@ impl Fnv {
     }
 
     fn bool(&mut self, v: bool) {
-        self.byte(v as u8);
+        self.byte(u8::from(v));
     }
 
     fn u32(&mut self, v: u32) {
@@ -130,9 +147,14 @@ impl PausePolicy {
     }
 
     fn step(self, dir: i32) -> Self {
-        let n = Self::ALL.len() as i32;
-        let i = Self::ALL.iter().position(|&p| p == self).unwrap_or(0) as i32;
-        Self::ALL[(i + dir.signum()).rem_euclid(n) as usize]
+        let n = Self::ALL.len();
+        let i = Self::ALL.iter().position(|&p| p == self).unwrap_or(0);
+        let next = match dir.signum() {
+            1 => (i + 1) % n,
+            -1 => (i + n - 1) % n,
+            _ => i,
+        };
+        Self::ALL[next]
     }
 }
 
@@ -188,8 +210,8 @@ impl RoomSettings {
 
     pub fn adjust(&mut self, i: usize, dir: i32) {
         match i {
-            0 => self.starting_level = (self.starting_level as i32 + dir).clamp(1, 15) as u32,
-            1 => self.colors = (self.colors as i32 + dir).clamp(4, 5) as u32,
+            0 => self.starting_level = self.starting_level.saturating_add_signed(dir).clamp(1, 15),
+            1 => self.colors = self.colors.saturating_add_signed(dir).clamp(4, 5),
             2 => self.friends_only = !self.friends_only,
             3 => self.pause = self.pause.step(dir),
             _ => {}
@@ -219,16 +241,8 @@ pub struct LobbyInfo {
     pub countdown: Option<u8>,
 }
 
-/// Version of the wire protocol. bitcode is not self-describing, so a client and a
-/// server built from different `shared` crates misread each other's messages. Bump
-/// this whenever `ClientMessage`, `ServerMessage` or anything they carry (`Board`,
-/// `BoardRng`…) changes shape. The client sends it as `?v=` on the WebSocket URL.
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// The text frame a server sends, before closing, to a client whose
-/// `PROTOCOL_VERSION` differs from its own. A text frame because every other
-/// message is binary: a client of any version can recognise it without decoding
-/// anything. Never change it.
 pub const OUTDATED_FRAME: &str = "outdated";
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -366,17 +380,17 @@ pub struct CellFall {
 pub fn fallen_px(frames: u32, start: u32, accel: u32) -> u64 {
     let (mut y, mut v) = (0u64, start);
     for _ in 0..frames {
-        y += v as u64;
+        y += u64::from(v);
         v = (v + accel).min(FREE_FALL_MAX);
     }
     y
 }
 
 pub fn frames_to_fall(cells: u32, start: u32, accel: u32) -> u32 {
-    let target = (cells * CELL_PX) as u64 * PX_UNITS as u64;
+    let target = u64::from(cells * CELL_PX) * u64::from(PX_UNITS);
     let (mut y, mut v, mut frames) = (0u64, start, 0);
     while y < target {
-        y += v as u64;
+        y += u64::from(v);
         v = (v + accel).min(FREE_FALL_MAX);
         frames += 1;
     }
@@ -394,13 +408,13 @@ impl CellFall {
 
     pub fn lands_at(&self) -> u32 {
         let (start, accel) = self.start_and_accel();
-        self.delay as u32 + frames_to_fall(self.cells_fallen as u32, start, accel)
+        u32::from(self.delay) + frames_to_fall(u32::from(self.cells_fallen), start, accel)
     }
 
     pub fn height_at(&self, frame: u32) -> f32 {
         let (start, accel) = self.start_and_accel();
-        let moving = frame.saturating_sub(self.delay as u32);
-        let total = (self.cells_fallen as u32 * CELL_PX) as u64 * PX_UNITS as u64;
+        let moving = frame.saturating_sub(u32::from(self.delay));
+        let total = u64::from(u32::from(self.cells_fallen) * CELL_PX) * u64::from(PX_UNITS);
         let left = total.saturating_sub(fallen_px(moving, start, accel));
         left as f32 / (CELL_PX * PX_UNITS) as f32
     }
@@ -539,7 +553,7 @@ impl Board {
         );
         let new_piece = ActivePuyo {
             row: 1,
-            col: SPAWN_COL as i32,
+            col: small(SPAWN_COL),
             rotation: 0,
             axis_type: c1,
             sat_type: c2,
@@ -566,11 +580,13 @@ impl Board {
     }
 
     pub fn check_collision(&self, piece: &ActivePuyo) -> bool {
-        for (r, c) in &piece.get_positions() {
-            if *c < 0 || *c >= self.width as i32 || *r >= self.height as i32 {
+        for &(r, c) in &piece.get_positions() {
+            let in_columns = usize::try_from(c).is_ok_and(|c| c < self.width);
+            let below_floor = usize::try_from(r).is_ok_and(|r| r >= self.height);
+            if !in_columns || below_floor {
                 return true;
             }
-            if *r >= 0 && self.cells[*r as usize][*c as usize].is_some() {
+            if self.index(r, c).is_some_and(|(r, c)| self.cells[r][c].is_some()) {
                 return true;
             }
         }
@@ -715,16 +731,16 @@ impl Board {
             return;
         };
         let mut placed = Vec::new();
-        for (i, (r, c)) in piece.get_positions().iter().enumerate() {
-            if *r >= 0 && *r < self.height as i32 && *c >= 0 && *c < self.width as i32 {
+        for (i, &(r, c)) in piece.get_positions().iter().enumerate() {
+            if let Some((r, c)) = self.index(r, c) {
                 let puyo_type = if i == 0 { piece.axis_type } else { piece.sat_type };
-                self.cells[*r as usize][*c as usize] = Some(puyo_type);
+                self.cells[r][c] = Some(puyo_type);
                 let delay = if i == 0 {
                     SPLIT_DELAY_AXIS
                 } else {
                     SPLIT_DELAY_SATELLITE
                 };
-                placed.push((*r as usize, *c as usize, delay));
+                placed.push((r, c, delay));
             }
         }
         self.fall_offset = 0;
@@ -739,9 +755,9 @@ impl Board {
                 None => (r, 0),
             };
             falls.push(CellFall {
-                row: row as u8,
-                col: c as u8,
-                cells_fallen: cells_fallen as u8,
+                row: small(row),
+                col: small(c),
+                cells_fallen: small(cells_fallen),
                 delay,
                 ojama: false,
             });
@@ -795,8 +811,8 @@ impl Board {
                 let group = self.flood_fill(r, c, p_type, &mut visited);
                 if group.len() >= 4 && group.iter().any(|(r, _)| *r >= VISIBLE_ROW_OFFSET) {
                     colors_seen[p_type as usize] = true;
-                    group_sizes.push(group.len() as u32);
-                    total_puyos_cleared += group.len() as u32;
+                    group_sizes.push(small(group.len()));
+                    total_puyos_cleared += small::<u32>(group.len());
                     for (gr, gc) in group {
                         to_remove[gr][gc] = true;
                         self.mark_adjacent_garbage(gr, gc, &mut to_remove);
@@ -807,7 +823,7 @@ impl Board {
         let popping: Vec<(u8, u8)> = (0..self.height)
             .flat_map(|r| (0..self.width).map(move |c| (r, c)))
             .filter(|&(r, c)| to_remove[r][c])
-            .map(|(r, c)| (r as u8, c as u8))
+            .map(|(r, c)| (small(r), small(c)))
             .collect();
         if popping.is_empty() {
             return None;
@@ -815,9 +831,11 @@ impl Board {
         self.chain_count += 1;
         let colors = colors_seen.iter().filter(|&&seen| seen).count();
         let score_gained = self.calculate_score(colors, total_puyos_cleared, &group_sizes);
-        self.score += score_gained;
+        self.score = self
+            .score
+            .saturating_add(i32::try_from(score_gained).unwrap_or(i32::MAX));
         self.popping = popping;
-        Some(score_gained as u32)
+        Some(score_gained)
     }
 
     fn clear_popping(&mut self) {
@@ -833,22 +851,30 @@ impl Board {
     }
 
     fn mark_adjacent_garbage(&self, r: usize, c: usize, to_remove: &mut [Vec<bool>]) {
-        let neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)];
-        for (dr, dc) in &neighbors {
-            let nr = r as i32 + dr;
-            let nc = c as i32 + dc;
-
-            if nr >= 0 && nr < self.height as i32 && nc >= 0 && nc < self.width as i32 {
-                let nr = nr as usize;
-                let nc = nc as usize;
-                if self.cells[nr][nc] == Some(PuyoType::Garbage) {
-                    to_remove[nr][nc] = true;
-                }
+        for (nr, nc) in self.neighbours(r, c) {
+            if self.cells[nr][nc] == Some(PuyoType::Garbage) {
+                to_remove[nr][nc] = true;
             }
         }
     }
 
-    fn calculate_score(&self, color_count_len: usize, total_cleared: u32, group_sizes: &[u32]) -> i32 {
+    fn index(&self, r: i32, c: i32) -> Option<(usize, usize)> {
+        let r = usize::try_from(r).ok().filter(|&r| r < self.height)?;
+        let c = usize::try_from(c).ok().filter(|&c| c < self.width)?;
+        Some((r, c))
+    }
+
+    fn neighbours(&self, r: usize, c: usize) -> impl Iterator<Item = (usize, usize)> + '_ {
+        [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            .into_iter()
+            .filter_map(move |(dr, dc)| {
+                let nr = r.checked_add_signed(dr)?;
+                let nc = c.checked_add_signed(dc)?;
+                (nr < self.height && nc < self.width).then_some((nr, nc))
+            })
+    }
+
+    fn calculate_score(&self, color_count_len: usize, total_cleared: u32, group_sizes: &[u32]) -> u32 {
         let chain_idx = (self.chain_count).min(19) as usize;
         let cp = CHAIN_POWERS[chain_idx];
         let cb = COLOR_BONUS[color_count_len.min(5)];
@@ -858,7 +884,7 @@ impl Board {
         }
         let multiplier = (cp + cb + gb).clamp(1, 999);
 
-        (10 * total_cleared) as i32 * multiplier as i32
+        10 * total_cleared * multiplier
     }
 
     pub fn drop_garbage(&mut self) {
@@ -868,8 +894,9 @@ impl Board {
         let garbage_to_drop = self.pending_garbage.min(30);
         self.pending_garbage -= garbage_to_drop;
 
-        let full_lines = garbage_to_drop / self.width as u32;
-        let leftover = garbage_to_drop % self.width as u32;
+        let width: u32 = small(self.width);
+        let full_lines = garbage_to_drop / width;
+        let leftover = garbage_to_drop % width;
         let mut landed: Vec<(usize, usize)> = Vec::new();
 
         for _ in 0..full_lines {
@@ -900,9 +927,9 @@ impl Board {
             };
             for &(r, _) in landed.iter().filter(|&&(_, c)| c == col) {
                 falls.push(CellFall {
-                    row: r as u8,
-                    col: col as u8,
-                    cells_fallen: bottom as u8,
+                    row: small(r),
+                    col: small(col),
+                    cells_fallen: small(bottom),
                     delay: 0,
                     ojama: true,
                 });
@@ -926,15 +953,9 @@ impl Board {
             }
             visited[r][c] = true;
             group.push((r, c));
-            for (dr, dc) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
-                let nr = r as i32 + dr;
-                let nc = c as i32 + dc;
-                if nr >= 0 && nr < self.height as i32 && nc >= 0 && nc < self.width as i32 {
-                    if let Some(cell_type) = self.cells[nr as usize][nc as usize] {
-                        if cell_type == target_type {
-                            stack.push((nr as usize, nc as usize));
-                        }
-                    }
+            for (nr, nc) in self.neighbours(r, c) {
+                if self.cells[nr][nc] == Some(target_type) {
+                    stack.push((nr, nc));
                 }
             }
         }
@@ -1008,9 +1029,9 @@ impl Board {
                     .collapse()
                     .into_iter()
                     .map(|(from, col, to)| CellFall {
-                        row: to as u8,
-                        col: col as u8,
-                        cells_fallen: (to - from) as u8,
+                        row: small(to),
+                        col: small(col),
+                        cells_fallen: small(to - from),
                         delay: 0,
                         ojama: false,
                     })
@@ -1060,8 +1081,8 @@ impl Board {
 
     pub fn target_points(&self) -> u32 {
         let steps = self.level().saturating_sub(MARGIN_LEVELS).min(MARGIN_STEPS);
-        let target = TARGET_POINTS as u64 * 3u64.pow(steps) / 4u64.pow(steps);
-        target.max(1) as u32
+        let target = u64::from(TARGET_POINTS) * 3u64.pow(steps) / 4u64.pow(steps);
+        u32::try_from(target.max(1)).unwrap_or(u32::MAX)
     }
 
     pub fn level(&self) -> u32 {
@@ -1191,7 +1212,7 @@ impl Board {
         }
         h.usize(falls.len());
         for f in falls {
-            h.bytes(&[f.row, f.col, f.cells_fallen, f.delay, f.ojama as u8]);
+            h.bytes(&[f.row, f.col, f.cells_fallen, f.delay, u8::from(f.ojama)]);
         }
         h.usize(popping.len());
         for (r, c) in popping {

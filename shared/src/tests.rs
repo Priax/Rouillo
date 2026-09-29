@@ -1,3 +1,11 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_lossless,
+    reason = "test fixtures build small, known values"
+)]
+
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::HashSet;
 
@@ -88,6 +96,22 @@ fn garbage_placement_leaves_the_piece_sequence_alone() {
         assert_eq!((pa.axis_type, pa.sat_type), (pb.axis_type, pb.sat_type), "pair {i}");
     }
     assert_ne!(a.rng_position(), b.rng_position(), "setup: the drops drew nothing");
+}
+
+#[test]
+fn room_settings_survive_any_step_from_the_network() {
+    let mut s = RoomSettings::default();
+    for dir in [i32::MAX, i32::MIN, 7, -7] {
+        s.adjust(0, dir);
+        assert!(
+            (1..=15).contains(&s.starting_level),
+            "level {} after {dir}",
+            s.starting_level
+        );
+        s.adjust(1, dir);
+        assert!((4..=5).contains(&s.colors), "colors {} after {dir}", s.colors);
+        s.adjust(3, dir);
+    }
 }
 
 #[test]

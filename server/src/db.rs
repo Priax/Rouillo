@@ -160,7 +160,9 @@ pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), 
     .fetch_one(&mut *tx)
     .await?;
 
-    for i in 0..2usize {
+    let small = |v: u32| i16::try_from(v).unwrap_or(i16::MAX);
+    let int = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
+    for (i, slot) in [(0usize, 1i16), (1, 2)] {
         sqlx::query(
             "INSERT INTO match_stats \
              (match_id, user_id, slot, max_chain, total_chains, \
@@ -169,13 +171,13 @@ pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), 
         )
         .bind(match_id)
         .bind(rec.user_ids[i])
-        .bind((i + 1) as i16)
-        .bind(rec.max_chain[i] as i16)
-        .bind(rec.total_chains[i] as i16)
-        .bind(rec.nuisance_sent[i] as i32)
-        .bind(rec.nuisance_sent[1 - i] as i32)
-        .bind(rec.all_clears[i] as i16)
-        .bind(rec.pieces_placed[i] as i32)
+        .bind(slot)
+        .bind(small(rec.max_chain[i]))
+        .bind(small(rec.total_chains[i]))
+        .bind(int(rec.nuisance_sent[i]))
+        .bind(int(rec.nuisance_sent[1 - i]))
+        .bind(small(rec.all_clears[i]))
+        .bind(int(rec.pieces_placed[i]))
         .execute(&mut *tx)
         .await?;
     }
