@@ -1561,6 +1561,19 @@ fn no_new_room_and_no_join_during_a_shutdown() {
 }
 
 #[test]
+fn a_join_being_checked_when_the_shutdown_starts_is_refused() {
+    let mut mgr = new_mgr();
+    let (_rx1, mut rx2) = friends_only_room(&mut mgr);
+    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    let check = only_join_check(&mut mgr);
+    mgr.handle(Command::Shutdown);
+    drain(&mut rx2);
+    mgr.handle(Command::FriendCheckDone { check, friends: true });
+    assert_eq!(mgr.room_of(2), None);
+    assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::JoinFailed { .. })));
+}
+
+#[test]
 fn a_player_can_still_come_back_during_a_shutdown() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);

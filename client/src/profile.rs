@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use notan::draw::Draw;
@@ -10,8 +11,15 @@ use crate::state::{
 };
 use crate::theme::{self, Palette};
 use crate::ui::{
-    self, divider, list_row, portrait, text_field, Face, Field, Fonts, Pill, Rect, SharpText, Status, Ui, View,
+    self, area_height, divider, list_row, portrait, text_area, text_field, Face, Field, Fonts, Pill, Rect, SharpText,
+    Status, Ui, View,
 };
+
+pub const BIO_MAX: usize = 500;
+pub const MUSIC_MAX: usize = 200;
+const BIO_EDIT_LINES: usize = 6;
+const ABOUT_LINE_H: f32 = 24.0;
+const ABOUT_BLOCK_H: f32 = 54.0;
 
 fn panels(ww: f32) -> (f32, f32, f32, f32) {
     let left_x = 40.0;
@@ -213,27 +221,52 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
     divider(draw, &pal, label_x, sep_y, card.w - 2.0 * CARD_PAD);
 
     let mut info_y = sep_y + 24.0;
-    let about = [
-        ("Bio", core.info.bio.as_deref(), pal.text),
-        ("Musique", core.info.favorite_music.as_deref(), pal.accent),
-    ];
     let room = card.w - 2.0 * CARD_PAD;
-    for (label, value, color) in about {
-        let Some(value) = value.filter(|v| !v.is_empty()) else {
-            continue;
-        };
+    let bio = core.info.bio.as_deref().filter(|v| !v.is_empty());
+    let music = core.info.favorite_music.as_deref().filter(|v| !v.is_empty());
+    let mut about = |label: &str, lines: &[Cow<str>], color: Color| {
         draw.sharp_text(&fonts.text, label)
             .position(label_x, info_y)
             .size(theme::size::SMALL)
             .v_align_middle()
             .color(pal.text_dim);
-        draw.sharp_text(&fonts.text, &fonts.fit(Face::Text, value, theme::size::BODY, room))
-            .position(label_x, info_y + 22.0)
-            .size(theme::size::BODY)
-            .v_align_middle()
-            .color(color);
-        info_y += 54.0;
+        for (i, line) in lines.iter().enumerate() {
+            draw.sharp_text(&fonts.text, line)
+                .position(label_x, info_y + 22.0 + i as f32 * ABOUT_LINE_H)
+                .size(theme::size::BODY)
+                .v_align_middle()
+                .color(color);
+        }
+        info_y += ABOUT_BLOCK_H + (lines.len().max(1) - 1) as f32 * ABOUT_LINE_H;
+    };
+    if let Some(bio) = bio {
+        let bottom = card.y + card.h - CARD_PAD - if music.is_some() { ABOUT_BLOCK_H } else { 0.0 };
+        let max_lines = ((bottom - sep_y - 24.0 - 22.0) / ABOUT_LINE_H) as usize;
+        about("Bio", &bio_lines(fonts, bio, room, max_lines.max(1)), pal.text);
     }
+    if let Some(music) = music {
+        about(
+            "Musique",
+            &[fonts.fit(Face::Text, music, theme::size::BODY, room)],
+            pal.accent,
+        );
+    }
+}
+
+fn bio_lines<'a>(fonts: &Fonts, bio: &'a str, room: f32, max: usize) -> Vec<Cow<'a, str>> {
+    let mut lines: Vec<Cow<str>> = fonts
+        .wrap(Face::Text, bio, theme::size::BODY, room)
+        .into_iter()
+        .map(Cow::Borrowed)
+        .collect();
+    if lines.len() > max {
+        lines.truncate(max);
+        if let Some(last) = lines.last_mut() {
+            let cut = format!("{}…", last.trim_end());
+            *last = Cow::Owned(fonts.fit(Face::Text, &cut, theme::size::BODY, room).into_owned());
+        }
+    }
+    lines
 }
 
 fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore, clickable: bool) {
@@ -396,16 +429,16 @@ fn save_profile(state: &mut State) {
 }
 
 fn edit_boxes(cx: f32) -> (Rect, Rect) {
-    (
-        Rect::at(cx - 300.0, 215.0, 600.0, 46.0),
-        Rect::at(cx - 300.0, 305.0, 600.0, 46.0),
-    )
+    let bio = Rect::at(cx - 300.0, 215.0, 600.0, area_height(BIO_EDIT_LINES));
+    (bio, Rect::at(bio.x, bio.y + bio.h + 44.0, bio.w, 46.0))
 }
 
 fn edit_buttons(cx: f32) -> (Rect, Rect) {
+    let (_, music) = edit_boxes(cx);
+    let y = music.y + music.h + 39.0;
     (
-        Rect::at(cx - 220.0, 390.0, 200.0, 54.0),
-        Rect::at(cx + 20.0, 390.0, 200.0, 54.0),
+        Rect::at(cx - 220.0, y, 200.0, 54.0),
+        Rect::at(cx + 20.0, y, 200.0, 54.0),
     )
 }
 
@@ -461,8 +494,20 @@ pub fn update_profile(app: &mut App, state: &mut State) {
                 p.edit_focused = ProfileEditField::Music;
             }
         }
+        let enter = app.keyboard.was_pressed(KeyCode::Enter);
+        let in_bio = state
+            .profile
+            .as_ref()
+            .is_some_and(|p| p.edit_focused == ProfileEditField::Bio);
+        if enter && in_bio {
+            if let Some(p) = state.profile.as_mut() {
+                if p.edit_bio.chars().count() < BIO_MAX {
+                    p.edit_bio.push('\n');
+                }
+            }
+        }
         let (save_btn, cancel_btn) = edit_buttons(cx);
-        if (state.ui.clicked(save_btn) || app.keyboard.was_pressed(KeyCode::Enter))
+        if (state.ui.clicked(save_btn) || (enter && !in_bio))
             && state.profile.as_ref().is_some_and(|p| p.edit_pending.is_none())
         {
             save_profile(state);
@@ -552,31 +597,49 @@ fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &
         (
             bio_box,
             "Bio",
-            "Ta bio (max 500 caractères)",
+            "Ta bio",
             &profile.edit_bio,
+            BIO_MAX,
             ProfileEditField::Bio,
         ),
         (
             music_box,
             "Musique préférée",
-            "Ta musique préférée (max 200 caractères)",
+            "Ta musique préférée",
             &profile.edit_music,
+            MUSIC_MAX,
             ProfileEditField::Music,
         ),
     ];
-    for (rect, label, placeholder, value, which) in fields {
+    for (rect, label, placeholder, value, max, which) in fields {
         draw.sharp_text(&fonts.text, label)
             .position(rect.x, rect.y - 15.0)
             .size(theme::size::LABEL)
             .v_align_middle()
             .color(pal.text_dim);
+        let left = max.saturating_sub(value.chars().count());
+        let left_color = match left {
+            0 => theme::DANGER,
+            1..=20 => theme::WARNING,
+            _ => pal.text_muted,
+        };
+        draw.sharp_text(&fonts.text, &left.to_string())
+            .position(rect.x + rect.w, rect.y - 15.0)
+            .size(theme::size::SMALL)
+            .h_align_right()
+            .v_align_middle()
+            .color(left_color);
         let field = Field {
             placeholder,
             value,
             focused: profile.edit_focused == which,
             secret: false,
         };
-        text_field(draw, &pal, fonts, rect, &field);
+        if which == ProfileEditField::Bio {
+            text_area(draw, ui, fonts, rect, &field);
+        } else {
+            text_field(draw, ui, fonts, rect, &field);
+        }
     }
 
     let (save_btn, cancel_btn) = edit_buttons(cx);
@@ -592,7 +655,7 @@ fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &
 
     if let Some((msg, color)) = profile.edit_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
-            .position(cx, 465.0)
+            .position(cx, save_btn.y + save_btn.h + 21.0)
             .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()

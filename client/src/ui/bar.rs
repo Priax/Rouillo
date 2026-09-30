@@ -122,8 +122,8 @@ impl Slanted {
     }
 }
 
-pub(super) fn contains(row: Rect, hover: f32, x: f32, y: f32) -> bool {
-    Slanted::of(row, hover).contains(x, y)
+pub(super) fn contains(row: Rect, x: f32, y: f32) -> bool {
+    Slanted::of(row, 0.0).contains(x, y)
 }
 
 fn glow(draw: &mut Draw, bar: Slanted, color: Color) {

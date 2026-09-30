@@ -212,6 +212,7 @@ fn update_entry(app: &mut App, state: &mut State) -> Option<String> {
 
 pub fn update_create_room(app: &mut App, state: &mut State) {
     if let Some(name) = update_entry(app, state).filter(|name| !name.is_empty()) {
+        state.notice.clear();
         send(state, &ClientMessage::CreateRoom { name });
         state.text_input.clear();
     }
@@ -245,11 +246,20 @@ fn draw_entry(gfx: &mut Graphics, state: &State, title: &str, confirm: &str, pla
         focused: true,
         secret: false,
     };
-    text_field(&mut draw, &pal, &state.fonts, entry_box(w, h), &field);
+    text_field(&mut draw, &state.ui, &state.fonts, entry_box(w, h), &field);
 
     let (cbtn, back) = entry_buttons(w, h);
     state.ui.button(&mut draw, &state.fonts, cbtn, confirm);
     state.ui.button(&mut draw, &state.fonts, back, "Retour");
+
+    if let Some((msg, color)) = state.notice.shown(&pal) {
+        draw.sharp_text(&state.fonts.text, msg)
+            .position(card.x + card.w / 2.0, card.y + card.h + 40.0)
+            .size(theme::size::EMPHASIS)
+            .h_align_center()
+            .v_align_middle()
+            .color(color);
+    }
 
     state.ui.render(gfx, &draw);
 }

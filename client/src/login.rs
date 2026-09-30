@@ -203,7 +203,7 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
             focused: form.focused == which,
             secret: which == AuthField::Password,
         };
-        text_field(&mut draw, &pal, &state.fonts, rect, &field);
+        text_field(&mut draw, &state.ui, &state.fonts, rect, &field);
     }
 
     let loading = state.auth_form.pending.is_some();

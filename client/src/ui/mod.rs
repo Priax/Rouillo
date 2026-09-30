@@ -21,7 +21,7 @@ use std::hash::{Hash, Hasher};
 
 pub use button::Icon;
 pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge, Pill};
-pub use field::{text_field, Field};
+pub use field::{area_height, text_area, text_field, Field};
 pub use fonts::{Face, Fonts};
 pub use keys::KeyRepeat;
 use notan::draw::{CreateDraw, Draw, DrawImages};
@@ -89,11 +89,9 @@ impl Default for Inner {
     }
 }
 
-/// The part of a widget's rectangle the pointer can reach.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Area {
     Whole,
-    /// The slanted bar of a menu row, which widens as it is hovered.
     Bar,
 }
 
@@ -112,7 +110,7 @@ impl Widget {
     fn contains(&self, x: f32, y: f32) -> bool {
         match self.area {
             Area::Whole => self.rect.contains(x, y),
-            Area::Bar => bar::contains(self.rect, self.hover, x, y),
+            Area::Bar => bar::contains(self.rect, x, y),
         }
     }
 }
@@ -273,16 +271,9 @@ impl Ui {
         m.pressed && r.contains(m.x, m.y)
     }
 
-    /// A click on the bar of a menu row, as wide as it is currently drawn.
     pub fn bar_clicked(&self, row: Rect) -> bool {
-        let inner = self.inner.borrow();
-        let m = inner.mouse;
-        let hover = inner
-            .widgets
-            .values()
-            .find(|w| w.area == Area::Bar && w.rect == row)
-            .map_or(0.0, |w| w.hover);
-        m.pressed && bar::contains(row, hover, m.x, m.y)
+        let m = self.inner.borrow().mouse;
+        m.pressed && bar::contains(row, m.x, m.y)
     }
 
     pub fn set_input(&self, on: bool) {
@@ -337,7 +328,6 @@ impl Ui {
         w.rect = rect;
         w.area = area;
         let over = live && w.contains(mouse.x, mouse.y);
-        // A widget that appears under the pointer was not entered.
         let entered = over && !w.hovered && !fresh;
         w.live = live;
         w.hovered = over;
@@ -511,7 +501,6 @@ mod tests {
     fn a_button_appearing_under_a_click_is_not_clicked() {
         let mut ui = Ui::default();
         frame(&mut ui, ON_A, &[("Amis", B)]);
-        // The click switches screens: "Retour" now sits where the click was.
         assert!(!ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A));
         assert!(ui.interact("Retour", A, true).flash.abs() < f32::EPSILON);
     }
@@ -571,34 +560,23 @@ mod tests {
     #[test]
     fn a_menu_bar_follows_its_slant() {
         let mut ui = Ui::default();
-        // The bar's left edge runs from x = 236.8 at the top to 203.2 at the bottom.
         bar_frame(&mut ui, at(225.0, 1.0));
         assert!(bar_frame(&mut ui, at(225.0, 1.0)).hover.abs() < f32::EPSILON);
         assert!(bar_frame(&mut ui, at(225.0, 59.0)).hover > 0.0);
     }
 
     #[test]
-    fn a_hovered_menu_bar_keeps_the_pointer_as_it_widens() {
+    fn a_widened_menu_bar_reacts_where_it_did_at_rest() {
         let mut ui = Ui::default();
-        // Past the bar at rest (it ends at x = 780), inside it once widened.
         let margin = at(800.0, 30.0);
-        for _ in 0..30 {
-            bar_frame(&mut ui, margin);
-        }
-        assert!(
-            bar_frame(&mut ui, margin).hover.abs() < f32::EPSILON,
-            "not reachable from outside"
-        );
         for _ in 0..60 {
             bar_frame(&mut ui, at(500.0, 30.0));
         }
+        assert!(bar_frame(&mut ui, at(500.0, 30.0)).hover > 0.9);
         for _ in 0..60 {
             bar_frame(&mut ui, margin);
         }
-        assert!(
-            bar_frame(&mut ui, margin).hover > 0.9,
-            "the pointer is on the bar as drawn"
-        );
+        assert!(bar_frame(&mut ui, margin).hover < 0.01);
         ui.begin_frame(
             1.0 / 60.0,
             View::default(),
@@ -607,7 +585,7 @@ mod tests {
                 ..margin
             },
         );
-        assert!(ui.bar_clicked(ROW));
+        assert!(!ui.bar_clicked(ROW));
     }
 
     #[test]

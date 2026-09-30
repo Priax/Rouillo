@@ -310,14 +310,16 @@ reconnectent tout seuls et retombent sur la liste des rooms.
 ### Caddyfile et Content-Security-Policy
 
 Le Caddyfile réel est `deploy/Caddyfile` (hors dépôt), le script ne l'installe pas. Il envoie
-une `Content-Security-Policy` sur la page: scripts et connexions limités à ce domaine. Le seul
+`Strict-Transport-Security` et `X-Content-Type-Options` sur tout le site, et une
+`Content-Security-Policy` sur la page: scripts, styles et connexions limités à ce domaine. Le seul
 script en ligne de la page (écrit par trunk) porte un nonce: trunk y laisse un texte à remplacer
 (`create_nonce` dans `client/Trunk.toml`) et la directive `templates` de Caddy y met
 l'identifiant de la requête, le même que dans l'en-tête.
 
 **Ordre à respecter**: d'abord `scripts/deploy.sh web` (une page avec le nonce), ensuite le
 Caddyfile. Dans l'autre sens, la page en place n'a pas de nonce, son script est bloqué et
-l'écran reste noir.
+l'écran reste noir. Pareil pour les styles: la page doit déjà charger `style-*.css`, une page
+plus ancienne a ses styles dans un `<style>` que la politique refuse.
 
 ```bash
 scp deploy/Caddyfile ubuntu@puyo.priax.org:/tmp/Caddyfile

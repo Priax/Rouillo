@@ -31,8 +31,6 @@ impl Fonts {
         })
     }
 
-    /// How wide `text` is at `size`, measured the way notan lays it out:
-    /// each glyph's advance plus the kerning between neighbours.
     pub fn width(&self, face: Face, text: &str, size: f32) -> f32 {
         advances(self.metrics(face), text, size).last().map_or(0.0, |(_, w)| w)
     }
@@ -44,11 +42,52 @@ impl Fonts {
         }
     }
 
-    /// `text` as is if it fits in `max` at `size`, else as much of it as fits
-    /// followed by an ellipsis.
     pub fn fit<'a>(&self, face: Face, text: &'a str, size: f32, max: f32) -> Cow<'a, str> {
         fit(self.metrics(face), text, size, max)
     }
+
+    pub fn tail<'a>(&self, face: Face, text: &'a str, size: f32, max: f32) -> &'a str {
+        tail(self.metrics(face), text, size, max)
+    }
+
+    pub fn wrap<'a>(&self, face: Face, text: &'a str, size: f32, max: f32) -> Vec<&'a str> {
+        wrap(self.metrics(face), text, size, max)
+    }
+}
+
+fn tail<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> &'a str {
+    let width = |t: &str| advances(font, t, size).last().map_or(0.0, |(_, w)| w);
+    text.char_indices()
+        .map(|(start, _)| &text[start..])
+        .find(|rest| width(rest) <= max)
+        .unwrap_or_default()
+}
+
+fn wrap<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> Vec<&'a str> {
+    let mut lines = Vec::new();
+    for mut rest in text.split('\n') {
+        loop {
+            let (line, after) = rest.split_at(line_end(font, rest, size, max));
+            lines.push(line);
+            rest = after;
+            if rest.is_empty() {
+                break;
+            }
+        }
+    }
+    lines
+}
+
+fn line_end(font: &FontRef<'static>, text: &str, size: f32, max: f32) -> usize {
+    let first = text.chars().next().map_or(0, char::len_utf8);
+    let fits = advances(font, text, size)
+        .take_while(|&(_, w)| w <= max)
+        .last()
+        .map_or(first, |(end, _)| end);
+    if fits == text.len() {
+        return fits;
+    }
+    text[..fits].rfind(' ').map_or(fits, |space| space + 1)
 }
 
 fn fit<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> Cow<'a, str> {
@@ -64,9 +103,6 @@ fn fit<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> Cow<'
     Cow::Owned(format!("{}…", text[..end].trim_end()))
 }
 
-/// For each character of `text`: the byte index just past it, and the width
-/// of the text up to there, laid out the way notan does it (each glyph's
-/// advance plus the kerning between neighbours).
 fn advances<'a>(font: &'a FontRef<'static>, text: &'a str, size: f32) -> impl Iterator<Item = (usize, f32)> + 'a {
     let scaled = font.as_scaled(PxScale::from(size));
     let mut width = 0.0;
@@ -106,6 +142,39 @@ mod tests {
         assert!(fitted.ends_with('…') && fitted.len() < worst.len() + 3);
         assert!(width(&fitted, 48.0) <= 400.0, "{} wide", width(&fitted, 48.0));
         assert_eq!(fit(&font(), "Pas du tout la place", 20.0, 1.0), "…");
+    }
+
+    #[test]
+    fn the_tail_is_the_end_that_fits() {
+        assert_eq!(tail(&font(), "Salon", 20.0, 500.0), "Salon");
+        let long = "abcdefghij".repeat(10);
+        let end = tail(&font(), &long, 20.0, 200.0);
+        assert!(long.ends_with(end) && end.len() < long.len() && !end.is_empty());
+        assert!(width(end, 20.0) <= 200.0);
+        assert_eq!(tail(&font(), "Pas la place", 20.0, 1.0), "");
+    }
+
+    #[test]
+    fn wrapping_breaks_between_words_and_loses_nothing() {
+        let text = "une bio assez longue pour ne pas tenir sur une seule ligne";
+        let lines = wrap(&font(), text, 20.0, 200.0);
+        assert!(lines.len() > 1);
+        assert_eq!(lines.concat(), text);
+        for line in &lines {
+            assert!(width(line, 20.0) <= 200.0, "{line:?}");
+        }
+        assert!(lines[..lines.len() - 1].iter().all(|l| l.ends_with(' ')));
+    }
+
+    #[test]
+    fn wrapping_keeps_line_breaks_and_cuts_overlong_words() {
+        assert_eq!(wrap(&font(), "a\n\nb\n", 20.0, 200.0), ["a", "", "b", ""]);
+        assert_eq!(wrap(&font(), "", 20.0, 200.0), [""]);
+        let word = "W".repeat(40);
+        let lines = wrap(&font(), &word, 20.0, 200.0);
+        assert!(lines.len() > 1 && lines.concat() == word);
+        assert!(lines.iter().all(|l| width(l, 20.0) <= 200.0));
+        assert_eq!(wrap(&font(), "WW", 20.0, 1.0), ["W", "W"]);
     }
 
     #[test]

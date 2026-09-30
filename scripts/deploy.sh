@@ -36,6 +36,10 @@ die() {
     exit 1
 }
 
+remote() {
+    ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$HOST" "$@"
+}
+
 pushed_commit() {
     [ -z "$(git -C "$root" status --porcelain)" ] || die "uncommitted changes, commit or stash them first"
     git -C "$root" fetch --quiet origin master
@@ -51,7 +55,7 @@ build_web() {
 
 build_server() {
     step "Building the server on $HOST ($1)"
-    ssh "$HOST" "set -eu
+    remote "set -eu
         . ~/.cargo/env
         cd $REPO
         git pull --ff-only --quiet
@@ -61,19 +65,27 @@ build_server() {
 
 swap_server() {
     step "Restarting the server (waits for running games to finish)"
-    ssh "$HOST" "set -eu
+    remote "set -eu
         systemctl cat puyo | grep -q '^TimeoutStopSec=' \
             || echo 'warning: puyo.service has no TimeoutStopSec, systemd will kill the server after 90 s (see DEPLOY.md)' >&2
         sudo install -m 755 $REPO/target/release/server $DIR/server.new
-        sudo cp -p $DIR/server $DIR/server.prev
-        sudo mv $DIR/server.new $DIR/server
-        sudo systemctl restart puyo"
+        sudo cmp -s $DIR/server.new $DIR/server || sudo cp -p $DIR/server $DIR/server.prev
+        sudo mv $DIR/server.new $DIR/server"
+    restart_server
+}
+
+restart_server() {
+    status=0
+    remote "sudo systemctl restart puyo" || status=$?
+    if [ "$status" = 255 ]; then
+        die "connection lost during the restart, which carries on on the VM. Once 'systemctl is-active puyo' says active there, run '$0 web' if the web client was part of this deploy"
+    fi
     check_server
 }
 
 check_server() {
-    ssh "$HOST" "sleep 2; systemctl is-active --quiet puyo" || {
-        ssh "$HOST" "journalctl -u puyo -n 30 --no-pager" >&2
+    remote "sleep 2; systemctl is-active --quiet puyo" || {
+        remote "journalctl -u puyo -n 30 --no-pager" >&2
         die "the server did not come back up; '$0 rollback' puts the previous binary back"
     }
     status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --http1.1 \
@@ -86,7 +98,9 @@ check_server() {
 
 push_web() {
     step "Uploading the web client"
-    rsync -a --delete --rsync-path='sudo rsync' "$root/client/dist/" "$HOST:$DIR/web/"
+    rsync -a --delete --rsync-path='sudo rsync' -e 'ssh -o ServerAliveInterval=30' \
+        "$root/client/dist/" "$HOST:$DIR/web/" \
+        || die "upload failed, the site still serves the previous web client: run '$0 web' again"
     status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$SITE/" || true)
     [ "$status" = 200 ] || die "$SITE/ answered $status instead of 200"
     echo "Web client up at $SITE/"
@@ -112,11 +126,10 @@ web)
     ;;
 rollback)
     step "Putting the previous server back"
-    ssh "$HOST" "set -eu
+    remote "set -eu
         sudo cp -p $DIR/server.prev $DIR/server.new
-        sudo mv $DIR/server.new $DIR/server
-        sudo systemctl restart puyo"
-    check_server
+        sudo mv $DIR/server.new $DIR/server"
+    restart_server
     ;;
 *)
     echo "usage: $0 [all | server | web | rollback]" >&2

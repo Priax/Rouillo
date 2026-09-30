@@ -294,6 +294,10 @@ impl Manager {
         let Some(token) = self.conn_token.get(&conn).cloned() else {
             return;
         };
+        if self.closing {
+            self.join_failed(conn, JOIN_MAINTENANCE);
+            return;
+        }
         if self.rooms.get(&id).is_none_or(|r| r.members.len() >= 2) {
             self.join_failed(conn, JOIN_UNAVAILABLE);
             return;

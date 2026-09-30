@@ -94,10 +94,10 @@ fn event(state: &mut State, evt: Event) {
                 if let Some(p) = state.profile.as_mut() {
                     if p.editing {
                         match p.edit_focused {
-                            state::ProfileEditField::Bio if p.edit_bio.chars().count() < 500 => {
+                            state::ProfileEditField::Bio if p.edit_bio.chars().count() < profile::BIO_MAX => {
                                 p.edit_bio.push(c);
                             }
-                            state::ProfileEditField::Music if p.edit_music.chars().count() < 200 => {
+                            state::ProfileEditField::Music if p.edit_music.chars().count() < profile::MUSIC_MAX => {
                                 p.edit_music.push(c);
                             }
                             _ => {}

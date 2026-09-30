@@ -39,7 +39,6 @@ fn list_row_rect(ww: f32, col: usize, row: usize) -> Rect {
     Rect::at(card.x + 8.0, LIST_Y + row as f32 * ROW_H, card.w - 16.0, ROW_H - 4.0)
 }
 
-/// A button of width `w` whose right edge is `from_right` inside the row's.
 fn row_button(row: Rect, from_right: f32, w: f32) -> Rect {
     Rect::at(
         row.x + row.w - from_right - w,
@@ -480,7 +479,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
         focused: true,
         secret: false,
     };
-    text_field(draw, &pal, fonts, field, &search);
+    text_field(draw, ui, fonts, field, &search);
     ui.button_enabled(
         draw,
         fonts,
@@ -645,7 +644,6 @@ fn draw_col<F>(
             .color(pal.text_muted);
         return;
     }
-    // Names stop short of the row's first button.
     let first_button = [remove_btn(ww, 0, 0), accept_btn(ww, 0), remove_btn(ww, 2, 0)][col];
     let room = first_button.x - list_row_rect(ww, col, 0).x - 20.0;
     for (i, e) in list.iter().take(MAX_ROWS).enumerate() {
