@@ -343,23 +343,6 @@ async fn handle_patch_me(user: db::User, body: PatchMeBody, pool: DbPool) -> Res
 }
 
 #[derive(Serialize)]
-struct PublicProfile {
-    id: Uuid,
-    username: String,
-    bio: Option<String>,
-    favorite_music: Option<String>,
-    avatar_url: Option<String>,
-    banner_url: Option<String>,
-    elo: i32,
-    created_at: DateTime<Utc>,
-    total_matches: i64,
-    wins: i64,
-    all_time_max_chain: i32,
-    total_nuisance_sent: i64,
-    total_all_clears: i64,
-}
-
-#[derive(Serialize)]
 struct PlayerMatchInfo {
     user_id: Option<Uuid>,
     username: Option<String>,
@@ -392,21 +375,7 @@ async fn handle_user_profile(user_id: Uuid, pool: DbPool) -> Result<impl Reply, 
         .map_err(internal)?
         .ok_or_else(warp::reject::not_found)?;
 
-    Ok(warp::reply::json(&PublicProfile {
-        id: row.id,
-        username: row.username,
-        bio: row.bio,
-        favorite_music: row.favorite_music,
-        avatar_url: row.avatar_url,
-        banner_url: row.banner_url,
-        elo: row.elo,
-        created_at: row.created_at,
-        total_matches: row.total_matches,
-        wins: row.wins,
-        all_time_max_chain: row.all_time_max_chain,
-        total_nuisance_sent: row.total_nuisance_sent,
-        total_all_clears: row.total_all_clears,
-    }))
+    Ok(warp::reply::json(&row))
 }
 
 async fn handle_match_history(user_id: Uuid, query: MatchHistoryQuery, pool: DbPool) -> Result<impl Reply, Rejection> {

@@ -18,15 +18,22 @@ pub enum Screen {
     Profile,
     Friends,
     OtherProfile,
+    SoloSetup,
+    Solo,
 }
 
 impl Screen {
-    /// The hue of the section this screen belongs to.
     pub fn hue(self) -> f32 {
         use crate::theme::hue;
         match self {
             Self::Auth | Self::Menu => hue::PURPLE,
-            Self::RoomBrowser | Self::CreateRoom | Self::JoinById | Self::RoomLobby | Self::Game => hue::BLUE,
+            Self::RoomBrowser
+            | Self::CreateRoom
+            | Self::JoinById
+            | Self::RoomLobby
+            | Self::Game
+            | Self::SoloSetup
+            | Self::Solo => hue::BLUE,
             Self::Friends => hue::GREEN,
             Self::Profile | Self::OtherProfile => hue::PINK,
             Self::Settings => hue::ORANGE,
@@ -99,7 +106,7 @@ pub struct ApiMeResponse {
     pub elo: i32,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Default)]
 pub struct ApiUserProfile {
     pub username: String,
     pub elo: i32,
@@ -191,42 +198,10 @@ pub struct ApiMatchEntry {
 
 pub struct ProfileCore {
     pub user_id: String,
-    pub username: String,
-    pub elo: i32,
-    pub bio: Option<String>,
-    pub favorite_music: Option<String>,
-    pub total_matches: i64,
-    pub wins: i64,
-    pub all_time_max_chain: i32,
-    pub total_nuisance_sent: i64,
+    pub info: ApiUserProfile,
     pub match_history: Vec<ApiMatchEntry>,
     pub profile_slot: Option<HttpSlot>,
     pub history_slot: Option<HttpSlot>,
-}
-
-impl ProfileCore {
-    pub fn loading(
-        user_id: String,
-        username: String,
-        elo: i32,
-        profile_slot: HttpSlot,
-        history_slot: HttpSlot,
-    ) -> Self {
-        Self {
-            user_id,
-            username,
-            elo,
-            bio: None,
-            favorite_music: None,
-            total_matches: 0,
-            wins: 0,
-            all_time_max_chain: 0,
-            total_nuisance_sent: 0,
-            match_history: Vec::new(),
-            profile_slot: Some(profile_slot),
-            history_slot: Some(history_slot),
-        }
-    }
 }
 
 pub struct ProfileData {
@@ -239,11 +214,15 @@ pub struct ProfileData {
     pub edit_status: Status,
 }
 
+#[cfg(target_arch = "wasm32")]
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window().and_then(|w| w.local_storage().ok().flatten())
+}
+
 pub fn load_stored_token() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {
-        web_sys::window()
-            .and_then(|w| w.local_storage().ok().flatten())
+        local_storage()
             .and_then(|s| s.get_item("puyorust_token").ok().flatten())
             .filter(|t| !t.is_empty())
     }
@@ -256,7 +235,7 @@ pub fn load_stored_token() -> Option<String> {
 pub fn save_token(token: &str) {
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        if let Some(s) = local_storage() {
             let _ = s.set_item("puyorust_token", token);
         }
     }
@@ -269,9 +248,39 @@ pub fn save_token(token: &str) {
 pub fn clear_stored_token() {
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        if let Some(s) = local_storage() {
             let _ = s.remove_item("puyorust_token");
         }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+const BEST_SCORE_KEY: &str = "puyorust_solo_best";
+
+pub fn load_best_score() -> i32 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        local_storage()
+            .and_then(|s| s.get_item(BEST_SCORE_KEY).ok().flatten())
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
+}
+
+pub fn save_best_score(score: i32) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(s) = local_storage() {
+            let _ = s.set_item(BEST_SCORE_KEY, &score.to_string());
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = score;
     }
 }
 
@@ -481,7 +490,7 @@ fn gen_player_id() -> String {
 pub fn load_or_create_player_id() -> String {
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        if let Some(storage) = local_storage() {
             if let Ok(Some(id)) = storage.get_item("puyorust_player_id") {
                 if !id.is_empty() {
                     return id;
@@ -525,6 +534,9 @@ pub struct State {
     pub outdated: bool,
     pub ui: crate::ui::Ui,
     pub backspace: crate::ui::KeyRepeat,
+    pub solo_settings: crate::solo::SoloSettings,
+    pub solo: Option<crate::solo::SoloGame>,
+    pub solo_best: i32,
 }
 
 impl State {
@@ -555,6 +567,9 @@ impl State {
             outdated: false,
             ui: crate::ui::Ui::default(),
             backspace: crate::ui::KeyRepeat::default(),
+            solo_settings: crate::solo::SoloSettings::default(),
+            solo: None,
+            solo_best: load_best_score(),
         }
     }
 }

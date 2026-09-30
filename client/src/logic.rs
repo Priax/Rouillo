@@ -40,9 +40,9 @@ pub fn update_game(
 
     let dt = app.timer.delta_f32();
     if !game_over && !paused {
-        handle_soft_drop_key(app, session, conn);
+        handle_soft_drop_key(app, session, Some(conn));
         if session.predicted_board.state == GameState::Playing {
-            handle_game_input(app, session, settings, conn, dt);
+            handle_game_input(app, session, settings, Some(conn), dt);
         } else {
             release_keys(session);
         }
@@ -52,15 +52,21 @@ pub fn update_game(
         release_keys(session);
     }
 
+    animate(session, dt);
+}
+
+pub fn animate(session: &mut GameSession, dt: f32) {
     session.opponent_view.advance(dt);
     if let Some(p) = &session.predicted_board.active_piece {
         session.my_turn.update(session.predicted_board.piece_id, p.rotation, dt);
     }
-    if let Some((b, _)) = session.opponent_view.frame() {
-        if let Some(p) = &b.active_piece {
-            let (id, rotation) = (b.piece_id, p.rotation);
-            session.opp_turn.update(id, rotation, dt);
-        }
+    let shown = session
+        .opponent_view
+        .frame()
+        .map_or(&session.other_board, |(board, _)| board);
+    if let Some(p) = &shown.active_piece {
+        let (id, rotation) = (shown.piece_id, p.rotation);
+        session.opp_turn.update(id, rotation, dt);
     }
 
     let off = &mut session.piece_visual_offset;
@@ -87,7 +93,7 @@ pub fn update_game(
 
 const PIECE_SMOOTH_RATE: f32 = 22.0;
 
-fn release_keys(session: &mut GameSession) {
+pub fn release_keys(session: &mut GameSession) {
     session.key_timer_left = 0.0;
     session.key_timer_right = 0.0;
 }
@@ -96,11 +102,7 @@ fn step_simulation(session: &mut GameSession, dt: f32) {
     if !session.synced {
         return;
     }
-    session.sim_accumulator += dt;
-    let mut steps = 0;
-    while session.sim_accumulator >= config::CLIENT_SIM_DT && steps < config::MAX_SIM_STEPS_PER_FRAME {
-        session.sim_accumulator -= config::CLIENT_SIM_DT;
-        steps += 1;
+    for _ in 0..take_steps(session, dt) {
         match session.clock_correction.signum() {
             -1 => {
                 session.clock_correction += 1;
@@ -114,21 +116,32 @@ fn step_simulation(session: &mut GameSession, dt: f32) {
         }
         advance_one(session);
     }
+}
+
+pub fn take_steps(session: &mut GameSession, dt: f32) -> u32 {
+    session.sim_accumulator += dt;
+    let mut steps = 0;
+    while session.sim_accumulator >= config::CLIENT_SIM_DT && steps < config::MAX_SIM_STEPS_PER_FRAME {
+        session.sim_accumulator -= config::CLIENT_SIM_DT;
+        steps += 1;
+    }
     if steps == config::MAX_SIM_STEPS_PER_FRAME {
         session.sim_accumulator = 0.0;
     }
+    steps
 }
 
-pub(crate) fn advance_one(session: &mut GameSession) {
+pub(crate) fn advance_one(session: &mut GameSession) -> u32 {
     session.local_tick = session.local_tick.wrapping_add(1);
     let now = session.local_tick;
     let landed = session.incoming.iter().filter(|g| g.at == now).map(|g| g.amount).sum();
     let was_playing = session.predicted_board.state == GameState::Playing;
-    session.predicted_board.step([], landed);
+    let sent = session.predicted_board.step([], landed);
     if was_playing && session.predicted_board.state == GameState::ResolvingMatches {
         crate::audio::play_lock();
     }
     announce_events(session);
+    sent
 }
 
 pub fn announce_events(session: &mut GameSession) {
@@ -147,10 +160,7 @@ pub fn announce_events(session: &mut GameSession) {
     }
 }
 
-fn send_input(session: &mut GameSession, conn: &mut Connection, kind: InputKind) -> bool {
-    session.input_seq += 1;
-    let seq = session.input_seq;
-    let tick = session.local_tick.wrapping_add(1);
+fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: InputKind) -> bool {
     let before = session.predicted_board.active_piece.clone();
     session.predicted_board.apply_input(kind);
     let moved = session.predicted_board.active_piece != before;
@@ -159,9 +169,14 @@ fn send_input(session: &mut GameSession, conn: &mut Connection, kind: InputKind)
         InputKind::HardDrop => crate::audio::play_lock(),
         _ => {}
     }
-    session.pending_inputs.push((seq, StampedInput { tick, kind }));
-    session.sent_at.push((seq, session.clock));
-    conn.send(&ClientMessage::Input { kind, seq, tick });
+    if let Some(conn) = conn {
+        session.input_seq += 1;
+        let seq = session.input_seq;
+        let tick = session.local_tick.wrapping_add(1);
+        session.pending_inputs.push((seq, StampedInput { tick, kind }));
+        session.sent_at.push((seq, session.clock));
+        conn.send(&ClientMessage::Input { kind, seq, tick });
+    }
     moved
 }
 
@@ -176,12 +191,18 @@ fn handle_global_input(app: &App, session: &GameSession, conn: &mut Connection) 
     }
 }
 
-fn handle_game_input(app: &App, session: &mut GameSession, settings: Settings, conn: &mut Connection, delta_time: f32) {
+pub fn handle_game_input(
+    app: &App,
+    session: &mut GameSession,
+    settings: Settings,
+    mut conn: Option<&mut Connection>,
+    delta_time: f32,
+) {
     if app.keyboard.was_pressed(KeyCode::ArrowUp) || app.keyboard.was_pressed(KeyCode::KeyZ) {
-        send_input(session, conn, InputKind::RotateCW);
+        send_input(session, conn.as_deref_mut(), InputKind::RotateCW);
     }
     if app.keyboard.was_pressed(KeyCode::KeyX) || app.keyboard.was_pressed(KeyCode::KeyW) {
-        send_input(session, conn, InputKind::RotateCCW);
+        send_input(session, conn.as_deref_mut(), InputKind::RotateCCW);
     }
 
     if app.keyboard.was_pressed(KeyCode::Space) || app.keyboard.was_pressed(KeyCode::Enter) {
@@ -197,7 +218,7 @@ fn handle_game_input(app: &App, session: &mut GameSession, settings: Settings, c
         settings,
     );
     for i in 0..left {
-        if send_input(session, conn, InputKind::MoveLeft) && i == 0 && left_pressed {
+        if send_input(session, conn.as_deref_mut(), InputKind::MoveLeft) && i == 0 && left_pressed {
             crate::audio::play_move();
         }
     }
@@ -209,7 +230,7 @@ fn handle_game_input(app: &App, session: &mut GameSession, settings: Settings, c
         settings,
     );
     for i in 0..right {
-        if send_input(session, conn, InputKind::MoveRight) && i == 0 && right_pressed {
+        if send_input(session, conn.as_deref_mut(), InputKind::MoveRight) && i == 0 && right_pressed {
             crate::audio::play_move();
         }
     }
@@ -236,7 +257,7 @@ fn autorepeat(timer: &mut f32, held: bool, dt: f32, settings: Settings) -> u32 {
     moves
 }
 
-fn handle_soft_drop_key(app: &App, session: &mut GameSession, conn: &mut Connection) {
+pub fn handle_soft_drop_key(app: &App, session: &mut GameSession, conn: Option<&mut Connection>) {
     let down = app.keyboard.is_down(KeyCode::ArrowDown);
     if down != session.soft_drop_held {
         session.soft_drop_held = down;

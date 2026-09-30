@@ -1,12 +1,13 @@
 use notan::prelude::*;
 
 use crate::state::{AuthForm, Screen, Settings, State};
-use crate::ui::{self, Rect, SharpText, Stepper, View};
+use crate::ui::{Rect, SettingsPanel, SharpText, View};
 use crate::{http, theme};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MenuItem {
     Play,
+    Solo,
     Friends,
     Settings,
     Logout,
@@ -15,7 +16,8 @@ enum MenuItem {
 impl MenuItem {
     fn label(self) -> &'static str {
         match self {
-            Self::Play => "Jouer",
+            Self::Play => "Multijoueur",
+            Self::Solo => "Solo",
             Self::Friends => "Amis",
             Self::Settings => "Paramètres",
             Self::Logout => "Déconnexion",
@@ -25,6 +27,7 @@ impl MenuItem {
     fn color(self) -> Color {
         match self {
             Self::Play => theme::bar::GREEN,
+            Self::Solo => theme::bar::PURPLE,
             Self::Friends => theme::bar::BLUE,
             Self::Settings => theme::bar::YELLOW,
             Self::Logout => theme::bar::RED,
@@ -37,9 +40,15 @@ const ROW_H: f32 = 64.0;
 /// The menu's rows, stacked with no gap under the title.
 fn menu_rows(view: View, logged_in: bool) -> impl Iterator<Item = (MenuItem, Rect)> {
     let items: &[MenuItem] = if logged_in {
-        &[MenuItem::Play, MenuItem::Friends, MenuItem::Settings, MenuItem::Logout]
+        &[
+            MenuItem::Solo,
+            MenuItem::Play,
+            MenuItem::Friends,
+            MenuItem::Settings,
+            MenuItem::Logout,
+        ]
     } else {
-        &[MenuItem::Play, MenuItem::Settings]
+        &[MenuItem::Solo, MenuItem::Play, MenuItem::Settings]
     };
     let top = view.h / 2.0 - 60.0;
     items
@@ -68,6 +77,10 @@ pub fn update_menu(state: &mut State) {
     let clicked = menu_rows(view, logged_in).find(|&(_, row)| state.ui.clicked(row));
     match clicked.map(|(item, _)| item) {
         Some(MenuItem::Play) => start_play(state),
+        Some(MenuItem::Solo) => {
+            state.notice.clear();
+            state.screen = Screen::SoloSetup;
+        }
         Some(MenuItem::Friends) => {
             crate::friends::enter_friends(state);
             state.screen = Screen::Friends;
@@ -146,44 +159,26 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &draw);
 }
 
-struct SettingsLayout {
-    steppers: [Stepper; Settings::COUNT],
-    back: Rect,
+fn settings_panel(view: View) -> SettingsPanel {
+    SettingsPanel::new(view, Settings::COUNT)
 }
 
-const SETTINGS_TITLE_H: f32 = 56.0;
-const SETTING_ROW_H: f32 = 70.0;
-
-fn settings_card(view: View) -> Rect {
-    let h = SETTINGS_TITLE_H + Settings::COUNT as f32 * SETTING_ROW_H + 16.0;
-    Rect::at(view.w / 2.0 - 320.0, theme::HEADER_H + 30.0, 640.0, h)
-}
-
-fn settings_layout(view: View) -> SettingsLayout {
-    let card = settings_card(view);
-    let steppers = std::array::from_fn(|i| {
-        Stepper::at(
-            card.x + card.w / 2.0 + 20.0,
-            card.y + SETTINGS_TITLE_H + 10.0 + i as f32 * SETTING_ROW_H,
-        )
-    });
-    SettingsLayout {
-        steppers,
-        back: Rect::at(40.0, view.h - 80.0, 200.0, 54.0),
-    }
+fn settings_back(view: View) -> Rect {
+    Rect::at(40.0, view.h - 80.0, 200.0, 54.0)
 }
 
 pub fn update_settings(app: &mut App, state: &mut State) {
-    let layout = settings_layout(state.ui.view());
-    for (i, stepper) in layout.steppers.into_iter().enumerate() {
-        if state.ui.clicked(stepper.minus) {
+    let view = state.ui.view();
+    let panel = settings_panel(view);
+    for i in 0..Settings::COUNT {
+        if state.ui.clicked(panel.stepper(i).minus) {
             state.settings.adjust(i, -1);
         }
-        if state.ui.clicked(stepper.plus) {
+        if state.ui.clicked(panel.stepper(i).plus) {
             state.settings.adjust(i, 1);
         }
     }
-    if state.ui.clicked(layout.back) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if state.ui.clicked(settings_back(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.screen = Screen::Menu;
     }
 }
@@ -202,24 +197,21 @@ pub fn draw_settings(gfx: &mut Graphics, state: &State) {
         .v_align_middle()
         .color(pal.text);
 
-    let card = settings_card(view);
-    ui::card(&mut draw, &pal, card);
-    draw.sharp_text(&state.fonts.display, "Contrôles")
-        .position(card.x + 20.0, card.y + SETTINGS_TITLE_H / 2.0)
-        .size(theme::size::EMPHASIS)
-        .v_align_middle()
-        .color(pal.text_dim);
-    ui::divider(&mut draw, &pal, card.x + 20.0, card.y + SETTINGS_TITLE_H, card.w - 40.0);
-
-    let layout = settings_layout(view);
-    for (i, stepper) in layout.steppers.into_iter().enumerate() {
+    let panel = settings_panel(view);
+    panel.draw(&mut draw, &pal, &state.fonts, "Contrôles");
+    for i in 0..Settings::COUNT {
         let value = format!("{:.0} ms", state.settings.value(i) * 1000.0);
-        state
-            .ui
-            .stepper(&mut draw, &state.fonts, stepper, Settings::label(i), &value, true);
+        state.ui.stepper(
+            &mut draw,
+            &state.fonts,
+            panel.stepper(i),
+            Settings::label(i),
+            &value,
+            true,
+        );
     }
 
-    state.ui.button(&mut draw, &state.fonts, layout.back, "Retour");
+    state.ui.button(&mut draw, &state.fonts, settings_back(view), "Retour");
     state.ui.render(gfx, &draw);
 }
 

@@ -239,7 +239,7 @@ pub async fn update_profile(
     .await
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(sqlx::FromRow, serde::Serialize)]
 pub struct UserProfileRow {
     pub id: Uuid,
     pub username: String,

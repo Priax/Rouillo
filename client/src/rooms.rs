@@ -5,7 +5,7 @@ use notan::prelude::*;
 use shared::{ClientMessage, LobbyInfo, RoomInfo, RoomSettings};
 
 use crate::state::{ApiFriendsResponse, Screen, State};
-use crate::ui::{self, divider, list_row, text_field, Face, Field, Pill, Rect, SharpText, Stepper, View};
+use crate::ui::{self, list_row, text_field, Face, Field, Pill, Rect, SettingsPanel, SharpText, View};
 use crate::{http, theme};
 
 fn send(state: &mut State, msg: &ClientMessage) {
@@ -23,7 +23,6 @@ fn room_list_card(view: View) -> Rect {
     )
 }
 
-/// How many rooms fit in the list card.
 fn visible_rooms(view: View) -> usize {
     ((room_list_card(view).h - 24.0) / ROOM_ROW_H).floor().max(0.0) as usize
 }
@@ -178,7 +177,6 @@ fn draw_room_row(draw: &mut Draw, state: &State, row: Rect, index: usize, room: 
         .color(pal.text);
 }
 
-/// The dialog card of the create and join screens, centred.
 fn entry_card(w: f32, h: f32) -> Rect {
     Rect::at(w / 2.0 - 280.0, h / 2.0 - 160.0, 560.0, 300.0)
 }
@@ -197,39 +195,33 @@ fn entry_buttons(w: f32, h: f32) -> (Rect, Rect) {
     )
 }
 
-pub fn update_create_room(app: &mut App, state: &mut State) {
+fn update_entry(app: &mut App, state: &mut State) -> Option<String> {
     if state.backspace.fired() {
         state.text_input.pop();
     }
     let (w, h) = state.ui.view().size();
     let (confirm, back) = entry_buttons(w, h);
-    let submit = state.ui.clicked(confirm) || app.keyboard.was_pressed(KeyCode::Enter);
-    if submit {
-        let name = state.text_input.trim().to_string();
-        if !name.is_empty() {
-            send(state, &ClientMessage::CreateRoom { name });
-            state.text_input.clear();
-        }
-    } else if state.ui.clicked(back) {
+    if state.ui.clicked(confirm) || app.keyboard.was_pressed(KeyCode::Enter) {
+        return Some(state.text_input.trim().to_string());
+    }
+    if state.ui.clicked(back) {
         state.screen = Screen::RoomBrowser;
+    }
+    None
+}
+
+pub fn update_create_room(app: &mut App, state: &mut State) {
+    if let Some(name) = update_entry(app, state).filter(|name| !name.is_empty()) {
+        send(state, &ClientMessage::CreateRoom { name });
+        state.text_input.clear();
     }
 }
 
 pub fn update_join_by_id(app: &mut App, state: &mut State) {
-    if state.backspace.fired() {
-        state.text_input.pop();
-    }
-    let (w, h) = state.ui.view().size();
-    let (confirm, back) = entry_buttons(w, h);
-    let submit = state.ui.clicked(confirm) || app.keyboard.was_pressed(KeyCode::Enter);
-    if submit {
-        if let Ok(id) = state.text_input.trim().parse::<u32>() {
-            state.notice.clear();
-            send(state, &ClientMessage::JoinRoom { id });
-            state.text_input.clear();
-        }
-    } else if state.ui.clicked(back) {
-        state.screen = Screen::RoomBrowser;
+    if let Some(id) = update_entry(app, state).and_then(|text| text.parse::<u32>().ok()) {
+        state.notice.clear();
+        send(state, &ClientMessage::JoinRoom { id });
+        state.text_input.clear();
     }
 }
 
@@ -274,46 +266,22 @@ fn lobby_ready(info: &LobbyInfo) -> bool {
     info.players >= 2 && info.connected >= info.players
 }
 
-const SETTINGS_TITLE_H: f32 = 56.0;
-const SETTING_ROW_H: f32 = 64.0;
-const ACTION_ROW_H: f32 = 60.0;
 const INVITE_ROW_H: f32 = 52.0;
 
-fn settings_card(view: View) -> Rect {
-    let h = SETTINGS_TITLE_H + RoomSettings::COUNT as f32 * SETTING_ROW_H + 16.0;
-    Rect::at(view.w / 2.0 - 320.0, theme::HEADER_H + 30.0, 640.0, h)
-}
-
-fn lobby_stepper(i: usize, view: View) -> Stepper {
-    let card = settings_card(view);
-    Stepper::at(
-        card.x + card.w / 2.0 + 20.0,
-        card.y + SETTINGS_TITLE_H + 8.0 + i as f32 * SETTING_ROW_H,
-    )
-}
-
-/// The lobby's actions, as full-width bars under the settings card:
-/// launching, inviting a friend, leaving.
-fn action_row(view: View, k: usize) -> Rect {
-    let card = settings_card(view);
-    Rect::at(
-        0.0,
-        card.y + card.h + 30.0 + k as f32 * ACTION_ROW_H,
-        view.w,
-        ACTION_ROW_H,
-    )
+fn lobby_panel(view: View) -> SettingsPanel {
+    SettingsPanel::new(view, RoomSettings::COUNT)
 }
 
 fn lobby_launch(view: View) -> Rect {
-    action_row(view, 0)
+    lobby_panel(view).action_row(0)
 }
 
 fn lobby_invite(view: View) -> Rect {
-    action_row(view, 1)
+    lobby_panel(view).action_row(1)
 }
 
 fn lobby_leave(view: View) -> Rect {
-    action_row(view, 2)
+    lobby_panel(view).action_row(2)
 }
 
 fn invite_card(view: View) -> Rect {
@@ -375,7 +343,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
 
     if info.is_host && info.countdown.is_none() {
         for i in 0..RoomSettings::COUNT {
-            if state.ui.clicked(lobby_stepper(i, view).minus) {
+            if state.ui.clicked(lobby_panel(view).stepper(i).minus) {
                 send(
                     state,
                     &ClientMessage::SetRoomSetting {
@@ -385,7 +353,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
                 );
                 return;
             }
-            if state.ui.clicked(lobby_stepper(i, view).plus) {
+            if state.ui.clicked(lobby_panel(view).stepper(i).plus) {
                 send(state, &ClientMessage::SetRoomSetting { index: i as u8, dir: 1 });
                 return;
             }
@@ -429,21 +397,15 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
 
     draw_lobby_header(&mut draw, state, info);
 
-    let card = settings_card(view);
-    ui::card(&mut draw, &pal, card);
-    draw.sharp_text(&fonts.display, "Réglages de la room")
-        .position(card.x + 20.0, card.y + SETTINGS_TITLE_H / 2.0)
-        .size(theme::size::EMPHASIS)
-        .v_align_middle()
-        .color(pal.text_dim);
-    divider(&mut draw, &pal, card.x + 20.0, card.y + SETTINGS_TITLE_H, card.w - 40.0);
+    let panel = lobby_panel(view);
+    panel.draw(&mut draw, &pal, fonts, "Réglages de la room");
     let editable = info.is_host && info.countdown.is_none();
     for i in 0..RoomSettings::COUNT {
         let value = info.settings.value(i);
         state.ui.stepper(
             &mut draw,
             fonts,
-            lobby_stepper(i, view),
+            panel.stepper(i),
             RoomSettings::label(i),
             &value,
             editable,
@@ -481,8 +443,6 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &draw);
 }
 
-/// The launch bar's label, colour and whether it can be pressed: it says
-/// why a game cannot start yet instead of showing a separate message.
 fn launch_bar(info: &LobbyInfo) -> (&'static str, Color, bool) {
     if !info.is_host {
         ("En attente de l'hôte...", theme::bar::GREEN, false)

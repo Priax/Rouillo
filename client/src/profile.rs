@@ -34,20 +34,39 @@ enum ProfileLoad {
 fn poll_core_profile(core: &mut ProfileCore) -> Option<ProfileLoad> {
     match http::take(&mut core.profile_slot)? {
         Ok(resp) if resp.status == 200 => {
-            if let Some(data) = http::json::<ApiUserProfile>(&resp) {
-                core.username = data.username;
-                core.elo = data.elo;
-                core.bio = data.bio;
-                core.favorite_music = data.favorite_music;
-                core.total_matches = data.total_matches;
-                core.wins = data.wins;
-                core.all_time_max_chain = data.all_time_max_chain;
-                core.total_nuisance_sent = data.total_nuisance_sent;
+            if let Some(info) = http::json::<ApiUserProfile>(&resp) {
+                core.info = info;
             }
             Some(ProfileLoad::Loaded)
         }
         Ok(_) => Some(ProfileLoad::HttpError),
         Err(_) => Some(ProfileLoad::NetworkError),
+    }
+}
+
+fn load_core(user_id: String, username: String, elo: i32, token: Option<String>, matches: u32) -> ProfileCore {
+    let profile_slot = http::new_slot();
+    let history_slot = http::new_slot();
+    http::get(
+        http::api_url(&format!("users/{user_id}")),
+        token.clone(),
+        Arc::clone(&profile_slot),
+    );
+    http::get(
+        http::api_url(&format!("users/{user_id}/matches?limit={matches}")),
+        token,
+        Arc::clone(&history_slot),
+    );
+    ProfileCore {
+        user_id,
+        info: ApiUserProfile {
+            username,
+            elo,
+            ..ApiUserProfile::default()
+        },
+        match_history: Vec::new(),
+        profile_slot: Some(profile_slot),
+        history_slot: Some(history_slot),
     }
 }
 
@@ -83,7 +102,6 @@ const CARD_PAD: f32 = 20.0;
 const CARD_TITLE_H: f32 = 56.0;
 const HISTORY_ROWS: usize = 7;
 const HISTORY_ROW_H: f32 = 48.0;
-/// Room between the cards and the buttons, for a status line.
 const STATUS_GAP: f32 = 56.0;
 
 fn draw_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
@@ -92,11 +110,11 @@ fn draw_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
     ui.header_band(draw, Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H));
     let radius = 48.0;
     let (px, py) = (60.0 + radius, PROFILE_HEADER_H / 2.0);
-    portrait(draw, &pal, fonts, (px, py), radius, &core.username, 0.0);
+    portrait(draw, &pal, fonts, (px, py), radius, &core.info.username, 0.0);
     let text_x = px + radius + 28.0;
     let name = fonts.fit(
         Face::Display,
-        &core.username,
+        &core.info.username,
         theme::size::TITLE,
         view.w - text_x - 60.0,
     );
@@ -105,7 +123,7 @@ fn draw_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
         .size(theme::size::TITLE)
         .v_align_middle()
         .color(pal.text);
-    let elo = format!("ELO {}", core.elo);
+    let elo = format!("ELO {}", core.info.elo);
     let rating = Pill {
         text: &elo,
         color: theme::GOLD,
@@ -114,8 +132,6 @@ fn draw_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
     rating.draw(draw, fonts, (text_x, py + 30.0));
 }
 
-/// The two cards under the header: statistics on the left, the match
-/// history on the right, down to the button row.
 fn cards(view: View) -> (Rect, Rect) {
     let (left_x, left_w, right_x, right_w) = panels(view.w);
     let h = button_row_y(view.h) - STATUS_GAP - CARD_TOP;
@@ -164,17 +180,17 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
         return;
     }
 
-    let winrate = if core.total_matches > 0 {
-        core.wins * 100 / core.total_matches
+    let winrate = if core.info.total_matches > 0 {
+        core.info.wins * 100 / core.info.total_matches
     } else {
         0
     };
     let stats = [
-        ("Matchs", core.total_matches.to_string()),
-        ("Victoires", core.wins.to_string()),
+        ("Matchs", core.info.total_matches.to_string()),
+        ("Victoires", core.info.wins.to_string()),
         ("Winrate", format!("{winrate}%")),
-        ("Max chain", core.all_time_max_chain.to_string()),
-        ("Nuisance", core.total_nuisance_sent.to_string()),
+        ("Max chain", core.info.all_time_max_chain.to_string()),
+        ("Nuisance", core.info.total_nuisance_sent.to_string()),
     ];
     let (label_x, value_x) = (card.x + CARD_PAD, card.x + card.w - CARD_PAD);
     let first = card.y + CARD_TITLE_H + 30.0;
@@ -198,8 +214,8 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
 
     let mut info_y = sep_y + 24.0;
     let about = [
-        ("Bio", core.bio.as_deref(), pal.text),
-        ("Musique", core.favorite_music.as_deref(), pal.accent),
+        ("Bio", core.info.bio.as_deref(), pal.text),
+        ("Musique", core.info.favorite_music.as_deref(), pal.accent),
     ];
     let room = card.w - 2.0 * CARD_PAD;
     for (label, value, color) in about {
@@ -307,25 +323,15 @@ pub fn enter_profile(state: &mut State) {
     let Some(auth) = &state.auth else {
         return;
     };
-    let user_id = auth.user_id.clone();
-    let token = auth.token.clone();
-
-    let profile_slot = http::new_slot();
-    let history_slot = http::new_slot();
-
-    http::get(
-        http::api_url(&format!("users/{user_id}")),
-        Some(token.clone()),
-        Arc::clone(&profile_slot),
+    let core = load_core(
+        auth.user_id.clone(),
+        auth.username.clone(),
+        auth.elo,
+        Some(auth.token.clone()),
+        10,
     );
-    http::get(
-        http::api_url(&format!("users/{user_id}/matches?limit=10")),
-        Some(token),
-        Arc::clone(&history_slot),
-    );
-
     state.profile = Some(ProfileData {
-        core: ProfileCore::loading(user_id, auth.username.clone(), auth.elo, profile_slot, history_slot),
+        core,
         editing: false,
         edit_bio: String::new(),
         edit_music: String::new(),
@@ -348,8 +354,8 @@ fn poll_edit(state: &mut State) {
                 favorite_music: Option<String>,
             }
             if let Some(data) = http::json::<PatchResp>(&resp) {
-                p.core.bio = data.bio;
-                p.core.favorite_music = data.favorite_music;
+                p.core.info.bio = data.bio;
+                p.core.info.favorite_music = data.favorite_music;
                 p.editing = false;
                 p.edit_bio.clear();
                 p.edit_music.clear();
@@ -477,8 +483,8 @@ pub fn update_profile(app: &mut App, state: &mut State) {
         }
         if state.ui.clicked(edit_btn) {
             if let Some(p) = state.profile.as_mut() {
-                p.edit_bio = p.core.bio.clone().unwrap_or_default();
-                p.edit_music = p.core.favorite_music.clone().unwrap_or_default();
+                p.edit_bio = p.core.info.bio.clone().unwrap_or_default();
+                p.edit_music = p.core.info.favorite_music.clone().unwrap_or_default();
                 p.edit_focused = ProfileEditField::Bio;
                 p.editing = true;
                 p.edit_status.clear();
@@ -596,22 +602,10 @@ fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &
 
 pub fn enter_other_profile(state: &mut State, user_id: String, username: String, prev: Screen) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let profile_slot = http::new_slot();
-    let history_slot = http::new_slot();
-
-    http::get(
-        http::api_url(&format!("users/{user_id}")),
-        token.clone(),
-        Arc::clone(&profile_slot),
-    );
-    http::get(
-        http::api_url(&format!("users/{user_id}/matches?limit=8")),
-        token.clone(),
-        Arc::clone(&history_slot),
-    );
+    let core = load_core(user_id, username, 0, token.clone(), 8);
 
     let (friendship, friendship_check_slot) = if let Some(f) = state.friends.as_ref() {
-        (friendship_with(&f.friends, &f.sent, &f.received, &user_id), None)
+        (friendship_with(&f.friends, &f.sent, &f.received, &core.user_id), None)
     } else if token.is_some() {
         let slot = http::new_slot();
         http::get(http::api_url("friends"), token, Arc::clone(&slot));
@@ -621,7 +615,7 @@ pub fn enter_other_profile(state: &mut State, user_id: String, username: String,
     };
 
     state.other_profile = Some(OtherProfileData {
-        core: ProfileCore::loading(user_id, username, 0, profile_slot, history_slot),
+        core,
         friendship_check_slot,
         load_failed: false,
         friendship,
@@ -695,11 +689,11 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
         match poll_core_profile(&mut p.core) {
             Some(ProfileLoad::HttpError) => {
                 p.load_failed = true;
-                p.core.username = "Inconnu".to_owned();
+                p.core.info.username = "Inconnu".to_owned();
             }
             Some(ProfileLoad::NetworkError) => {
                 p.load_failed = true;
-                p.core.username = "Erreur réseau".to_owned();
+                p.core.info.username = "Erreur réseau".to_owned();
             }
             _ => {}
         }

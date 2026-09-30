@@ -16,12 +16,13 @@ struct GameLayout {
 }
 
 impl GameLayout {
-    fn new(view: View) -> Self {
+    fn new(view: View, two_boards: bool) -> Self {
         let (win_w, win_h) = view.size();
         let board_w = config::GRID_WIDTH as f32 * config::CELL_SIZE;
         let board_h = (config::GRID_HEIGHT - config::VISIBLE_ROW_OFFSET) as f32 * config::CELL_SIZE;
         let gap = 250.0;
-        let start_x = (win_w - (board_w * 2.0 + gap)) / 2.0;
+        let boards = if two_boards { 2.0 } else { 1.0 };
+        let start_x = (win_w - (board_w * boards + gap)) / 2.0;
         let offset_y = (win_h - board_h) / 2.0;
         Self {
             win_w,
@@ -39,6 +40,29 @@ pub struct Role {
     pub can_pause: bool,
 }
 
+#[derive(Clone, Copy)]
+pub enum Hud {
+    Online(Role),
+    Solo { versus: bool, best: i32, new_best: bool },
+}
+
+impl Hud {
+    const fn opponent(self) -> Option<&'static str> {
+        match self {
+            Self::Online(_) => Some("OPPONENT"),
+            Self::Solo { versus: true, .. } => Some("CPU"),
+            Self::Solo { versus: false, .. } => None,
+        }
+    }
+
+    const fn deciding(self, session: &GameSession) -> &Board {
+        match self {
+            Self::Online(_) => &session.board,
+            Self::Solo { .. } => &session.predicted_board,
+        }
+    }
+}
+
 enum Overlay {
     GameOver { i_lost: bool },
     OpponentGone,
@@ -46,13 +70,15 @@ enum Overlay {
 }
 
 impl Overlay {
-    fn of(session: &GameSession) -> Option<Self> {
-        let i_lost = session.board.state == GameState::GameOver;
-        if i_lost || session.other_board.state == GameState::GameOver {
+    fn of(session: &GameSession, hud: Hud) -> Option<Self> {
+        let me = hud.deciding(session);
+        let i_lost = me.state == GameState::GameOver;
+        let they_lost = hud.opponent().is_some() && session.other_board.state == GameState::GameOver;
+        if i_lost || they_lost {
             Some(Self::GameOver { i_lost })
         } else if session.opponent_disconnected {
             Some(Self::OpponentGone)
-        } else if session.board.state == GameState::Paused {
+        } else if me.state == GameState::Paused {
             Some(Self::Paused)
         } else {
             None
@@ -60,13 +86,13 @@ impl Overlay {
     }
 }
 
-pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &Ui, fonts: &Fonts, role: Role) {
-    let layout = GameLayout::new(ui.view());
+pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &Ui, fonts: &Fonts, hud: Hud) {
+    let layout = GameLayout::new(ui.view(), hud.opponent().is_some());
     let pal = ui.palette();
     let mut draw = ui.canvas(gfx);
     draw.clear(game::BACKGROUND);
 
-    draw_boards(&mut draw, &pal, fonts, session, &layout);
+    draw_boards(&mut draw, &pal, fonts, session, &layout, hud);
     draw_sidebar(
         &mut draw,
         &pal,
@@ -75,6 +101,18 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
         layout.sidebar_x,
         layout.mine.y,
     );
+    if let Hud::Solo {
+        versus: false, best, ..
+    } = hud
+    {
+        draw.sharp_text(
+            &fonts.text,
+            &format!("Best: {}", best.max(session.predicted_board.score)),
+        )
+        .position(layout.sidebar_x, layout.mine.y + 390.0)
+        .size(theme::size::LABEL)
+        .color(pal.text_muted);
+    }
     draw_chain_anim(&mut draw, fonts, session.chain_display, layout.mine);
     if session.all_clear_timer > 0.0 {
         let alpha = (session.all_clear_timer / 3.0).min(1.0);
@@ -85,19 +123,21 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
             .v_align_middle()
             .color(game::ALL_CLEAR.with_alpha(alpha));
     }
-    if let Some(overlay) = Overlay::of(session) {
+    if let Some(overlay) = Overlay::of(session, hud) {
         let game_over = matches!(overlay, Overlay::GameOver { .. });
         let leaving_forfeits = !game_over && !session.opponent_disconnected;
-        draw_overlay(&mut draw, &pal, fonts, &overlay, &layout, role, app.timer.elapsed_f32());
-        draw_exit_buttons(&mut draw, ui, fonts, role.is_host, leaving_forfeits);
+        draw_overlay(&mut draw, &pal, fonts, &overlay, &layout, hud, app.timer.elapsed_f32());
+        draw_exit_buttons(&mut draw, ui, fonts, hud, leaving_forfeits);
     }
     #[cfg(debug_assertions)]
-    draw_debug(&mut draw, fonts, session, layout.win_h);
+    if matches!(hud, Hud::Online(_)) {
+        draw_debug(&mut draw, fonts, session, layout.win_h);
+    }
 
     ui.render(gfx, &draw);
 }
 
-fn draw_boards(draw: &mut Draw, pal: &Palette, fonts: &Fonts, session: &GameSession, layout: &GameLayout) {
+fn draw_boards(draw: &mut Draw, pal: &Palette, fonts: &Fonts, session: &GameSession, layout: &GameLayout, hud: Hud) {
     let me = &session.predicted_board;
     let (row_off, col_off) = session.piece_visual_offset;
     draw_board(
@@ -113,12 +153,15 @@ fn draw_boards(draw: &mut Draw, pal: &Palette, fonts: &Fonts, session: &GameSess
         .color(pal.text);
     draw_nuisance_bar(draw, pal, fonts, session.my_nuisance(), layout.mine);
 
+    let Some(opponent) = hud.opponent() else {
+        return;
+    };
     let (opp_board, opp_offset) = session
         .opponent_view
         .frame()
-        .unwrap_or((&session.other_board, (0.0, 0.0)));
+        .unwrap_or((&session.other_board, (fall_step(&session.other_board), 0.0)));
     draw_board(draw, opp_board, layout.theirs, opp_offset, session.opp_turn.satellite());
-    draw.sharp_text(&fonts.text, "OPPONENT")
+    draw.sharp_text(&fonts.text, opponent)
         .position(layout.theirs.x, layout.theirs.y - 50.0)
         .size(theme::size::LABEL)
         .color(pal.text_muted);
@@ -170,7 +213,7 @@ fn draw_overlay(
     fonts: &Fonts,
     overlay: &Overlay,
     layout: &GameLayout,
-    role: Role,
+    hud: Hud,
     elapsed: f32,
 ) {
     let (cx, cy) = (layout.win_w / 2.0, layout.win_h / 2.0);
@@ -190,7 +233,11 @@ fn draw_overlay(
     draw.rect((0.0, 0.0), (layout.win_w, layout.win_h)).color(scrim);
     match overlay {
         Overlay::GameOver { i_lost: true } => {
-            centered(draw, "GAME OVER", cy - 20.0, theme::size::HERO, theme::DANGER);
+            if matches!(hud, Hud::Solo { new_best: true, .. }) {
+                centered(draw, "NEW RECORD !", cy - 20.0, theme::size::HERO, theme::GOLD);
+            } else {
+                centered(draw, "GAME OVER", cy - 20.0, theme::size::HERO, theme::DANGER);
+            }
             centered(draw, "Press R to Restart", cy + 50.0, theme::size::HEADING, pal.text);
         }
         Overlay::GameOver { i_lost: false } => {
@@ -206,7 +253,11 @@ fn draw_overlay(
         ),
         Overlay::Paused => {
             let blink = 0.2 + (elapsed * 2.0).sin().abs() * 0.8;
-            let hint = if role.can_pause {
+            let can_resume = match hud {
+                Hud::Online(role) => role.can_pause,
+                Hud::Solo { .. } => true,
+            };
+            let hint = if can_resume {
                 "Press ESC to continue"
             } else {
                 "Seul l'hôte peut reprendre"
@@ -255,7 +306,6 @@ fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32)
 
 const EXIT_ROW_H: f32 = 60.0;
 
-/// The overlay's rows: leaving the room, then (host only) back to the lobby.
 pub fn exit_rows(view: View) -> (Rect, Rect) {
     let top = view.h / 2.0 + 90.0;
     (
@@ -264,15 +314,15 @@ pub fn exit_rows(view: View) -> (Rect, Rect) {
     )
 }
 
-fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, fonts: &Fonts, is_host: bool, forfeits: bool) {
-    let (leave, back) = if forfeits {
-        ("Abandonner (défaite)", "Lobby (défaite)")
-    } else {
-        ("Quitter la room", "Retour au lobby")
+fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, fonts: &Fonts, hud: Hud, forfeits: bool) {
+    let (leave, back, has_back) = match hud {
+        Hud::Solo { .. } => ("Quitter", "Recommencer", true),
+        Hud::Online(role) if forfeits => ("Abandonner (défaite)", "Lobby (défaite)", role.is_host),
+        Hud::Online(role) => ("Quitter la room", "Retour au lobby", role.is_host),
     };
     let (leave_row, back_row) = exit_rows(ui.view());
     ui.menu_bar(draw, fonts, leave_row, leave, theme::bar::RED);
-    if is_host {
+    if has_back {
         ui.menu_bar(draw, fonts, back_row, back, theme::bar::YELLOW);
     }
 }

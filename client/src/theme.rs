@@ -1,6 +1,5 @@
 use notan::prelude::Color;
 
-/// Section hues, after osu!lazer's colour schemes.
 pub mod hue {
     pub const PURPLE: f32 = 255.0;
     pub const BLUE: f32 = 200.0;
@@ -60,8 +59,6 @@ pub fn mix(a: Color, b: Color, t: f32) -> Color {
     )
 }
 
-/// Every colour that follows a section's hue. The tones differ only in
-/// saturation and lightness, the way osu!lazer's colour provider works.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Palette {
     pub background: Color,
@@ -123,15 +120,14 @@ pub const SCRIM_DARK: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.7);
 
 pub const RADIUS: f32 = 8.0;
 
-/// Height of the header band that opens most screens.
 pub const HEADER_H: f32 = 110.0;
 
-/// Colours of the full-width menu bars, one per kind of action.
 pub mod bar {
     use notan::prelude::Color;
 
     pub const GREEN: Color = Color::from_rgb(0.53, 0.72, 0.05);
     pub const BLUE: Color = Color::from_rgb(0.2, 0.55, 0.85);
+    pub const PURPLE: Color = Color::from_rgb(0.52, 0.36, 0.86);
     pub const YELLOW: Color = Color::from_rgb(0.95, 0.66, 0.05);
     pub const RED: Color = Color::from_rgb(0.74, 0.14, 0.2);
 }

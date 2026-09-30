@@ -7,6 +7,7 @@ use shared::{config, ClientMessage};
 
 mod audio;
 mod connection;
+mod cpu;
 mod draw;
 mod friends;
 mod http;
@@ -17,6 +18,7 @@ mod menu;
 mod network;
 mod profile;
 mod rooms;
+mod solo;
 mod state;
 mod theme;
 mod ui;
@@ -133,6 +135,7 @@ fn update_invitation(state: &mut State) {
                 state.rooms.clear();
                 state.pending_join = Some(room_id);
             }
+            state.solo = None;
             state.screen = Screen::RoomBrowser;
         }
     } else if state.ui.clicked(decline_btn) {
@@ -169,6 +172,8 @@ fn update(app: &mut App, state: &mut State) {
         Screen::Profile => profile::update_profile(app, state),
         Screen::Friends => friends::update_friends(app, state),
         Screen::OtherProfile => profile::update_other_profile(app, state),
+        Screen::SoloSetup => solo::update_setup(app, state),
+        Screen::Solo => solo::update_game(app, state),
         Screen::Game => {
             let is_host = state.lobby.as_ref().is_some_and(|l| l.is_host);
             let State {
@@ -225,13 +230,20 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         Screen::Profile => profile::draw_profile(gfx, state),
         Screen::Friends => friends::draw_friends(gfx, state),
         Screen::OtherProfile => profile::draw_other_profile(gfx, state),
+        Screen::SoloSetup => solo::draw_setup(gfx, state),
+        Screen::Solo => {
+            if let Some(game) = state.solo.as_ref() {
+                let hud = game.hud(state.solo_best);
+                draw::draw_game(app, gfx, &game.session, &state.ui, &state.fonts, hud);
+            }
+        }
         Screen::Game => {
             let role = draw::Role {
                 is_host: state.lobby.as_ref().is_some_and(|l| l.is_host),
                 can_pause: state.lobby.as_ref().is_some_and(|l| l.settings.pause.allows(l.is_host)),
             };
             if let Some(session) = state.session.as_ref() {
-                draw::draw_game(app, gfx, session, &state.ui, &state.fonts, role);
+                draw::draw_game(app, gfx, session, &state.ui, &state.fonts, draw::Hud::Online(role));
             }
         }
     }

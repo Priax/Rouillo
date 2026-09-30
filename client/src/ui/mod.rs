@@ -5,6 +5,7 @@ mod deco;
 mod field;
 mod fonts;
 mod keys;
+mod panel;
 mod rect;
 mod screen;
 mod status;
@@ -26,6 +27,7 @@ pub use keys::KeyRepeat;
 use notan::draw::{CreateDraw, Draw, DrawImages};
 use notan::math::{vec2, Mat3};
 use notan::prelude::{App, BlendMode, Color, Graphics, RenderTexture, TextureFilter};
+pub use panel::SettingsPanel;
 pub use rect::Rect;
 pub use status::Status;
 pub use stepper::Stepper;
@@ -188,8 +190,6 @@ impl Ui {
         ease_out(transition_progress(inner.time, inner.entered_at))
     }
 
-    /// Seconds since the interface started, for animations. Kept in `f64`:
-    /// an `f32` clock loses a frame's worth of precision after a day or so.
     pub fn time(&self) -> f64 {
         self.inner.borrow().time
     }
@@ -211,22 +211,15 @@ impl Ui {
         let mut draw = self.target(gfx).create_draw();
         let scale = view.scale * supersample(view);
         draw.transform().push(Mat3::from_scale(vec2(scale, scale)));
-        // Blend translucent shapes into the colour only. With notan's default
-        // the alpha channel is blended like a colour and drops below 1 under
-        // every translucent shape; a compositor that honours the window's
-        // alpha (KWin while it draws its enlarged cursor, say) then shows the
-        // desktop through those pixels.
         draw.set_alpha_mode(Some(BlendMode::OVER));
         draw
     }
 
-    /// Draws `draw` into this frame's texture.
     pub fn render(&self, gfx: &mut Graphics, draw: &Draw) {
         let target = self.target(gfx);
         gfx.render_to(&target, draw);
     }
 
-    /// Shows the frame: its texture scaled down to the window.
     pub fn present(&self, gfx: &mut Graphics) {
         let view = self.view();
         let target = self.target(gfx);
@@ -236,7 +229,6 @@ impl Ui {
         gfx.render(&draw);
     }
 
-    /// The frame's texture, made again when the window changes size.
     fn target(&self, gfx: &mut Graphics) -> RenderTexture {
         let view = self.view();
         let factor = view.scale * supersample(view);

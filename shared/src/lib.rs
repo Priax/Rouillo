@@ -317,6 +317,19 @@ pub enum ServerMessage {
     },
 }
 
+/// The bonus a popped group of `size` puyos adds to its link's multiplier.
+pub fn group_bonus(size: u32) -> u32 {
+    GROUP_BONUS[size.saturating_sub(4).min(7) as usize]
+}
+
+/// The points scored by link number `link` of a chain (1 for the first) that
+/// cleared `cleared` puyos of `colours` colours, in groups whose bonuses add
+/// up to `group_bonuses`.
+pub fn link_score(link: u32, colours: usize, cleared: u32, group_bonuses: u32) -> u32 {
+    let multiplier = (CHAIN_POWERS[link.min(19) as usize] + COLOR_BONUS[colours.min(5)] + group_bonuses).clamp(1, 999);
+    10 * cleared * multiplier
+}
+
 impl PuyoType {
     pub fn random_with_seed<R: Rng>(rng: &mut R, colors: u32) -> Self {
         let n = colors.clamp(1, 5);
@@ -875,16 +888,8 @@ impl Board {
     }
 
     fn calculate_score(&self, color_count_len: usize, total_cleared: u32, group_sizes: &[u32]) -> u32 {
-        let chain_idx = (self.chain_count).min(19) as usize;
-        let cp = CHAIN_POWERS[chain_idx];
-        let cb = COLOR_BONUS[color_count_len.min(5)];
-        let mut gb = 0;
-        for &size in group_sizes {
-            gb += GROUP_BONUS[(size.saturating_sub(4)).min(7) as usize];
-        }
-        let multiplier = (cp + cb + gb).clamp(1, 999);
-
-        10 * total_cleared * multiplier
+        let group_bonuses = group_sizes.iter().map(|&size| group_bonus(size)).sum();
+        link_score(self.chain_count, color_count_len, total_cleared, group_bonuses)
     }
 
     pub fn drop_garbage(&mut self) {

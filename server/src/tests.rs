@@ -1,6 +1,14 @@
-use shared::{PausePolicy, PuyoType};
+use shared::{
+    config, ClientMessage, GameState, IncomingGarbage, InputKind, LobbyInfo, PausePolicy, PuyoType, RoomId,
+    ServerMessage,
+};
+use uuid::Uuid;
 
 use super::*;
+use crate::manager::*;
+use crate::room::*;
+use crate::sim::*;
+use crate::ws::*;
 
 fn new_mgr() -> Manager {
     Manager::new()
