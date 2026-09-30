@@ -128,6 +128,15 @@ application ne fournit pas son icône, le bureau la retrouve par l'`app_id` de l
 Une fois installé, l'icône s'affiche aussi pour un `cargo run -p client`.
 `PREFIX=/usr DESTDIR=pkg scripts/install-linux.sh` pour un paquet.
 
+### Déployer sur la VM
+```bash
+scripts/deploy.sh            # serveur + client web (le commit doit être poussé)
+scripts/deploy.sh server     # serveur seul
+scripts/deploy.sh web        # client web seul
+scripts/deploy.sh rollback   # remet le binaire serveur précédent
+```
+Le redémarrage attend la fin des parties en cours. Détails dans `DEPLOY.md` §12.
+
 ### Publier une release GitHub
 Le workflow `.github/workflows/release.yml` se déclenche sur un tag `v*` et construit les
 binaires **natifs** du client (Linux + Windows) attachés à une release brouillon, plus

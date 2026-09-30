@@ -17,7 +17,7 @@ pub fn update_game(
         return;
     }
 
-    let game_over = session.board.state == GameState::GameOver || session.other_board.state == GameState::GameOver;
+    let game_over = session.decided();
     let paused = session.board.state == GameState::Paused;
 
     if paused || game_over || session.opponent_disconnected {
@@ -181,8 +181,7 @@ fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: In
 }
 
 fn handle_global_input(app: &App, session: &GameSession, conn: &mut Connection) {
-    let can_restart = session.board.state == GameState::GameOver || session.other_board.state == GameState::GameOver;
-    if app.keyboard.was_pressed(KeyCode::KeyR) && can_restart {
+    if app.keyboard.was_pressed(KeyCode::KeyR) && session.decided() {
         conn.send(&ClientMessage::RequestRestart);
     }
 

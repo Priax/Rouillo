@@ -262,10 +262,6 @@ pub fn draw_join_by_id(gfx: &mut Graphics, state: &State) {
     draw_entry(gfx, state, "Rejoindre par ID", "Rejoindre", "Numéro de la room...");
 }
 
-fn lobby_ready(info: &LobbyInfo) -> bool {
-    info.players >= 2 && info.connected >= info.players
-}
-
 const INVITE_ROW_H: f32 = 52.0;
 
 fn lobby_panel(view: View) -> SettingsPanel {
@@ -360,7 +356,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         }
     }
 
-    let launch_enabled = lobby_ready(&info) || info.countdown.is_some();
+    let (_, _, launch_enabled) = launch_bar(&info, state.maintenance);
     if info.is_host && launch_enabled && state.ui.clicked(lobby_launch(view)) {
         send(state, &ClientMessage::ToggleCountdown);
         return;
@@ -412,7 +408,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
         );
     }
 
-    let (label, color, enabled) = launch_bar(info);
+    let (label, color, enabled) = launch_bar(info, state.maintenance);
     state
         .ui
         .menu_bar_enabled(&mut draw, fonts, lobby_launch(view), label, color, enabled);
@@ -443,8 +439,10 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &draw);
 }
 
-fn launch_bar(info: &LobbyInfo) -> (&'static str, Color, bool) {
-    if !info.is_host {
+fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool) {
+    if maintenance {
+        ("Le serveur redémarre...", theme::bar::GREEN, false)
+    } else if !info.is_host {
         ("En attente de l'hôte...", theme::bar::GREEN, false)
     } else if info.countdown.is_some() {
         ("Annuler", theme::bar::YELLOW, true)

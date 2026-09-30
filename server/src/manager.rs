@@ -49,6 +49,7 @@ impl FriendCheck {
 
 const JOIN_UNAVAILABLE: &str = "Room indisponible";
 const JOIN_FRIENDS_ONLY: &str = "Cette room est réservée aux amis de l'hôte.";
+const JOIN_MAINTENANCE: &str = "Le serveur redémarre, réessaie dans un instant.";
 
 pub struct Manager {
     pub rooms: HashMap<RoomId, Room>,
@@ -65,6 +66,7 @@ pub struct Manager {
     pub checks_in_flight: HashSet<ConnId>,
     pub last_invite: HashMap<ConnId, Instant>,
     unsaved_matches: Vec<db::MatchRecord>,
+    closing: bool,
 }
 
 pub enum Command {
@@ -127,12 +129,13 @@ pub enum Command {
         check: FriendCheck,
         friends: bool,
     },
+    Shutdown,
 }
 
 impl Command {
     fn client(&self) -> Option<ConnId> {
         match self {
-            Self::Register { .. } | Self::FriendCheckDone { .. } => None,
+            Self::Register { .. } | Self::FriendCheckDone { .. } | Self::Shutdown => None,
             Self::Unregister { conn }
             | Self::Hello { conn, .. }
             | Self::RequestRoomList { conn }
@@ -176,7 +179,44 @@ impl Manager {
             checks_in_flight: HashSet::new(),
             last_invite: HashMap::new(),
             unsaved_matches: Vec::new(),
+            closing: false,
         }
+    }
+
+    fn begin_shutdown(&mut self) {
+        if self.closing {
+            return;
+        }
+        self.closing = true;
+        let counting: Vec<RoomId> = self
+            .rooms
+            .values()
+            .filter(|r| matches!(r.phase, Phase::CountingDown(_)))
+            .map(|r| r.id)
+            .collect();
+        for id in counting {
+            if let Some(room) = self.rooms.get_mut(&id) {
+                room.phase = Phase::Lobby;
+            }
+            self.send_lobby(id);
+            self.room_list_dirty = true;
+        }
+        let conns: Vec<ConnId> = self.senders.keys().copied().collect();
+        for conn in conns {
+            self.deliver_msg(conn, &ServerMessage::Maintenance);
+        }
+        info!(
+            "Maintenance: {} partie(s) en cours à laisser finir",
+            self.games_running()
+        );
+    }
+
+    pub fn closing(&self) -> bool {
+        self.closing
+    }
+
+    pub fn games_running(&self) -> usize {
+        self.rooms.values().filter(|r| r.game_running()).count()
     }
 
     pub fn room_of(&self, conn: ConnId) -> Option<RoomId> {
@@ -216,6 +256,10 @@ impl Manager {
             return;
         }
         if self.room_of(conn) == Some(id) {
+            return;
+        }
+        if self.closing {
+            self.join_failed(conn, JOIN_MAINTENANCE);
             return;
         }
         let Some(room) = self.rooms.get(&id).filter(|r| r.members.len() < 2) else {
@@ -489,6 +533,7 @@ impl Manager {
             Command::Restart { conn } => self.restart(conn),
             Command::InviteFriend { conn, target_user_id } => self.request_invite(conn, &target_user_id),
             Command::FriendCheckDone { check, friends } => self.friend_check_done(check, friends),
+            Command::Shutdown => self.begin_shutdown(),
         }
     }
 
@@ -516,6 +561,9 @@ impl Manager {
         } else {
             self.send_room_list_to(conn);
         }
+        if self.closing {
+            self.deliver_msg(conn, &ServerMessage::Maintenance);
+        }
     }
 
     fn create_room(&mut self, conn: ConnId, name: &str) {
@@ -523,6 +571,10 @@ impl Manager {
             Some(t) => t.clone(),
             None => return,
         };
+        if self.closing {
+            self.join_failed(conn, JOIN_MAINTENANCE);
+            return;
+        }
         self.leave_current(conn);
         let id = self.next_id;
         self.next_id += 1;
@@ -568,12 +620,15 @@ impl Manager {
     }
 
     fn toggle_countdown(&mut self, conn: ConnId) {
+        let closing = self.closing;
         if let Some(id) = self.room_of(conn) {
             let toggled = self
                 .with_room(id, |room| {
                     if room.is_host_conn(conn) {
                         room.phase = match room.phase {
-                            Phase::Lobby if room.members.len() >= 2 && room.all_connected() => Phase::CountingDown(3.0),
+                            Phase::Lobby if !closing && room.members.len() >= 2 && room.all_connected() => {
+                                Phase::CountingDown(3.0)
+                            }
                             Phase::Lobby => Phase::Lobby,
                             Phase::CountingDown(_) => Phase::Lobby,
                             Phase::Playing => Phase::Playing,
@@ -646,6 +701,9 @@ impl Manager {
     }
 
     fn restart(&mut self, conn: ConnId) {
+        if self.closing {
+            return;
+        }
         if let Some(id) = self.room_of(conn) {
             let restarted = self
                 .with_room(id, |room| {

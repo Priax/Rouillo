@@ -35,6 +35,7 @@ fn on_opened(state: &mut State, recovered: bool) {
         last_disconnect_reason: state.conn.take_unreported_drop(),
     };
     state.conn.send(&hello);
+    state.maintenance = false;
     if let Some(id) = state.pending_join.take() {
         state.conn.send(&ClientMessage::JoinRoom { id });
     }
@@ -228,6 +229,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             }
         }
         ServerMessage::Pong { .. } => {}
+        ServerMessage::Maintenance => state.maintenance = true,
         ServerMessage::FriendInvitation {
             from_username,
             room_id,

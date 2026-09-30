@@ -1,6 +1,13 @@
 [serve]
 port = 8081
 open = false
+# With `create_nonce` below, `trunk serve` would send a policy of its own that
+# blocks the page's <style>. The policy that matters is Caddy's, in production.
+disable_csp = true
 
 [[proxy]]
 backend = "http://127.0.0.1:8080/api"
+
+[build]
+create_nonce = true
+nonce_placeholder = "{{placeholder `http.request.uuid`}}"

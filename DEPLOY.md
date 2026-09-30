@@ -16,7 +16,7 @@ Client ──wss://puyo.priax.org/ws / https://puyo.priax.org/api──▶ Caddy
 | Shape | `VM.Standard.A1.Flex` (ARM aarch64), 2 OCPU / 12 Go |
 | OS | Canonical Ubuntu 24.04 (pas « Minimal ») |
 | Utilisateur SSH | `ubuntu` (clé `~/.ssh/id_ed25519`) |
-| IP publique | `129.151.236.143` (éphémère → **change si la VM est recréée**) |
+| IP publique | `129.151.236.143` (éphémère → **change si la VM est recréée**, seul l'enregistrement DNS est alors à mettre à jour, §8) |
 | Domaine | `puyo.priax.org` (DNS Cloudflare, enregistrement A, *DNS only*) |
 | Base | PostgreSQL 16, base `puyorust`, rôle `puyo` |
 | Fichiers serveur | `/opt/puyorust/server`, `/opt/puyorust/puyo.env` |
@@ -173,6 +173,7 @@ EnvironmentFile=/opt/puyorust/puyo.env
 ExecStart=/opt/puyorust/server
 Restart=always
 RestartSec=2
+TimeoutStopSec=630
 User=puyo
 Group=puyo
 NoNewPrivileges=true
@@ -261,14 +262,84 @@ Oracle récupère les instances Always Free **inactives** (CPU < 20 % sur 7 jour
 Parade: **Billing → Upgrade to Pay As You Go** (les ressources Always Free restent gratuites),
 puis **Billing → Budgets**: budget avec alerte à **1 €**.
 
-## 12. Mettre à jour le serveur
+## 12. Mettre à jour le serveur et le client web
 
-Sur la VM:
+Depuis le PC, une fois le commit poussé sur `master`:
 
 ```bash
-cd ~/puyorust && git pull && cargo build --release -p server \
-  && sudo cp target/release/server /opt/puyorust/server.new \
-  && sudo chmod +x /opt/puyorust/server.new \
+scripts/deploy.sh            # serveur + client web
+scripts/deploy.sh server     # serveur seul
+scripts/deploy.sh web        # client web seul
+scripts/deploy.sh rollback   # remet le binaire serveur précédent
+```
+
+Le script refuse de partir si l'arbre local a des modifications ou si `HEAD` n'est pas
+`origin/master`: le serveur est compilé sur la VM depuis GitHub et le client web ici, il faut
+donc que les deux viennent du même commit. Il compile tout **avant** de remplacer quoi que ce
+soit, redémarre le serveur, envoie le client web, puis vérifie que `/ws` répond 101 et `/` 200.
+Il se connecte à `ubuntu@puyo.priax.org` (autre cible: `PUYO_HOST=user@hôte`), donc l'IP de la
+VM n'apparaît nulle part.
+
+### Le redémarrage ne coupe plus les parties
+
+Sur `SIGTERM` (ce qu'envoie `systemctl restart` ou `stop`), le serveur passe en maintenance:
+
+- il refuse les nouvelles rooms, les entrées dans une room, les lancements et les revanches,
+  et annule les comptes à rebours en cours;
+- il prévient les clients connectés, qui affichent un bandeau;
+- il laisse les parties en cours se terminer (un joueur déconnecté garde sa place et peut
+  revenir), puis s'arrête 4 s après la dernière, le temps de voir le résultat;
+- il s'arrête de toute façon au bout de 10 min (`SHUTDOWN_DEADLINE` dans `server/src/main.rs`),
+  par exemple si une partie reste en pause.
+
+Sans partie en cours, l'arrêt est immédiat. `systemctl restart puyo` **attend** donc la fin des
+parties: c'est normal que la commande dure. Pour ne pas attendre, un second signal arrête tout
+de suite: `sudo systemctl kill puyo`.
+
+`TimeoutStopSec` de l'unité (§7) doit rester **supérieur** à `SHUTDOWN_DEADLINE`, sinon systemd
+tue le serveur avant. Sur une VM installée avant ce changement, à faire une fois:
+
+```bash
+ssh ubuntu@puyo.priax.org "sudo sed -i '/^RestartSec=/a TimeoutStopSec=630' /etc/systemd/system/puyo.service \
+  && sudo systemctl daemon-reload"
+```
+
+Les rooms sans partie en cours (lobbies) sont perdues au redémarrage: leurs joueurs se
+reconnectent tout seuls et retombent sur la liste des rooms.
+
+### Caddyfile et Content-Security-Policy
+
+Le Caddyfile réel est `deploy/Caddyfile` (hors dépôt), le script ne l'installe pas. Il envoie
+une `Content-Security-Policy` sur la page: scripts et connexions limités à ce domaine. Le seul
+script en ligne de la page (écrit par trunk) porte un nonce: trunk y laisse un texte à remplacer
+(`create_nonce` dans `client/Trunk.toml`) et la directive `templates` de Caddy y met
+l'identifiant de la requête, le même que dans l'en-tête.
+
+**Ordre à respecter**: d'abord `scripts/deploy.sh web` (une page avec le nonce), ensuite le
+Caddyfile. Dans l'autre sens, la page en place n'a pas de nonce, son script est bloqué et
+l'écran reste noir.
+
+```bash
+scp deploy/Caddyfile ubuntu@puyo.priax.org:/tmp/Caddyfile
+ssh ubuntu@puyo.priax.org "caddy validate --adapter caddyfile --config /tmp/Caddyfile \
+  && sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.old \
+  && sudo cp /tmp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy"
+curl -sI https://puyo.priax.org/ | grep -i content-security-policy
+```
+
+Le `reload` de Caddy ferme les WebSockets ouverts: les clients se reconnectent tout seuls, mais
+autant le faire quand personne ne joue. Puis ouvrir le site, console du navigateur ouverte
+(F12): aucune ligne « Content Security Policy » ne doit apparaître, y compris après être entré
+en multijoueur.
+
+### À la main
+
+Ce que fait le script côté serveur, sur la VM:
+
+```bash
+cd ~/puyorust && git pull && nice -n 19 cargo build --release -p server \
+  && sudo install -m 755 target/release/server /opt/puyorust/server.new \
+  && sudo cp -p /opt/puyorust/server /opt/puyorust/server.prev \
   && sudo mv /opt/puyorust/server.new /opt/puyorust/server \
   && sudo systemctl restart puyo \
   && journalctl -u puyo -n 5 --no-pager
@@ -276,9 +347,11 @@ cd ~/puyorust && git pull && cargo build --release -p server \
 
 **Pas de `cp` direct sur `/opt/puyorust/server`**: le binaire est en cours d'exécution,
 `cp` échoue avec `Text file busy`. On copie à côté puis `mv` (renommage atomique: le
-processus en cours garde l'ancien fichier jusqu'au `restart`).
+processus en cours garde l'ancien fichier jusqu'au `restart`). `nice` parce que la VM n'a que
+deux cœurs et que les parties en cours en ont besoin d'un.
 
-Le redémarrage **coupe les parties en cours** (rooms en mémoire): déployer quand personne ne joue.
+`rollback` ne défait pas les migrations: si le déploiement en a appliqué une, l'ancien binaire
+refuse de démarrer (sqlx voit une migration qu'il ne connaît pas).
 
 Si `shared/` a changé (protocole), **incrémenter `PROTOCOL_VERSION`** (`shared/src/lib.rs`)
 (le test `protocol_changes_bump_the_version` échoue tant que ce n'est pas fait)

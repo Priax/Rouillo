@@ -1,6 +1,3 @@
-// The simulation must run bit for bit alike on every peer, so a silent
-// truncation or sign flip here would be a desync: casts that can lose data
-// are refused, and conversions go through `From`, `try_from` or `small`.
 #![warn(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -241,7 +238,7 @@ pub struct LobbyInfo {
     pub countdown: Option<u8>,
 }
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 pub const OUTDATED_FRAME: &str = "outdated";
 
@@ -315,16 +312,13 @@ pub enum ServerMessage {
     Pong {
         id: u32,
     },
+    Maintenance,
 }
 
-/// The bonus a popped group of `size` puyos adds to its link's multiplier.
 pub fn group_bonus(size: u32) -> u32 {
     GROUP_BONUS[size.saturating_sub(4).min(7) as usize]
 }
 
-/// The points scored by link number `link` of a chain (1 for the first) that
-/// cleared `cleared` puyos of `colours` colours, in groups whose bonuses add
-/// up to `group_bonuses`.
 pub fn link_score(link: u32, colours: usize, cleared: u32, group_bonuses: u32) -> u32 {
     let multiplier = (CHAIN_POWERS[link.min(19) as usize] + COLOR_BONUS[colours.min(5)] + group_bonuses).clamp(1, 999);
     10 * cleared * multiplier

@@ -51,15 +51,15 @@ impl Difficulty {
                 hard_drop: false,
                 lookahead: true,
                 min_chain: 2,
-                noise: 10.0,
+                noise: 20.0,
             },
             Self::Hard => Profile {
-                think_ticks: 8,
-                input_ticks: 3,
-                hard_drop: true,
+                think_ticks: 10,
+                input_ticks: 5,
+                hard_drop: false,
                 lookahead: true,
                 min_chain: 5,
-                noise: 0.0,
+                noise: 10.0,
             },
         }
     }

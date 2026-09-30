@@ -7,6 +7,7 @@ mod ws;
 
 use shared::config;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tokio::time::{interval, Duration, Instant};
 use tracing::{error, info, warn};
 use warp::Filter;
@@ -16,6 +17,9 @@ use crate::ws::{bind_listener, ws_route, CMD_CHAN_CAP};
 
 type ConnId = u64;
 type Token = String;
+
+const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(600);
+const SHUTDOWN_LINGER: Duration = Duration::from_secs(4);
 
 struct TickProfile {
     enabled: bool,
@@ -60,10 +64,41 @@ impl TickProfile {
     }
 }
 
-fn run_side_effects(mgr: &mut Manager, pool: &db::DbPool, cmd_tx: &mpsc::Sender<Command>) {
+#[derive(Debug, PartialEq, Eq)]
+enum Exit {
+    Clean,
+    TimedOut,
+}
+
+struct Winddown {
+    deadline: Instant,
+    last_game: Option<Instant>,
+}
+
+impl Winddown {
+    fn new(now: Instant) -> Self {
+        Self {
+            deadline: now + SHUTDOWN_DEADLINE,
+            last_game: None,
+        }
+    }
+
+    fn check(&mut self, running: usize, now: Instant) -> Option<Exit> {
+        if running > 0 {
+            self.last_game = Some(now);
+            return (now >= self.deadline).then_some(Exit::TimedOut);
+        }
+        self.last_game
+            .is_none_or(|t| now.duration_since(t) >= SHUTDOWN_LINGER)
+            .then_some(Exit::Clean)
+    }
+}
+
+fn run_side_effects(mgr: &mut Manager, pool: &db::DbPool, cmd_tx: &mpsc::Sender<Command>, saves: &mut JoinSet<()>) {
+    while saves.try_join_next().is_some() {}
     for rec in mgr.take_unsaved_matches() {
         let pool = pool.clone();
-        tokio::spawn(async move {
+        saves.spawn(async move {
             if let Err(e) = db::record_match_result(&pool, rec).await {
                 error!("Match save: {e}");
             }
@@ -89,6 +124,8 @@ async fn manager_loop(mut cmd_rx: mpsc::Receiver<Command>, cmd_tx: mpsc::Sender<
     let mut mgr = Manager::new();
     let mut last_broadcast = Instant::now();
     let mut profile = TickProfile::new();
+    let mut saves = JoinSet::new();
+    let mut winddown: Option<Winddown> = None;
 
     loop {
         tokio::select! {
@@ -99,15 +136,60 @@ async fn manager_loop(mut cmd_rx: mpsc::Receiver<Command>, cmd_tx: mpsc::Sender<
                 mgr.tick(tick_dt, do_broadcast);
                 profile.record(t0.elapsed(), mgr.rooms.len());
                 mgr.reap_dead();
-                run_side_effects(&mut mgr, &pool, &cmd_tx);
+                run_side_effects(&mut mgr, &pool, &cmd_tx, &mut saves);
             }
             Some(cmd) = cmd_rx.recv() => {
                 mgr.handle(cmd);
                 mgr.reap_dead();
-                run_side_effects(&mut mgr, &pool, &cmd_tx);
+                run_side_effects(&mut mgr, &pool, &cmd_tx, &mut saves);
             }
         }
+        if !mgr.closing() {
+            continue;
+        }
+        let now = Instant::now();
+        let running = mgr.games_running();
+        match winddown.get_or_insert_with(|| Winddown::new(now)).check(running, now) {
+            Some(Exit::Clean) => {
+                info!("Plus aucune partie en cours, arrêt");
+                break;
+            }
+            Some(Exit::TimedOut) => {
+                warn!(
+                    "{running} partie(s) encore en cours après {}s, arrêt quand même",
+                    SHUTDOWN_DEADLINE.as_secs()
+                );
+                break;
+            }
+            None => {}
+        }
     }
+    while saves.join_next().await.is_some() {}
+}
+
+async fn stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate()).expect("SIGTERM handler");
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = tokio::signal::ctrl_c() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+async fn watch_signals(cmd_tx: mpsc::Sender<Command>) {
+    stop_signal().await;
+    info!("Arrêt demandé: les parties en cours se terminent, plus rien ne démarre");
+    let _ = cmd_tx.send(Command::Shutdown).await;
+    stop_signal().await;
+    warn!("Second signal, arrêt immédiat");
+    std::process::exit(1);
 }
 
 #[tokio::main]
@@ -143,7 +225,8 @@ async fn main() {
     info!("Écoute sur :{port}");
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(CMD_CHAN_CAP);
-    tokio::spawn(manager_loop(cmd_rx, cmd_tx.clone(), pool.clone()));
+    let manager = tokio::spawn(manager_loop(cmd_rx, cmd_tx.clone(), pool.clone()));
+    tokio::spawn(watch_signals(cmd_tx.clone()));
 
     let pool_cleanup = pool.clone();
     tokio::spawn(async move {
@@ -178,10 +261,14 @@ async fn main() {
             }
         }));
 
-    warp::serve(routes)
+    let server = warp::serve(routes)
         .incoming(bind_listener((config::SERVER_BIND_ADDRESS, port).into()))
-        .run()
-        .await;
+        .run();
+    // The manager only returns once a shutdown has let the games finish.
+    tokio::select! {
+        () = server => {}
+        _ = manager => {}
+    }
 }
 
 #[cfg(test)]

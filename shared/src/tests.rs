@@ -1255,10 +1255,11 @@ fn server_samples() -> Vec<ServerMessage> {
             room_name: "r".into(),
         },
         ServerMessage::Pong { id: 8 },
+        ServerMessage::Maintenance,
     ]
 }
 
-const SERVER_VARIANTS: usize = 9;
+const SERVER_VARIANTS: usize = 10;
 
 fn server_variant(m: &ServerMessage) -> usize {
     match m {
@@ -1271,6 +1272,7 @@ fn server_variant(m: &ServerMessage) -> usize {
         ServerMessage::JoinFailed { .. } => 6,
         ServerMessage::FriendInvitation { .. } => 7,
         ServerMessage::Pong { .. } => 8,
+        ServerMessage::Maintenance => 9,
     }
 }
 
@@ -1303,7 +1305,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (1, 6_548_698_159_580_308_123);
+const PROTOCOL_DIGEST: (u32, u64) = (2, 8_597_404_285_938_695_702);
 
 #[test]
 fn protocol_changes_bump_the_version() {

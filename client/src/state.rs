@@ -1,5 +1,5 @@
 use notan::prelude::*;
-use shared::{config, Board, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, StampedInput};
+use shared::{config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, StampedInput};
 
 use crate::connection::Connection;
 use crate::interp::OpponentView;
@@ -467,6 +467,10 @@ impl TurnAnim {
 }
 
 impl GameSession {
+    pub fn decided(&self) -> bool {
+        self.board.state == GameState::GameOver || self.other_board.state == GameState::GameOver
+    }
+
     pub fn my_nuisance(&self) -> u32 {
         let travelling: u32 = self
             .incoming
@@ -532,6 +536,7 @@ pub struct State {
     pub invite_slot: Option<HttpSlot>,
     pub invite_friends: Vec<FriendEntry>,
     pub outdated: bool,
+    pub maintenance: bool,
     pub ui: crate::ui::Ui,
     pub backspace: crate::ui::KeyRepeat,
     pub solo_settings: crate::solo::SoloSettings,
@@ -565,6 +570,7 @@ impl State {
             invite_slot: None,
             invite_friends: Vec::new(),
             outdated: false,
+            maintenance: false,
             ui: crate::ui::Ui::default(),
             backspace: crate::ui::KeyRepeat::default(),
             solo_settings: crate::solo::SoloSettings::default(),
