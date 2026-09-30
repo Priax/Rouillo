@@ -83,24 +83,24 @@ fn type_char(state: &mut State, c: char) {
     match state.screen {
         Screen::Auth => match state.auth_form.focused {
             state::AuthField::Username if state.auth_form.username.chars().count() < 24 => {
-                state.auth_form.username.push(c);
+                state.auth_form.username.insert(c);
             }
             state::AuthField::Password if state.auth_form.password.len() < 64 => {
-                state.auth_form.password.push(c);
+                state.auth_form.password.insert(c);
             }
             _ => {}
         },
         Screen::CreateRoom if state.text_input.chars().count() < 24 => {
-            state.text_input.push(c);
+            state.text_input.insert(c);
         }
         Screen::JoinById if c.is_ascii_digit() && state.text_input.len() < 9 => {
-            state.text_input.push(c);
+            state.text_input.insert(c);
         }
         Screen::Friends => {
             if let Some(f) = state.friends.as_mut() {
                 let allowed = c.is_alphanumeric() || c == '_' || c == '-' || c == ' ';
                 if allowed && f.search_input.len() < 36 {
-                    f.search_input.push(c);
+                    f.search_input.insert(c);
                 }
             }
         }
@@ -150,7 +150,7 @@ fn update(app: &mut App, state: &mut State) {
     let dt = app.timer.delta_f32();
     let view = ui::View::of(app);
     state.ui.begin_frame(dt, view, ui::Mouse::of(app, view));
-    state.backspace.update(app.keyboard.is_down(KeyCode::Backspace), dt);
+    state.keys.update(&app.keyboard, dt);
     #[cfg(target_arch = "wasm32")]
     for c in web::take_typed().chars() {
         type_char(state, c);

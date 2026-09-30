@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::ops::Deref;
 
 use ab_glyph::{Font as _, FontRef, PxScale, ScaleFont as _};
 use notan::draw::{CreateFont, Font};
@@ -16,42 +17,70 @@ pub enum Face {
 pub struct Fonts {
     pub text: Font,
     pub display: Font,
-    text_metrics: FontRef<'static>,
-    display_metrics: FontRef<'static>,
+    metrics: Metrics,
+}
+
+pub struct Metrics {
+    text: FontRef<'static>,
+    display: FontRef<'static>,
+}
+
+impl Deref for Fonts {
+    type Target = Metrics;
+
+    fn deref(&self) -> &Metrics {
+        &self.metrics
+    }
 }
 
 impl Fonts {
     pub fn load(gfx: &mut Graphics) -> Result<Self, String> {
-        let metrics = |bytes| FontRef::try_from_slice(bytes).map_err(|e| e.to_string());
         Ok(Self {
             text: gfx.create_font(TEXT)?,
             display: gfx.create_font(DISPLAY)?,
-            text_metrics: metrics(TEXT)?,
-            display_metrics: metrics(DISPLAY)?,
+            metrics: Metrics::load()?,
+        })
+    }
+}
+
+impl Metrics {
+    pub fn load() -> Result<Self, String> {
+        let metrics = |bytes| FontRef::try_from_slice(bytes).map_err(|e| e.to_string());
+        Ok(Self {
+            text: metrics(TEXT)?,
+            display: metrics(DISPLAY)?,
         })
     }
 
     pub fn width(&self, face: Face, text: &str, size: f32) -> f32 {
-        advances(self.metrics(face), text, size).last().map_or(0.0, |(_, w)| w)
+        advances(self.of(face), text, size).last().map_or(0.0, |(_, w)| w)
     }
 
-    fn metrics(&self, face: Face) -> &FontRef<'static> {
+    const fn of(&self, face: Face) -> &FontRef<'static> {
         match face {
-            Face::Text => &self.text_metrics,
-            Face::Display => &self.display_metrics,
+            Face::Text => &self.text,
+            Face::Display => &self.display,
         }
     }
 
     pub fn fit<'a>(&self, face: Face, text: &'a str, size: f32, max: f32) -> Cow<'a, str> {
-        fit(self.metrics(face), text, size, max)
+        fit(self.of(face), text, size, max)
     }
 
     pub fn tail<'a>(&self, face: Face, text: &'a str, size: f32, max: f32) -> &'a str {
-        tail(self.metrics(face), text, size, max)
+        tail(self.of(face), text, size, max)
+    }
+
+    pub fn head<'a>(&self, face: Face, text: &'a str, size: f32, max: f32) -> &'a str {
+        head(self.of(face), text, size, max)
+    }
+
+    pub fn index_at(&self, face: Face, text: &str, size: f32, x: f32) -> usize {
+        index_at(self.of(face), text, size, x)
     }
 
     pub fn wrap<'a>(&self, face: Face, text: &'a str, size: f32, max: f32) -> Vec<&'a str> {
-        wrap(self.metrics(face), text, size, max)
+        wrap(self.of(face), text, size, max)
     }
 }
 
@@ -61,6 +90,25 @@ fn tail<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> &'a 
         .map(|(start, _)| &text[start..])
         .find(|rest| width(rest) <= max)
         .unwrap_or_default()
+}
+
+fn head<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> &'a str {
+    let end = advances(font, text, size)
+        .take_while(|&(_, w)| w <= max)
+        .last()
+        .map_or(0, |(end, _)| end);
+    &text[..end]
+}
+
+fn index_at(font: &FontRef<'static>, text: &str, size: f32, x: f32) -> usize {
+    let mut before = (0, 0.0);
+    for (end, width) in advances(font, text, size) {
+        if x < f32::midpoint(before.1, width) {
+            break;
+        }
+        before = (end, width);
+    }
+    before.0
 }
 
 fn wrap<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> Vec<&'a str> {
@@ -152,6 +200,29 @@ mod tests {
         assert!(long.ends_with(end) && end.len() < long.len() && !end.is_empty());
         assert!(width(end, 20.0) <= 200.0);
         assert_eq!(tail(&font(), "Pas la place", 20.0, 1.0), "");
+    }
+
+    #[test]
+    fn the_head_is_the_start_that_fits() {
+        assert_eq!(head(&font(), "Salon", 20.0, 500.0), "Salon");
+        let long = "abcdefghij".repeat(10);
+        let start = head(&font(), &long, 20.0, 200.0);
+        assert!(long.starts_with(start) && start.len() < long.len() && !start.is_empty());
+        assert!(width(start, 20.0) <= 200.0);
+        assert_eq!(head(&font(), "Pas la place", 20.0, 1.0), "");
+    }
+
+    #[test]
+    fn a_point_falls_on_the_nearest_gap_between_characters() {
+        let text = "héWi";
+        let gaps = [0, 1, 3, 4, 5].map(|end| (end, width(&text[..end], 20.0)));
+        for (end, x) in gaps {
+            assert_eq!(index_at(&font(), text, 20.0, x + 0.4), end);
+            assert_eq!(index_at(&font(), text, 20.0, x - 0.4), end);
+        }
+        assert_eq!(index_at(&font(), text, 20.0, -50.0), 0);
+        assert_eq!(index_at(&font(), text, 20.0, 5000.0), text.len());
+        assert_eq!(index_at(&font(), "", 20.0, 10.0), 0);
     }
 
     #[test]

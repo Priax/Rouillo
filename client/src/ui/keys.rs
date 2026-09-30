@@ -1,3 +1,5 @@
+use notan::prelude::{KeyCode, Keyboard};
+
 const REPEAT_DELAY: f32 = 0.4;
 const REPEAT_EVERY: f32 = 0.035;
 
@@ -27,6 +29,30 @@ impl KeyRepeat {
 
     pub fn fired(&self) -> bool {
         self.fired
+    }
+}
+
+#[derive(Default)]
+pub struct EditKeys {
+    pub erase: KeyRepeat,
+    pub left: KeyRepeat,
+    pub right: KeyRepeat,
+    pub up: KeyRepeat,
+    pub down: KeyRepeat,
+}
+
+impl EditKeys {
+    pub fn update(&mut self, keyboard: &Keyboard, dt: f32) {
+        let keys = [
+            (&mut self.erase, KeyCode::Backspace),
+            (&mut self.left, KeyCode::ArrowLeft),
+            (&mut self.right, KeyCode::ArrowRight),
+            (&mut self.up, KeyCode::ArrowUp),
+            (&mut self.down, KeyCode::ArrowDown),
+        ];
+        for (key, code) in keys {
+            key.update(keyboard.is_down(code), dt);
+        }
     }
 }
 

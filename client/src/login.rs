@@ -3,7 +3,7 @@ use std::sync::Arc;
 use notan::prelude::*;
 
 use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, State};
-use crate::ui::{self, text_field, Field, Rect, SharpText, Status, View};
+use crate::ui::{self, field_clicked, text_field, Field, Rect, SharpText, Status, View};
 use crate::{http, theme};
 
 struct AuthLayout {
@@ -42,7 +42,7 @@ fn submit(form: &mut AuthForm) {
         return;
     }
     let username = form.username.trim().to_owned();
-    let password = form.password.clone();
+    let password = form.password.to_owned();
     if username.is_empty() || password.is_empty() {
         form.status = Status::error("Remplis tous les champs.");
         return;
@@ -120,15 +120,9 @@ pub fn update_auth(app: &mut App, state: &mut State) {
 
     let layout = auth_layout(state.ui.view());
 
-    if state.backspace.fired() {
-        match state.auth_form.focused {
-            AuthField::Username => {
-                state.auth_form.username.pop();
-            }
-            AuthField::Password => {
-                state.auth_form.password.pop();
-            }
-        }
+    match state.auth_form.focused {
+        AuthField::Username => state.auth_form.username.edit(&state.keys),
+        AuthField::Password => state.auth_form.password.edit(&state.keys),
     }
 
     if app.keyboard.was_pressed(KeyCode::Tab) {
@@ -145,10 +139,10 @@ pub fn update_auth(app: &mut App, state: &mut State) {
         }
     }
 
-    if state.ui.clicked(layout.username) {
+    if field_clicked(&state.ui, &state.fonts, layout.username, &mut state.auth_form.username) {
         state.auth_form.focused = AuthField::Username;
     }
-    if state.ui.clicked(layout.password) {
+    if field_clicked(&state.ui, &state.fonts, layout.password, &mut state.auth_form.password) {
         state.auth_form.focused = AuthField::Password;
     }
 
@@ -196,12 +190,11 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
         ),
         (layout.password, "Mot de passe", &form.password, AuthField::Password),
     ];
-    for (rect, placeholder, value, which) in fields {
+    for (rect, placeholder, input, which) in fields {
         let field = Field {
             placeholder,
-            value,
+            input,
             focused: form.focused == which,
-            secret: which == AuthField::Password,
         };
         text_field(&mut draw, &state.ui, &state.fonts, rect, &field);
     }

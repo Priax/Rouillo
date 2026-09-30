@@ -5,7 +5,9 @@ use notan::prelude::*;
 use shared::{ClientMessage, LobbyInfo, RoomInfo, RoomSettings};
 
 use crate::state::{ApiFriendsResponse, Screen, State};
-use crate::ui::{self, list_row, text_field, Face, Field, Modal, Pill, Rect, SettingsPanel, SharpText, View};
+use crate::ui::{
+    self, field_clicked, list_row, text_field, Face, Field, Modal, Pill, Rect, SettingsPanel, SharpText, View,
+};
 use crate::{http, theme};
 
 fn send(state: &mut State, msg: &ClientMessage) {
@@ -196,10 +198,9 @@ fn entry_buttons(w: f32, h: f32) -> (Rect, Rect) {
 }
 
 fn update_entry(app: &mut App, state: &mut State) -> Option<String> {
-    if state.backspace.fired() {
-        state.text_input.pop();
-    }
+    state.text_input.edit(&state.keys);
     let (w, h) = state.ui.view().size();
+    field_clicked(&state.ui, &state.fonts, entry_box(w, h), &mut state.text_input);
     let (confirm, back) = entry_buttons(w, h);
     if state.ui.clicked(confirm) || app.keyboard.was_pressed(KeyCode::Enter) {
         return Some(state.text_input.trim().to_string());
@@ -242,9 +243,8 @@ fn draw_entry(gfx: &mut Graphics, state: &State, title: &str, confirm: &str, pla
 
     let field = Field {
         placeholder,
-        value: &state.text_input,
+        input: &state.text_input,
         focused: true,
-        secret: false,
     };
     text_field(&mut draw, &state.ui, &state.fonts, entry_box(w, h), &field);
 

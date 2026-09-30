@@ -6,7 +6,10 @@ use notan::prelude::*;
 use crate::http;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
 use crate::theme::{self, Palette};
-use crate::ui::{self, divider, list_row, text_field, Face, Field, Fonts, Pill, Rect, SharpText, Status, Ui};
+use crate::ui::{
+    self, divider, field_clicked, list_row, text_field, Face, Field, Fonts, Pill, Rect, SharpText, Status, TextInput,
+    Ui,
+};
 
 const FIELD_H: f32 = 44.0;
 const RESULTS_TOP: f32 = 128.0;
@@ -126,7 +129,7 @@ pub fn enter_friends(state: &mut State) {
         sent: Vec::new(),
         received: Vec::new(),
         list_slot: Some(slot),
-        search_input: String::new(),
+        search_input: TextInput::default(),
         search_results: Vec::new(),
         search_slot: None,
         search_status: Status::Empty,
@@ -304,10 +307,9 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     let ww = state.ui.view().w;
     let wh = state.ui.view().h;
 
-    if state.backspace.fired() {
-        if let Some(f) = state.friends.as_mut() {
-            f.search_input.pop();
-        }
+    if let Some(f) = state.friends.as_mut() {
+        f.search_input.edit(&state.keys);
+        field_clicked(&state.ui, &state.fonts, search_box(ww), &mut f.search_input);
     }
 
     if state.ui.clicked(search_submit_btn(ww)) || app.keyboard.was_pressed(KeyCode::Enter) {
@@ -475,9 +477,8 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
     let searching = f.search_slot.is_some();
     let search = Field {
         placeholder: "Pseudo ou UUID",
-        value: &f.search_input,
+        input: &f.search_input,
         focused: true,
-        secret: false,
     };
     text_field(draw, ui, fonts, field, &search);
     ui.button_enabled(

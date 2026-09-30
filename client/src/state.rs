@@ -3,7 +3,7 @@ use shared::{config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomI
 
 use crate::connection::Connection;
 use crate::interp::OpponentView;
-use crate::ui::Status;
+use crate::ui::{Status, TextInput};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
@@ -63,8 +63,8 @@ pub enum AuthField {
 }
 
 pub struct AuthForm {
-    pub username: String,
-    pub password: String,
+    pub username: TextInput,
+    pub password: TextInput,
     pub focused: AuthField,
     pub mode: AuthMode,
     pub status: Status,
@@ -74,8 +74,8 @@ pub struct AuthForm {
 impl Default for AuthForm {
     fn default() -> Self {
         Self {
-            username: String::new(),
-            password: String::new(),
+            username: TextInput::default(),
+            password: TextInput::masked(),
             focused: AuthField::Username,
             mode: AuthMode::Login,
             status: Status::Empty,
@@ -144,7 +144,7 @@ pub struct FriendsData {
     pub sent: Vec<FriendEntry>,
     pub received: Vec<FriendEntry>,
     pub list_slot: Option<HttpSlot>,
-    pub search_input: String,
+    pub search_input: TextInput,
     pub search_results: Vec<UserSearchEntry>,
     pub search_slot: Option<HttpSlot>,
     pub search_status: Status,
@@ -510,7 +510,7 @@ pub struct State {
     pub conn: Connection,
     pub rooms: Vec<RoomInfo>,
     pub lobby: Option<LobbyInfo>,
-    pub text_input: String,
+    pub text_input: TextInput,
     pub notice: Status,
     pub session: Option<GameSession>,
     pub fonts: crate::ui::Fonts,
@@ -528,7 +528,7 @@ pub struct State {
     pub outdated: bool,
     pub maintenance: bool,
     pub ui: crate::ui::Ui,
-    pub backspace: crate::ui::KeyRepeat,
+    pub keys: crate::ui::EditKeys,
     pub solo_settings: crate::solo::SoloSettings,
     pub solo: Option<crate::solo::SoloGame>,
     pub solo_best: i32,
@@ -544,7 +544,7 @@ impl State {
             conn: Connection::new(&player_id),
             rooms: Vec::new(),
             lobby: None,
-            text_input: String::new(),
+            text_input: TextInput::default(),
             notice: Status::Empty,
             session: None,
             fonts,
@@ -562,7 +562,7 @@ impl State {
             outdated: false,
             maintenance: false,
             ui: crate::ui::Ui::default(),
-            backspace: crate::ui::KeyRepeat::default(),
+            keys: crate::ui::EditKeys::default(),
             solo_settings: crate::solo::SoloSettings::default(),
             solo: None,
             solo_best: load_best_score(),

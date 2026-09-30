@@ -6,7 +6,10 @@ use notan::prelude::*;
 use crate::http::{self, HttpSlot};
 use crate::state::{ApiUserProfile, State};
 use crate::theme;
-use crate::ui::{area_height, text_area, text_field, Field, Fonts, Rect, SharpText, Status, Ui};
+use crate::ui::{
+    area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field, Fonts, Rect, SharpText, Status,
+    TextInput, Ui,
+};
 
 const BIO_LINES: usize = 6;
 
@@ -52,8 +55,8 @@ impl EditField {
 
 #[derive(Default)]
 pub struct EditForm {
-    pub bio: String,
-    pub music: String,
+    pub bio: TextInput,
+    pub music: TextInput,
     pub focused: EditField,
     pub pending: Option<HttpSlot>,
     pub status: Status,
@@ -62,16 +65,23 @@ pub struct EditForm {
 impl EditForm {
     pub fn open(info: &ApiUserProfile) -> Self {
         Self {
-            bio: info.bio.clone().unwrap_or_default(),
-            music: info.favorite_music.clone().unwrap_or_default(),
+            bio: info.bio.clone().unwrap_or_default().into(),
+            music: info.favorite_music.clone().unwrap_or_default().into(),
             ..Self::default()
         }
     }
 
-    fn value(&self, field: EditField) -> &str {
+    const fn value(&self, field: EditField) -> &TextInput {
         match field {
             EditField::Bio => &self.bio,
             EditField::Music => &self.music,
+        }
+    }
+
+    const fn value_mut(&mut self, field: EditField) -> &mut TextInput {
+        match field {
+            EditField::Bio => &mut self.bio,
+            EditField::Music => &mut self.music,
         }
     }
 
@@ -84,17 +94,7 @@ impl EditForm {
         if self.left(field) == 0 || (self.value(field).is_empty() && c.is_whitespace()) {
             return;
         }
-        match field {
-            EditField::Bio => self.bio.push(c),
-            EditField::Music => self.music.push(c),
-        }
-    }
-
-    fn erase(&mut self) {
-        match self.focused {
-            EditField::Bio => self.bio.pop(),
-            EditField::Music => self.music.pop(),
-        };
+        self.value_mut(field).insert(c);
     }
 
     fn focus_next(&mut self) {
@@ -108,7 +108,10 @@ impl EditForm {
         if self.focused != EditField::Bio {
             return true;
         }
-        if !self.bio.ends_with("\n\n") {
+        let (before, after) = self.bio.around_caret();
+        let around =
+            before.len() - before.trim_end_matches('\n').len() + after.len() - after.trim_start_matches('\n').len();
+        if around < 2 {
             self.type_char('\n');
         }
         false
@@ -170,21 +173,27 @@ pub fn update(app: &mut App, state: &mut State) {
     let cx = state.ui.view().w / 2.0;
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let State {
-        profile, ui, backspace, ..
+        profile,
+        ui,
+        fonts,
+        keys,
+        ..
     } = state;
     let Some(profile) = profile.as_mut() else { return };
     let Some(form) = profile.edit.as_mut() else { return };
 
-    if backspace.fired() {
-        form.erase();
+    match form.focused {
+        EditField::Bio => area_keys(fonts, EditField::Bio.rect(cx), &mut form.bio, keys),
+        EditField::Music => form.music.edit(keys),
     }
     if app.keyboard.was_pressed(KeyCode::Tab) {
         form.focus_next();
     }
-    for field in EditField::ALL {
-        if ui.clicked(field.rect(cx)) {
-            form.focused = field;
-        }
+    if area_clicked(ui, fonts, EditField::Bio.rect(cx), &mut form.bio) {
+        form.focused = EditField::Bio;
+    }
+    if field_clicked(ui, fonts, EditField::Music.rect(cx), &mut form.music) {
+        form.focused = EditField::Music;
     }
     let wants_save = app.keyboard.was_pressed(KeyCode::Enter) && form.enter();
     let (save_btn, cancel_btn) = buttons(cx);
@@ -221,9 +230,8 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, cx: f32) {
             .color(left_color);
         let field = Field {
             placeholder: which.placeholder(),
-            value: form.value(which),
+            input: form.value(which),
             focused,
-            secret: false,
         };
         if which == EditField::Bio {
             text_area(draw, ui, fonts, rect, &field);
@@ -268,10 +276,10 @@ mod tests {
         let mut form = EditForm::default();
         typed(&mut form, "a");
         assert!(!form.enter());
-        assert_eq!(form.bio, "a\n");
+        assert_eq!(&*form.bio, "a\n");
         form.focus_next();
         assert!(form.enter());
-        assert_eq!((form.bio.as_str(), form.music.as_str()), ("a\n", ""));
+        assert_eq!((&*form.bio, &*form.music), ("a\n", ""));
     }
 
     #[test]
@@ -279,15 +287,22 @@ mod tests {
         let mut form = EditForm::default();
         form.enter();
         typed(&mut form, "  ");
-        assert_eq!(form.bio, "", "nothing the save would trim off the front");
+        assert_eq!(&*form.bio, "", "nothing the save would trim off the front");
         typed(&mut form, "a");
         for _ in 0..5 {
             form.enter();
         }
-        assert_eq!(form.bio, "a\n\n");
+        assert_eq!(&*form.bio, "a\n\n");
         typed(&mut form, "b");
         form.enter();
-        assert_eq!(form.bio, "a\n\nb\n");
+        assert_eq!(&*form.bio, "a\n\nb\n");
+        form.bio.set_caret(2);
+        form.enter();
+        assert_eq!(&*form.bio, "a\n\nb\n", "nor a second one from the middle of a break");
+        form.bio.set_caret(4);
+        typed(&mut form, "c");
+        form.enter();
+        assert_eq!(&*form.bio, "a\n\nbc\n\n");
     }
 
     #[test]
@@ -298,7 +313,7 @@ mod tests {
         assert_eq!(form.left(EditField::Bio), 0);
         assert!(!form.enter());
         assert_eq!(form.bio.chars().count(), EditField::Bio.max());
-        form.erase();
+        form.bio.erase();
         assert_eq!(form.left(EditField::Bio), 1);
 
         form.focus_next();
@@ -312,17 +327,17 @@ mod tests {
         typed(&mut form, "bio");
         form.focus_next();
         typed(&mut form, "musique");
-        form.erase();
+        form.music.erase();
         form.focus_next();
-        assert_eq!((form.bio.as_str(), form.music.as_str()), ("bio", "musiqu"));
+        assert_eq!((&*form.bio, &*form.music), ("bio", "musiqu"));
         assert_eq!(form.focused, EditField::Bio);
     }
 
     #[test]
     fn an_emptied_field_is_sent_empty_not_left_out() {
         let mut form = EditForm {
-            bio: "  \n".into(),
-            music: " Tsu ".into(),
+            bio: "  \n".to_owned().into(),
+            music: " Tsu ".to_owned().into(),
             ..EditForm::default()
         };
         let body: serde_json::Value = serde_json::from_str(&form.body()).expect("json");
@@ -340,7 +355,7 @@ mod tests {
             ..ApiUserProfile::default()
         };
         let form = EditForm::open(&info);
-        assert_eq!((form.bio.as_str(), form.music.as_str()), ("salut", ""));
+        assert_eq!((&*form.bio, &*form.music), ("salut", ""));
         assert_eq!(form.focused, EditField::Bio);
     }
 }

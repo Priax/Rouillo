@@ -4,6 +4,7 @@ mod controls;
 mod deco;
 mod field;
 mod fonts;
+mod input;
 mod keys;
 mod modal;
 mod panel;
@@ -22,9 +23,10 @@ use std::hash::{Hash, Hasher};
 
 pub use button::Icon;
 pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge, Pill};
-pub use field::{area_height, text_area, text_field, Field};
+pub use field::{area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field};
 pub use fonts::{Face, Fonts};
-pub use keys::KeyRepeat;
+pub use input::TextInput;
+pub use keys::EditKeys;
 pub use modal::Modal;
 use notan::draw::{CreateDraw, Draw, DrawImages};
 use notan::math::{vec2, Mat3};
@@ -274,8 +276,12 @@ impl Ui {
     }
 
     pub fn clicked(&self, r: Rect) -> bool {
+        self.click_in(r).is_some()
+    }
+
+    pub fn click_in(&self, r: Rect) -> Option<(f32, f32)> {
         let m = self.inner.borrow().mouse;
-        m.pressed && r.contains(m.x, m.y)
+        (m.pressed && r.contains(m.x, m.y)).then_some((m.x, m.y))
     }
 
     pub fn pressed(&self, label: &str) -> bool {
@@ -293,12 +299,12 @@ impl Ui {
         m.pressed && bar::contains(row, m.x, m.y)
     }
 
-    /// Whether the caret of the focused field, holding `text`, is lit this
-    /// frame. It blinks, and starts over lit whenever the text changes, so
-    /// that it never vanishes under the typing.
-    pub fn caret_on(&self, text: &str) -> bool {
+    /// Whether the caret of the focused field, standing at `at` in `text`,
+    /// is lit this frame. It blinks, and starts over lit whenever the text
+    /// changes or the caret moves, so that it never vanishes under the typing.
+    pub fn caret_on(&self, text: &str, at: usize) -> bool {
         let mut inner = self.inner.borrow_mut();
-        let text = Some(hash_of(text));
+        let text = Some(hash_of(&(text, at)));
         if inner.caret_text != text {
             inner.caret_text = text;
             inner.caret_since = inner.time;
@@ -375,9 +381,9 @@ impl Ui {
     }
 }
 
-fn hash_of(text: &str) -> u64 {
+fn hash_of<T: Hash + ?Sized>(value: &T) -> u64 {
     let mut h = DefaultHasher::new();
-    text.hash(&mut h);
+    value.hash(&mut h);
     h.finish()
 }
 
@@ -627,18 +633,21 @@ mod tests {
     #[test]
     fn the_caret_blinks_and_typing_lights_it_again() {
         let mut ui = Ui::default();
-        let after = |ui: &mut Ui, frames: u32, text: &str| {
+        let at = |ui: &mut Ui, frames: u32, text: &str, at: usize| {
             for _ in 0..frames {
                 ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
             }
-            ui.caret_on(text)
+            ui.caret_on(text, at)
         };
+        let after = |ui: &mut Ui, frames: u32, text: &str| at(ui, frames, text, text.len());
         assert!(after(&mut ui, 1, "a"));
         assert!(after(&mut ui, 15, "a"), "lit for half a second");
         assert!(!after(&mut ui, 21, "a"), "then off");
         assert!(after(&mut ui, 1, "ab"), "a keystroke must not type blind");
         assert!(!after(&mut ui, 36, "ab"));
         assert!(after(&mut ui, 30, "ab"), "and back on");
+        assert!(!after(&mut ui, 36, "ab"));
+        assert!(at(&mut ui, 1, "ab", 1), "nor may it move unseen");
     }
 
     #[test]
