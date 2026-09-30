@@ -5,7 +5,7 @@ use notan::prelude::*;
 use shared::{ClientMessage, LobbyInfo, RoomInfo, RoomSettings};
 
 use crate::state::{ApiFriendsResponse, Screen, State};
-use crate::ui::{self, list_row, text_field, Face, Field, Pill, Rect, SettingsPanel, SharpText, View};
+use crate::ui::{self, list_row, text_field, Face, Field, Modal, Pill, Rect, SettingsPanel, SharpText, View};
 use crate::{http, theme};
 
 fn send(state: &mut State, msg: &ClientMessage) {
@@ -290,21 +290,16 @@ fn lobby_leave(view: View) -> Rect {
     lobby_panel(view).action_row(2)
 }
 
-fn invite_card(view: View) -> Rect {
-    Rect::at(view.w / 2.0 - 300.0, 110.0, 600.0, view.h - 220.0)
-}
-
-fn invite_close(view: View) -> Rect {
-    let card = invite_card(view);
-    Rect::at(card.x + card.w - 64.0, card.y + 14.0, 48.0, 40.0)
+fn invite_modal(view: View) -> Modal {
+    Modal::new(view, 600.0)
 }
 
 fn visible_invites(view: View) -> usize {
-    ((invite_card(view).h - 86.0) / INVITE_ROW_H).floor().max(0.0) as usize
+    ((invite_modal(view).card.h - 86.0) / INVITE_ROW_H).floor().max(0.0) as usize
 }
 
 fn invite_row(view: View, i: usize) -> Rect {
-    let card = invite_card(view);
+    let card = invite_modal(view).card;
     Rect::at(
         card.x + 16.0,
         card.y + 70.0 + i as f32 * INVITE_ROW_H,
@@ -332,7 +327,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
     let view = state.ui.view();
 
     if state.invite_overlay {
-        if state.ui.clicked(invite_close(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
+        if invite_modal(view).dismissed(&state.ui) || app.keyboard.was_pressed(KeyCode::Escape) {
             state.invite_overlay = false;
             return;
         }
@@ -442,7 +437,6 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     }
 
     if state.invite_overlay {
-        state.ui.set_input(true);
         draw_invite_overlay(&mut draw, state);
     }
 
@@ -507,15 +501,9 @@ fn draw_invite_overlay(draw: &mut Draw, state: &State) {
     let pal = state.ui.palette();
     let view = state.ui.view();
     let fonts = &state.fonts;
-    draw.rect((0.0, 0.0), (view.w, view.h)).color(pal.scrim_strong);
-    let card = invite_card(view);
-    ui::card(draw, &pal, card);
-    draw.sharp_text(&fonts.display, "Inviter un ami")
-        .position(card.x + 24.0, card.y + 34.0)
-        .size(theme::size::HEADING)
-        .v_align_middle()
-        .color(pal.text);
-    state.ui.button(draw, fonts, invite_close(view), "X");
+    let modal = invite_modal(view);
+    let card = modal.card;
+    modal.draw(draw, &state.ui, fonts, "Inviter un ami");
 
     let message = if state.invite_slot.is_some() {
         Some("Chargement...")

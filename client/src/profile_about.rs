@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 
-use notan::draw::{Draw, DrawShapes};
+use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::state::ApiUserProfile;
 use crate::theme;
-use crate::ui::{self, Face, Fonts, Rect, SharpText, Ui};
+use crate::ui::{Face, Fonts, Modal, Rect, SharpText, Ui};
 
 const LINE_H: f32 = 24.0;
 const LABEL_H: f32 = 22.0;
@@ -94,46 +94,30 @@ pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &Fonts, summary: &Summary, 
     }
 }
 
-pub fn more_link(area: Rect) -> Rect {
-    Rect::at(area.x + area.w - 96.0, area.y - 13.0, 96.0, 26.0)
-}
+pub const MORE: &str = "Voir plus";
+const OVERLAY_W: f32 = 640.0;
 
-fn overlay_card(ui: &Ui) -> Rect {
-    let view = ui.view();
-    Rect::at(view.w / 2.0 - 320.0, 110.0, 640.0, view.h - 220.0)
-}
-
-fn overlay_close(card: Rect) -> Rect {
-    Rect::at(card.x + card.w - 64.0, card.y + 14.0, 48.0, 40.0)
+pub fn draw_more_link(draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect) {
+    let w = fonts.width(Face::Text, MORE, theme::size::BODY) + 8.0;
+    let link = Rect::at(area.x + area.w - w, area.y - 13.0, w, 26.0);
+    ui.link(draw, fonts, link, MORE, true);
 }
 
 pub fn overlay_closed(app: &App, ui: &Ui) -> bool {
-    let view = ui.view();
-    let card = overlay_card(ui);
-    let beside = ui.clicked(Rect::at(0.0, 0.0, view.w, view.h)) && !ui.clicked(card);
-    beside || ui.clicked(overlay_close(card)) || app.keyboard.was_pressed(KeyCode::Escape)
+    Modal::new(ui.view(), OVERLAY_W).dismissed(ui) || app.keyboard.was_pressed(KeyCode::Escape)
 }
 
 pub fn draw_overlay(draw: &mut Draw, ui: &Ui, fonts: &Fonts, info: &ApiUserProfile) {
-    let pal = ui.palette();
-    let view = ui.view();
-    draw.rect((0.0, 0.0), (view.w, view.h)).color(pal.scrim_strong);
-    let card = overlay_card(ui);
-    ui::card(draw, &pal, card);
+    let modal = Modal::new(ui.view(), OVERLAY_W);
     let title = fonts.fit(
         Face::Display,
         &info.username,
         theme::size::HEADING,
-        card.w - 24.0 - 80.0,
+        modal.card.w - 120.0,
     );
-    draw.sharp_text(&fonts.display, &title)
-        .position(card.x + 24.0, card.y + 34.0)
-        .size(theme::size::HEADING)
-        .v_align_middle()
-        .color(pal.text);
-    ui.button(draw, fonts, overlay_close(card), "X");
-
-    let area = Rect::at(card.x + 24.0, card.y + 92.0, card.w - 48.0, card.h - 92.0 - 24.0);
+    modal.draw(draw, ui, fonts, &title);
+    let body = modal.body();
+    let area = Rect::at(body.x, body.y + LABEL_H, body.w, body.h - LABEL_H);
     draw_summary(draw, ui, fonts, &summary(fonts, info, area, OVERLAY_MUSIC_LINES), area);
 }
 

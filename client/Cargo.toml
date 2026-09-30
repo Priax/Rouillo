@@ -27,7 +27,8 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = [
     "Window", "Location", "Storage", "Performance",
-    "EventTarget", "Event", "UiEvent", "KeyboardEvent",
+    "EventTarget", "Event", "UiEvent", "KeyboardEvent", "CompositionEvent",
+    "Document", "Node", "Element", "HtmlElement", "HtmlInputElement", "CssStyleDeclaration",
     "AudioContext", "BaseAudioContext",
     "AudioNode", "AudioDestinationNode", "AudioScheduledSourceNode",
     "OscillatorNode", "OscillatorType",

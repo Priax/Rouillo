@@ -217,13 +217,12 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
     let summary = profile_about::summary(fonts, &core.info, area, 1);
     profile_about::draw_summary(draw, ui, fonts, &summary, area);
     if summary.cut {
-        ui.link(draw, fonts, profile_about::more_link(area), "Voir plus", true);
+        profile_about::draw_more_link(draw, ui, fonts, area);
     }
 }
 
 fn draw_about_overlay(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
     if core.about_open {
-        ui.set_input(true);
         profile_about::draw_overlay(draw, ui, fonts, &core.info);
     }
 }
@@ -242,17 +241,12 @@ fn about_area(card: Rect) -> Rect {
     )
 }
 
-fn update_about(app: &App, ui: &Ui, fonts: &Fonts, core: &mut ProfileCore) -> bool {
+fn update_about(app: &App, ui: &Ui, core: &mut ProfileCore) -> bool {
     if core.about_open {
         core.about_open = !profile_about::overlay_closed(app, ui);
         return true;
     }
-    if core.profile_slot.is_some() {
-        return false;
-    }
-    let area = about_area(cards(ui.view()).0);
-    let cut = profile_about::summary(fonts, &core.info, area, 1).cut;
-    core.about_open = cut && ui.clicked(profile_about::more_link(area));
+    core.about_open = ui.pressed(profile_about::MORE);
     core.about_open
 }
 
@@ -376,7 +370,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
         profile_edit::update(app, state);
     } else {
         if let Some(p) = state.profile.as_mut() {
-            if update_about(app, &state.ui, &state.fonts, &mut p.core) {
+            if update_about(app, &state.ui, &mut p.core) {
                 return;
             }
         }
@@ -550,7 +544,7 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
     }
     poll_friend(state);
     if let Some(p) = state.other_profile.as_mut() {
-        if update_about(app, &state.ui, &state.fonts, &mut p.core) {
+        if update_about(app, &state.ui, &mut p.core) {
             return;
         }
     }

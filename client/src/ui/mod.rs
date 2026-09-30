@@ -5,6 +5,7 @@ mod deco;
 mod field;
 mod fonts;
 mod keys;
+mod modal;
 mod panel;
 mod rect;
 mod screen;
@@ -24,6 +25,7 @@ pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge,
 pub use field::{area_height, text_area, text_field, Field};
 pub use fonts::{Face, Fonts};
 pub use keys::KeyRepeat;
+pub use modal::Modal;
 use notan::draw::{CreateDraw, Draw, DrawImages};
 use notan::math::{vec2, Mat3};
 use notan::prelude::{App, BlendMode, Color, Graphics, RenderTexture, TextureFilter};
@@ -276,6 +278,16 @@ impl Ui {
         m.pressed && r.contains(m.x, m.y)
     }
 
+    pub fn pressed(&self, label: &str) -> bool {
+        let inner = self.inner.borrow();
+        let (m, label) = (inner.mouse, hash_of(label));
+        m.pressed
+            && inner
+                .widgets
+                .iter()
+                .any(|(&(l, _), w)| l == label && w.live && w.contains(m.x, m.y))
+    }
+
     pub fn bar_clicked(&self, row: Rect) -> bool {
         let m = self.inner.borrow().mouse;
         m.pressed && bar::contains(row, m.x, m.y)
@@ -286,9 +298,7 @@ impl Ui {
     /// that it never vanishes under the typing.
     pub fn caret_on(&self, text: &str) -> bool {
         let mut inner = self.inner.borrow_mut();
-        let mut h = DefaultHasher::new();
-        text.hash(&mut h);
-        let text = Some(h.finish());
+        let text = Some(hash_of(text));
         if inner.caret_text != text {
             inner.caret_text = text;
             inner.caret_since = inner.time;
@@ -326,9 +336,7 @@ impl Ui {
         } = &mut *inner;
         let live = enabled && !*input_off;
 
-        let mut h = DefaultHasher::new();
-        label.hash(&mut h);
-        let label = h.finish();
+        let label = hash_of(label);
         let nth = drawn.entry(label).or_insert(0);
         let key = (label, *nth);
         *nth += 1;
@@ -365,6 +373,12 @@ impl Ui {
             entered,
         }
     }
+}
+
+fn hash_of(text: &str) -> u64 {
+    let mut h = DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
 }
 
 fn supersample(view: View) -> f32 {
@@ -625,6 +639,24 @@ mod tests {
         assert!(after(&mut ui, 1, "ab"), "a keystroke must not type blind");
         assert!(!after(&mut ui, 36, "ab"));
         assert!(after(&mut ui, 30, "ab"), "and back on");
+    }
+
+    #[test]
+    fn a_press_finds_the_widget_by_its_label() {
+        let mut ui = Ui::default();
+        frame(&mut ui, ON_A, &[("Voir plus", A), ("Retour", B)]);
+        ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A);
+        assert!(ui.pressed("Voir plus"));
+        assert!(!ui.pressed("Retour"), "drawn, but not under the click");
+        assert!(!ui.pressed("Jamais dessiné"));
+
+        ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A);
+        assert!(!ui.pressed("Voir plus"), "no longer drawn, no longer there");
+
+        ui.set_input(false);
+        ui.interact("Voir plus", A, true);
+        ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A);
+        assert!(!ui.pressed("Voir plus"), "covered by a window");
     }
 
     #[test]

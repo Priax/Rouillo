@@ -1,45 +1,115 @@
-#[cfg(any(target_arch = "wasm32", test))]
-fn left_to_the_browser(key: &str, shortcut: bool) -> bool {
-    let function_key = key
-        .strip_prefix('F')
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-    shortcut || function_key
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+use wasm_bindgen::convert::FromWasmAbi;
+use wasm_bindgen::prelude::*;
+use web_sys::{CompositionEvent, Event, EventTarget, HtmlInputElement, KeyboardEvent};
+
+thread_local! {
+    static TYPED: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
-#[cfg(target_arch = "wasm32")]
-pub fn keep_keys_in_the_game() {
-    use wasm_bindgen::prelude::*;
-    use web_sys::KeyboardEvent;
+pub fn take_typed() -> String {
+    TYPED.with(|typed| std::mem::take(&mut *typed.borrow_mut()))
+}
 
-    let Some(window) = web_sys::window() else { return };
-    let on_key = Closure::<dyn FnMut(KeyboardEvent)>::new(|e: KeyboardEvent| {
-        // AltGr reads as Ctrl+Alt on Windows, yet it types a character.
-        let shortcut = (e.ctrl_key() || e.meta_key() || e.alt_key()) && !e.get_modifier_state("AltGraph");
-        if !left_to_the_browser(&e.key(), shortcut) {
+fn typed(text: &str) {
+    TYPED.with(|typed| typed.borrow_mut().push_str(text));
+}
+
+fn listen<E: FromWasmAbi + 'static>(target: &EventTarget, event: &str, handler: impl FnMut(E) + 'static) {
+    let handler = Closure::<dyn FnMut(E)>::new(handler);
+    let _ = target.add_event_listener_with_callback(event, handler.as_ref().unchecked_ref());
+    handler.forget();
+}
+
+fn hidden_input() -> Option<HtmlInputElement> {
+    let document = web_sys::window()?.document()?;
+    let input: HtmlInputElement = document.create_element("input").ok()?.dyn_into().ok()?;
+    input.set_type("text");
+    for (name, value) in [
+        ("autocomplete", "off"),
+        ("autocapitalize", "off"),
+        ("autocorrect", "off"),
+        ("spellcheck", "false"),
+        ("aria-hidden", "true"),
+        ("tabindex", "-1"),
+    ] {
+        let _ = input.set_attribute(name, value);
+    }
+    let style = input.style();
+    for (name, value) in [
+        ("position", "fixed"),
+        ("top", "0"),
+        ("left", "0"),
+        ("width", "1px"),
+        ("height", "1px"),
+        ("padding", "0"),
+        ("border", "0"),
+        ("opacity", "0"),
+        ("pointer-events", "none"),
+    ] {
+        let _ = style.set_property(name, value);
+    }
+    document.body()?.append_child(&input).ok()?;
+    Some(input)
+}
+
+pub fn start_text_input() {
+    let (Some(window), Some(input)) = (web_sys::window(), hidden_input()) else {
+        return;
+    };
+    let _ = input.focus();
+
+    let composing = Rc::new(Cell::new(false));
+    {
+        let composing = Rc::clone(&composing);
+        listen(&input, "compositionstart", move |_: Event| composing.set(true));
+    }
+    {
+        let (composing, input) = (Rc::clone(&composing), input.clone());
+        listen(&input.clone(), "compositionend", move |e: CompositionEvent| {
+            composing.set(false);
+            typed(&e.data().unwrap_or_default());
+            input.set_value("");
+        });
+    }
+    {
+        let input = input.clone();
+        listen(&input.clone(), "input", move |_: Event| {
+            if !composing.get() {
+                typed(&input.value());
+                input.set_value("");
+            }
+        });
+    }
+
+    for event in ["focus", "mouseup", "touchend"] {
+        let input = input.clone();
+        listen(&window, event, move |_: Event| {
+            let _ = input.focus();
+        });
+    }
+    let focused = {
+        let input = input.clone();
+        move || {
+            web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.active_element())
+                .is_some_and(|e| e == *input.as_ref())
+        }
+    };
+    listen(&window, "keydown", move |e: KeyboardEvent| {
+        if e.key() == "Tab" {
             e.prevent_default();
         }
+        if !focused() {
+            let _ = input.focus();
+            let key = e.key();
+            if key.chars().count() == 1 && !e.ctrl_key() && !e.meta_key() {
+                typed(&key);
+                e.prevent_default();
+            }
+        }
     });
-    let _ = window.add_event_listener_with_callback("keydown", on_key.as_ref().unchecked_ref());
-    on_key.forget();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::left_to_the_browser;
-
-    #[test]
-    fn typing_keys_stay_in_the_game() {
-        for key in ["'", "/", " ", "a", "F", "Tab", "Backspace", "Enter", "ArrowDown"] {
-            assert!(!left_to_the_browser(key, false), "{key}");
-        }
-    }
-
-    #[test]
-    fn shortcuts_and_function_keys_stay_with_the_browser() {
-        assert!(left_to_the_browser("r", true));
-        assert!(left_to_the_browser("ArrowLeft", true));
-        for key in ["F5", "F11", "F12"] {
-            assert!(left_to_the_browser(key, false), "{key}");
-        }
-    }
 }

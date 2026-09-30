@@ -25,6 +25,7 @@ mod state;
 mod theme;
 mod ui;
 mod update;
+#[cfg(target_arch = "wasm32")]
 mod web;
 
 use state::{Screen, State};
@@ -54,7 +55,7 @@ fn setup(gfx: &mut Graphics) -> State {
     let fonts = ui::Fonts::load(gfx).expect("the bundled fonts are valid");
     let mut state = State::new(fonts);
     #[cfg(target_arch = "wasm32")]
-    web::keep_keys_in_the_game();
+    web::start_text_input();
 
     if let Some(token) = state::load_stored_token() {
         let slot = http::new_slot();
@@ -67,41 +68,48 @@ fn setup(gfx: &mut Graphics) -> State {
 
 #[allow(clippy::needless_pass_by_value)]
 fn event(state: &mut State, evt: Event) {
+    #[cfg(not(target_arch = "wasm32"))]
     if let Event::ReceivedCharacter(c) = evt {
-        if c.is_control() {
-            return;
-        }
-        match state.screen {
-            Screen::Auth => match state.auth_form.focused {
-                state::AuthField::Username if state.auth_form.username.chars().count() < 24 => {
-                    state.auth_form.username.push(c);
-                }
-                state::AuthField::Password if state.auth_form.password.len() < 64 => {
-                    state.auth_form.password.push(c);
-                }
-                _ => {}
-            },
-            Screen::CreateRoom if state.text_input.chars().count() < 24 => {
-                state.text_input.push(c);
+        type_char(state, c);
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (state, evt);
+}
+
+fn type_char(state: &mut State, c: char) {
+    if c.is_control() {
+        return;
+    }
+    match state.screen {
+        Screen::Auth => match state.auth_form.focused {
+            state::AuthField::Username if state.auth_form.username.chars().count() < 24 => {
+                state.auth_form.username.push(c);
             }
-            Screen::JoinById if c.is_ascii_digit() && state.text_input.len() < 9 => {
-                state.text_input.push(c);
-            }
-            Screen::Friends => {
-                if let Some(f) = state.friends.as_mut() {
-                    let allowed = c.is_alphanumeric() || c == '_' || c == '-' || c == ' ';
-                    if allowed && f.search_input.len() < 36 {
-                        f.search_input.push(c);
-                    }
-                }
-            }
-            Screen::Profile => {
-                if let Some(form) = state.profile.as_mut().and_then(|p| p.edit.as_mut()) {
-                    form.type_char(c);
-                }
+            state::AuthField::Password if state.auth_form.password.len() < 64 => {
+                state.auth_form.password.push(c);
             }
             _ => {}
+        },
+        Screen::CreateRoom if state.text_input.chars().count() < 24 => {
+            state.text_input.push(c);
         }
+        Screen::JoinById if c.is_ascii_digit() && state.text_input.len() < 9 => {
+            state.text_input.push(c);
+        }
+        Screen::Friends => {
+            if let Some(f) = state.friends.as_mut() {
+                let allowed = c.is_alphanumeric() || c == '_' || c == '-' || c == ' ';
+                if allowed && f.search_input.len() < 36 {
+                    f.search_input.push(c);
+                }
+            }
+        }
+        Screen::Profile => {
+            if let Some(form) = state.profile.as_mut().and_then(|p| p.edit.as_mut()) {
+                form.type_char(c);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -143,6 +151,10 @@ fn update(app: &mut App, state: &mut State) {
     let view = ui::View::of(app);
     state.ui.begin_frame(dt, view, ui::Mouse::of(app, view));
     state.backspace.update(app.keyboard.is_down(KeyCode::Backspace), dt);
+    #[cfg(target_arch = "wasm32")]
+    for c in web::take_typed().chars() {
+        type_char(state, c);
+    }
     let State { session, conn, .. } = state;
     if let Some(session) = session.as_mut() {
         session.clock += app.timer.delta_f32() as f64;
