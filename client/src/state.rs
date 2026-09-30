@@ -174,12 +174,6 @@ pub struct OtherProfileData {
     pub prev_screen: Screen,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ProfileEditField {
-    Bio,
-    Music,
-}
-
 #[derive(serde::Deserialize)]
 pub struct ApiMatchPlayer {
     pub user_id: Option<String>,
@@ -206,12 +200,7 @@ pub struct ProfileCore {
 
 pub struct ProfileData {
     pub core: ProfileCore,
-    pub editing: bool,
-    pub edit_bio: String,
-    pub edit_music: String,
-    pub edit_focused: ProfileEditField,
-    pub edit_pending: Option<HttpSlot>,
-    pub edit_status: Status,
+    pub edit: Option<crate::profile_edit::EditForm>,
 }
 
 #[cfg(target_arch = "wasm32")]

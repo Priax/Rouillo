@@ -17,6 +17,7 @@ mod login;
 mod menu;
 mod network;
 mod profile;
+mod profile_edit;
 mod rooms;
 mod solo;
 mod state;
@@ -91,18 +92,8 @@ fn event(state: &mut State, evt: Event) {
                 }
             }
             Screen::Profile => {
-                if let Some(p) = state.profile.as_mut() {
-                    if p.editing {
-                        match p.edit_focused {
-                            state::ProfileEditField::Bio if p.edit_bio.chars().count() < profile::BIO_MAX => {
-                                p.edit_bio.push(c);
-                            }
-                            state::ProfileEditField::Music if p.edit_music.chars().count() < profile::MUSIC_MAX => {
-                                p.edit_music.push(c);
-                            }
-                            _ => {}
-                        }
-                    }
+                if let Some(form) = state.profile.as_mut().and_then(|p| p.edit.as_mut()) {
+                    form.type_char(c);
                 }
             }
             _ => {}

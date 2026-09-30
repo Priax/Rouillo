@@ -1,0 +1,361 @@
+use std::sync::Arc;
+
+use notan::draw::Draw;
+use notan::prelude::*;
+
+use crate::http::{self, HttpSlot};
+use crate::state::{ApiUserProfile, State};
+use crate::theme;
+use crate::ui::{area_height, text_area, text_field, Face, Field, Fonts, Rect, SharpText, Status, Ui};
+
+const BIO_LINES: usize = 6;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum EditField {
+    #[default]
+    Bio,
+    Music,
+}
+
+impl EditField {
+    const ALL: [Self; 2] = [Self::Bio, Self::Music];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Bio => "Bio",
+            Self::Music => "Musique préférée",
+        }
+    }
+
+    const fn placeholder(self) -> &'static str {
+        match self {
+            Self::Bio => "Ta bio",
+            Self::Music => "Ta musique préférée",
+        }
+    }
+
+    const fn hint(self) -> &'static str {
+        match self {
+            Self::Bio => "Entrée: nouvelle ligne",
+            Self::Music => "Entrée: enregistrer",
+        }
+    }
+
+    const fn max(self) -> usize {
+        match self {
+            Self::Bio => 500,
+            Self::Music => 200,
+        }
+    }
+
+    fn rect(self, cx: f32) -> Rect {
+        let bio = Rect::at(cx - 300.0, 215.0, 600.0, area_height(BIO_LINES));
+        match self {
+            Self::Bio => bio,
+            Self::Music => Rect::at(bio.x, bio.y + bio.h + 44.0, bio.w, 46.0),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct EditForm {
+    pub bio: String,
+    pub music: String,
+    pub focused: EditField,
+    pub pending: Option<HttpSlot>,
+    pub status: Status,
+}
+
+impl EditForm {
+    pub fn open(info: &ApiUserProfile) -> Self {
+        Self {
+            bio: info.bio.clone().unwrap_or_default(),
+            music: info.favorite_music.clone().unwrap_or_default(),
+            ..Self::default()
+        }
+    }
+
+    fn value(&self, field: EditField) -> &str {
+        match field {
+            EditField::Bio => &self.bio,
+            EditField::Music => &self.music,
+        }
+    }
+
+    fn left(&self, field: EditField) -> usize {
+        field.max().saturating_sub(self.value(field).chars().count())
+    }
+
+    pub fn type_char(&mut self, c: char) {
+        let field = self.focused;
+        if self.left(field) == 0 || (self.value(field).is_empty() && c.is_whitespace()) {
+            return;
+        }
+        match field {
+            EditField::Bio => self.bio.push(c),
+            EditField::Music => self.music.push(c),
+        }
+    }
+
+    fn erase(&mut self) {
+        match self.focused {
+            EditField::Bio => self.bio.pop(),
+            EditField::Music => self.music.pop(),
+        };
+    }
+
+    fn focus_next(&mut self) {
+        self.focused = match self.focused {
+            EditField::Bio => EditField::Music,
+            EditField::Music => EditField::Bio,
+        };
+    }
+
+    fn enter(&mut self) -> bool {
+        if self.focused != EditField::Bio {
+            return true;
+        }
+        if !self.bio.ends_with("\n\n") {
+            self.type_char('\n');
+        }
+        false
+    }
+
+    fn body(&self) -> String {
+        serde_json::json!({
+            "bio": self.bio.trim(),
+            "favorite_music": self.music.trim(),
+        })
+        .to_string()
+    }
+}
+
+fn buttons(cx: f32) -> (Rect, Rect) {
+    let music = EditField::Music.rect(cx);
+    let y = music.y + music.h + 39.0;
+    (
+        Rect::at(cx - 220.0, y, 200.0, 54.0),
+        Rect::at(cx + 20.0, y, 200.0, 54.0),
+    )
+}
+
+pub fn poll(state: &mut State) {
+    let Some(p) = state.profile.as_mut() else { return };
+    let Some(form) = p.edit.as_mut() else { return };
+    let Some(result) = http::take(&mut form.pending) else {
+        return;
+    };
+    match result {
+        Ok(resp) if resp.status == 200 => {
+            #[derive(serde::Deserialize)]
+            struct PatchResp {
+                bio: Option<String>,
+                favorite_music: Option<String>,
+            }
+            if let Some(data) = http::json::<PatchResp>(&resp) {
+                p.core.info.bio = data.bio;
+                p.core.info.favorite_music = data.favorite_music;
+                p.edit = None;
+            }
+        }
+        Ok(resp) => form.status = Status::error(http::error_message(&resp)),
+        Err(e) => form.status = Status::error(format!("Erreur réseau: {e}")),
+    }
+}
+
+fn save(form: &mut EditForm, token: Option<String>) {
+    if form.pending.is_some() {
+        return;
+    }
+    let slot = http::new_slot();
+    http::patch_json(http::api_url("me"), form.body(), token, Arc::clone(&slot));
+    form.pending = Some(slot);
+    form.status.clear();
+}
+
+pub fn update(app: &mut App, state: &mut State) {
+    let cx = state.ui.view().w / 2.0;
+    let token = state.auth.as_ref().map(|a| a.token.clone());
+    let State {
+        profile, ui, backspace, ..
+    } = state;
+    let Some(profile) = profile.as_mut() else { return };
+    let Some(form) = profile.edit.as_mut() else { return };
+
+    if backspace.fired() {
+        form.erase();
+    }
+    if app.keyboard.was_pressed(KeyCode::Tab) {
+        form.focus_next();
+    }
+    for field in EditField::ALL {
+        if ui.clicked(field.rect(cx)) {
+            form.focused = field;
+        }
+    }
+    let wants_save = app.keyboard.was_pressed(KeyCode::Enter) && form.enter();
+    let (save_btn, cancel_btn) = buttons(cx);
+    if ui.clicked(save_btn) || wants_save {
+        save(form, token);
+    }
+    if ui.clicked(cancel_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
+        profile.edit = None;
+    }
+}
+
+pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, cx: f32) {
+    let pal = ui.palette();
+    for which in EditField::ALL {
+        let rect = which.rect(cx);
+        let label_y = rect.y - 15.0;
+        draw.sharp_text(&fonts.text, which.label())
+            .position(rect.x, label_y)
+            .size(theme::size::LABEL)
+            .v_align_middle()
+            .color(pal.text_dim);
+        let focused = form.focused == which;
+        if focused {
+            let after_label = rect.x + fonts.width(Face::Text, which.label(), theme::size::LABEL) + 14.0;
+            draw.sharp_text(&fonts.text, which.hint())
+                .position(after_label, label_y)
+                .size(theme::size::SMALL)
+                .v_align_middle()
+                .color(pal.text_muted);
+        }
+        let left = form.left(which);
+        let left_color = match left {
+            0 => theme::DANGER,
+            1..=20 => theme::WARNING,
+            _ => pal.text_muted,
+        };
+        draw.sharp_text(&fonts.text, &left.to_string())
+            .position(rect.x + rect.w, label_y)
+            .size(theme::size::SMALL)
+            .h_align_right()
+            .v_align_middle()
+            .color(left_color);
+        let field = Field {
+            placeholder: which.placeholder(),
+            value: form.value(which),
+            focused,
+            secret: false,
+        };
+        if which == EditField::Bio {
+            text_area(draw, ui, fonts, rect, &field);
+        } else {
+            text_field(draw, ui, fonts, rect, &field);
+        }
+    }
+
+    let (save_btn, cancel_btn) = buttons(cx);
+    let saving = form.pending.is_some();
+    ui.button_enabled(
+        draw,
+        fonts,
+        save_btn,
+        if saving { "Sauvegarde..." } else { "Enregistrer" },
+        !saving,
+    );
+    ui.button(draw, fonts, cancel_btn, "Annuler");
+
+    if let Some((msg, color)) = form.status.shown(&pal) {
+        draw.sharp_text(&fonts.text, msg)
+            .position(cx, save_btn.y + save_btn.h + 21.0)
+            .size(theme::size::LABEL)
+            .h_align_center()
+            .v_align_middle()
+            .color(color);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn typed(form: &mut EditForm, text: &str) {
+        for c in text.chars() {
+            form.type_char(c);
+        }
+    }
+
+    #[test]
+    fn enter_breaks_the_line_in_the_bio_and_saves_elsewhere() {
+        let mut form = EditForm::default();
+        typed(&mut form, "a");
+        assert!(!form.enter());
+        assert_eq!(form.bio, "a\n");
+        form.focus_next();
+        assert!(form.enter());
+        assert_eq!((form.bio.as_str(), form.music.as_str()), ("a\n", ""));
+    }
+
+    #[test]
+    fn a_bio_holds_one_blank_line_in_a_row_and_none_in_front() {
+        let mut form = EditForm::default();
+        form.enter();
+        typed(&mut form, "  ");
+        assert_eq!(form.bio, "", "nothing the save would trim off the front");
+        typed(&mut form, "a");
+        for _ in 0..5 {
+            form.enter();
+        }
+        assert_eq!(form.bio, "a\n\n");
+        typed(&mut form, "b");
+        form.enter();
+        assert_eq!(form.bio, "a\n\nb\n");
+    }
+
+    #[test]
+    fn a_full_field_takes_nothing_more() {
+        let mut form = EditForm::default();
+        typed(&mut form, &"é".repeat(600));
+        assert_eq!(form.bio.chars().count(), EditField::Bio.max());
+        assert_eq!(form.left(EditField::Bio), 0);
+        assert!(!form.enter());
+        assert_eq!(form.bio.chars().count(), EditField::Bio.max());
+        form.erase();
+        assert_eq!(form.left(EditField::Bio), 1);
+
+        form.focus_next();
+        typed(&mut form, &"m".repeat(600));
+        assert_eq!(form.music.len(), EditField::Music.max());
+    }
+
+    #[test]
+    fn typing_goes_to_the_focused_field_only() {
+        let mut form = EditForm::default();
+        typed(&mut form, "bio");
+        form.focus_next();
+        typed(&mut form, "musique");
+        form.erase();
+        form.focus_next();
+        assert_eq!((form.bio.as_str(), form.music.as_str()), ("bio", "musiqu"));
+        assert_eq!(form.focused, EditField::Bio);
+    }
+
+    #[test]
+    fn an_emptied_field_is_sent_empty_not_left_out() {
+        let mut form = EditForm {
+            bio: "  \n".into(),
+            music: " Tsu ".into(),
+            ..EditForm::default()
+        };
+        let body: serde_json::Value = serde_json::from_str(&form.body()).expect("json");
+        assert_eq!(body["bio"], "");
+        assert_eq!(body["favorite_music"], "Tsu");
+        form.music.clear();
+        let body: serde_json::Value = serde_json::from_str(&form.body()).expect("json");
+        assert_eq!(body["favorite_music"], "");
+    }
+
+    #[test]
+    fn opening_the_form_starts_from_the_saved_profile() {
+        let info = ApiUserProfile {
+            bio: Some("salut".into()),
+            ..ApiUserProfile::default()
+        };
+        let form = EditForm::open(&info);
+        assert_eq!((form.bio.as_str(), form.music.as_str()), ("salut", ""));
+        assert_eq!(form.focused, EditField::Bio);
+    }
+}

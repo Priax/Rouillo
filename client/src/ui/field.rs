@@ -14,7 +14,7 @@ pub struct Field<'a> {
 
 const PADDING: f32 = 12.0;
 const CARET_W: f32 = 2.0;
-const BLINK_SECS: f64 = 0.5;
+const CARET_GAP: f32 = 5.0;
 const AREA_TEXT: f32 = theme::size::LABEL;
 const AREA_LINE_H: f32 = 26.0;
 
@@ -29,8 +29,8 @@ fn frame(draw: &mut Draw, pal: &Palette, r: Rect, focused: bool) {
         .color(border);
 }
 
-fn caret(draw: &mut Draw, ui: &Ui, x: f32, mid: f32, size: f32) {
-    if ui.time() % (2.0 * BLINK_SECS) < BLINK_SECS {
+fn caret(draw: &mut Draw, ui: &Ui, value: &str, x: f32, mid: f32, size: f32) {
+    if ui.caret_on(value) {
         let h = size * 1.2;
         draw.rect((x + 1.0, mid - h / 2.0), (CARET_W, h))
             .color(ui.palette().text);
@@ -55,12 +55,27 @@ pub fn text_field(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Fiel
         (shown, pal.text)
     };
     draw.sharp_text(&fonts.text, text)
-        .position(x, mid)
+        .position(x + placeholder_shift(field), mid)
         .size(size)
         .v_align_middle()
         .color(color);
     if field.focused {
-        caret(draw, ui, x + fonts.width(Face::Text, shown, size), mid, size);
+        caret(
+            draw,
+            ui,
+            field.value,
+            x + fonts.width(Face::Text, shown, size),
+            mid,
+            size,
+        );
+    }
+}
+
+fn placeholder_shift(field: &Field) -> f32 {
+    if field.focused && field.value.is_empty() {
+        CARET_W + CARET_GAP
+    } else {
+        0.0
     }
 }
 
@@ -80,7 +95,7 @@ pub fn text_area(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Field
 
     if field.value.is_empty() {
         draw.sharp_text(&fonts.text, field.placeholder)
-            .position(x, line_mid(0))
+            .position(x + placeholder_shift(field), line_mid(0))
             .size(AREA_TEXT)
             .v_align_middle()
             .color(pal.text_muted);
@@ -98,6 +113,7 @@ pub fn text_area(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Field
         caret(
             draw,
             ui,
+            field.value,
             x + fonts.width(Face::Text, last, AREA_TEXT),
             line_mid(row),
             AREA_TEXT,

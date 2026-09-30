@@ -45,6 +45,7 @@ const TRANSITION: f32 = 0.3;
 const HOVER_SPEED: f32 = 18.0;
 const PRESS_SPEED: f32 = 30.0;
 const FLASH_SPEED: f32 = 8.0;
+const CARET_BLINK: f64 = 0.5;
 
 #[derive(Default)]
 pub struct Ui {
@@ -66,6 +67,8 @@ struct Inner {
     input_off: bool,
     widgets: HashMap<(u64, u32), Widget>,
     drawn: HashMap<u64, u32>,
+    caret_text: Option<u64>,
+    caret_since: f64,
 }
 
 impl Default for Inner {
@@ -85,6 +88,8 @@ impl Default for Inner {
             input_off: false,
             widgets: HashMap::new(),
             drawn: HashMap::new(),
+            caret_text: None,
+            caret_since: 0.0,
         }
     }
 }
@@ -276,6 +281,21 @@ impl Ui {
         m.pressed && bar::contains(row, m.x, m.y)
     }
 
+    /// Whether the caret of the focused field, holding `text`, is lit this
+    /// frame. It blinks, and starts over lit whenever the text changes, so
+    /// that it never vanishes under the typing.
+    pub fn caret_on(&self, text: &str) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        let mut h = DefaultHasher::new();
+        text.hash(&mut h);
+        let text = Some(h.finish());
+        if inner.caret_text != text {
+            inner.caret_text = text;
+            inner.caret_since = inner.time;
+        }
+        (inner.time - inner.caret_since) % (2.0 * CARET_BLINK) < CARET_BLINK
+    }
+
     pub fn set_input(&self, on: bool) {
         self.inner.borrow_mut().input_off = !on;
     }
@@ -301,6 +321,8 @@ impl Ui {
             input_off,
             widgets,
             drawn,
+            caret_text: _,
+            caret_since: _,
         } = &mut *inner;
         let live = enabled && !*input_off;
 
@@ -586,6 +608,23 @@ mod tests {
             },
         );
         assert!(!ui.bar_clicked(ROW));
+    }
+
+    #[test]
+    fn the_caret_blinks_and_typing_lights_it_again() {
+        let mut ui = Ui::default();
+        let after = |ui: &mut Ui, frames: u32, text: &str| {
+            for _ in 0..frames {
+                ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
+            }
+            ui.caret_on(text)
+        };
+        assert!(after(&mut ui, 1, "a"));
+        assert!(after(&mut ui, 15, "a"), "lit for half a second");
+        assert!(!after(&mut ui, 21, "a"), "then off");
+        assert!(after(&mut ui, 1, "ab"), "a keystroke must not type blind");
+        assert!(!after(&mut ui, 36, "ab"));
+        assert!(after(&mut ui, 30, "ab"), "and back on");
     }
 
     #[test]

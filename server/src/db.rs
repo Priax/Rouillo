@@ -228,8 +228,8 @@ pub async fn update_profile(
 ) -> Result<User, sqlx::Error> {
     sqlx::query_as::<_, User>(
         "UPDATE users SET \
-         bio = CASE WHEN $2 IS NOT NULL THEN $2 ELSE bio END, \
-         favorite_music = CASE WHEN $3 IS NOT NULL THEN $3 ELSE favorite_music END \
+         bio = CASE WHEN $2 IS NOT NULL THEN NULLIF($2, '') ELSE bio END, \
+         favorite_music = CASE WHEN $3 IS NOT NULL THEN NULLIF($3, '') ELSE favorite_music END \
          WHERE id = $1 RETURNING *",
     )
     .bind(user_id)

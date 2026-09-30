@@ -5,19 +5,14 @@ use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::http;
+use crate::profile_edit::{self, EditForm};
 use crate::state::{
     ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, OtherProfileData, ProfileCore,
-    ProfileData, ProfileEditField, Screen, State,
+    ProfileData, Screen, State,
 };
 use crate::theme::{self, Palette};
-use crate::ui::{
-    self, area_height, divider, list_row, portrait, text_area, text_field, Face, Field, Fonts, Pill, Rect, SharpText,
-    Status, Ui, View,
-};
+use crate::ui::{self, divider, list_row, portrait, Face, Fonts, Pill, Rect, SharpText, Status, Ui, View};
 
-pub const BIO_MAX: usize = 500;
-pub const MUSIC_MAX: usize = 200;
-const BIO_EDIT_LINES: usize = 6;
 const ABOUT_LINE_H: f32 = 24.0;
 const ABOUT_BLOCK_H: f32 = 54.0;
 
@@ -363,83 +358,7 @@ pub fn enter_profile(state: &mut State) {
         Some(auth.token.clone()),
         10,
     );
-    state.profile = Some(ProfileData {
-        core,
-        editing: false,
-        edit_bio: String::new(),
-        edit_music: String::new(),
-        edit_focused: ProfileEditField::Bio,
-        edit_pending: None,
-        edit_status: Status::Empty,
-    });
-}
-
-fn poll_edit(state: &mut State) {
-    let Some(p) = state.profile.as_mut() else { return };
-    let Some(result) = http::take(&mut p.edit_pending) else {
-        return;
-    };
-    match result {
-        Ok(resp) if resp.status == 200 => {
-            #[derive(serde::Deserialize)]
-            struct PatchResp {
-                bio: Option<String>,
-                favorite_music: Option<String>,
-            }
-            if let Some(data) = http::json::<PatchResp>(&resp) {
-                p.core.info.bio = data.bio;
-                p.core.info.favorite_music = data.favorite_music;
-                p.editing = false;
-                p.edit_bio.clear();
-                p.edit_music.clear();
-                p.edit_status.clear();
-            }
-        }
-        Ok(resp) => p.edit_status = Status::error(http::error_message(&resp)),
-        Err(e) => p.edit_status = Status::error(format!("Erreur réseau: {e}")),
-    }
-}
-
-fn save_profile(state: &mut State) {
-    if state.profile.as_ref().is_none_or(|p| p.edit_pending.is_some()) {
-        return;
-    }
-    let bio = state
-        .profile
-        .as_ref()
-        .map(|p| p.edit_bio.trim().to_owned())
-        .unwrap_or_default();
-    let music = state
-        .profile
-        .as_ref()
-        .map(|p| p.edit_music.trim().to_owned())
-        .unwrap_or_default();
-    let token = state.auth.as_ref().map(|a| a.token.clone());
-    let body = serde_json::json!({
-        "bio": if bio.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(bio) },
-        "favorite_music": if music.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(music) },
-    })
-    .to_string();
-    let slot = http::new_slot();
-    http::patch_json(http::api_url("me"), body, token, Arc::clone(&slot));
-    if let Some(p) = state.profile.as_mut() {
-        p.edit_pending = Some(slot);
-        p.edit_status.clear();
-    }
-}
-
-fn edit_boxes(cx: f32) -> (Rect, Rect) {
-    let bio = Rect::at(cx - 300.0, 215.0, 600.0, area_height(BIO_EDIT_LINES));
-    (bio, Rect::at(bio.x, bio.y + bio.h + 44.0, bio.w, 46.0))
-}
-
-fn edit_buttons(cx: f32) -> (Rect, Rect) {
-    let (_, music) = edit_boxes(cx);
-    let y = music.y + music.h + 39.0;
-    (
-        Rect::at(cx - 220.0, y, 200.0, 54.0),
-        Rect::at(cx + 20.0, y, 200.0, 54.0),
-    )
+    state.profile = Some(ProfileData { core, edit: None });
 }
 
 fn own_buttons(cx: f32, wh: f32) -> (Rect, Rect, Rect) {
@@ -456,68 +375,13 @@ pub fn update_profile(app: &mut App, state: &mut State) {
         poll_core_profile(&mut p.core);
         poll_core_history(&mut p.core);
     }
-    poll_edit(state);
+    profile_edit::poll(state);
 
     let (ww, wh) = state.ui.view().size();
     let cx = ww / 2.0;
-    let editing = state.profile.as_ref().is_some_and(|p| p.editing);
 
-    if editing {
-        if state.backspace.fired() {
-            if let Some(p) = state.profile.as_mut() {
-                match p.edit_focused {
-                    ProfileEditField::Bio => {
-                        p.edit_bio.pop();
-                    }
-                    ProfileEditField::Music => {
-                        p.edit_music.pop();
-                    }
-                }
-            }
-        }
-        if app.keyboard.was_pressed(KeyCode::Tab) {
-            if let Some(p) = state.profile.as_mut() {
-                p.edit_focused = match p.edit_focused {
-                    ProfileEditField::Bio => ProfileEditField::Music,
-                    ProfileEditField::Music => ProfileEditField::Bio,
-                };
-            }
-        }
-        let (bio_box, music_box) = edit_boxes(cx);
-        if state.ui.clicked(bio_box) {
-            if let Some(p) = state.profile.as_mut() {
-                p.edit_focused = ProfileEditField::Bio;
-            }
-        }
-        if state.ui.clicked(music_box) {
-            if let Some(p) = state.profile.as_mut() {
-                p.edit_focused = ProfileEditField::Music;
-            }
-        }
-        let enter = app.keyboard.was_pressed(KeyCode::Enter);
-        let in_bio = state
-            .profile
-            .as_ref()
-            .is_some_and(|p| p.edit_focused == ProfileEditField::Bio);
-        if enter && in_bio {
-            if let Some(p) = state.profile.as_mut() {
-                if p.edit_bio.chars().count() < BIO_MAX {
-                    p.edit_bio.push('\n');
-                }
-            }
-        }
-        let (save_btn, cancel_btn) = edit_buttons(cx);
-        if (state.ui.clicked(save_btn) || (enter && !in_bio))
-            && state.profile.as_ref().is_some_and(|p| p.edit_pending.is_none())
-        {
-            save_profile(state);
-        }
-        if state.ui.clicked(cancel_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
-            if let Some(p) = state.profile.as_mut() {
-                p.editing = false;
-                p.edit_status.clear();
-            }
-        }
+    if state.profile.as_ref().is_some_and(|p| p.edit.is_some()) {
+        profile_edit::update(app, state);
     } else {
         let (back_btn, edit_btn, logout_btn) = own_buttons(cx, wh);
 
@@ -528,11 +392,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
         }
         if state.ui.clicked(edit_btn) {
             if let Some(p) = state.profile.as_mut() {
-                p.edit_bio = p.core.info.bio.clone().unwrap_or_default();
-                p.edit_music = p.core.info.favorite_music.clone().unwrap_or_default();
-                p.edit_focused = ProfileEditField::Bio;
-                p.editing = true;
-                p.edit_status.clear();
+                p.edit = Some(EditForm::open(&p.core.info));
             }
         }
         if state.ui.clicked(logout_btn) {
@@ -575,8 +435,8 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
 
     draw_header(&mut draw, &state.ui, &state.fonts, &profile.core);
 
-    if profile.editing {
-        draw_edit_form(&state.ui, &mut draw, &state.fonts, profile, cx);
+    if let Some(form) = &profile.edit {
+        profile_edit::draw(&state.ui, &mut draw, &state.fonts, form, cx);
     } else {
         draw_stats_panel(&mut draw, &state.ui, &state.fonts, &profile.core, false);
         draw_history_panel(&mut draw, &state.ui, &state.fonts, &profile.core, true);
@@ -588,79 +448,6 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
     }
 
     state.ui.render(gfx, &draw);
-}
-
-fn draw_edit_form(ui: &crate::ui::Ui, draw: &mut Draw, fonts: &Fonts, profile: &ProfileData, cx: f32) {
-    let pal = ui.palette();
-    let (bio_box, music_box) = edit_boxes(cx);
-    let fields = [
-        (
-            bio_box,
-            "Bio",
-            "Ta bio",
-            &profile.edit_bio,
-            BIO_MAX,
-            ProfileEditField::Bio,
-        ),
-        (
-            music_box,
-            "Musique préférée",
-            "Ta musique préférée",
-            &profile.edit_music,
-            MUSIC_MAX,
-            ProfileEditField::Music,
-        ),
-    ];
-    for (rect, label, placeholder, value, max, which) in fields {
-        draw.sharp_text(&fonts.text, label)
-            .position(rect.x, rect.y - 15.0)
-            .size(theme::size::LABEL)
-            .v_align_middle()
-            .color(pal.text_dim);
-        let left = max.saturating_sub(value.chars().count());
-        let left_color = match left {
-            0 => theme::DANGER,
-            1..=20 => theme::WARNING,
-            _ => pal.text_muted,
-        };
-        draw.sharp_text(&fonts.text, &left.to_string())
-            .position(rect.x + rect.w, rect.y - 15.0)
-            .size(theme::size::SMALL)
-            .h_align_right()
-            .v_align_middle()
-            .color(left_color);
-        let field = Field {
-            placeholder,
-            value,
-            focused: profile.edit_focused == which,
-            secret: false,
-        };
-        if which == ProfileEditField::Bio {
-            text_area(draw, ui, fonts, rect, &field);
-        } else {
-            text_field(draw, ui, fonts, rect, &field);
-        }
-    }
-
-    let (save_btn, cancel_btn) = edit_buttons(cx);
-    let saving = profile.edit_pending.is_some();
-    ui.button_enabled(
-        draw,
-        fonts,
-        save_btn,
-        if saving { "Sauvegarde..." } else { "Enregistrer" },
-        !saving,
-    );
-    ui.button(draw, fonts, cancel_btn, "Annuler");
-
-    if let Some((msg, color)) = profile.edit_status.shown(&pal) {
-        draw.sharp_text(&fonts.text, msg)
-            .position(cx, save_btn.y + save_btn.h + 21.0)
-            .size(theme::size::LABEL)
-            .h_align_center()
-            .v_align_middle()
-            .color(color);
-    }
 }
 
 pub fn enter_other_profile(state: &mut State, user_id: String, username: String, prev: Screen) {
