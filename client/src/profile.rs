@@ -1,10 +1,8 @@
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use notan::draw::Draw;
 use notan::prelude::*;
 
-use crate::http;
 use crate::profile_edit::{self, EditForm};
 use crate::state::{
     ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, OtherProfileData, ProfileCore,
@@ -12,9 +10,7 @@ use crate::state::{
 };
 use crate::theme::{self, Palette};
 use crate::ui::{self, divider, list_row, portrait, Face, Fonts, Pill, Rect, SharpText, Status, Ui, View};
-
-const ABOUT_LINE_H: f32 = 24.0;
-const ABOUT_BLOCK_H: f32 = 54.0;
+use crate::{http, profile_about};
 
 fn panels(ww: f32) -> (f32, f32, f32, f32) {
     let left_x = 40.0;
@@ -68,6 +64,7 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>,
             ..ApiUserProfile::default()
         },
         match_history: Vec::new(),
+        about_open: false,
         profile_slot: Some(profile_slot),
         history_slot: Some(history_slot),
     }
@@ -106,6 +103,8 @@ const CARD_TITLE_H: f32 = 56.0;
 const HISTORY_ROWS: usize = 7;
 const HISTORY_ROW_H: f32 = 48.0;
 const STATUS_GAP: f32 = 56.0;
+const STAT_ROWS: usize = 5;
+const STAT_ROW_H: f32 = 32.0;
 
 fn draw_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
     let pal = ui.palette();
@@ -188,7 +187,7 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
     } else {
         0
     };
-    let stats = [
+    let stats: [_; STAT_ROWS] = [
         ("Matchs", core.info.total_matches.to_string()),
         ("Victoires", core.info.wins.to_string()),
         ("Winrate", format!("{winrate}%")),
@@ -198,7 +197,7 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
     let (label_x, value_x) = (card.x + CARD_PAD, card.x + card.w - CARD_PAD);
     let first = card.y + CARD_TITLE_H + 30.0;
     for (i, (label, value)) in stats.iter().enumerate() {
-        let y = first + i as f32 * 32.0;
+        let y = first + i as f32 * STAT_ROW_H;
         draw.sharp_text(&fonts.text, label)
             .position(label_x, y)
             .size(theme::size::LABEL)
@@ -212,56 +211,49 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
             .color(pal.text);
     }
 
-    let sep_y = first + stats.len() as f32 * 32.0 - 6.0;
-    divider(draw, &pal, label_x, sep_y, card.w - 2.0 * CARD_PAD);
+    divider(draw, &pal, label_x, stats_end(card), card.w - 2.0 * CARD_PAD);
 
-    let mut info_y = sep_y + 24.0;
-    let room = card.w - 2.0 * CARD_PAD;
-    let bio = core.info.bio.as_deref().filter(|v| !v.is_empty());
-    let music = core.info.favorite_music.as_deref().filter(|v| !v.is_empty());
-    let mut about = |label: &str, lines: &[Cow<str>], color: Color| {
-        draw.sharp_text(&fonts.text, label)
-            .position(label_x, info_y)
-            .size(theme::size::SMALL)
-            .v_align_middle()
-            .color(pal.text_dim);
-        for (i, line) in lines.iter().enumerate() {
-            draw.sharp_text(&fonts.text, line)
-                .position(label_x, info_y + 22.0 + i as f32 * ABOUT_LINE_H)
-                .size(theme::size::BODY)
-                .v_align_middle()
-                .color(color);
-        }
-        info_y += ABOUT_BLOCK_H + (lines.len().max(1) - 1) as f32 * ABOUT_LINE_H;
-    };
-    if let Some(bio) = bio {
-        let bottom = card.y + card.h - CARD_PAD - if music.is_some() { ABOUT_BLOCK_H } else { 0.0 };
-        let max_lines = ((bottom - sep_y - 24.0 - 22.0) / ABOUT_LINE_H) as usize;
-        about("Bio", &bio_lines(fonts, bio, room, max_lines.max(1)), pal.text);
-    }
-    if let Some(music) = music {
-        about(
-            "Musique",
-            &[fonts.fit(Face::Text, music, theme::size::BODY, room)],
-            pal.accent,
-        );
+    let area = about_area(card);
+    let summary = profile_about::summary(fonts, &core.info, area, 1);
+    profile_about::draw_summary(draw, ui, fonts, &summary, area);
+    if summary.cut {
+        ui.link(draw, fonts, profile_about::more_link(area), "Voir plus", true);
     }
 }
 
-fn bio_lines<'a>(fonts: &Fonts, bio: &'a str, room: f32, max: usize) -> Vec<Cow<'a, str>> {
-    let mut lines: Vec<Cow<str>> = fonts
-        .wrap(Face::Text, bio, theme::size::BODY, room)
-        .into_iter()
-        .map(Cow::Borrowed)
-        .collect();
-    if lines.len() > max {
-        lines.truncate(max);
-        if let Some(last) = lines.last_mut() {
-            let cut = format!("{}…", last.trim_end());
-            *last = Cow::Owned(fonts.fit(Face::Text, &cut, theme::size::BODY, room).into_owned());
-        }
+fn draw_about_overlay(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
+    if core.about_open {
+        ui.set_input(true);
+        profile_about::draw_overlay(draw, ui, fonts, &core.info);
     }
-    lines
+}
+
+fn stats_end(card: Rect) -> f32 {
+    card.y + CARD_TITLE_H + 30.0 + STAT_ROWS as f32 * STAT_ROW_H - 6.0
+}
+
+fn about_area(card: Rect) -> Rect {
+    let top = stats_end(card) + 24.0;
+    Rect::at(
+        card.x + CARD_PAD,
+        top,
+        card.w - 2.0 * CARD_PAD,
+        card.y + card.h - CARD_PAD - top,
+    )
+}
+
+fn update_about(app: &App, ui: &Ui, fonts: &Fonts, core: &mut ProfileCore) -> bool {
+    if core.about_open {
+        core.about_open = !profile_about::overlay_closed(app, ui);
+        return true;
+    }
+    if core.profile_slot.is_some() {
+        return false;
+    }
+    let area = about_area(cards(ui.view()).0);
+    let cut = profile_about::summary(fonts, &core.info, area, 1).cut;
+    core.about_open = cut && ui.clicked(profile_about::more_link(area));
+    core.about_open
 }
 
 fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore, clickable: bool) {
@@ -383,6 +375,11 @@ pub fn update_profile(app: &mut App, state: &mut State) {
     if state.profile.as_ref().is_some_and(|p| p.edit.is_some()) {
         profile_edit::update(app, state);
     } else {
+        if let Some(p) = state.profile.as_mut() {
+            if update_about(app, &state.ui, &state.fonts, &mut p.core) {
+                return;
+            }
+        }
         let (back_btn, edit_btn, logout_btn) = own_buttons(cx, wh);
 
         if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
@@ -438,6 +435,7 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
     if let Some(form) = &profile.edit {
         profile_edit::draw(&state.ui, &mut draw, &state.fonts, form, cx);
     } else {
+        state.ui.set_input(!profile.core.about_open);
         draw_stats_panel(&mut draw, &state.ui, &state.fonts, &profile.core, false);
         draw_history_panel(&mut draw, &state.ui, &state.fonts, &profile.core, true);
 
@@ -445,6 +443,7 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
         state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
         state.ui.button(&mut draw, &state.fonts, edit_btn, "Modifier");
         state.ui.button(&mut draw, &state.fonts, logout_btn, "Déconnexion");
+        draw_about_overlay(&mut draw, &state.ui, &state.fonts, &profile.core);
     }
 
     state.ui.render(gfx, &draw);
@@ -550,6 +549,11 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
         poll_core_history(&mut p.core);
     }
     poll_friend(state);
+    if let Some(p) = state.other_profile.as_mut() {
+        if update_about(app, &state.ui, &state.fonts, &mut p.core) {
+            return;
+        }
+    }
 
     let ww = state.ui.view().w;
     let wh = state.ui.view().h;
@@ -586,6 +590,7 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
     };
 
     draw_header(&mut draw, &state.ui, &state.fonts, &p.core);
+    state.ui.set_input(!p.core.about_open);
     draw_stats_panel(&mut draw, &state.ui, &state.fonts, &p.core, p.load_failed);
     draw_history_panel(&mut draw, &state.ui, &state.fonts, &p.core, false);
 
@@ -610,6 +615,7 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
             .v_align_middle()
             .color(color);
     }
+    draw_about_overlay(&mut draw, &state.ui, &state.fonts, &p.core);
 
     state.ui.render(gfx, &draw);
 }

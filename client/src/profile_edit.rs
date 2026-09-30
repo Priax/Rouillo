@@ -6,7 +6,7 @@ use notan::prelude::*;
 use crate::http::{self, HttpSlot};
 use crate::state::{ApiUserProfile, State};
 use crate::theme;
-use crate::ui::{area_height, text_area, text_field, Face, Field, Fonts, Rect, SharpText, Status, Ui};
+use crate::ui::{area_height, text_area, text_field, Field, Fonts, Rect, SharpText, Status, Ui};
 
 const BIO_LINES: usize = 6;
 
@@ -31,13 +31,6 @@ impl EditField {
         match self {
             Self::Bio => "Ta bio",
             Self::Music => "Ta musique préférée",
-        }
-    }
-
-    const fn hint(self) -> &'static str {
-        match self {
-            Self::Bio => "Entrée: nouvelle ligne",
-            Self::Music => "Entrée: enregistrer",
         }
     }
 
@@ -214,14 +207,6 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, cx: f32) {
             .v_align_middle()
             .color(pal.text_dim);
         let focused = form.focused == which;
-        if focused {
-            let after_label = rect.x + fonts.width(Face::Text, which.label(), theme::size::LABEL) + 14.0;
-            draw.sharp_text(&fonts.text, which.hint())
-                .position(after_label, label_y)
-                .size(theme::size::SMALL)
-                .v_align_middle()
-                .color(pal.text_muted);
-        }
         let left = form.left(which);
         let left_color = match left {
             0 => theme::DANGER,

@@ -17,6 +17,7 @@ mod login;
 mod menu;
 mod network;
 mod profile;
+mod profile_about;
 mod profile_edit;
 mod rooms;
 mod solo;
@@ -24,6 +25,7 @@ mod state;
 mod theme;
 mod ui;
 mod update;
+mod web;
 
 use state::{Screen, State};
 use ui::{Rect, SharpText};
@@ -51,6 +53,8 @@ pub fn server_url() -> String {
 fn setup(gfx: &mut Graphics) -> State {
     let fonts = ui::Fonts::load(gfx).expect("the bundled fonts are valid");
     let mut state = State::new(fonts);
+    #[cfg(target_arch = "wasm32")]
+    web::keep_keys_in_the_game();
 
     if let Some(token) = state::load_stored_token() {
         let slot = http::new_slot();

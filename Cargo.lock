@@ -557,6 +557,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shared",
+ "wasm-bindgen",
  "web-sys",
  "winres",
 ]

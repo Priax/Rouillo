@@ -194,6 +194,7 @@ pub struct ProfileCore {
     pub user_id: String,
     pub info: ApiUserProfile,
     pub match_history: Vec<ApiMatchEntry>,
+    pub about_open: bool,
     pub profile_slot: Option<HttpSlot>,
     pub history_slot: Option<HttpSlot>,
 }
