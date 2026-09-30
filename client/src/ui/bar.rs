@@ -1,28 +1,20 @@
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::Color;
 
-use super::{Fonts, Rect, SharpText, Triangles, Ui};
+use super::{Area, Fonts, Rect, SharpText, Triangles, Ui};
 
-/// Share of the row's width the bar covers at rest, and how much wider it
-/// grows when hovered.
 const WIDTH: f32 = 0.56;
 const HOVER_WIDTH: f32 = 0.10;
-/// How far the slanted edges lean, relative to the bar's height.
 const SLANT: f32 = 0.28;
 const GLOW_WIDTH: f32 = 90.0;
 const BAND: Color = Color::new(0.0, 0.0, 0.0, 0.28);
 const TEXT_HEIGHT: f32 = 0.42;
 
 impl Ui {
-    /// A full-width menu entry in the style of osu!lazer's pause menu: a
-    /// slanted bar of `color` over a dark band, with triangles drifting
-    /// through it. The whole row reacts to the pointer.
     pub fn menu_bar(&self, draw: &mut Draw, fonts: &Fonts, row: Rect, label: &str, color: Color) {
         self.menu_bar_enabled(draw, fonts, row, label, color, true);
     }
 
-    /// A menu bar that can be greyed out: it then ignores the pointer and
-    /// its label says why nothing can be done yet.
     pub fn menu_bar_enabled(
         &self,
         draw: &mut Draw,
@@ -34,7 +26,7 @@ impl Ui {
     ) {
         let pal = self.palette();
         let color = if enabled { color } else { pal.disabled };
-        let r = self.interact(label, row, enabled);
+        let r = self.interact_in(label, row, Area::Bar, enabled);
         if r.entered {
             crate::audio::play_ui_hover();
         }
@@ -42,15 +34,8 @@ impl Ui {
         draw.rect((row.x, row.y), (row.w, row.h)).color(BAND);
 
         let cx = row.x + row.w / 2.0;
-        let half = row.w * (WIDTH + HOVER_WIDTH * r.hover) / 2.0;
-        let slant = row.h * SLANT;
-        let bar = Slanted {
-            left: cx - half,
-            right: cx + half,
-            top: row.y,
-            bottom: row.y + row.h,
-            slant,
-        };
+        let bar = Slanted::of(row, r.hover);
+        let slant = bar.slant;
 
         glow(draw, bar, color.with_alpha(0.45 * r.hover));
         bar.fill(draw, color);
@@ -88,6 +73,26 @@ struct Slanted {
 }
 
 impl Slanted {
+    fn of(row: Rect, hover: f32) -> Self {
+        let cx = row.x + row.w / 2.0;
+        let half = row.w * (WIDTH + HOVER_WIDTH * hover) / 2.0;
+        Self {
+            left: cx - half,
+            right: cx + half,
+            top: row.y,
+            bottom: row.y + row.h,
+            slant: row.h * SLANT,
+        }
+    }
+
+    fn contains(self, x: f32, y: f32) -> bool {
+        if y < self.top || y >= self.bottom {
+            return false;
+        }
+        let lean = self.slant * (1.0 - 2.0 * (y - self.top) / (self.bottom - self.top));
+        x >= self.left + lean && x < self.right + lean
+    }
+
     fn corners(self) -> [(f32, f32); 4] {
         let Self {
             left,
@@ -117,8 +122,10 @@ impl Slanted {
     }
 }
 
-/// Light spilling out of both slanted ends of the bar, fading away from it.
-/// Each glow is a quad lying against its edge, so it follows the slant.
+pub(super) fn contains(row: Rect, hover: f32, x: f32, y: f32) -> bool {
+    Slanted::of(row, hover).contains(x, y)
+}
+
 fn glow(draw: &mut Draw, bar: Slanted, color: Color) {
     if color.a <= 0.0 {
         return;
@@ -134,8 +141,6 @@ fn glow(draw: &mut Draw, bar: Slanted, color: Color) {
     glow_quad(draw, (right + slant, top), (right - slant, bottom), GLOW_WIDTH, color);
 }
 
-/// A quad from the edge `top`-`bottom` out to `reach` (negative leftwards),
-/// `color` along the edge and clear at the far side.
 fn glow_quad(draw: &mut Draw, top: (f32, f32), bottom: (f32, f32), reach: f32, color: Color) {
     let clear = color.with_alpha(0.0);
     let (far_top, far_bottom) = ((top.0 + reach, top.1), (bottom.0 + reach, bottom.1));

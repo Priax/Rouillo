@@ -357,12 +357,12 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
     }
 
     let (_, _, launch_enabled) = launch_bar(&info, state.maintenance);
-    if info.is_host && launch_enabled && state.ui.clicked(lobby_launch(view)) {
+    if info.is_host && launch_enabled && state.ui.bar_clicked(lobby_launch(view)) {
         send(state, &ClientMessage::ToggleCountdown);
         return;
     }
 
-    if state.ui.clicked(lobby_leave(view)) {
+    if state.ui.bar_clicked(lobby_leave(view)) {
         send(state, &ClientMessage::LeaveRoom);
         state.invite_friends.clear();
         state.invite_slot = None;
@@ -370,7 +370,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         return;
     }
 
-    if state.auth.is_some() && state.ui.clicked(lobby_invite(view)) {
+    if state.auth.is_some() && state.ui.bar_clicked(lobby_invite(view)) {
         state.invite_overlay = true;
         if state.invite_friends.is_empty() && state.invite_slot.is_none() {
             let token = state.auth.as_ref().map(|a| a.token.clone());

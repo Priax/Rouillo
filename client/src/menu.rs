@@ -74,7 +74,7 @@ pub fn update_menu(state: &mut State) {
     let ww = view.w;
     let logged_in = state.auth.is_some();
 
-    let clicked = menu_rows(view, logged_in).find(|&(_, row)| state.ui.clicked(row));
+    let clicked = menu_rows(view, logged_in).find(|&(_, row)| state.ui.bar_clicked(row));
     match clicked.map(|(item, _)| item) {
         Some(MenuItem::Play) => start_play(state),
         Some(MenuItem::Solo) => {

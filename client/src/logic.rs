@@ -22,11 +22,11 @@ pub fn update_game(
 
     if paused || game_over || session.opponent_disconnected {
         let (leave_row, back_row) = crate::draw::exit_rows(ui.view());
-        if ui.clicked(leave_row) {
+        if ui.bar_clicked(leave_row) {
             conn.send(&ClientMessage::LeaveRoom);
             return;
         }
-        if is_host && ui.clicked(back_row) {
+        if is_host && ui.bar_clicked(back_row) {
             conn.send(&ClientMessage::ReturnToLobby);
             return;
         }

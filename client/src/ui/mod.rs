@@ -89,14 +89,32 @@ impl Default for Inner {
     }
 }
 
+/// The part of a widget's rectangle the pointer can reach.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Area {
+    Whole,
+    /// The slanted bar of a menu row, which widens as it is hovered.
+    Bar,
+}
+
 struct Widget {
     rect: Rect,
+    area: Area,
     live: bool,
     hover: f32,
     press: f32,
     flash: f32,
     hovered: bool,
     touched: bool,
+}
+
+impl Widget {
+    fn contains(&self, x: f32, y: f32) -> bool {
+        match self.area {
+            Area::Whole => self.rect.contains(x, y),
+            Area::Bar => bar::contains(self.rect, self.hover, x, y),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -148,7 +166,7 @@ impl Ui {
         let mut clicked = false;
         if mouse.pressed {
             for w in inner.widgets.values_mut() {
-                if w.live && w.rect.contains(mouse.x, mouse.y) {
+                if w.live && w.contains(mouse.x, mouse.y) {
                     w.flash = 1.0;
                     clicked = true;
                 }
@@ -255,11 +273,27 @@ impl Ui {
         m.pressed && r.contains(m.x, m.y)
     }
 
+    /// A click on the bar of a menu row, as wide as it is currently drawn.
+    pub fn bar_clicked(&self, row: Rect) -> bool {
+        let inner = self.inner.borrow();
+        let m = inner.mouse;
+        let hover = inner
+            .widgets
+            .values()
+            .find(|w| w.area == Area::Bar && w.rect == row)
+            .map_or(0.0, |w| w.hover);
+        m.pressed && bar::contains(row, hover, m.x, m.y)
+    }
+
     pub fn set_input(&self, on: bool) {
         self.inner.borrow_mut().input_off = !on;
     }
 
     fn interact(&self, label: &str, rect: Rect, enabled: bool) -> Response {
+        self.interact_in(label, rect, Area::Whole, enabled)
+    }
+
+    fn interact_in(&self, label: &str, rect: Rect, area: Area, enabled: bool) -> Response {
         let mut inner = self.inner.borrow_mut();
         let Inner {
             target: _,
@@ -278,7 +312,6 @@ impl Ui {
             drawn,
         } = &mut *inner;
         let live = enabled && !*input_off;
-        let over = live && rect.contains(mouse.x, mouse.y);
 
         let mut h = DefaultHasher::new();
         label.hash(&mut h);
@@ -287,17 +320,25 @@ impl Ui {
         let key = (label, *nth);
         *nth += 1;
 
-        let w = widgets.entry(key).or_insert(Widget {
-            rect,
-            live,
-            hover: 0.0,
-            press: 0.0,
-            flash: 0.0,
-            hovered: over,
-            touched: false,
+        let mut fresh = false;
+        let w = widgets.entry(key).or_insert_with(|| {
+            fresh = true;
+            Widget {
+                rect,
+                area,
+                live,
+                hover: 0.0,
+                press: 0.0,
+                flash: 0.0,
+                hovered: false,
+                touched: false,
+            }
         });
-        let entered = over && !w.hovered;
         w.rect = rect;
+        w.area = area;
+        let over = live && w.contains(mouse.x, mouse.y);
+        // A widget that appears under the pointer was not entered.
+        let entered = over && !w.hovered && !fresh;
         w.live = live;
         w.hovered = over;
         w.touched = true;
@@ -482,6 +523,91 @@ mod tests {
         frame(&mut ui, CLICK_A, &[("Jouer", A)]);
         let later = (0..60).map(|_| frame(&mut ui, ON_A, &[("Jouer", A)])[0]).last();
         assert!(later.is_some_and(|r| r.flash < 0.01));
+    }
+
+    const ROW: Rect = Rect::at(0.0, 0.0, 1000.0, 60.0);
+
+    fn at(x: f32, y: f32) -> Mouse {
+        Mouse {
+            x,
+            y,
+            down: false,
+            pressed: false,
+        }
+    }
+
+    fn bar_frame(ui: &mut Ui, mouse: Mouse) -> Response {
+        ui.begin_frame(1.0 / 60.0, View::default(), mouse);
+        ui.interact_in("Solo", ROW, Area::Bar, true)
+    }
+
+    #[test]
+    fn a_menu_row_reacts_on_its_bar_only() {
+        let mut ui = Ui::default();
+        for _ in 0..30 {
+            bar_frame(&mut ui, at(100.0, 30.0));
+        }
+        let band = bar_frame(&mut ui, at(100.0, 30.0));
+        assert!(
+            band.hover.abs() < f32::EPSILON,
+            "the band beside the bar is not the button"
+        );
+        let click = Mouse {
+            pressed: true,
+            ..at(100.0, 30.0)
+        };
+        assert!(!ui.begin_frame(1.0 / 60.0, View::default(), click));
+        assert!(!ui.bar_clicked(ROW));
+
+        assert!(bar_frame(&mut ui, at(500.0, 30.0)).hover > 0.0);
+        let click = Mouse {
+            pressed: true,
+            ..at(500.0, 30.0)
+        };
+        assert!(ui.begin_frame(1.0 / 60.0, View::default(), click));
+        assert!(ui.bar_clicked(ROW));
+    }
+
+    #[test]
+    fn a_menu_bar_follows_its_slant() {
+        let mut ui = Ui::default();
+        // The bar's left edge runs from x = 236.8 at the top to 203.2 at the bottom.
+        bar_frame(&mut ui, at(225.0, 1.0));
+        assert!(bar_frame(&mut ui, at(225.0, 1.0)).hover.abs() < f32::EPSILON);
+        assert!(bar_frame(&mut ui, at(225.0, 59.0)).hover > 0.0);
+    }
+
+    #[test]
+    fn a_hovered_menu_bar_keeps_the_pointer_as_it_widens() {
+        let mut ui = Ui::default();
+        // Past the bar at rest (it ends at x = 780), inside it once widened.
+        let margin = at(800.0, 30.0);
+        for _ in 0..30 {
+            bar_frame(&mut ui, margin);
+        }
+        assert!(
+            bar_frame(&mut ui, margin).hover.abs() < f32::EPSILON,
+            "not reachable from outside"
+        );
+        for _ in 0..60 {
+            bar_frame(&mut ui, at(500.0, 30.0));
+        }
+        for _ in 0..60 {
+            bar_frame(&mut ui, margin);
+        }
+        assert!(
+            bar_frame(&mut ui, margin).hover > 0.9,
+            "the pointer is on the bar as drawn"
+        );
+        ui.begin_frame(
+            1.0 / 60.0,
+            View::default(),
+            Mouse {
+                pressed: true,
+                ..margin
+            },
+        );
+        assert!(ui.bar_clicked(ROW));
     }
 
     #[test]

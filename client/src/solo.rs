@@ -157,12 +157,12 @@ pub fn update_game(app: &mut App, state: &mut State) {
     let (over, paused) = (game.over(), game.paused());
     if over || paused {
         let (quit, again) = crate::draw::exit_rows(ui.view());
-        if ui.clicked(quit) {
+        if ui.bar_clicked(quit) {
             *solo = None;
             *screen = Screen::SoloSetup;
             return;
         }
-        if ui.clicked(again) || (over && app.keyboard.was_pressed(KeyCode::KeyR)) {
+        if ui.bar_clicked(again) || (over && app.keyboard.was_pressed(KeyCode::KeyR)) {
             *game = SoloGame::new(game.settings);
             return;
         }
@@ -205,10 +205,10 @@ pub fn update_setup(app: &mut App, state: &mut State) {
             state.solo_settings.adjust(i, 1);
         }
     }
-    if state.ui.clicked(panel.action_row(0)) || app.keyboard.was_pressed(KeyCode::Enter) {
+    if state.ui.bar_clicked(panel.action_row(0)) || app.keyboard.was_pressed(KeyCode::Enter) {
         state.solo = Some(SoloGame::new(state.solo_settings));
         state.screen = Screen::Solo;
-    } else if state.ui.clicked(panel.action_row(1)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    } else if state.ui.bar_clicked(panel.action_row(1)) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.screen = Screen::Menu;
     }
 }
