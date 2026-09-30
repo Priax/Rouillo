@@ -322,11 +322,11 @@ l'écran reste noir. Pareil pour les styles: la page doit déjà charger `style-
 plus ancienne a ses styles dans un `<style>` que la politique refuse.
 
 ```bash
-scp deploy/Caddyfile ubuntu@puyo.priax.org:/tmp/Caddyfile
-ssh ubuntu@puyo.priax.org "caddy validate --adapter caddyfile --config /tmp/Caddyfile \
+scp deploy/Caddyfile ubuntu@puyo.priax.org:/tmp/Caddyfile \
+  && ssh ubuntu@puyo.priax.org "caddy validate --adapter caddyfile --config /tmp/Caddyfile \
   && sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.old \
-  && sudo cp /tmp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy"
-curl -sI https://puyo.priax.org/ | grep -i content-security-policy
+  && sudo cp /tmp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy" \
+  && curl -sI https://puyo.priax.org/ | grep -i content-security-policy
 ```
 
 Le `reload` de Caddy ferme les WebSockets ouverts: les clients se reconnectent tout seuls, mais
