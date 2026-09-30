@@ -19,11 +19,11 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             bin: client
-            asset: puyorust-linux-x86_64
+            asset: rouillo-linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             bin: client.exe
-            asset: puyorust-windows-x86_64.exe
+            asset: rouillo-windows-x86_64.exe
 
     steps:
       - uses: actions/checkout@v7
@@ -51,9 +51,24 @@ jobs:
         shell: bash
         run: cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "${{ matrix.asset }}"
 
+      # The bare binary runs as is; the archive adds what a desktop needs to
+      # show the game in its menus with its icon (see scripts/install-linux.sh).
+      - name: Package Linux archive
+        if: runner.os == 'Linux'
+        run: |
+          # Built aside: the bare binary already holds this name here.
+          dir=rouillo-linux-x86_64
+          mkdir -p "pkg/$dir"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "pkg/$dir/rouillo"
+          cp scripts/install-linux.sh "pkg/$dir/install.sh"
+          cp -r assets/linux/share "pkg/$dir/share"
+          tar -czf "$dir.tar.gz" -C pkg "$dir"
+
       - name: Attach binary to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ matrix.asset }}
+          files: |
+            ${{ matrix.asset }}
+            rouillo-linux-x86_64.tar.gz
           draft: true
           generate_release_notes: true

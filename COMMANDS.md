@@ -115,9 +115,23 @@ cargo build --release -p client            # client NATIF seul
 cd client && trunk build --release
 ```
 
+### Installer le client natif sous Linux (lanceur + icône)
+```bash
+scripts/install-linux.sh             # build release puis installe dans ~/.local
+scripts/install-linux.sh uninstall   # retire tout
+```
+Installe le binaire (`~/.local/bin/rouillo`), l'entrée de lanceur
+(`~/.local/share/applications/org.priax.Rouillo.desktop`) et les icônes
+(`~/.local/share/icons/hicolor/`). L'icône de la fenêtre vient de là: sous Wayland une
+application ne fournit pas son icône, le bureau la retrouve par l'`app_id` de la fenêtre
+(`org.priax.Rouillo`, posé dans `client/src/main.rs`), qui doit être le nom du `.desktop`.
+Une fois installé, l'icône s'affiche aussi pour un `cargo run -p client`.
+`PREFIX=/usr DESTDIR=pkg scripts/install-linux.sh` pour un paquet.
+
 ### Publier une release GitHub
 Le workflow `.github/workflows/release.yml` se déclenche sur un tag `v*` et construit les
-binaires **natifs** du client (Linux + Windows) attachés à une release brouillon:
+binaires **natifs** du client (Linux + Windows) attachés à une release brouillon, plus
+l'archive `rouillo-linux-x86_64.tar.gz` (binaire, `install.sh`, lanceur et icônes):
 
 ```bash
 git tag v0.5.0

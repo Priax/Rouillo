@@ -255,7 +255,7 @@ pub fn clear_stored_token() {
 }
 
 #[cfg(target_arch = "wasm32")]
-const BEST_SCORE_KEY: &str = "puyorust_solo_best";
+const BEST_SCORE_KEY: &str = "rouillo_solo_best";
 
 pub fn load_best_score() -> i32 {
     #[cfg(target_arch = "wasm32")]

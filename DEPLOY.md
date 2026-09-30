@@ -1,4 +1,4 @@
-# Déployer le backend Puyorust sur Oracle Cloud (Always Free), de A à Z
+# Déployer le backend Rouillo sur Oracle Cloud (Always Free), de A à Z
 
 Procédure complète, telle que réalisée le 2026-09-17. À suivre si la VM est perdue
 (supprimée, récupérée par Oracle, compte recréé…).

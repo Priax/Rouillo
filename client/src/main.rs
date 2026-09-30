@@ -280,9 +280,10 @@ fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
 fn main() -> Result<(), String> {
     let icon = Some(include_bytes!("../../assets/puyo_puyo_icon.ico").as_ref());
     let win_config = WindowConfig::new()
-        .set_title("Puyorust")
+        .set_title("Rouillo")
         .set_size(1280, 800)
         .set_resizable(true)
+        .set_app_id("org.priax.Rouillo")
         .set_window_icon_data(icon)
         .set_taskbar_icon_data(icon);
     #[cfg(target_arch = "wasm32")]

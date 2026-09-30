@@ -39,15 +39,15 @@ impl Difficulty {
         match self {
             Self::Easy => Profile {
                 think_ticks: 30,
-                input_ticks: 15,
+                input_ticks: 18,
                 hard_drop: false,
                 lookahead: false,
                 min_chain: 1,
                 noise: 40.0,
             },
             Self::Normal => Profile {
-                think_ticks: 24,
-                input_ticks: 11,
+                think_ticks: 26,
+                input_ticks: 15,
                 hard_drop: false,
                 lookahead: true,
                 min_chain: 2,
