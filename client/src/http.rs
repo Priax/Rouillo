@@ -1,9 +1,14 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
 use shared::config;
 
 pub type HttpSlot = Arc<Mutex<Option<ehttp::Result<ehttp::Response>>>>;
+
+const TIMEOUT: Duration = Duration::from_secs(10);
+const TIMEOUT_MESSAGE: &str = "le serveur ne répond pas";
 
 pub fn new_slot() -> HttpSlot {
     Arc::new(Mutex::new(None))
@@ -60,8 +65,30 @@ fn send(mut req: ehttp::Request, token: Option<String>, slot: HttpSlot) {
     if let Some(t) = token {
         push_header(&mut req, "authorization", format!("Bearer {t}"));
     }
-    ehttp::fetch(req, move |r| {
-        *slot.lock().unwrap() = Some(r);
+    let done = Arc::new(AtomicBool::new(false));
+    {
+        let (slot, done) = (Arc::clone(&slot), Arc::clone(&done));
+        after(TIMEOUT, move || deliver(&slot, &done, Err(TIMEOUT_MESSAGE.to_owned())));
+    }
+    ehttp::fetch(req, move |r| deliver(&slot, &done, r));
+}
+
+fn deliver(slot: &HttpSlot, done: &AtomicBool, result: ehttp::Result<ehttp::Response>) {
+    if !done.swap(true, Ordering::AcqRel) {
+        *slot.lock().unwrap() = Some(result);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn after(delay: Duration, f: impl FnOnce() + 'static) {
+    crate::web::after(delay, f);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn after(delay: Duration, f: impl FnOnce() + Send + 'static) {
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        f();
     });
 }
 
