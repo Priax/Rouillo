@@ -3,6 +3,7 @@ use std::sync::Arc;
 use notan::draw::Draw;
 use notan::prelude::*;
 
+use crate::account::{self, AccountForm, Outcome};
 use crate::profile_edit::{self, EditForm};
 use crate::state::{
     ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, OtherProfileData, ProfileCore,
@@ -344,16 +345,16 @@ pub fn enter_profile(state: &mut State) {
         Some(auth.token.clone()),
         10,
     );
-    state.profile = Some(ProfileData { core, edit: None });
+    state.profile = Some(ProfileData {
+        core,
+        edit: None,
+        account: None,
+    });
 }
 
-fn own_buttons(cx: f32, wh: f32) -> (Rect, Rect, Rect) {
+fn own_buttons(cx: f32, wh: f32) -> [Rect; 4] {
     let y = button_row_y(wh);
-    (
-        Rect::at(cx - 390.0, y, 200.0, 54.0),
-        Rect::at(cx - 100.0, y, 200.0, 54.0),
-        Rect::at(cx + 190.0, y, 200.0, 54.0),
-    )
+    [-445.0, -215.0, 15.0, 245.0].map(|dx| Rect::at(cx + dx, y, 200.0, 54.0))
 }
 
 pub fn update_profile(app: &mut App, state: &mut State) {
@@ -368,13 +369,15 @@ pub fn update_profile(app: &mut App, state: &mut State) {
 
     if state.profile.as_ref().is_some_and(|p| p.edit.is_some()) {
         profile_edit::update(app, state);
+    } else if state.profile.as_ref().is_some_and(|p| p.account.is_some()) {
+        update_account(app, state);
     } else {
         if let Some(p) = state.profile.as_mut() {
             if update_about(app, &state.ui, &mut p.core) {
                 return;
             }
         }
-        let (back_btn, edit_btn, logout_btn) = own_buttons(cx, wh);
+        let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(cx, wh);
 
         if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
             state.profile = None;
@@ -384,6 +387,11 @@ pub fn update_profile(app: &mut App, state: &mut State) {
         if state.ui.clicked(edit_btn) {
             if let Some(p) = state.profile.as_mut() {
                 p.edit = Some(EditForm::open(&p.core.info));
+            }
+        }
+        if state.ui.clicked(account_btn) {
+            if let Some(p) = state.profile.as_mut() {
+                p.account = Some(AccountForm::open());
             }
         }
         if state.ui.clicked(logout_btn) {
@@ -414,6 +422,32 @@ pub fn update_profile(app: &mut App, state: &mut State) {
     }
 }
 
+fn update_account(app: &App, state: &mut State) {
+    let token = state.auth.as_ref().map(|a| a.token.clone());
+    let State {
+        profile,
+        ui,
+        fonts,
+        keys,
+        ..
+    } = state;
+    let Some(form) = profile.as_mut().and_then(|p| p.account.as_mut()) else {
+        return;
+    };
+    match account::update(app, ui, fonts, keys, form, token) {
+        Outcome::Stay => {}
+        Outcome::Close => {
+            if let Some(p) = profile.as_mut() {
+                p.account = None;
+            }
+        }
+        Outcome::LoggedOut(msg) => {
+            crate::menu::forget_session(state);
+            state.auth_form.status = Status::success(msg);
+        }
+    }
+}
+
 pub fn draw_profile(gfx: &mut Graphics, state: &State) {
     let (ww, wh) = state.ui.view().size();
     let cx = ww / 2.0;
@@ -428,14 +462,17 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
 
     if let Some(form) = &profile.edit {
         profile_edit::draw(&state.ui, &mut draw, &state.fonts, form, cx);
+    } else if let Some(form) = &profile.account {
+        account::draw(&state.ui, &mut draw, &state.fonts, form, cx);
     } else {
         state.ui.set_input(!profile.core.about_open);
         draw_stats_panel(&mut draw, &state.ui, &state.fonts, &profile.core, false);
         draw_history_panel(&mut draw, &state.ui, &state.fonts, &profile.core, true);
 
-        let (back_btn, edit_btn, logout_btn) = own_buttons(cx, wh);
+        let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(cx, wh);
         state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
         state.ui.button(&mut draw, &state.fonts, edit_btn, "Modifier");
+        state.ui.button(&mut draw, &state.fonts, account_btn, "Compte");
         state.ui.button(&mut draw, &state.fonts, logout_btn, "Déconnexion");
         draw_about_overlay(&mut draw, &state.ui, &state.fonts, &profile.core);
     }

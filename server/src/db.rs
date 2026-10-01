@@ -80,14 +80,9 @@ pub async fn init_pool(database_url: &str) -> Result<DbPool, sqlx::Error> {
 
 pub async fn create_user(pool: &DbPool, username: &str, password: &str) -> Result<User, sqlx::Error> {
     let password = password.to_owned();
-    let hash = run_hash(move || {
-        let salt = SaltString::generate(&mut OsRng);
-        Argon2::default()
-            .hash_password(password.as_bytes(), &salt)
-            .map(|h| h.to_string())
-    })
-    .await?
-    .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+    let hash = run_hash(move || hash_password(&password))
+        .await?
+        .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
     sqlx::query_as::<_, User>("INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING *")
         .bind(username)
         .bind(hash)
@@ -135,6 +130,44 @@ pub async fn delete_session(pool: &DbPool, token: Uuid) -> Result<(), sqlx::Erro
     Ok(())
 }
 
+pub async fn set_password(pool: &DbPool, user_id: Uuid, hash: String, keep: Uuid) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE users SET password_hash = $2 WHERE id = $1")
+        .bind(user_id)
+        .bind(hash)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token <> $2")
+        .bind(user_id)
+        .bind(keep)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await
+}
+
+pub async fn delete_user_sessions(pool: &DbPool, user_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_user(pool: &DbPool, user_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub fn hash_password(password: &str) -> Result<String, password_hash::Error> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|h| h.to_string())
+}
+
 pub struct MatchRecord {
     pub duration_secs: f64,
     pub winner_slot: u8,
@@ -151,7 +184,8 @@ pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), 
 
     let match_id = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO matches (duration_secs, player1_id, player2_id, winner_slot) \
-         VALUES ($1, $2, $3, $4) RETURNING id",
+         VALUES ($1, (SELECT id FROM users WHERE id = $2), (SELECT id FROM users WHERE id = $3), $4) \
+         RETURNING id",
     )
     .bind(rec.duration_secs)
     .bind(rec.user_ids[0])
@@ -167,7 +201,7 @@ pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), 
             "INSERT INTO match_stats \
              (match_id, user_id, slot, max_chain, total_chains, \
               nuisance_sent, nuisance_received, all_clears, pieces_placed) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+             VALUES ($1, (SELECT id FROM users WHERE id = $2), $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind(match_id)
         .bind(rec.user_ids[i])
@@ -189,12 +223,15 @@ pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), 
     if let Some((uid0, uid1)) = ranked {
         let elo0 = sqlx::query_scalar::<_, i32>("SELECT elo FROM users WHERE id = $1 FOR UPDATE")
             .bind(uid0)
-            .fetch_one(&mut *tx)
+            .fetch_optional(&mut *tx)
             .await?;
         let elo1 = sqlx::query_scalar::<_, i32>("SELECT elo FROM users WHERE id = $1 FOR UPDATE")
             .bind(uid1)
-            .fetch_one(&mut *tx)
+            .fetch_optional(&mut *tx)
             .await?;
+        let (Some(elo0), Some(elo1)) = (elo0, elo1) else {
+            return tx.commit().await;
+        };
         debug_assert!(
             rec.winner_slot >= 1,
             "winner_slot must be 1 or 2, got {}",

@@ -20,6 +20,10 @@ struct Unauthorized;
 impl warp::reject::Reject for Unauthorized {}
 
 #[derive(Debug)]
+struct WrongPassword;
+impl warp::reject::Reject for WrongPassword {}
+
+#[derive(Debug)]
 struct Conflict(String);
 impl warp::reject::Reject for Conflict {}
 
@@ -127,6 +131,8 @@ pub fn client_addr() -> impl Filter<Extract = (Option<String>,), Error = std::co
     )
 }
 
+type PasswordChecks = RateMap;
+
 type FriendLimit = RateMap;
 const MAX_FRIEND_REQS: u32 = 30;
 const FRIEND_WINDOW: Duration = Duration::from_secs(600);
@@ -151,6 +157,17 @@ struct LoginBody {
 struct PatchMeBody {
     bio: Option<String>,
     favorite_music: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ChangePasswordBody {
+    current: String,
+    new: String,
+}
+
+#[derive(Deserialize)]
+struct DeleteAccountBody {
+    password: String,
 }
 
 #[derive(Serialize)]
@@ -187,12 +204,17 @@ fn bearer_token() -> impl Filter<Extract = (Uuid,), Error = Rejection> + Clone {
 }
 
 fn authed(pool: DbPool) -> impl Filter<Extract = (db::User,), Error = Rejection> + Clone {
+    authed_session(pool).map(|(user, _token): (db::User, Uuid)| user)
+}
+
+fn authed_session(pool: DbPool) -> impl Filter<Extract = ((db::User, Uuid),), Error = Rejection> + Clone {
     bearer_token()
         .and(with(pool))
         .and_then(|token: Uuid, pool: DbPool| async move {
             db::find_user_by_token(&pool, token)
                 .await
                 .map_err(internal)?
+                .map(|user| (user, token))
                 .ok_or_else(|| warp::reject::custom(Unauthorized))
         })
 }
@@ -302,6 +324,60 @@ async fn handle_login(
 
 async fn handle_logout(token: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
     db::delete_session(&pool, token).await.map_err(internal)?;
+    Ok(warp::reply::json(&serde_json::json!({})))
+}
+
+async fn check_password(user: &db::User, password: String, checks: &PasswordChecks) -> Result<(), Rejection> {
+    let key = user.id.to_string();
+    if rate_check(checks, &key, MAX_ATTEMPTS, WINDOW) {
+        return Err(warp::reject::custom(TooManyRequests));
+    }
+    let hash = user.password_hash().to_owned();
+    let ok = db::run_hash(move || db::verify_password(&password, &hash))
+        .await
+        .map_err(internal)?;
+    if !ok {
+        rate_record(checks, &key, WINDOW);
+        return Err(warp::reject::custom(WrongPassword));
+    }
+    rate_clear(checks, &key);
+    Ok(())
+}
+
+async fn handle_change_password(
+    (user, token): (db::User, Uuid),
+    body: ChangePasswordBody,
+    pool: DbPool,
+    checks: PasswordChecks,
+) -> Result<impl Reply, Rejection> {
+    if !validate_password(&body.new) {
+        return Err(warp::reject::custom(BadRequest(
+            "Password must be at least 8 characters".into(),
+        )));
+    }
+    check_password(&user, body.current, &checks).await?;
+    let new = body.new;
+    let hash = db::run_hash(move || db::hash_password(&new))
+        .await
+        .map_err(internal)?
+        .map_err(internal)?;
+    db::set_password(&pool, user.id, hash, token).await.map_err(internal)?;
+    Ok(warp::reply::json(&serde_json::json!({})))
+}
+
+async fn handle_logout_all(user: db::User, pool: DbPool) -> Result<impl Reply, Rejection> {
+    db::delete_user_sessions(&pool, user.id).await.map_err(internal)?;
+    Ok(warp::reply::json(&serde_json::json!({})))
+}
+
+async fn handle_delete_account(
+    user: db::User,
+    body: DeleteAccountBody,
+    pool: DbPool,
+    checks: PasswordChecks,
+) -> Result<impl Reply, Rejection> {
+    check_password(&user, body.password, &checks).await?;
+    db::delete_user(&pool, user.id).await.map_err(internal)?;
     Ok(warp::reply::json(&serde_json::json!({})))
 }
 
@@ -532,6 +608,8 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, std::convert
         (warp::http::StatusCode::BAD_REQUEST, e.0.clone())
     } else if err.find::<Unauthorized>().is_some() {
         (warp::http::StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
+    } else if err.find::<WrongPassword>().is_some() {
+        (warp::http::StatusCode::FORBIDDEN, "Wrong password".to_string())
     } else if let Some(e) = err.find::<Conflict>() {
         (warp::http::StatusCode::CONFLICT, e.0.clone())
     } else if err.find::<TooManyRequests>().is_some() {
@@ -566,6 +644,7 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
     let search_limit: SearchLimit = new_rate_map();
     let registrations: IpLimit = new_rate_map();
     let ip_login_failures: IpLimit = new_rate_map();
+    let password_checks = with(new_rate_map());
 
     let register = api
         .and(warp::path("register"))
@@ -599,6 +678,38 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(bearer_token())
         .and(pool.clone())
         .and_then(handle_logout);
+
+    let logout_all = api
+        .and(warp::path("logout-all"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(authed(db.clone()))
+        .and(pool.clone())
+        .and_then(handle_logout_all);
+
+    let me_password = api
+        .and(warp::path("me"))
+        .and(warp::path("password"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(authed_session(db.clone()))
+        .and(body_limit)
+        .and(warp::body::json())
+        .and(pool.clone())
+        .and(password_checks.clone())
+        .and_then(handle_change_password);
+
+    let me_delete = api
+        .and(warp::path("me"))
+        .and(warp::path("delete"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(authed(db.clone()))
+        .and(body_limit)
+        .and(warp::body::json())
+        .and(pool.clone())
+        .and(password_checks)
+        .and_then(handle_delete_account);
 
     let me_get = api
         .and(warp::path("me"))
@@ -687,6 +798,9 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
     register
         .or(login)
         .or(logout)
+        .or(logout_all)
+        .or(me_password)
+        .or(me_delete)
         .or(me_get)
         .or(me_patch)
         .or(users_search)

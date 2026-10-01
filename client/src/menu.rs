@@ -104,6 +104,10 @@ pub fn do_logout(state: &mut State) {
     if let Some(auth) = &state.auth {
         http::post_empty(http::api_url("logout"), Some(auth.token.clone()), http::new_slot());
     }
+    forget_session(state);
+}
+
+pub fn forget_session(state: &mut State) {
     crate::state::clear_stored_token();
     state.auth = None;
     state.auth_form = AuthForm::default();

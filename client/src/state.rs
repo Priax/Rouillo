@@ -203,6 +203,7 @@ pub struct ProfileCore {
 pub struct ProfileData {
     pub core: ProfileCore,
     pub edit: Option<crate::profile_edit::EditForm>,
+    pub account: Option<crate::account::AccountForm>,
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -5,6 +5,7 @@ use notan::draw::DrawConfig;
 use notan::prelude::*;
 use shared::{config, ClientMessage};
 
+mod account;
 mod audio;
 mod connection;
 mod cpu;
@@ -110,8 +111,12 @@ fn type_char(state: &mut State, c: char) {
             }
         }
         Screen::Profile => {
-            if let Some(form) = state.profile.as_mut().and_then(|p| p.edit.as_mut()) {
-                form.type_char(c);
+            if let Some(p) = state.profile.as_mut() {
+                if let Some(form) = p.edit.as_mut() {
+                    form.type_char(c);
+                } else if let Some(form) = p.account.as_mut() {
+                    form.type_char(c);
+                }
             }
         }
         _ => {}
