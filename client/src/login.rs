@@ -44,7 +44,7 @@ fn submit(form: &mut AuthForm) {
     let username = form.username.trim().to_owned();
     let password = form.password.to_owned();
     if username.is_empty() || password.is_empty() {
-        form.status = Status::error("Remplis tous les champs.");
+        form.status = Status::error("Remplissez tous les champs.");
         return;
     }
     let body = serde_json::json!({ "username": username, "password": password }).to_string();

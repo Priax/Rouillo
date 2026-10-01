@@ -29,10 +29,43 @@ pub fn json<T: serde::de::DeserializeOwned>(resp: &ehttp::Response) -> Option<T>
 }
 
 pub fn error_message(resp: &ehttp::Response) -> String {
-    serde_json::from_str::<serde_json::Value>(resp.text().unwrap_or_default())
-        .ok()
-        .and_then(|v| v["error"].as_str().map(str::to_owned))
+    let body = serde_json::from_str::<serde_json::Value>(resp.text().unwrap_or_default()).ok();
+    let body = body.as_ref();
+    body.and_then(|v| v["code"].as_str())
+        .and_then(translate)
+        .map(str::to_owned)
+        .or_else(|| body.and_then(|v| v["error"].as_str()).map(str::to_owned))
         .unwrap_or_else(|| format!("Erreur {}", resp.status))
+}
+
+fn translate(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "bad_username" => "Le pseudo doit faire 3 à 24 caractères (lettres, chiffres ou _).",
+        "bad_password" => "Le mot de passe doit faire au moins 8 caractères.",
+        "bio_too_long" => "La bio ne doit pas dépasser 500 caractères.",
+        "music_too_long" => "La musique préférée ne doit pas dépasser 200 caractères.",
+        "self_friend_request" => "Vous ne pouvez pas vous ajouter vous-même en ami.",
+        "unauthorized" => "Votre session a expiré, reconnectez-vous.",
+        "bad_credentials" => "Pseudo ou mot de passe incorrect.",
+        "wrong_password" => "Mot de passe incorrect.",
+        "not_found" => "Introuvable.",
+        "username_taken" => "Ce pseudo est déjà pris.",
+        "friend_request_exists" => "Une demande d'ami existe déjà.",
+        "too_many_requests" => "Trop de tentatives, réessayez plus tard.",
+        "bad_query" | "invalid_body" => "Requête invalide.",
+        "internal" => "Erreur du serveur, réessayez plus tard.",
+        _ => return None,
+    })
+}
+
+pub fn encode_query(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => char::from(b).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 pub fn api_url(path: &str) -> String {
@@ -124,4 +157,39 @@ pub fn delete_req(url: String, token: Option<String>, slot: HttpSlot) {
 
 pub fn post_empty(url: String, token: Option<String>, slot: HttpSlot) {
     send(ehttp::Request::post(url, vec![]), token, slot);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(status: u16, body: &str) -> ehttp::Response {
+        ehttp::Response {
+            url: String::new(),
+            ok: false,
+            status,
+            status_text: String::new(),
+            headers: ehttp::Headers::default(),
+            bytes: body.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_query_is_percent_encoded_byte_by_byte() {
+        assert_eq!(encode_query("élo a_b"), "%C3%A9lo%20a_b");
+        assert_eq!(encode_query("a&b=c"), "a%26b%3Dc");
+    }
+
+    #[test]
+    fn a_known_code_is_shown_in_french() {
+        let resp = response(409, r#"{"error":"Username already taken","code":"username_taken"}"#);
+        assert_eq!(error_message(&resp), "Ce pseudo est déjà pris.");
+    }
+
+    #[test]
+    fn an_unknown_code_falls_back_to_the_server_text_then_the_status() {
+        let resp = response(418, r#"{"error":"Teapot","code":"teapot"}"#);
+        assert_eq!(error_message(&resp), "Teapot");
+        assert_eq!(error_message(&response(502, "<html>")), "Erreur 502");
+    }
 }

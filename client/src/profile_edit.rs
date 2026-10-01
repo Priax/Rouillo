@@ -32,8 +32,8 @@ impl EditField {
 
     const fn placeholder(self) -> &'static str {
         match self {
-            Self::Bio => "Ta bio",
-            Self::Music => "Ta musique préférée",
+            Self::Bio => "Votre bio",
+            Self::Music => "Votre musique préférée",
         }
     }
 

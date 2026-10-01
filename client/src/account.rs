@@ -85,7 +85,7 @@ impl AccountForm {
 
     fn labels(&self) -> &'static [&'static str] {
         match self.page {
-            Page::Password => &["Mot de passe actuel", "Nouveau mot de passe", "Confirme le nouveau"],
+            Page::Password => &["Mot de passe actuel", "Nouveau mot de passe", "Confirmez le nouveau"],
             Page::Delete => &["Mot de passe"],
             Page::Choose | Page::LogoutAll => &[],
         }
@@ -116,7 +116,7 @@ impl AccountForm {
 
     fn check(&self) -> Result<(), &'static str> {
         if !self.labels().is_empty() && self.current.is_empty() {
-            return Err("Entre ton mot de passe actuel.");
+            return Err("Entrez votre mot de passe actuel.");
         }
         if self.page == Page::Password {
             if self.new.chars().count() < MIN_PASSWORD {
@@ -167,17 +167,13 @@ impl AccountForm {
             Ok(resp) if resp.status == 200 => match self.page {
                 Page::Password => {
                     self.show(Page::Choose);
-                    self.status = Status::success("Mot de passe changé, tes autres sessions sont déconnectées.");
+                    self.status = Status::success("Mot de passe changé, vos autres sessions sont déconnectées.");
                     Outcome::Stay
                 }
-                Page::LogoutAll => Outcome::LoggedOut("Toutes tes sessions ont été déconnectées."),
-                Page::Delete => Outcome::LoggedOut("Ton compte a été supprimé."),
+                Page::LogoutAll => Outcome::LoggedOut("Toutes vos sessions ont été déconnectées."),
+                Page::Delete => Outcome::LoggedOut("Votre compte a été supprimé."),
                 Page::Choose => Outcome::Stay,
             },
-            Ok(resp) if resp.status == 403 => {
-                self.status = Status::error("Mot de passe incorrect.");
-                Outcome::Stay
-            }
             Ok(resp) => {
                 self.status = Status::error(http::error_message(&resp));
                 Outcome::Stay
@@ -217,8 +213,8 @@ const fn confirm_label(page: Page) -> &'static str {
 
 const fn warning(page: Page) -> Option<&'static str> {
     match page {
-        Page::LogoutAll => Some("Toutes tes sessions seront fermées, celle-ci comprise."),
-        Page::Delete => Some("Définitif: ton profil, ton ELO et tes amis disparaissent."),
+        Page::LogoutAll => Some("Toutes vos sessions seront fermées, celle-ci comprise."),
+        Page::Delete => Some("Définitif: votre profil, votre ELO et vos amis seront supprimés !"),
         Page::Choose | Page::Password => None,
     }
 }
