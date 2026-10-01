@@ -1673,3 +1673,40 @@ async fn the_manager_loop_outlives_a_shutdown_while_a_game_runs() {
         .expect("a game that never ends held the server past its deadline")
         .expect("manager panicked");
 }
+
+#[test]
+fn an_account_cannot_take_both_slots() {
+    let mut mgr = new_mgr();
+    let _rx1 = reg(&mut mgr, 1);
+    hello_as(&mut mgr, 1, "A", 1);
+    mgr.handle(Command::CreateRoom {
+        conn: 1,
+        name: "R".into(),
+    });
+    let mut rx2 = reg(&mut mgr, 2);
+    hello_as(&mut mgr, 2, "B", 1);
+    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    assert_eq!(mgr.rooms[&1].members.len(), 1);
+    assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::JoinFailed { .. })));
+}
+
+#[test]
+fn logged_reasons_are_bounded_and_single_line() {
+    let s = log_safe(&format!("a\nfake log line\r{}", "x".repeat(10_000)));
+    assert!(!s.contains('\n') && !s.contains('\r'));
+    assert_eq!(s.chars().count(), 100);
+}
+
+#[test]
+fn ws_connections_are_capped_per_ip_and_freed_on_drop() {
+    let conns = IpConns::default();
+    let ip = || Some("203.0.113.7".to_string());
+    let slots: Vec<_> = (0..MAX_WS_PER_IP)
+        .map(|_| IpSlot::take(&conns, ip()).unwrap())
+        .collect();
+    assert!(IpSlot::take(&conns, ip()).is_err());
+    assert!(IpSlot::take(&conns, Some("198.51.100.1".into())).is_ok());
+    drop(slots);
+    assert!(IpSlot::take(&conns, ip()).is_ok());
+    assert!(conns.lock().unwrap().is_empty());
+}

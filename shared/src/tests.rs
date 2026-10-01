@@ -1305,7 +1305,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (2, 8_597_404_285_938_695_702);
+const PROTOCOL_DIGEST: (u32, u64) = (3, 8_597_404_285_938_695_702);
 
 #[test]
 fn protocol_changes_bump_the_version() {

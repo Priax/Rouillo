@@ -222,7 +222,10 @@ async fn main() {
         .expect("dummy hash init failed");
 
     let port = config::SERVER_PORT;
-    info!("Écoute sur :{port}");
+    let bind: std::net::IpAddr = std::env::var("PUYO_BIND").map_or(config::SERVER_BIND_ADDRESS.into(), |s| {
+        s.parse().expect("PUYO_BIND must be an IP address")
+    });
+    info!("Écoute sur {bind}:{port}");
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(CMD_CHAN_CAP);
     let manager = tokio::spawn(manager_loop(cmd_rx, cmd_tx.clone(), pool.clone()));
@@ -261,9 +264,7 @@ async fn main() {
             }
         }));
 
-    let server = warp::serve(routes)
-        .incoming(bind_listener((config::SERVER_BIND_ADDRESS, port).into()))
-        .run();
+    let server = warp::serve(routes).incoming(bind_listener((bind, port).into())).run();
     // The manager only returns once a shutdown has let the games finish.
     tokio::select! {
         () = server => {}

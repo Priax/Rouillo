@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures_util::{SinkExt, StreamExt};
 use shared::{config, ClientMessage, ServerMessage};
@@ -11,6 +12,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 use warp::{Filter, Reply};
 
+use crate::auth::client_addr;
 use crate::manager::Command;
 use crate::{db, ConnId};
 
@@ -84,26 +86,87 @@ pub fn bind_listener(addr: SocketAddr) -> tokio::net::TcpListener {
     tokio::net::TcpListener::from_std(socket.into()).expect("listener")
 }
 
+const MAX_LOGGED_REASON: usize = 100;
+
+pub(crate) fn log_safe(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(MAX_LOGGED_REASON).collect()
+}
+
+pub const MAX_WS_PER_IP: u32 = 16;
+
+pub(crate) type IpConns = Arc<Mutex<HashMap<String, u32>>>;
+
+pub(crate) struct IpSlot {
+    conns: IpConns,
+    ip: String,
+}
+
+impl IpSlot {
+    pub(crate) fn take(conns: &IpConns, ip: Option<String>) -> Result<Option<Self>, ()> {
+        let Some(ip) = ip else { return Ok(None) };
+        let mut m = conns.lock().unwrap();
+        let n = m.entry(ip.clone()).or_insert(0);
+        if *n >= MAX_WS_PER_IP {
+            return Err(());
+        }
+        *n += 1;
+        drop(m);
+        Ok(Some(Self {
+            conns: Arc::clone(conns),
+            ip,
+        }))
+    }
+}
+
+impl Drop for IpSlot {
+    fn drop(&mut self) {
+        let mut m = self.conns.lock().unwrap();
+        if let Some(n) = m.get_mut(&self.ip) {
+            *n -= 1;
+            if *n == 0 {
+                m.remove(&self.ip);
+            }
+        }
+    }
+}
+
 pub fn ws_route(
     cmd_tx: mpsc::Sender<Command>,
     pool: db::DbPool,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     let conn_counter = Arc::new(AtomicU64::new(1));
+    let ip_conns: IpConns = Arc::default();
     warp::path("ws")
         .and(warp::ws())
         .and(warp::query::<WsQuery>())
+        .and(client_addr())
         .and(warp::any().map(move || cmd_tx.clone()))
         .and(warp::any().map(move || Arc::clone(&conn_counter)))
         .and(warp::any().map(move || pool.clone()))
+        .and(warp::any().map(move || Arc::clone(&ip_conns)))
         .map(
-            |ws: warp::ws::Ws, query: WsQuery, cmd_tx, counter: Arc<AtomicU64>, pool: db::DbPool| {
+            |ws: warp::ws::Ws,
+             query: WsQuery,
+             client: Option<String>,
+             cmd_tx,
+             counter: Arc<AtomicU64>,
+             pool: db::DbPool,
+             ip_conns: IpConns| {
+                let Ok(slot) = IpSlot::take(&ip_conns, client) else {
+                    warn!("WS refusé: trop de connexions depuis la même IP");
+                    return warp::reply::with_status("Too many connections", warp::http::StatusCode::TOO_MANY_REQUESTS)
+                        .into_response();
+                };
                 let conn = counter.fetch_add(1, Ordering::Relaxed);
                 let ws = ws
                     .max_message_size(MAX_CLIENT_MESSAGE)
                     .max_frame_size(MAX_CLIENT_MESSAGE);
                 if query.v == Some(shared::PROTOCOL_VERSION) {
-                    ws.on_upgrade(move |socket| handle_connection(socket, cmd_tx, conn, pool))
-                        .into_response()
+                    ws.on_upgrade(move |socket| async move {
+                        handle_connection(socket, cmd_tx, conn, pool).await;
+                        drop(slot);
+                    })
+                    .into_response()
                 } else {
                     info!(
                         "WS {conn} refusé: protocole {:?}, attendu {}",
@@ -183,24 +246,20 @@ async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::Sender<Command
                             ClientMessage::Hello {
                                 player_id,
                                 auth_token,
-                                username,
+                                username: _,
                                 last_disconnect_reason,
                             } => {
                                 greeted = true;
-                                let user_id = match auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok()) {
-                                    Some(token_uuid) => db::find_user_by_token(&pool, token_uuid)
-                                        .await
-                                        .ok()
-                                        .flatten()
-                                        .map(|u| u.id),
+                                let user = match auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok()) {
+                                    Some(token_uuid) => db::find_user_by_token(&pool, token_uuid).await.ok().flatten(),
                                     None => None,
                                 };
                                 Command::Hello {
                                     conn,
                                     token: player_id,
-                                    user_id,
-                                    username,
-                                    last_disconnect_reason,
+                                    user_id: user.as_ref().map(|u| u.id),
+                                    username: user.map(|u| u.username),
+                                    last_disconnect_reason: last_disconnect_reason.as_deref().map(log_safe),
                                 }
                             }
                             ClientMessage::Ping { id } => {

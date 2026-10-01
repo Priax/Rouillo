@@ -28,7 +28,7 @@ pub const fn starting_garbage_rows(level: u32) -> u32 {
     }
 }
 pub const SOFT_DROP_UNITS: u32 = 0x8000;
-pub const LEVEL_FRAMES: u32 = 15 * 60;
+pub const LEVEL_FRAMES: u32 = 16 * 60;
 
 pub const GRACE_FRAMES: u32 = 32;
 pub const MAX_PUSH_BACKS: u32 = 8;
@@ -65,7 +65,7 @@ pub const RECONNECT_GRACE_SECS: u64 = 120;
 
 pub const RECONNECT_MARGIN_SECS: u64 = 5;
 
-pub const SERVER_BIND_ADDRESS: [u8; 4] = [0, 0, 0, 0];
+pub const SERVER_BIND_ADDRESS: [u8; 4] = [127, 0, 0, 1];
 
 pub const SERVER_URL: &str = "ws://127.0.0.1:8080/ws";
 

@@ -32,8 +32,10 @@ DATABASE_URL=postgres://USER:PASSWORD@localhost/puyorust sqlx migrate run --sour
 ## Lancer le jeu (dev)
 
 ```bash
-# 1) Le serveur (écoute sur ws://0.0.0.0:8080/ws, cf. shared/src/config.rs)
+# 1) Le serveur (écoute sur ws://127.0.0.1:8080/ws, cf. shared/src/config.rs)
 cargo run -p server
+# Pour y accéder depuis une autre machine du réseau local:
+PUYO_BIND=0.0.0.0 cargo run -p server
 
 # 2a) Le client dans le NAVIGATEUR (WASM), servi sur http://localhost:8000
 cd client && trunk serve --port 8000 --address 0.0.0.0

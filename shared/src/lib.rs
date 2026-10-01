@@ -238,7 +238,7 @@ pub struct LobbyInfo {
     pub countdown: Option<u8>,
 }
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 pub const OUTDATED_FRAME: &str = "outdated";
 

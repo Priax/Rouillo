@@ -81,14 +81,17 @@ type LoginAttempts = RateMap;
 const MAX_ATTEMPTS: u32 = 10;
 const WINDOW: Duration = Duration::from_mins(15);
 
-fn is_rate_limited(attempts: &LoginAttempts, username: &str) -> bool {
-    rate_check(attempts, username, MAX_ATTEMPTS, WINDOW)
+fn attempt_key(client: Option<&str>, username: &str) -> String {
+    format!("{}|{username}", client.unwrap_or(""))
 }
-fn record_failure(attempts: &LoginAttempts, username: &str) {
-    rate_record(attempts, username, WINDOW);
+fn is_rate_limited(attempts: &LoginAttempts, key: &str) -> bool {
+    rate_check(attempts, key, MAX_ATTEMPTS, WINDOW)
 }
-fn clear_attempts(attempts: &LoginAttempts, username: &str) {
-    rate_clear(attempts, username);
+fn record_failure(attempts: &LoginAttempts, key: &str) {
+    rate_record(attempts, key, WINDOW);
+}
+fn clear_attempts(attempts: &LoginAttempts, key: &str) {
+    rate_clear(attempts, key);
 }
 
 type IpLimit = RateMap;
@@ -115,7 +118,7 @@ fn client_key(peer: Option<SocketAddr>, forwarded_for: Option<&str>) -> Option<S
     })
 }
 
-fn client_addr() -> impl Filter<Extract = (Option<String>,), Error = std::convert::Infallible> + Clone {
+pub fn client_addr() -> impl Filter<Extract = (Option<String>,), Error = std::convert::Infallible> + Clone {
     warp::addr::remote().and(warp::header::headers_cloned()).map(
         |peer: Option<SocketAddr>, headers: warp::http::HeaderMap| {
             let xff = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
@@ -255,7 +258,8 @@ async fn handle_login(
     client: Option<String>,
     ip_failures: IpLimit,
 ) -> Result<impl Reply, Rejection> {
-    if is_rate_limited(&attempts, &body.username) {
+    let attempt = attempt_key(client.as_deref(), &body.username);
+    if is_rate_limited(&attempts, &attempt) {
         return Err(warp::reject::custom(TooManyRequests));
     }
     if let Some(ip) = &client {
@@ -277,14 +281,14 @@ async fn handle_login(
         .map_err(internal)?;
 
     let (Some(user), true) = (user, ok) else {
-        record_failure(&attempts, &body.username);
+        record_failure(&attempts, &attempt);
         if let Some(ip) = &client {
             rate_record(&ip_failures, ip, WINDOW);
         }
         return Err(warp::reject::custom(Unauthorized));
     };
 
-    clear_attempts(&attempts, &body.username);
+    clear_attempts(&attempts, &attempt);
 
     let token = db::create_session(&pool, user.id).await.map_err(internal)?;
 

@@ -50,6 +50,7 @@ impl FriendCheck {
 const JOIN_UNAVAILABLE: &str = "Room indisponible";
 const JOIN_FRIENDS_ONLY: &str = "Cette room est réservée aux amis de l'hôte.";
 const JOIN_MAINTENANCE: &str = "Le serveur redémarre, réessaie dans un instant.";
+const JOIN_SAME_ACCOUNT: &str = "Ce compte est déjà dans cette room.";
 
 pub struct Manager {
     pub rooms: HashMap<RoomId, Room>,
@@ -302,8 +303,12 @@ impl Manager {
             self.join_failed(conn, JOIN_UNAVAILABLE);
             return;
         }
-        self.leave_current(conn);
         let user_id = self.conn_user_id.get(&conn).copied();
+        if user_id.is_some() && self.rooms[&id].members.iter().any(|m| m.user_id == user_id) {
+            self.join_failed(conn, JOIN_SAME_ACCOUNT);
+            return;
+        }
+        self.leave_current(conn);
         if let Some(room) = self.rooms.get_mut(&id) {
             room.members.push(Member {
                 token,

@@ -182,7 +182,11 @@ pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), 
         .await?;
     }
 
-    if let (Some(uid0), Some(uid1)) = (rec.user_ids[0], rec.user_ids[1]) {
+    let ranked = match rec.user_ids {
+        [Some(a), Some(b)] if a != b => Some((a, b)),
+        _ => None,
+    };
+    if let Some((uid0, uid1)) = ranked {
         let elo0 = sqlx::query_scalar::<_, i32>("SELECT elo FROM users WHERE id = $1 FOR UPDATE")
             .bind(uid0)
             .fetch_one(&mut *tx)
