@@ -545,7 +545,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "client"
-version = "0.8.28"
+version = "0.8.29"
 dependencies = [
  "ab_glyph",
  "ehttp",
@@ -3824,7 +3824,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.8.28"
+version = "0.8.29"
 dependencies = [
  "argon2",
  "chrono",
@@ -3923,7 +3923,7 @@ dependencies = [
 
 [[package]]
 name = "shared"
-version = "0.8.28"
+version = "0.8.29"
 dependencies = [
  "bitcode",
  "criterion",
