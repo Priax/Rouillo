@@ -250,13 +250,15 @@ async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::Sender<Command
                                 last_disconnect_reason,
                             } => {
                                 greeted = true;
-                                let user = match auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok()) {
+                                let session = auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok());
+                                let user = match session {
                                     Some(token_uuid) => db::find_user_by_token(&pool, token_uuid).await.ok().flatten(),
                                     None => None,
                                 };
                                 Command::Hello {
                                     conn,
                                     token: player_id,
+                                    session: session.filter(|_| user.is_some()),
                                     user_id: user.as_ref().map(|u| u.id),
                                     username: user.map(|u| u.username),
                                     last_disconnect_reason: last_disconnect_reason.as_deref().map(log_safe),
@@ -282,6 +284,8 @@ async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::Sender<Command
                                 conn,
                                 target_user_id: user_id,
                             },
+                            ClientMessage::JoinQueue => Command::JoinQueue { conn },
+                            ClientMessage::LeaveQueue => Command::LeaveQueue { conn },
                         };
                         if cmd_tx_recv.send(cmd).await.is_err() {
                             break;

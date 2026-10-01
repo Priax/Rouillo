@@ -1,10 +1,8 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use argon2::{password_hash, Argon2, PasswordHasher, PasswordVerifier};
 use chrono::{DateTime, Utc};
-use password_hash::rand_core::OsRng;
-use password_hash::SaltString;
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
@@ -36,11 +34,7 @@ where
 
 pub fn dummy_hash() -> &'static str {
     DUMMY_HASH.get_or_init(|| {
-        let salt = SaltString::generate(&mut OsRng);
-        Argon2::default()
-            .hash_password(b"dummy_placeholder_never_matches_any_real_password", &salt)
-            .expect("argon2 dummy hash init failed")
-            .to_string()
+        hash_password("dummy_placeholder_never_matches_any_real_password").expect("argon2 dummy hash init failed")
     })
 }
 
@@ -98,10 +92,7 @@ pub async fn find_user_by_username(pool: &DbPool, username: &str) -> Result<Opti
 }
 
 pub fn verify_password(password: &str, hash: &str) -> bool {
-    let Ok(parsed) = PasswordHash::new(hash) else {
-        return false;
-    };
-    Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok()
+    Argon2::default().verify_password(password.as_bytes(), hash).is_ok()
 }
 
 pub async fn create_session(pool: &DbPool, user_id: Uuid) -> Result<Uuid, sqlx::Error> {
@@ -162,15 +153,15 @@ pub async fn delete_user(pool: &DbPool, user_id: Uuid) -> Result<(), sqlx::Error
 }
 
 pub fn hash_password(password: &str) -> Result<String, password_hash::Error> {
-    let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map(|h| h.to_string())
 }
 
 pub struct MatchRecord {
+    pub ranked: bool,
     pub duration_secs: f64,
-    pub winner_slot: u8,
+    pub winner_slot: Option<u8>,
     pub user_ids: [Option<Uuid>; 2],
     pub max_chain: [u32; 2],
     pub total_chains: [u32; 2],
@@ -183,14 +174,15 @@ pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), 
     let mut tx = pool.begin().await?;
 
     let match_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO matches (duration_secs, player1_id, player2_id, winner_slot) \
-         VALUES ($1, (SELECT id FROM users WHERE id = $2), (SELECT id FROM users WHERE id = $3), $4) \
+        "INSERT INTO matches (duration_secs, player1_id, player2_id, winner_slot, ranked) \
+         VALUES ($1, (SELECT id FROM users WHERE id = $2), (SELECT id FROM users WHERE id = $3), $4, $5) \
          RETURNING id",
     )
     .bind(rec.duration_secs)
     .bind(rec.user_ids[0])
     .bind(rec.user_ids[1])
-    .bind(rec.winner_slot as i16)
+    .bind(rec.winner_slot.map(i16::from))
+    .bind(rec.ranked)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -216,44 +208,49 @@ pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), 
         .await?;
     }
 
-    let ranked = match rec.user_ids {
-        [Some(a), Some(b)] if a != b => Some((a, b)),
-        _ => None,
-    };
-    if let Some((uid0, uid1)) = ranked {
-        let elo0 = sqlx::query_scalar::<_, i32>("SELECT elo FROM users WHERE id = $1 FOR UPDATE")
-            .bind(uid0)
-            .fetch_optional(&mut *tx)
-            .await?;
-        let elo1 = sqlx::query_scalar::<_, i32>("SELECT elo FROM users WHERE id = $1 FOR UPDATE")
-            .bind(uid1)
-            .fetch_optional(&mut *tx)
-            .await?;
-        let (Some(elo0), Some(elo1)) = (elo0, elo1) else {
-            return tx.commit().await;
-        };
-        debug_assert!(
-            rec.winner_slot >= 1,
-            "winner_slot must be 1 or 2, got {}",
-            rec.winner_slot
-        );
-        let [new0, new1] = compute_elo(elo0, elo1, rec.winner_slot as usize - 1);
-        sqlx::query("UPDATE users SET elo = $2 WHERE id = $1")
-            .bind(uid0)
-            .bind(new0)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("UPDATE users SET elo = $2 WHERE id = $1")
-            .bind(uid1)
-            .bind(new1)
-            .execute(&mut *tx)
-            .await?;
-    }
-
     tx.commit().await
 }
 
-fn compute_elo(elo0: i32, elo1: i32, winner: usize) -> [i32; 2] {
+pub async fn record_series(pool: &DbPool, winner: Uuid, loser: Uuid) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "INSERT INTO ranked_series (winner_id, loser_id) \
+         VALUES ((SELECT id FROM users WHERE id = $1), (SELECT id FROM users WHERE id = $2))",
+    )
+    .bind(winner)
+    .bind(loser)
+    .execute(&mut *tx)
+    .await?;
+    let elo = |id: Uuid| sqlx::query_scalar::<_, i32>("SELECT elo FROM users WHERE id = $1 FOR UPDATE").bind(id);
+    let w = elo(winner).fetch_optional(&mut *tx).await?;
+    let l = elo(loser).fetch_optional(&mut *tx).await?;
+    let (Some(w), Some(l)) = (w, l) else {
+        return tx.commit().await;
+    };
+    let [new_w, new_l] = compute_elo(w, l, 0);
+    for (id, new) in [(winner, new_w), (loser, new_l)] {
+        sqlx::query("UPDATE users SET elo = $2 WHERE id = $1")
+            .bind(id)
+            .bind(new)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await
+}
+
+pub async fn ranked_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<(i32, i64)>, sqlx::Error> {
+    sqlx::query_as::<_, (i32, i64)>(
+        "SELECT u.elo, \
+                (SELECT COUNT(*) FROM matches m \
+                 WHERE NOT m.ranked AND (m.player1_id = u.id OR m.player2_id = u.id)) \
+         FROM users u WHERE u.id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub fn compute_elo(elo0: i32, elo1: i32, winner: usize) -> [i32; 2] {
     const K: f64 = 32.0;
     let expected0 = 1.0 / (1.0 + 10f64.powf((elo1 - elo0) as f64 / 400.0));
     let actual0 = if winner == 0 { 1.0 } else { 0.0 };
@@ -292,6 +289,10 @@ pub struct UserProfileRow {
     pub created_at: DateTime<Utc>,
     pub total_matches: i64,
     pub wins: i64,
+    pub casual_matches: i64,
+    pub casual_wins: i64,
+    pub ranked_series: i64,
+    pub ranked_series_won: i64,
     pub all_time_max_chain: i32,
     pub total_nuisance_sent: i64,
     pub total_all_clears: i64,
@@ -308,15 +309,21 @@ pub async fn get_user_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<Use
     sqlx::query_as::<_, UserProfileRow>(
         "SELECT u.id, u.username, u.bio, u.favorite_music, u.avatar_url, u.banner_url, u.elo, u.created_at,
                 COUNT(DISTINCT m.id)::bigint AS total_matches,
-                COUNT(DISTINCT CASE WHEN
-                    (m.winner_slot = 1 AND m.player1_id = u.id) OR
-                    (m.winner_slot = 2 AND m.player2_id = u.id)
-                    THEN m.id END)::bigint AS wins,
+                COUNT(DISTINCT m.id) FILTER (WHERE m.won)::bigint AS wins,
+                COUNT(DISTINCT m.id) FILTER (WHERE NOT m.ranked)::bigint AS casual_matches,
+                COUNT(DISTINCT m.id) FILTER (WHERE NOT m.ranked AND m.won)::bigint AS casual_wins,
+                (SELECT COUNT(*) FROM ranked_series s
+                 WHERE s.winner_id = u.id OR s.loser_id = u.id)::bigint AS ranked_series,
+                (SELECT COUNT(*) FROM ranked_series s WHERE s.winner_id = u.id)::bigint AS ranked_series_won,
                 COALESCE(MAX(ms.max_chain)::int, 0) AS all_time_max_chain,
                 COALESCE(SUM(ms.nuisance_sent)::bigint, 0) AS total_nuisance_sent,
                 COALESCE(SUM(ms.all_clears)::bigint, 0) AS total_all_clears
          FROM users u
-         LEFT JOIN matches m ON m.player1_id = u.id OR m.player2_id = u.id
+         LEFT JOIN (
+             SELECT m.*, (m.winner_slot = 1 AND m.player1_id = $1) OR (m.winner_slot = 2 AND m.player2_id = $1) AS won
+             FROM matches m
+             WHERE m.player1_id = $1 OR m.player2_id = $1
+         ) m ON true
          LEFT JOIN match_stats ms ON ms.match_id = m.id AND ms.user_id = u.id
          WHERE u.id = $1
          GROUP BY u.id",
@@ -331,7 +338,8 @@ pub struct MatchRow {
     pub id: Uuid,
     pub played_at: DateTime<Utc>,
     pub duration_secs: f64,
-    pub winner_slot: i16,
+    pub winner_slot: Option<i16>,
+    pub ranked: bool,
     pub player1_id: Option<Uuid>,
     pub player2_id: Option<Uuid>,
     pub player1_username: Option<String>,
@@ -373,6 +381,12 @@ pub struct FriendList {
 pub async fn send_friend_request(pool: &DbPool, requester: Uuid, target: Uuid) -> Result<(), FriendshipError> {
     if requester == target {
         return Err(FriendshipError::SelfRequest);
+    }
+    if accept_friend_request(pool, requester, target)
+        .await
+        .map_err(FriendshipError::Db)?
+    {
+        return Ok(());
     }
     match sqlx::query("INSERT INTO friendships (user_id, friend_id) VALUES ($1, $2)")
         .bind(requester)
@@ -484,9 +498,14 @@ pub async fn are_friends(pool: &DbPool, user_a: Uuid, user_b: Uuid) -> Result<bo
     .await
 }
 
-pub async fn get_match_history(pool: &DbPool, user_id: Uuid, limit: i64) -> Result<Vec<MatchRow>, sqlx::Error> {
+pub async fn get_match_history(
+    pool: &DbPool,
+    user_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<MatchRow>, sqlx::Error> {
     sqlx::query_as::<_, MatchRow>(
-        "SELECT m.id, m.played_at, m.duration_secs, m.winner_slot,
+        "SELECT m.id, m.played_at, m.duration_secs, m.winner_slot, m.ranked,
                 m.player1_id, m.player2_id,
                 u1.username AS player1_username,
                 u2.username AS player2_username,
@@ -508,11 +527,58 @@ pub async fn get_match_history(pool: &DbPool, user_id: Uuid, limit: i64) -> Resu
          LEFT JOIN match_stats ms1 ON ms1.match_id = m.id AND ms1.slot = 1
          LEFT JOIN match_stats ms2 ON ms2.match_id = m.id AND ms2.slot = 2
          WHERE m.player1_id = $1 OR m.player2_id = $1
-         ORDER BY m.played_at DESC
-         LIMIT $2",
+         ORDER BY m.played_at DESC, m.id
+         LIMIT $2 OFFSET $3",
     )
     .bind(user_id)
     .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Made by argon2 0.5, as every password stored before the upgrade.
+    const STORED: &str =
+        "$argon2id$v=19$m=19456,t=2,p=1$PT4Gs+vVXAjApAmsHtnjnQ$SrDhbhp7xoB+zb+HlNQMxiNhNBeEY8RVLFaN1BgnBTA";
+
+    #[test]
+    fn passwords_stored_before_the_upgrade_still_verify() {
+        assert!(verify_password("password123", STORED));
+        assert!(!verify_password("password124", STORED));
+    }
+
+    #[test]
+    fn a_new_hash_keeps_the_same_algorithm_and_cost() {
+        let hash = hash_password("password123").unwrap();
+        assert!(hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"), "{hash}");
+        assert!(verify_password("password123", &hash));
+        assert_ne!(
+            hash,
+            hash_password("password123").unwrap(),
+            "each hash gets its own salt"
+        );
+    }
+
+    #[test]
+    fn a_hash_is_checked_with_its_own_costs_not_the_current_defaults() {
+        use argon2::{CustomizedPasswordHasher, Params};
+        let cheaper = Params::new(8192, 1, 1, None).unwrap();
+        let hash = Argon2::default()
+            .hash_password_customized(b"password123", b"somesaltsomesalt", None, None, cheaper)
+            .unwrap()
+            .to_string();
+        assert!(hash.contains("m=8192,t=1,p=1"), "{hash}");
+        assert!(verify_password("password123", &hash));
+        assert!(!verify_password("password124", &hash));
+    }
+
+    #[test]
+    fn a_malformed_hash_never_verifies() {
+        assert!(!verify_password("password123", "not a hash"));
+        assert!(!verify_password("", ""));
+    }
 }

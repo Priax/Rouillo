@@ -104,6 +104,24 @@ fn run_side_effects(mgr: &mut Manager, pool: &db::DbPool, cmd_tx: &mpsc::Sender<
             }
         });
     }
+    for (winner, loser) in mgr.take_unsaved_series() {
+        let pool = pool.clone();
+        saves.spawn(async move {
+            if let Err(e) = db::record_series(&pool, winner, loser).await {
+                error!("Series save: {e}");
+            }
+        });
+    }
+    for check in mgr.take_ranked_checks() {
+        let (pool, cmd_tx) = (pool.clone(), cmd_tx.clone());
+        tokio::spawn(async move {
+            let profile = db::ranked_profile(&pool, check.user_id).await.unwrap_or_else(|e| {
+                error!("Ranked check: {e}");
+                None
+            });
+            let _ = cmd_tx.send(Command::RankedCheckDone { check, profile }).await;
+        });
+    }
     for check in mgr.take_friend_checks() {
         let (pool, cmd_tx) = (pool.clone(), cmd_tx.clone());
         tokio::spawn(async move {
@@ -245,8 +263,8 @@ async fn main() {
         }
     });
 
-    let routes = ws_route(cmd_tx, pool.clone())
-        .or(auth::routes(pool))
+    let routes = ws_route(cmd_tx.clone(), pool.clone())
+        .or(auth::routes(pool, cmd_tx))
         .recover(auth::handle_rejection)
         .with(warp::log::custom(|info| {
             if info.status() == warp::http::StatusCode::SWITCHING_PROTOCOLS {
@@ -272,5 +290,7 @@ async fn main() {
     }
 }
 
+#[cfg(test)]
+mod db_tests;
 #[cfg(test)]
 mod tests;

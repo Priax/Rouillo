@@ -1,4 +1,4 @@
-use shared::{GameState, LobbyInfo, RoomId, RoomInfo, RoomSettings, ServerMessage};
+use shared::{GameState, LobbyInfo, RankedInfo, RoomId, RoomInfo, RoomSettings, ServerMessage};
 use tokio::time::Instant;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -19,6 +19,21 @@ pub struct Member {
     pub user_id: Option<Uuid>,
 }
 
+pub struct Series {
+    pub users: [Uuid; 2],
+    pub names: [String; 2],
+    pub elos: [i32; 2],
+    pub wins: [u8; 2],
+    pub next_game_at: Option<Instant>,
+    pub result: Option<SeriesResult>,
+}
+
+#[derive(Clone, Copy)]
+pub struct SeriesResult {
+    pub winner: Option<usize>,
+    pub elo_changes: [i32; 2],
+}
+
 pub struct Room {
     pub id: RoomId,
     pub name: String,
@@ -27,6 +42,7 @@ pub struct Room {
     pub settings: RoomSettings,
     pub phase: Phase,
     pub sim: Sim,
+    pub series: Option<Series>,
 }
 
 impl Room {
@@ -83,17 +99,19 @@ impl Room {
             self.sim.record_stats();
             if self.sim.boards.iter().any(|b| b.state == GameState::GameOver) {
                 self.sim.finished = true;
-                let winner_slot = if self.sim.boards[0].state == GameState::GameOver
-                    && self.sim.boards[1].state != GameState::GameOver
-                {
-                    2u8
-                } else {
-                    1u8
+                let lost = self.sim.boards.each_ref().map(|b| b.state == GameState::GameOver);
+                let winner_slot = match lost {
+                    [true, true] => None,
+                    [true, false] => Some(2),
+                    _ => Some(1),
                 };
                 let rec = self.match_record(winner_slot);
                 info!(
-                    "Match terminé room #{} → slot {winner_slot} gagne ({:.0}s, inputs en retard {:?})",
-                    self.id, rec.duration_secs, self.sim.late_inputs
+                    "Match terminé room #{} → {} ({:.0}s, inputs en retard {:?})",
+                    self.id,
+                    winner_slot.map_or_else(|| "égalité".to_string(), |w| format!("slot {w} gagne")),
+                    rec.duration_secs,
+                    self.sim.late_inputs
                 );
                 record = Some(rec);
             }
@@ -140,6 +158,11 @@ impl Room {
                 Phase::CountingDown(t) => Some(t.ceil() as u8),
                 _ => None,
             },
+            ranked: self.series.as_ref().map(|s| RankedInfo {
+                opponent: s.names[1 - idx].clone(),
+                opponent_elo: s.elos[1 - idx],
+                wins: s.wins,
+            }),
         }
     }
 
@@ -147,8 +170,9 @@ impl Room {
         matches!(self.phase, Phase::Playing) && !self.sim.finished
     }
 
-    fn match_record(&self, winner_slot: u8) -> db::MatchRecord {
+    fn match_record(&self, winner_slot: Option<u8>) -> db::MatchRecord {
         db::MatchRecord {
+            ranked: self.series.is_some(),
             duration_secs: self.sim.start.elapsed().as_secs_f64(),
             winner_slot,
             user_ids: [
@@ -170,7 +194,7 @@ impl Room {
         let winner = 1 - slot;
         self.members[winner].conn?;
         self.sim.finished = true;
-        Some(self.match_record((winner + 1) as u8))
+        Some(self.match_record(Some((winner + 1) as u8)))
     }
 
     pub fn info(&self) -> RoomInfo {
