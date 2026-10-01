@@ -63,12 +63,24 @@ cargo run -p client
 ## Tests
 
 ```bash
-cargo test --workspace            # toute la suite (28 tests ; le test de charge est ignoré)
-cargo test -p shared              # 18 tests cœur de simulation + protocole
-cargo test -p server              # 10 tests machine d'états (rooms / reconnexion)
+cargo test --workspace            # toute la suite (tests de base et de charge ignorés)
+cargo test -p shared              # cœur de simulation + protocole
+cargo test -p server              # rooms, reconnexion, classé, routes HTTP
 
 cargo test -p shared four_connected      # filtrer par sous-chaîne du nom
 cargo test -p server -- --nocapture      # voir les println! des tests
+```
+
+### Tests de la base (opt-in, Postgres requis)
+
+Chaque test crée sa propre base jetable (`#[sqlx::test]`) et la supprime s'il réussit.
+`DATABASE_URL` ne sert que de point d'entrée: une base dédiée, jamais celle de dev
+(sqlx y range un schéma `_sqlx_test`). La CI les lance avec un service Postgres.
+
+```bash
+createdb puyorust_test   # une seule fois
+DATABASE_URL=postgres://priax@%2Fvar%2Frun%2Fpostgresql/puyorust_test \
+  cargo test -p server db_ -- --ignored
 ```
 
 ### Test de charge (perf, opt-in, à lancer en release)
