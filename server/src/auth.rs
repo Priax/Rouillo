@@ -5,40 +5,104 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use tracing::error;
 use uuid::Uuid;
+use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
 
 use crate::db::{self, DbPool};
+use crate::manager::Command;
 
-#[derive(Debug)]
-struct BadRequest(String);
-impl warp::reject::Reject for BadRequest {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApiError {
+    BadUsername,
+    BadPassword,
+    BadQuery,
+    BioTooLong,
+    MusicTooLong,
+    SelfFriendRequest,
+    Unauthorized,
+    BadCredentials,
+    WrongPassword,
+    NotFound,
+    UsernameTaken,
+    FriendRequestExists,
+    TooManyRequests,
+    InvalidBody,
+    Internal,
+}
 
-#[derive(Debug)]
-struct Unauthorized;
-impl warp::reject::Reject for Unauthorized {}
+impl warp::reject::Reject for ApiError {}
 
-#[derive(Debug)]
-struct WrongPassword;
-impl warp::reject::Reject for WrongPassword {}
+impl ApiError {
+    const fn status(self) -> StatusCode {
+        match self {
+            Self::BadUsername
+            | Self::BadPassword
+            | Self::BadQuery
+            | Self::BioTooLong
+            | Self::MusicTooLong
+            | Self::SelfFriendRequest
+            | Self::InvalidBody => StatusCode::BAD_REQUEST,
+            Self::Unauthorized | Self::BadCredentials => StatusCode::UNAUTHORIZED,
+            Self::WrongPassword => StatusCode::FORBIDDEN,
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::UsernameTaken | Self::FriendRequestExists => StatusCode::CONFLICT,
+            Self::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
+            Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
 
-#[derive(Debug)]
-struct Conflict(String);
-impl warp::reject::Reject for Conflict {}
+    const fn code(self) -> &'static str {
+        match self {
+            Self::BadUsername => "bad_username",
+            Self::BadPassword => "bad_password",
+            Self::BadQuery => "bad_query",
+            Self::BioTooLong => "bio_too_long",
+            Self::MusicTooLong => "music_too_long",
+            Self::SelfFriendRequest => "self_friend_request",
+            Self::Unauthorized => "unauthorized",
+            Self::BadCredentials => "bad_credentials",
+            Self::WrongPassword => "wrong_password",
+            Self::NotFound => "not_found",
+            Self::UsernameTaken => "username_taken",
+            Self::FriendRequestExists => "friend_request_exists",
+            Self::TooManyRequests => "too_many_requests",
+            Self::InvalidBody => "invalid_body",
+            Self::Internal => "internal",
+        }
+    }
 
-#[derive(Debug)]
-struct InternalError;
-impl warp::reject::Reject for InternalError {}
+    const fn message(self) -> &'static str {
+        match self {
+            Self::BadUsername => "Username must be 3-24 alphanumeric characters or underscores",
+            Self::BadPassword => "Password must be 8 to 1024 bytes long",
+            Self::BadQuery => "'limit' and 'offset' must be non-negative integers",
+            Self::BioTooLong => "Bio must be 500 characters or less",
+            Self::MusicTooLong => "Favorite music must be 200 characters or less",
+            Self::SelfFriendRequest => "Cannot send a friend request to yourself",
+            Self::Unauthorized => "Unauthorized",
+            Self::BadCredentials => "Wrong username or password",
+            Self::WrongPassword => "Wrong password",
+            Self::NotFound => "Not found",
+            Self::UsernameTaken => "Username already taken",
+            Self::FriendRequestExists => "Friend request already exists",
+            Self::TooManyRequests => "Too many requests, please try again later",
+            Self::InvalidBody => "Invalid request body",
+            Self::Internal => "Internal server error",
+        }
+    }
+}
+
+fn reject(e: ApiError) -> Rejection {
+    warp::reject::custom(e)
+}
 
 fn internal<E: std::fmt::Display>(e: E) -> Rejection {
     error!("{e}");
-    warp::reject::custom(InternalError)
+    reject(ApiError::Internal)
 }
-
-#[derive(Debug)]
-struct TooManyRequests;
-impl warp::reject::Reject for TooManyRequests {}
 
 type RateMap = Arc<Mutex<HashMap<String, (u32, Instant)>>>;
 
@@ -46,24 +110,7 @@ fn new_rate_map() -> RateMap {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
-fn rate_check(map: &RateMap, key: &str, max: u32, window: Duration) -> bool {
-    let mut m = map.lock().unwrap();
-    let now = Instant::now();
-    match m.get(key) {
-        Some((count, since)) if now.duration_since(*since) < window => *count >= max,
-        Some(_) => {
-            m.remove(key);
-            false
-        }
-        None => false,
-    }
-}
-
-#[allow(
-    clippy::significant_drop_tightening,
-    reason = "the lock is needed until the last statement, which writes the entry"
-)]
-fn rate_record(map: &RateMap, key: &str, window: Duration) {
+fn rate_take(map: &RateMap, key: &str, max: u32, window: Duration) -> bool {
     let now = Instant::now();
     let mut m = map.lock().unwrap();
     if m.len() > 500 {
@@ -71,9 +118,18 @@ fn rate_record(map: &RateMap, key: &str, window: Duration) {
     }
     let entry = m.entry(key.to_owned()).or_insert((0, now));
     if now.duration_since(entry.1) >= window {
-        *entry = (1, now);
-    } else {
-        entry.0 += 1;
+        *entry = (0, now);
+    }
+    if entry.0 >= max {
+        return false;
+    }
+    entry.0 += 1;
+    true
+}
+
+fn rate_refund(map: &RateMap, key: &str) {
+    if let Some(entry) = map.lock().unwrap().get_mut(key) {
+        entry.0 = entry.0.saturating_sub(1);
     }
 }
 
@@ -81,25 +137,54 @@ fn rate_clear(map: &RateMap, key: &str) {
     map.lock().unwrap().remove(key);
 }
 
-type LoginAttempts = RateMap;
 const MAX_ATTEMPTS: u32 = 10;
 const WINDOW: Duration = Duration::from_mins(15);
+const MAX_LOGIN_FAILURES_PER_IP: u32 = 30;
+const MAX_FAILURES_PER_ACCOUNT: u32 = 100;
+const ACCOUNT_WINDOW: Duration = Duration::from_hours(1);
+
+#[derive(Clone, Default)]
+struct LoginLimits {
+    pairs: RateMap,
+    ips: RateMap,
+    accounts: RateMap,
+}
+
+impl LoginLimits {
+    fn counters<'a>(
+        &'a self,
+        pair: &'a str,
+        ip: Option<&'a str>,
+        username: &'a str,
+    ) -> Vec<(&'a RateMap, &'a str, u32, Duration)> {
+        let mut counters = vec![
+            (&self.pairs, pair, MAX_ATTEMPTS, WINDOW),
+            (&self.accounts, username, MAX_FAILURES_PER_ACCOUNT, ACCOUNT_WINDOW),
+        ];
+        if let Some(ip) = ip {
+            counters.push((&self.ips, ip, MAX_LOGIN_FAILURES_PER_IP, WINDOW));
+        }
+        counters
+    }
+}
+
+fn reserve(counters: &[(&RateMap, &str, u32, Duration)]) -> bool {
+    for (i, &(map, key, max, window)) in counters.iter().enumerate() {
+        if !rate_take(map, key, max, window) {
+            for &(map, key, ..) in &counters[..i] {
+                rate_refund(map, key);
+            }
+            return false;
+        }
+    }
+    true
+}
 
 fn attempt_key(client: Option<&str>, username: &str) -> String {
     format!("{}|{username}", client.unwrap_or(""))
 }
-fn is_rate_limited(attempts: &LoginAttempts, key: &str) -> bool {
-    rate_check(attempts, key, MAX_ATTEMPTS, WINDOW)
-}
-fn record_failure(attempts: &LoginAttempts, key: &str) {
-    rate_record(attempts, key, WINDOW);
-}
-fn clear_attempts(attempts: &LoginAttempts, key: &str) {
-    rate_clear(attempts, key);
-}
 
 type IpLimit = RateMap;
-const MAX_LOGIN_FAILURES_PER_IP: u32 = 30;
 const MAX_REGISTRATIONS_PER_IP: u32 = 10;
 const REGISTER_WINDOW: Duration = Duration::from_secs(3600);
 
@@ -199,7 +284,7 @@ fn bearer_token() -> impl Filter<Extract = (Uuid,), Error = Rejection> + Clone {
         h.as_deref()
             .and_then(|v| v.strip_prefix("Bearer "))
             .and_then(|t| Uuid::parse_str(t).ok())
-            .ok_or_else(|| warp::reject::custom(Unauthorized))
+            .ok_or_else(|| reject(ApiError::Unauthorized))
     })
 }
 
@@ -215,7 +300,7 @@ fn authed_session(pool: DbPool) -> impl Filter<Extract = ((db::User, Uuid),), Er
                 .await
                 .map_err(internal)?
                 .map(|user| (user, token))
-                .ok_or_else(|| warp::reject::custom(Unauthorized))
+                .ok_or_else(|| reject(ApiError::Unauthorized))
         })
 }
 
@@ -236,26 +321,21 @@ async fn handle_register(
     registrations: IpLimit,
 ) -> Result<impl Reply, Rejection> {
     if !validate_username(&body.username) {
-        return Err(warp::reject::custom(BadRequest(
-            "Username must be 3-24 alphanumeric characters or underscores".into(),
-        )));
+        return Err(reject(ApiError::BadUsername));
     }
     if !validate_password(&body.password) {
-        return Err(warp::reject::custom(BadRequest(
-            "Password must be at least 8 characters".into(),
-        )));
+        return Err(reject(ApiError::BadPassword));
     }
     if let Some(ip) = &client {
-        if rate_check(&registrations, ip, MAX_REGISTRATIONS_PER_IP, REGISTER_WINDOW) {
-            return Err(warp::reject::custom(TooManyRequests));
+        if !rate_take(&registrations, ip, MAX_REGISTRATIONS_PER_IP, REGISTER_WINDOW) {
+            return Err(reject(ApiError::TooManyRequests));
         }
-        rate_record(&registrations, ip, REGISTER_WINDOW);
     }
 
     let user = match db::create_user(&pool, &body.username, &body.password).await {
         Ok(u) => u,
         Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("23505") => {
-            return Err(warp::reject::custom(Conflict("Username already taken".into())));
+            return Err(reject(ApiError::UsernameTaken));
         }
         Err(e) => return Err(internal(e)),
     };
@@ -276,18 +356,16 @@ async fn handle_register(
 async fn handle_login(
     body: LoginBody,
     pool: DbPool,
-    attempts: LoginAttempts,
+    limits: LoginLimits,
     client: Option<String>,
-    ip_failures: IpLimit,
 ) -> Result<impl Reply, Rejection> {
-    let attempt = attempt_key(client.as_deref(), &body.username);
-    if is_rate_limited(&attempts, &attempt) {
-        return Err(warp::reject::custom(TooManyRequests));
+    if !validate_username(&body.username) {
+        return Err(reject(ApiError::BadCredentials));
     }
-    if let Some(ip) = &client {
-        if rate_check(&ip_failures, ip, MAX_LOGIN_FAILURES_PER_IP, WINDOW) {
-            return Err(warp::reject::custom(TooManyRequests));
-        }
+    let pair = attempt_key(client.as_deref(), &body.username);
+    let counters = limits.counters(&pair, client.as_deref(), &body.username);
+    if !reserve(&counters) {
+        return Err(reject(ApiError::TooManyRequests));
     }
 
     let user = db::find_user_by_username(&pool, &body.username)
@@ -303,14 +381,13 @@ async fn handle_login(
         .map_err(internal)?;
 
     let (Some(user), true) = (user, ok) else {
-        record_failure(&attempts, &attempt);
-        if let Some(ip) = &client {
-            rate_record(&ip_failures, ip, WINDOW);
-        }
-        return Err(warp::reject::custom(Unauthorized));
+        return Err(reject(ApiError::BadCredentials));
     };
 
-    clear_attempts(&attempts, &attempt);
+    for &(map, key, ..) in &counters {
+        rate_refund(map, key);
+    }
+    rate_clear(&limits.pairs, &pair);
 
     let token = db::create_session(&pool, user.id).await.map_err(internal)?;
 
@@ -329,16 +406,15 @@ async fn handle_logout(token: Uuid, pool: DbPool) -> Result<impl Reply, Rejectio
 
 async fn check_password(user: &db::User, password: String, checks: &PasswordChecks) -> Result<(), Rejection> {
     let key = user.id.to_string();
-    if rate_check(checks, &key, MAX_ATTEMPTS, WINDOW) {
-        return Err(warp::reject::custom(TooManyRequests));
+    if !rate_take(checks, &key, MAX_ATTEMPTS, WINDOW) {
+        return Err(reject(ApiError::TooManyRequests));
     }
     let hash = user.password_hash().to_owned();
     let ok = db::run_hash(move || db::verify_password(&password, &hash))
         .await
         .map_err(internal)?;
     if !ok {
-        rate_record(checks, &key, WINDOW);
-        return Err(warp::reject::custom(WrongPassword));
+        return Err(reject(ApiError::WrongPassword));
     }
     rate_clear(checks, &key);
     Ok(())
@@ -349,11 +425,10 @@ async fn handle_change_password(
     body: ChangePasswordBody,
     pool: DbPool,
     checks: PasswordChecks,
+    cmd_tx: mpsc::Sender<Command>,
 ) -> Result<impl Reply, Rejection> {
     if !validate_password(&body.new) {
-        return Err(warp::reject::custom(BadRequest(
-            "Password must be at least 8 characters".into(),
-        )));
+        return Err(reject(ApiError::BadPassword));
     }
     check_password(&user, body.current, &checks).await?;
     let new = body.new;
@@ -362,64 +437,74 @@ async fn handle_change_password(
         .map_err(internal)?
         .map_err(internal)?;
     db::set_password(&pool, user.id, hash, token).await.map_err(internal)?;
+    revoke(&cmd_tx, user.id, token).await;
     Ok(warp::reply::json(&serde_json::json!({})))
 }
 
-async fn handle_logout_all(user: db::User, pool: DbPool) -> Result<impl Reply, Rejection> {
+async fn handle_logout_all(
+    (user, token): (db::User, Uuid),
+    pool: DbPool,
+    cmd_tx: mpsc::Sender<Command>,
+) -> Result<impl Reply, Rejection> {
     db::delete_user_sessions(&pool, user.id).await.map_err(internal)?;
+    revoke(&cmd_tx, user.id, token).await;
     Ok(warp::reply::json(&serde_json::json!({})))
 }
 
 async fn handle_delete_account(
-    user: db::User,
+    (user, token): (db::User, Uuid),
     body: DeleteAccountBody,
     pool: DbPool,
     checks: PasswordChecks,
+    cmd_tx: mpsc::Sender<Command>,
 ) -> Result<impl Reply, Rejection> {
     check_password(&user, body.password, &checks).await?;
     db::delete_user(&pool, user.id).await.map_err(internal)?;
+    revoke(&cmd_tx, user.id, token).await;
     Ok(warp::reply::json(&serde_json::json!({})))
 }
 
+async fn revoke(cmd_tx: &mpsc::Sender<Command>, user_id: Uuid, keep: Uuid) {
+    let _ = cmd_tx
+        .send(Command::Revoke {
+            user_id,
+            keep: Some(keep),
+        })
+        .await;
+}
+
+impl From<db::User> for UserProfile {
+    fn from(user: db::User) -> Self {
+        Self {
+            id: user.id,
+            username: user.username,
+            bio: user.bio,
+            favorite_music: user.favorite_music,
+            avatar_url: user.avatar_url,
+            banner_url: user.banner_url,
+            elo: user.elo,
+            created_at: user.created_at,
+        }
+    }
+}
+
 async fn handle_me(user: db::User) -> Result<impl Reply, Rejection> {
-    Ok(warp::reply::json(&UserProfile {
-        id: user.id,
-        username: user.username,
-        bio: user.bio,
-        favorite_music: user.favorite_music,
-        avatar_url: user.avatar_url,
-        banner_url: user.banner_url,
-        elo: user.elo,
-        created_at: user.created_at,
-    }))
+    Ok(warp::reply::json(&UserProfile::from(user)))
 }
 
 async fn handle_patch_me(user: db::User, body: PatchMeBody, pool: DbPool) -> Result<impl Reply, Rejection> {
     if body.bio.as_deref().is_some_and(|s| s.chars().count() > 500) {
-        return Err(warp::reject::custom(BadRequest(
-            "Bio must be 500 characters or less".into(),
-        )));
+        return Err(reject(ApiError::BioTooLong));
     }
     if body.favorite_music.as_deref().is_some_and(|s| s.chars().count() > 200) {
-        return Err(warp::reject::custom(BadRequest(
-            "Favorite music must be 200 characters or less".into(),
-        )));
+        return Err(reject(ApiError::MusicTooLong));
     }
 
     let updated = db::update_profile(&pool, user.id, body.bio, body.favorite_music)
         .await
         .map_err(internal)?;
 
-    Ok(warp::reply::json(&UserProfile {
-        id: updated.id,
-        username: updated.username,
-        bio: updated.bio,
-        favorite_music: updated.favorite_music,
-        avatar_url: updated.avatar_url,
-        banner_url: updated.banner_url,
-        elo: updated.elo,
-        created_at: updated.created_at,
-    }))
+    Ok(warp::reply::json(&UserProfile::from(updated)))
 }
 
 #[derive(Serialize)]
@@ -439,7 +524,8 @@ struct MatchEntry {
     id: Uuid,
     played_at: DateTime<Utc>,
     duration_secs: f64,
-    winner_slot: i16,
+    winner_slot: Option<i16>,
+    ranked: bool,
     player1: PlayerMatchInfo,
     player2: PlayerMatchInfo,
 }
@@ -447,13 +533,23 @@ struct MatchEntry {
 #[derive(Deserialize)]
 struct MatchHistoryQuery {
     limit: Option<String>,
+    offset: Option<String>,
+}
+
+fn int_param(value: Option<&str>, default: i64) -> Result<i64, Rejection> {
+    value.map_or(Ok(default), |s| {
+        s.parse::<i64>()
+            .ok()
+            .filter(|&n| n >= 0)
+            .ok_or_else(|| reject(ApiError::BadQuery))
+    })
 }
 
 async fn handle_user_profile(user_id: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
     let row = db::get_user_profile(&pool, user_id)
         .await
         .map_err(internal)?
-        .ok_or_else(warp::reject::not_found)?;
+        .ok_or_else(|| reject(ApiError::NotFound))?;
 
     Ok(warp::reply::json(&row))
 }
@@ -461,16 +557,13 @@ async fn handle_user_profile(user_id: Uuid, pool: DbPool) -> Result<impl Reply, 
 async fn handle_match_history(user_id: Uuid, query: MatchHistoryQuery, pool: DbPool) -> Result<impl Reply, Rejection> {
     let exists = db::user_exists(&pool, user_id).await.map_err(internal)?;
     if !exists {
-        return Err(warp::reject::not_found());
+        return Err(reject(ApiError::NotFound));
     }
-    let limit = match query.limit.as_deref() {
-        None => 20i64,
-        Some(s) => s
-            .parse::<i64>()
-            .map_err(|_| warp::reject::custom(BadRequest("'limit' must be a positive integer".into())))?,
-    }
-    .clamp(1, 100);
-    let rows = db::get_match_history(&pool, user_id, limit).await.map_err(internal)?;
+    let limit = int_param(query.limit.as_deref(), 20)?.clamp(1, 100);
+    let offset = int_param(query.offset.as_deref(), 0)?;
+    let rows = db::get_match_history(&pool, user_id, limit, offset)
+        .await
+        .map_err(internal)?;
 
     let entries: Vec<MatchEntry> = rows
         .into_iter()
@@ -479,6 +572,7 @@ async fn handle_match_history(user_id: Uuid, query: MatchHistoryQuery, pool: DbP
             played_at: r.played_at,
             duration_secs: r.duration_secs,
             winner_slot: r.winner_slot,
+            ranked: r.ranked,
             player1: PlayerMatchInfo {
                 user_id: r.player1_id,
                 username: r.player1_username,
@@ -529,10 +623,9 @@ async fn handle_search_users(
     limit: SearchLimit,
 ) -> Result<impl Reply, Rejection> {
     let key = me.id.to_string();
-    if rate_check(&limit, &key, MAX_SEARCHES, SEARCH_WINDOW) {
-        return Err(warp::reject::custom(TooManyRequests));
+    if !rate_take(&limit, &key, MAX_SEARCHES, SEARCH_WINDOW) {
+        return Err(reject(ApiError::TooManyRequests));
     }
-    rate_record(&limit, &key, SEARCH_WINDOW);
 
     let q = query.q.as_deref().unwrap_or("").trim().to_owned();
     if q.len() < 2 {
@@ -560,23 +653,18 @@ async fn handle_send_friend_request(
     limit: FriendLimit,
 ) -> Result<impl Reply, Rejection> {
     let key = me.id.to_string();
-    if rate_check(&limit, &key, MAX_FRIEND_REQS, FRIEND_WINDOW) {
-        return Err(warp::reject::custom(TooManyRequests));
+    if !rate_take(&limit, &key, MAX_FRIEND_REQS, FRIEND_WINDOW) {
+        return Err(reject(ApiError::TooManyRequests));
     }
-    rate_record(&limit, &key, FRIEND_WINDOW);
 
     match db::send_friend_request(&pool, me.id, body.user_id).await {
         Ok(()) => Ok(warp::reply::with_status(
             warp::reply::json(&serde_json::json!({})),
             warp::http::StatusCode::CREATED,
         )),
-        Err(db::FriendshipError::SelfRequest) => Err(warp::reject::custom(BadRequest(
-            "Cannot send a friend request to yourself".into(),
-        ))),
-        Err(db::FriendshipError::AlreadyExists) => {
-            Err(warp::reject::custom(Conflict("Friend request already exists".into())))
-        }
-        Err(db::FriendshipError::UserNotFound) => Err(warp::reject::not_found()),
+        Err(db::FriendshipError::SelfRequest) => Err(reject(ApiError::SelfFriendRequest)),
+        Err(db::FriendshipError::AlreadyExists) => Err(reject(ApiError::FriendRequestExists)),
+        Err(db::FriendshipError::UserNotFound) => Err(reject(ApiError::NotFound)),
         Err(db::FriendshipError::Db(e)) => Err(internal(e)),
     }
 }
@@ -589,7 +677,7 @@ async fn handle_accept_friend(requester_id: Uuid, me: db::User, pool: DbPool) ->
     if found {
         Ok(warp::reply::json(&serde_json::json!({})))
     } else {
-        Err(warp::reject::not_found())
+        Err(reject(ApiError::NotFound))
     }
 }
 
@@ -599,51 +687,41 @@ async fn handle_remove_friend(other_id: Uuid, me: db::User, pool: DbPool) -> Res
     if found {
         Ok(warp::reply::json(&serde_json::json!({})))
     } else {
-        Err(warp::reject::not_found())
+        Err(reject(ApiError::NotFound))
     }
 }
 
 pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, std::convert::Infallible> {
-    let (status, message) = if let Some(e) = err.find::<BadRequest>() {
-        (warp::http::StatusCode::BAD_REQUEST, e.0.clone())
-    } else if err.find::<Unauthorized>().is_some() {
-        (warp::http::StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
-    } else if err.find::<WrongPassword>().is_some() {
-        (warp::http::StatusCode::FORBIDDEN, "Wrong password".to_string())
-    } else if let Some(e) = err.find::<Conflict>() {
-        (warp::http::StatusCode::CONFLICT, e.0.clone())
-    } else if err.find::<TooManyRequests>().is_some() {
-        (
-            warp::http::StatusCode::TOO_MANY_REQUESTS,
-            "Too many requests, please try again later".to_string(),
-        )
-    } else if err.find::<InternalError>().is_some() {
-        (
-            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error".to_string(),
-        )
-    } else if err.find::<warp::body::BodyDeserializeError>().is_some() {
-        (warp::http::StatusCode::BAD_REQUEST, "Invalid request body".to_string())
+    let e = if let Some(&e) = err.find::<ApiError>() {
+        e
+    } else if err.find::<warp::body::BodyDeserializeError>().is_some()
+        || err.find::<warp::reject::PayloadTooLarge>().is_some()
+        || err.find::<warp::reject::LengthRequired>().is_some()
+        || err.find::<warp::reject::UnsupportedMediaType>().is_some()
+    {
+        ApiError::InvalidBody
     } else {
-        (warp::http::StatusCode::NOT_FOUND, "Not found".to_string())
+        ApiError::NotFound
     };
-
     Ok(warp::reply::with_status(
-        warp::reply::json(&serde_json::json!({ "error": message })),
-        status,
+        warp::reply::json(&serde_json::json!({ "error": e.message(), "code": e.code() })),
+        e.status(),
     ))
 }
 
-pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+pub fn routes(
+    pool: DbPool,
+    cmd_tx: mpsc::Sender<Command>,
+) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    let cmd_tx = with(cmd_tx);
     let api = warp::path("api");
     let db = pool.clone();
     let pool = with(pool);
     let body_limit = warp::body::content_length_limit(16 * 1024);
-    let attempts: LoginAttempts = new_rate_map();
+    let login_limits = LoginLimits::default();
     let friend_limit: FriendLimit = new_rate_map();
     let search_limit: SearchLimit = new_rate_map();
     let registrations: IpLimit = new_rate_map();
-    let ip_login_failures: IpLimit = new_rate_map();
     let password_checks = with(new_rate_map());
 
     let register = api
@@ -664,9 +742,8 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(body_limit)
         .and(warp::body::json())
         .and(pool.clone())
-        .and(with(attempts))
+        .and(with(login_limits))
         .and(client_addr())
-        .and(with(ip_login_failures))
         .and_then(handle_login);
 
     let friend_limit = with(friend_limit);
@@ -683,8 +760,9 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::path("logout-all"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(authed(db.clone()))
+        .and(authed_session(db.clone()))
         .and(pool.clone())
+        .and(cmd_tx.clone())
         .and_then(handle_logout_all);
 
     let me_password = api
@@ -697,6 +775,7 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::body::json())
         .and(pool.clone())
         .and(password_checks.clone())
+        .and(cmd_tx.clone())
         .and_then(handle_change_password);
 
     let me_delete = api
@@ -704,11 +783,12 @@ pub fn routes(pool: DbPool) -> impl Filter<Extract = impl Reply, Error = Rejecti
         .and(warp::path("delete"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(authed(db.clone()))
+        .and(authed_session(db.clone()))
         .and(body_limit)
         .and(warp::body::json())
         .and(pool.clone())
         .and(password_checks)
+        .and(cmd_tx)
         .and_then(handle_delete_account);
 
     let me_get = api
@@ -865,7 +945,7 @@ mod tests {
             .acquire_timeout(Duration::from_millis(50))
             .connect_lazy("postgres://nobody@127.0.0.1:1/none")
             .unwrap();
-        let api = routes(pool).recover(handle_rejection);
+        let api = routes(pool, mpsc::channel(8).0).recover(handle_rejection);
         let register = |from: &'static str, n: u32| {
             warp::test::request()
                 .method("POST")
@@ -884,6 +964,55 @@ mod tests {
         assert_eq!(res.status(), 429);
         let res = register("198.51.100.1", 1001).reply(&api).await;
         assert_ne!(res.status(), 429);
+    }
+
+    #[tokio::test]
+    async fn errors_carry_a_stable_code() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap();
+        let api = routes(pool, mpsc::channel(8).0).recover(handle_rejection);
+        let res = warp::test::request()
+            .method("POST")
+            .path("/api/register")
+            .json(&serde_json::json!({ "username": "a", "password": "password123" }))
+            .reply(&api)
+            .await;
+        assert_eq!(res.status(), 400);
+        let body: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
+        assert_eq!(body["code"], "bad_username");
+        assert!(body["error"].is_string(), "old clients still read 'error'");
+    }
+
+    async fn post(path: &str, body: String) -> (u16, String) {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap();
+        let api = routes(pool, mpsc::channel(8).0).recover(handle_rejection);
+        let res = warp::test::request()
+            .method("POST")
+            .path(path)
+            .header("content-type", "application/json")
+            .body(body)
+            .reply(&api)
+            .await;
+        let json: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
+        (
+            res.status().as_u16(),
+            json["code"].as_str().unwrap_or_default().to_owned(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_username_that_cannot_exist_fails_without_a_lookup() {
+        let body = serde_json::json!({ "username": "x".repeat(5000), "password": "password123" }).to_string();
+        assert_eq!(post("/api/login", body).await, (401, "bad_credentials".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn an_oversized_body_is_an_invalid_request() {
+        let body = serde_json::json!({ "username": "alice", "password": "p".repeat(20_000) }).to_string();
+        assert_eq!(post("/api/login", body).await, (400, "invalid_body".to_owned()));
     }
 
     #[test]
