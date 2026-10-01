@@ -4,6 +4,7 @@ use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::account::{self, AccountForm, Outcome};
+use crate::history::{History, PAGE_SIZE};
 use crate::profile_edit::{self, EditForm};
 use crate::state::{
     ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, OtherProfileData, ProfileCore,
@@ -44,39 +45,44 @@ fn poll_core_profile(core: &mut ProfileCore) -> Option<ProfileLoad> {
     }
 }
 
-fn load_core(user_id: String, username: String, elo: i32, token: Option<String>, matches: u32) -> ProfileCore {
+fn load_core(user_id: String, username: String, elo: i32, token: Option<String>) -> ProfileCore {
     let profile_slot = http::new_slot();
-    let history_slot = http::new_slot();
     http::get(
         http::api_url(&format!("users/{user_id}")),
         token.clone(),
         Arc::clone(&profile_slot),
     );
-    http::get(
-        http::api_url(&format!("users/{user_id}/matches?limit={matches}")),
-        token,
-        Arc::clone(&history_slot),
-    );
     ProfileCore {
+        history: History::load(user_id.clone(), token),
         user_id,
         info: ApiUserProfile {
             username,
             elo,
             ..ApiUserProfile::default()
         },
-        match_history: Vec::new(),
         about_open: false,
         profile_slot: Some(profile_slot),
-        history_slot: Some(history_slot),
     }
 }
 
-fn poll_core_history(core: &mut ProfileCore) {
-    let Some(Ok(resp)) = http::take(&mut core.history_slot) else {
-        return;
+fn update_history(app: &App, state: &mut State, other: bool) {
+    let area = pager_area(state.ui.view());
+    let State {
+        profile,
+        other_profile,
+        ui,
+        fonts,
+        keys,
+        ..
+    } = state;
+    let core = if other {
+        other_profile.as_mut().map(|p| &mut p.core)
+    } else {
+        profile.as_mut().map(|p| &mut p.core)
     };
-    if let Some(matches) = http::json::<Vec<ApiMatchEntry>>(&resp) {
-        core.match_history = matches;
+    if let Some(core) = core {
+        let total = core.info.total_matches;
+        core.history.update(app, ui, fonts, keys, area, total);
     }
 }
 
@@ -101,10 +107,10 @@ const PROFILE_HEADER_H: f32 = 150.0;
 const CARD_TOP: f32 = 180.0;
 const CARD_PAD: f32 = 20.0;
 const CARD_TITLE_H: f32 = 56.0;
-const HISTORY_ROWS: usize = 7;
 const HISTORY_ROW_H: f32 = 48.0;
 const STATUS_GAP: f32 = 56.0;
-const STAT_ROWS: usize = 5;
+const STAT_ROWS: usize = 4;
+const PAGER_H: f32 = 52.0;
 const STAT_ROW_H: f32 = 32.0;
 
 fn draw_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
@@ -183,17 +189,12 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
         return;
     }
 
-    let winrate = if core.info.total_matches > 0 {
-        core.info.wins * 100 / core.info.total_matches
-    } else {
-        0
-    };
+    let info = &core.info;
     let stats: [_; STAT_ROWS] = [
-        ("Matchs", core.info.total_matches.to_string()),
-        ("Victoires", core.info.wins.to_string()),
-        ("Winrate", format!("{winrate}%")),
-        ("Max chain", core.info.all_time_max_chain.to_string()),
-        ("Nuisance", core.info.total_nuisance_sent.to_string()),
+        ("Amical (parties)", win_rate(info.casual_wins, info.casual_matches)),
+        ("Classé (séries)", win_rate(info.ranked_series_won, info.ranked_series)),
+        ("Meilleure chaîne", info.all_time_max_chain.to_string()),
+        ("Nuisances envoyées", info.total_nuisance_sent.to_string()),
     ];
     let (label_x, value_x) = (card.x + CARD_PAD, card.x + card.w - CARD_PAD);
     let first = card.y + CARD_TITLE_H + 30.0;
@@ -220,6 +221,13 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
     if summary.cut {
         profile_about::draw_more_link(draw, ui, fonts, area);
     }
+}
+
+fn win_rate(wins: i64, played: i64) -> String {
+    if played == 0 {
+        return "-".to_string();
+    }
+    format!("{wins} / {played} ({}%)", wins * 100 / played)
 }
 
 fn draw_about_overlay(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
@@ -255,17 +263,26 @@ fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCor
     let pal = ui.palette();
     let (_, card) = cards(ui.view());
     ui::card(draw, &pal, card);
-    card_title(draw, &pal, fonts, card, "Derniers matchs");
+    card_title(draw, &pal, fonts, card, "Matchs");
 
-    if core.history_slot.is_some() {
+    if core.history.slot.is_some() && core.history.entries.is_empty() {
         card_message(draw, fonts, card, "Chargement...", pal.text_muted);
-    } else if core.match_history.is_empty() {
+    } else if core.history.entries.is_empty() {
         card_message(draw, fonts, card, "Aucun match pour l'instant.", pal.text_muted);
     } else {
-        for (i, m) in core.match_history.iter().enumerate().take(HISTORY_ROWS) {
+        for (i, m) in core.history.entries.iter().enumerate().take(PAGE_SIZE) {
             draw_match_row(draw, ui, fonts, (history_row(card, i), i), m, &core.user_id, clickable);
         }
     }
+    if core.info.total_matches > PAGE_SIZE as i64 {
+        core.history
+            .draw_pager(draw, ui, fonts, pager_area(ui.view()), core.info.total_matches);
+    }
+}
+
+fn pager_area(view: View) -> Rect {
+    let (_, card) = cards(view);
+    Rect::at(card.x, card.y + card.h - PAGER_H, card.w, PAGER_H)
 }
 
 fn history_row(card: Rect, i: usize) -> Rect {
@@ -278,7 +295,7 @@ fn history_row(card: Rect, i: usize) -> Rect {
 }
 
 fn opponent_zone(row: Rect) -> Rect {
-    Rect::at(row.x + row.w * 0.2, row.y, row.w * 0.3, row.h)
+    Rect::at(row.x + row.w * 0.33, row.y, row.w * 0.25, row.h)
 }
 
 fn history_row_zone(view: View, i: usize) -> Rect {
@@ -298,26 +315,39 @@ fn draw_match_row(
     let pal = ui.palette();
     let mid = row.y + row.h / 2.0;
     let i_am_p1 = m.player1.user_id.as_deref() == Some(viewed_id);
-    let won = m.winner_slot == if i_am_p1 { 1i16 } else { 2i16 };
+    let my_slot = if i_am_p1 { 1i16 } else { 2i16 };
     let opp = if i_am_p1 { &m.player2 } else { &m.player1 };
     let me = if i_am_p1 { &m.player1 } else { &m.player2 };
     let opp_name = opp.username.as_deref().unwrap_or("Invité");
 
     list_row(draw, &pal, row, index);
 
+    let (text, color) = match m.winner_slot {
+        None => ("ÉGALITÉ", pal.text_dim),
+        Some(w) if w == my_slot => ("VICTOIRE", theme::SUCCESS),
+        Some(_) => ("DÉFAITE", theme::DANGER),
+    };
     let result = Pill {
-        text: if won { "VICTOIRE" } else { "DÉFAITE" },
-        color: if won { theme::SUCCESS } else { theme::DANGER },
+        text,
+        color,
         size: theme::size::SMALL,
     };
     result.draw(draw, fonts, (row.x + row.w * 0.1 - result.width(fonts) / 2.0, mid));
+    if m.ranked {
+        let ranked = Pill {
+            text: "CLASSÉ",
+            color: theme::bar::ORANGE,
+            size: theme::size::SMALL,
+        };
+        ranked.draw(draw, fonts, (row.x + row.w * 0.2, mid));
+    }
 
     let linked = clickable && opp.user_id.is_some();
     ui.link(draw, fonts, opponent_zone(row), &format!("vs {opp_name}"), linked);
 
     draw.sharp_text(
         &fonts.text,
-        &format!("Chain x{}  Nuis {}", me.max_chain, me.nuisance_sent),
+        &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent),
     )
     .position(row.x + row.w * 0.68, mid)
     .size(theme::size::SMALL)
@@ -343,7 +373,6 @@ pub fn enter_profile(state: &mut State) {
         auth.username.clone(),
         auth.elo,
         Some(auth.token.clone()),
-        10,
     );
     state.profile = Some(ProfileData {
         core,
@@ -360,7 +389,7 @@ fn own_buttons(cx: f32, wh: f32) -> [Rect; 4] {
 pub fn update_profile(app: &mut App, state: &mut State) {
     if let Some(p) = state.profile.as_mut() {
         poll_core_profile(&mut p.core);
-        poll_core_history(&mut p.core);
+        p.core.history.poll();
     }
     profile_edit::poll(state);
 
@@ -377,6 +406,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
                 return;
             }
         }
+        update_history(app, state, false);
         let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(cx, wh);
 
         if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
@@ -404,7 +434,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
                 break 'find None;
             };
             let my_id = profile.core.user_id.as_str();
-            for (i, m) in profile.core.match_history.iter().enumerate().take(HISTORY_ROWS) {
+            for (i, m) in profile.core.history.entries.iter().enumerate().take(PAGE_SIZE) {
                 let i_am_p1 = m.player1.user_id.as_deref() == Some(my_id);
                 let opp = if i_am_p1 { &m.player2 } else { &m.player1 };
                 if let (Some(opp_id), Some(opp_name)) = (&opp.user_id, &opp.username) {
@@ -482,7 +512,7 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
 
 pub fn enter_other_profile(state: &mut State, user_id: String, username: String, prev: Screen) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let core = load_core(user_id, username, 0, token.clone(), 8);
+    let core = load_core(user_id, username, 0, token.clone());
 
     let (friendship, friendship_check_slot) = if let Some(f) = state.friends.as_ref() {
         (friendship_with(&f.friends, &f.sent, &f.received, &core.user_id), None)
@@ -577,7 +607,7 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
             }
             _ => {}
         }
-        poll_core_history(&mut p.core);
+        p.core.history.poll();
     }
     poll_friend(state);
     if let Some(p) = state.other_profile.as_mut() {
@@ -586,6 +616,7 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
         }
     }
 
+    update_history(app, state, true);
     let ww = state.ui.view().w;
     let wh = state.ui.view().h;
     let cx = ww / 2.0;

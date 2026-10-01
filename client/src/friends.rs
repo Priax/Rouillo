@@ -7,8 +7,8 @@ use crate::http;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
 use crate::theme::{self, Palette};
 use crate::ui::{
-    self, divider, field_clicked, list_row, text_field, Face, Field, Fonts, Pill, Rect, SharpText, Status, TextInput,
-    Ui,
+    self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Pager, Pill, Rect, SharpText,
+    Status, TextInput, Ui,
 };
 
 const FIELD_H: f32 = 44.0;
@@ -20,7 +20,8 @@ const COLUMNS_TOP: f32 = 344.0;
 const CARD_TITLE_H: f32 = 50.0;
 const LIST_Y: f32 = COLUMNS_TOP + CARD_TITLE_H + 6.0;
 const ROW_H: f32 = 48.0;
-const MAX_ROWS: usize = 6;
+const MAX_ROWS: usize = 5;
+const CARD_ROWS: usize = MAX_ROWS + 1;
 const COL_W: f32 = 360.0;
 const COL_GAP: f32 = 30.0;
 const ACTION_STATUS_Y: f32 = 708.0;
@@ -33,13 +34,22 @@ fn col_x(ww: f32, col: usize) -> f32 {
 }
 
 fn column_card(ww: f32, col: usize) -> Rect {
-    let bottom = LIST_Y + MAX_ROWS as f32 * ROW_H + 10.0;
+    let bottom = LIST_Y + CARD_ROWS as f32 * ROW_H + 10.0;
     Rect::at(col_x(ww, col), COLUMNS_TOP, COL_W, bottom - COLUMNS_TOP)
 }
 
 fn list_row_rect(ww: f32, col: usize, row: usize) -> Rect {
     let card = column_card(ww, col);
     Rect::at(card.x + 8.0, LIST_Y + row as f32 * ROW_H, card.w - 16.0, ROW_H - 4.0)
+}
+
+fn pager_area(ww: f32, col: usize) -> Rect {
+    let card = column_card(ww, col);
+    Rect::at(card.x, LIST_Y + MAX_ROWS as f32 * ROW_H, card.w, ROW_H)
+}
+
+fn lists(f: &FriendsData) -> [&[FriendEntry]; 3] {
+    [&f.friends, &f.received, &f.sent]
 }
 
 fn row_button(row: Rect, from_right: f32, w: f32) -> Rect {
@@ -138,6 +148,7 @@ pub fn enter_friends(state: &mut State) {
         confirm_remove: None,
         action_pending: None,
         action_status: Status::Empty,
+        pages: Default::default(),
     });
 }
 
@@ -181,9 +192,8 @@ fn try_search(state: &mut State) {
     }
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let slot = http::new_slot();
-    let encoded_q = q.replace(' ', "%20");
     http::get(
-        http::api_url(&format!("users/search?q={encoded_q}")),
+        http::api_url(&format!("users/search?q={}", http::encode_query(&q))),
         token,
         Arc::clone(&slot),
     );
@@ -236,7 +246,7 @@ fn poll_search(state: &mut State) {
                 f.search_results = entries;
             }
         }
-        Ok(resp) => f.search_status = Status::error(format!("Erreur {}", resp.status)),
+        Ok(resp) => f.search_status = Status::error(http::error_message(&resp)),
         Err(e) => f.search_status = Status::error(format!("Erreur réseau: {e}")),
     }
 }
@@ -307,12 +317,23 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     let ww = state.ui.view().w;
     let wh = state.ui.view().h;
 
+    let paging = state
+        .friends
+        .as_ref()
+        .is_some_and(|f| f.pages.iter().any(Pager::focused));
     if let Some(f) = state.friends.as_mut() {
-        f.search_input.edit(&state.keys);
+        if !paging {
+            f.search_input.edit(&state.keys);
+        }
         field_clicked(&state.ui, &state.fonts, search_box(ww), &mut f.search_input);
+        for col in 0..3 {
+            let pages = page_count(lists(f)[col].len(), MAX_ROWS);
+            f.pages[col].clamp(pages);
+            f.pages[col].update(app, &state.ui, &state.fonts, &state.keys, pager_area(ww, col), pages);
+        }
     }
 
-    if state.ui.clicked(search_submit_btn(ww)) || app.keyboard.was_pressed(KeyCode::Enter) {
+    if state.ui.clicked(search_submit_btn(ww)) || (!paging && app.keyboard.was_pressed(KeyCode::Enter)) {
         let q = state
             .friends
             .as_ref()
@@ -386,7 +407,9 @@ fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
         return None;
     }
     if let Some(confirm_id) = &f.confirm_remove {
-        let row = f.friends.iter().take(MAX_ROWS).position(|e| &e.user_id == confirm_id)?;
+        let (row, _) = f.pages[0]
+            .shown(&f.friends, MAX_ROWS)
+            .find(|(_, e)| &e.user_id == confirm_id)?;
         if ui.clicked(confirm_yes_btn(ww, row)) {
             return Some(FriendAction::ConfirmRemove(confirm_id.clone()));
         }
@@ -395,12 +418,12 @@ fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
         }
         return None;
     }
-    for (i, e) in f.friends.iter().take(MAX_ROWS).enumerate() {
+    for (i, e) in f.pages[0].shown(&f.friends, MAX_ROWS) {
         if ui.clicked(remove_btn(ww, 0, i)) {
             return Some(FriendAction::StartRemove(e.user_id.clone()));
         }
     }
-    for (i, e) in f.received.iter().take(MAX_ROWS).enumerate() {
+    for (i, e) in f.pages[1].shown(&f.received, MAX_ROWS) {
         if ui.clicked(accept_btn(ww, i)) {
             return Some(FriendAction::Accept(e.user_id.clone()));
         }
@@ -408,7 +431,7 @@ fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
             return Some(FriendAction::Reject(e.user_id.clone()));
         }
     }
-    for (i, e) in f.sent.iter().take(MAX_ROWS).enumerate() {
+    for (i, e) in f.pages[2].shown(&f.sent, MAX_ROWS) {
         if ui.clicked(remove_btn(ww, 2, i)) {
             return Some(FriendAction::Cancel(e.user_id.clone()));
         }
@@ -577,7 +600,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             &pal,
             fonts,
             (ww, 0),
-            columns[0].1,
+            (columns[0].1, &f.pages[0]),
             columns[0].2,
             |draw, fonts, entry, i| {
                 if confirm == Some(entry.user_id.as_str()) {
@@ -594,7 +617,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             &pal,
             fonts,
             (ww, 1),
-            columns[1].1,
+            (columns[1].1, &f.pages[1]),
             columns[1].2,
             |draw, fonts, _, i| {
                 ui.button_enabled(draw, fonts, accept_btn(ww, i), "Accepter", !busy);
@@ -606,12 +629,19 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             &pal,
             fonts,
             (ww, 2),
-            columns[2].1,
+            (columns[2].1, &f.pages[2]),
             columns[2].2,
             |draw, fonts, _, i| {
                 ui.button_enabled(draw, fonts, remove_btn(ww, 2, i), "Annuler", !busy);
             },
         );
+    }
+
+    for (col, list) in lists(f).into_iter().enumerate() {
+        let pages = page_count(list.len(), MAX_ROWS);
+        if pages > 1 && f.list_slot.is_none() {
+            f.pages[col].draw(draw, ui, fonts, pager_area(ww, col), pages);
+        }
     }
 
     if let Some((msg, color)) = f.action_status.shown(&pal) {
@@ -629,7 +659,7 @@ fn draw_col<F>(
     pal: &Palette,
     fonts: &Fonts,
     (ww, col): (f32, usize),
-    list: &[FriendEntry],
+    (list, pager): (&[FriendEntry], &Pager),
     empty_msg: &str,
     draw_buttons: F,
 ) where
@@ -647,7 +677,7 @@ fn draw_col<F>(
     }
     let first_button = [remove_btn(ww, 0, 0), accept_btn(ww, 0), remove_btn(ww, 2, 0)][col];
     let room = first_button.x - list_row_rect(ww, col, 0).x - 20.0;
-    for (i, e) in list.iter().take(MAX_ROWS).enumerate() {
+    for (i, e) in pager.shown(list, MAX_ROWS) {
         let row = list_row_rect(ww, col, i);
         list_row(draw, pal, row, i);
         draw.sharp_text(

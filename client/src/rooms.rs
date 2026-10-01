@@ -15,6 +15,7 @@ fn send(state: &mut State, msg: &ClientMessage) {
 }
 
 const ROOM_ROW_H: f32 = 56.0;
+const PAGER_H: f32 = 52.0;
 
 fn room_list_card(view: View) -> Rect {
     Rect::at(
@@ -26,7 +27,23 @@ fn room_list_card(view: View) -> Rect {
 }
 
 fn visible_rooms(view: View) -> usize {
-    ((room_list_card(view).h - 24.0) / ROOM_ROW_H).floor().max(0.0) as usize
+    ((room_list_card(view).h - 24.0 - PAGER_H) / ROOM_ROW_H)
+        .floor()
+        .max(1.0) as usize
+}
+
+fn pager_area(view: View) -> Rect {
+    let card = room_list_card(view);
+    Rect::at(card.x, card.y + card.h - PAGER_H, card.w, PAGER_H)
+}
+
+fn room_pages(state: &State) -> usize {
+    ui::page_count(state.rooms.len(), visible_rooms(state.ui.view()))
+}
+
+/// The rooms on the current page, with their row on screen.
+fn shown_rooms(state: &State) -> impl Iterator<Item = (usize, &RoomInfo)> {
+    state.room_pager.shown(&state.rooms, visible_rooms(state.ui.view()))
 }
 
 fn room_row(view: View, i: usize) -> Rect {
@@ -58,17 +75,21 @@ fn browser_buttons(view: View) -> BrowserButtons {
     }
 }
 
-pub fn update_browser(state: &mut State) {
+pub fn update_browser(app: &App, state: &mut State) {
     let view = state.ui.view();
     let b = browser_buttons(view);
 
-    for i in 0..state.rooms.len().min(visible_rooms(view)) {
-        let id = state.rooms[i].id;
-        if state.ui.clicked(room_row(view, i)) {
-            state.notice.clear();
-            send(state, &ClientMessage::JoinRoom { id });
-            return;
-        }
+    let pages = room_pages(state);
+    state.room_pager.clamp(pages);
+    state
+        .room_pager
+        .update(app, &state.ui, &state.fonts, &state.keys, pager_area(view), pages);
+
+    let clicked = shown_rooms(state).find_map(|(i, room)| state.ui.clicked(room_row(view, i)).then_some(room.id));
+    if let Some(id) = clicked {
+        state.notice.clear();
+        send(state, &ClientMessage::JoinRoom { id });
+        return;
     }
 
     if state.ui.clicked(b.create) {
@@ -81,10 +102,10 @@ pub fn update_browser(state: &mut State) {
         state.screen = Screen::JoinById;
     } else if state.ui.clicked(b.refresh) {
         send(state, &ClientMessage::RequestRoomList);
-    } else if state.ui.clicked(b.back) {
+    } else if state.ui.clicked(b.back) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.conn.disconnect();
         state.rooms.clear();
-        state.screen = Screen::Menu;
+        state.screen = Screen::PlayMenu;
     }
 }
 
@@ -105,15 +126,21 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
     let card = room_list_card(view);
     ui::card(&mut draw, &pal, card);
     if state.rooms.is_empty() {
-        draw.sharp_text(&state.fonts.text, "Aucune room. Crées-en une !")
+        draw.sharp_text(&state.fonts.text, "Aucune room. Créez-en une !")
             .position(card.x + card.w / 2.0, card.y + 60.0)
             .size(theme::size::EMPHASIS)
             .h_align_center()
             .v_align_middle()
             .color(pal.text_muted);
     }
-    for (i, room) in state.rooms.iter().take(visible_rooms(view)).enumerate() {
+    for (i, room) in shown_rooms(state) {
         draw_room_row(&mut draw, state, room_row(view, i), i, room);
+    }
+    let pages = room_pages(state);
+    if pages > 1 {
+        state
+            .room_pager
+            .draw(&mut draw, &state.ui, &state.fonts, pager_area(view), pages);
     }
 
     let b = browser_buttons(view);
@@ -205,7 +232,7 @@ fn update_entry(app: &mut App, state: &mut State) -> Option<String> {
     if state.ui.clicked(confirm) || app.keyboard.was_pressed(KeyCode::Enter) {
         return Some(state.text_input.trim().to_string());
     }
-    if state.ui.clicked(back) {
+    if state.ui.clicked(back) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.screen = Screen::RoomBrowser;
     }
     None
@@ -295,7 +322,14 @@ fn invite_modal(view: View) -> Modal {
 }
 
 fn visible_invites(view: View) -> usize {
-    ((invite_modal(view).card.h - 86.0) / INVITE_ROW_H).floor().max(0.0) as usize
+    ((invite_modal(view).card.h - 86.0 - PAGER_H) / INVITE_ROW_H)
+        .floor()
+        .max(1.0) as usize
+}
+
+fn invite_pager_area(view: View) -> Rect {
+    let card = invite_modal(view).card;
+    Rect::at(card.x, card.y + card.h - PAGER_H - 8.0, card.w, PAGER_H)
 }
 
 fn invite_row(view: View, i: usize) -> Rect {
@@ -331,11 +365,24 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
             state.invite_overlay = false;
             return;
         }
+        let per_page = visible_invites(view);
+        let pages = ui::page_count(state.invite_friends.len(), per_page);
+        state.invite_pager.clamp(pages);
+        state.invite_pager.update(
+            app,
+            &state.ui,
+            &state.fonts,
+            &state.keys,
+            invite_pager_area(view),
+            pages,
+        );
         let loaded = state.invite_slot.is_none();
-        let shown = state.invite_friends.len().min(visible_invites(view));
-        let invited = (0..shown).find(|&i| loaded && state.ui.clicked(invite_button(view, i)));
-        if let Some(i) = invited {
-            let user_id = state.invite_friends[i].user_id.clone();
+        let invited = state
+            .invite_pager
+            .shown(&state.invite_friends, per_page)
+            .find(|&(i, _)| loaded && state.ui.clicked(invite_button(view, i)))
+            .map(|(_, friend)| friend.user_id.clone());
+        if let Some(user_id) = invited {
             send(state, &ClientMessage::InviteFriend { user_id });
             state.invite_overlay = false;
         }
@@ -521,7 +568,14 @@ fn draw_invite_overlay(draw: &mut Draw, state: &State) {
             .color(pal.text_muted);
         return;
     }
-    for (i, friend) in state.invite_friends.iter().take(visible_invites(view)).enumerate() {
+    let per_page = visible_invites(view);
+    let pages = ui::page_count(state.invite_friends.len(), per_page);
+    if pages > 1 {
+        state
+            .invite_pager
+            .draw(draw, &state.ui, fonts, invite_pager_area(view), pages);
+    }
+    for (i, friend) in state.invite_pager.shown(&state.invite_friends, per_page) {
         let row = invite_row(view, i);
         list_row(draw, &pal, row, i);
         draw.sharp_text(&fonts.text, &friend.username)
