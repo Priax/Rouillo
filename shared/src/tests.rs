@@ -117,12 +117,12 @@ fn room_settings_survive_any_step_from_the_network() {
 #[test]
 fn four_connected_same_color_clears() {
     let mut b = empty_board();
-    for r in 9..=12 {
-        b.cells[r][0] = Some(PuyoType::Red);
+    for row in &mut b.cells[9..=12] {
+        row[0] = Some(PuyoType::Red);
     }
     assert_eq!(b.check_matches(), Some(40)); // chain 1, group of 4, no bonus -> 10*4*1
-    for r in 9..=12 {
-        assert!(b.cells[r][0].is_none());
+    for row in &b.cells[9..=12] {
+        assert!(row[0].is_none());
     }
     assert_eq!(b.chain_count, 1);
 }
@@ -130,29 +130,27 @@ fn four_connected_same_color_clears() {
 #[test]
 fn three_connected_does_not_clear() {
     let mut b = empty_board();
-    for r in 10..=12 {
-        b.cells[r][0] = Some(PuyoType::Red);
+    for row in &mut b.cells[10..=12] {
+        row[0] = Some(PuyoType::Red);
     }
     assert_eq!(b.check_matches(), None);
-    for r in 10..=12 {
-        assert!(b.cells[r][0].is_some());
+    for row in &b.cells[10..=12] {
+        assert!(row[0].is_some());
     }
 }
 
 #[test]
 fn group_only_in_hidden_row_does_not_clear() {
     let mut b = empty_board();
-    for c in 0..4 {
-        b.cells[0][c] = Some(PuyoType::Red);
-    }
+    b.cells[0][..4].fill(Some(PuyoType::Red));
     assert_eq!(b.check_matches(), None);
 }
 
 #[test]
 fn adjacent_garbage_is_cleared() {
     let mut b = empty_board();
-    for r in 9..=12 {
-        b.cells[r][0] = Some(PuyoType::Red);
+    for row in &mut b.cells[9..=12] {
+        row[0] = Some(PuyoType::Red);
     }
     b.cells[9][1] = Some(PuyoType::Garbage); // touches the group
     b.cells[5][5] = Some(PuyoType::Garbage); // far away
@@ -164,8 +162,8 @@ fn adjacent_garbage_is_cleared() {
 #[test]
 fn garbage_does_not_self_match() {
     let mut b = empty_board();
-    for r in 9..=12 {
-        b.cells[r][0] = Some(PuyoType::Garbage);
+    for row in &mut b.cells[9..=12] {
+        row[0] = Some(PuyoType::Garbage);
     }
     assert_eq!(b.check_matches(), None);
 }
@@ -192,8 +190,8 @@ fn gravity_noop_when_settled() {
 #[test]
 fn a_pop_converts_score_to_garbage_with_carry() {
     let mut b = empty_board();
-    for r in 8..=12 {
-        b.cells[r][0] = Some(PuyoType::Red);
+    for row in &mut b.cells[8..=12] {
+        row[0] = Some(PuyoType::Red);
     } // group of 5 -> score 100
     b.state = GameState::ResolvingMatches;
     assert_eq!(b.after_landing(), 1); // floor(100 / 70)
@@ -356,8 +354,8 @@ fn a_split_pair_falls_before_anything_pops() {
 #[test]
 fn a_group_flashes_before_it_vanishes() {
     let mut b = empty_board();
-    for r in 9..=12 {
-        b.cells[r][0] = Some(PuyoType::Red);
+    for row in &mut b.cells[9..=12] {
+        row[0] = Some(PuyoType::Red);
     }
     b.state = GameState::ResolvingMatches;
     b.after_landing();
@@ -962,8 +960,8 @@ fn a_resting_piece_is_drawn_on_its_cell() {
 /// A group of five reds at the bottom of column 0, and nothing else.
 fn board_about_to_pop() -> Board {
     let mut b = empty_board();
-    for r in 8..=12 {
-        b.cells[r][0] = Some(PuyoType::Red);
+    for row in &mut b.cells[8..=12] {
+        row[0] = Some(PuyoType::Red);
     } // score 100 -> 1 nuisance
     b.state = GameState::ResolvingMatches;
     b
@@ -1007,8 +1005,8 @@ fn an_all_clear_pays_out_with_the_next_chain() {
 #[test]
 fn nuisance_into_a_full_column_does_not_end_the_game_mid_drop() {
     let mut b = empty_board();
-    for r in 0..GRID_HEIGHT {
-        b.cells[r][0] = Some(PuyoType::Red);
+    for row in &mut b.cells {
+        row[0] = Some(PuyoType::Red);
     }
     b.pending_garbage = 30;
     b.state = GameState::DroppingGarbage;
@@ -1024,10 +1022,8 @@ fn nuisance_into_a_full_column_does_not_end_the_game_mid_drop() {
 #[test]
 fn a_board_buried_by_nuisance_loses_after_the_drop_is_seen() {
     let mut b = empty_board();
-    for r in 3..GRID_HEIGHT {
-        for c in 0..GRID_WIDTH {
-            b.cells[r][c] = Some(PuyoType::Garbage);
-        }
+    for row in &mut b.cells[3..] {
+        row.fill(Some(PuyoType::Garbage));
     }
     b.pending_garbage = 30;
     b.state = GameState::DroppingGarbage;
@@ -1073,8 +1069,8 @@ fn the_starting_level_counts_towards_the_margin() {
 #[test]
 fn a_fully_run_down_margin_makes_a_single_pop_send_forty() {
     let mut b = at_level(20);
-    for r in 9..=12 {
-        b.cells[r][0] = Some(PuyoType::Red);
+    for row in &mut b.cells[9..=12] {
+        row[0] = Some(PuyoType::Red);
     }
     b.state = GameState::ResolvingMatches;
     assert_eq!(b.after_landing(), 40);
@@ -1165,10 +1161,12 @@ fn client_samples() -> Vec<ClientMessage> {
         ClientMessage::ReturnToLobby,
         ClientMessage::InviteFriend { user_id: "f".into() },
         ClientMessage::Ping { id: 5 },
+        ClientMessage::JoinQueue,
+        ClientMessage::LeaveQueue,
     ]
 }
 
-const CLIENT_VARIANTS: usize = 13;
+const CLIENT_VARIANTS: usize = 15;
 
 fn client_variant(m: &ClientMessage) -> usize {
     match m {
@@ -1185,6 +1183,8 @@ fn client_variant(m: &ClientMessage) -> usize {
         ClientMessage::ReturnToLobby => 10,
         ClientMessage::InviteFriend { .. } => 11,
         ClientMessage::Ping { .. } => 12,
+        ClientMessage::JoinQueue => 13,
+        ClientMessage::LeaveQueue => 14,
     }
 }
 
@@ -1246,6 +1246,11 @@ fn server_samples() -> Vec<ServerMessage> {
                 your_slot: 1,
                 is_host: true,
                 countdown: Some(3),
+                ranked: Some(RankedInfo {
+                    opponent: "o".into(),
+                    opponent_elo: 1010,
+                    wins: [2, 1],
+                }),
             },
         },
         ServerMessage::JoinFailed { reason: "x".into() },
@@ -1256,10 +1261,17 @@ fn server_samples() -> Vec<ServerMessage> {
         },
         ServerMessage::Pong { id: 8 },
         ServerMessage::Maintenance,
+        ServerMessage::QueueRefused { reason: "q".into() },
+        ServerMessage::SeriesScore { wins: [1, 2] },
+        ServerMessage::SeriesOver {
+            winner_slot: Some(2),
+            elo_change: -16,
+        },
+        ServerMessage::SessionRevoked,
     ]
 }
 
-const SERVER_VARIANTS: usize = 10;
+const SERVER_VARIANTS: usize = 14;
 
 fn server_variant(m: &ServerMessage) -> usize {
     match m {
@@ -1273,6 +1285,10 @@ fn server_variant(m: &ServerMessage) -> usize {
         ServerMessage::FriendInvitation { .. } => 7,
         ServerMessage::Pong { .. } => 8,
         ServerMessage::Maintenance => 9,
+        ServerMessage::QueueRefused { .. } => 10,
+        ServerMessage::SeriesScore { .. } => 11,
+        ServerMessage::SeriesOver { .. } => 12,
+        ServerMessage::SessionRevoked => 13,
     }
 }
 
@@ -1305,7 +1321,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (3, 8_597_404_285_938_695_702);
+const PROTOCOL_DIGEST: (u32, u64) = (4, 12_514_917_666_170_902_045);
 
 #[test]
 fn protocol_changes_bump_the_version() {

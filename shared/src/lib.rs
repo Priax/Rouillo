@@ -41,6 +41,12 @@ fn small<T: TryFrom<usize>>(v: usize) -> T {
 
 struct Fnv(u64);
 
+pub fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h = Fnv::new();
+    h.bytes(bytes);
+    h.finish()
+}
+
 impl Fnv {
     fn new() -> Self {
         Self(0xcbf2_9ce4_8422_2325)
@@ -179,8 +185,8 @@ impl RoomSettings {
 
     pub fn label(i: usize) -> &'static str {
         match i {
-            0 => "Starting level",
-            1 => "Colors",
+            0 => "Niveau de départ",
+            1 => "Couleurs",
             2 => "Amis seulement",
             _ => "Pause",
         }
@@ -236,9 +242,17 @@ pub struct LobbyInfo {
     pub your_slot: u8,
     pub is_host: bool,
     pub countdown: Option<u8>,
+    pub ranked: Option<RankedInfo>,
 }
 
-pub const PROTOCOL_VERSION: u32 = 3;
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RankedInfo {
+    pub opponent: String,
+    pub opponent_elo: i32,
+    pub wins: [u8; 2],
+}
+
+pub const PROTOCOL_VERSION: u32 = 4;
 
 pub const OUTDATED_FRAME: &str = "outdated";
 
@@ -277,6 +291,8 @@ pub enum ClientMessage {
     Ping {
         id: u32,
     },
+    JoinQueue,
+    LeaveQueue,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -313,6 +329,17 @@ pub enum ServerMessage {
         id: u32,
     },
     Maintenance,
+    QueueRefused {
+        reason: String,
+    },
+    SeriesScore {
+        wins: [u8; 2],
+    },
+    SeriesOver {
+        winner_slot: Option<u8>,
+        elo_change: i32,
+    },
+    SessionRevoked,
 }
 
 pub fn group_bonus(size: u32) -> u32 {
