@@ -55,7 +55,10 @@ fn setup(gfx: &mut Graphics) -> State {
     let fonts = ui::Fonts::load(gfx).expect("the bundled fonts are valid");
     let mut state = State::new(fonts);
     #[cfg(target_arch = "wasm32")]
-    web::start_text_input();
+    {
+        web::start_text_input();
+        audio::unlock_on_gesture();
+    }
 
     if let Some(token) = state::load_stored_token() {
         let slot = http::new_slot();

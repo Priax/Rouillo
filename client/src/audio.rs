@@ -9,7 +9,7 @@ enum Wave {
 mod imp {
     use std::cell::RefCell;
 
-    use web_sys::{AudioContext, OscillatorType};
+    use web_sys::{AudioContext, AudioContextState, Event, OscillatorType};
 
     use super::Wave;
 
@@ -17,13 +17,30 @@ mod imp {
         static CTX: RefCell<Option<AudioContext>> = const { RefCell::new(None) };
     }
 
+    pub fn unlock_on_gesture() {
+        let Some(window) = web_sys::window() else { return };
+        for event in ["pointerdown", "pointerup", "touchend", "keydown"] {
+            crate::web::listen(&window, event, |_: Event| {
+                CTX.with(|cell| {
+                    let mut borrow = cell.borrow_mut();
+                    if borrow.is_none() {
+                        *borrow = AudioContext::new().ok();
+                    }
+                    if let Some(ctx) = borrow.as_ref().filter(|c| c.state() != AudioContextState::Running) {
+                        let _ = ctx.resume();
+                    }
+                });
+            });
+        }
+    }
+
     fn with_ctx<F: FnOnce(&AudioContext)>(f: F) {
         CTX.with(|cell| {
-            let mut borrow = cell.borrow_mut();
-            if borrow.is_none() {
-                *borrow = AudioContext::new().ok();
-            }
-            if let Some(ref ctx) = *borrow {
+            if let Some(ctx) = cell
+                .borrow()
+                .as_ref()
+                .filter(|c| c.state() == AudioContextState::Running)
+            {
                 f(ctx);
             }
         });
@@ -36,7 +53,6 @@ mod imp {
             Wave::Sawtooth => OscillatorType::Sawtooth,
         };
         with_ctx(|ctx| {
-            let _ = ctx.resume();
             let Ok(osc) = ctx.create_oscillator() else {
                 return;
             };
@@ -150,6 +166,8 @@ mod imp {
 }
 
 use imp::play;
+#[cfg(target_arch = "wasm32")]
+pub use imp::unlock_on_gesture;
 
 // --- Public API ---
 

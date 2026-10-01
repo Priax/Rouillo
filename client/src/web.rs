@@ -17,7 +17,7 @@ fn typed(text: &str) {
     TYPED.with(|typed| typed.borrow_mut().push_str(text));
 }
 
-fn listen<E: FromWasmAbi + 'static>(target: &EventTarget, event: &str, handler: impl FnMut(E) + 'static) {
+pub fn listen<E: FromWasmAbi + 'static>(target: &EventTarget, event: &str, handler: impl FnMut(E) + 'static) {
     let handler = Closure::<dyn FnMut(E)>::new(handler);
     let _ = target.add_event_listener_with_callback(event, handler.as_ref().unchecked_ref());
     handler.forget();
