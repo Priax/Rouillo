@@ -3,6 +3,7 @@ use shared::{config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomI
 
 use crate::connection::Connection;
 use crate::interp::OpponentView;
+use crate::storage;
 use crate::ui::{Status, TextInput};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -10,6 +11,7 @@ pub enum Screen {
     Title,
     Auth,
     Menu,
+    PlayMenu,
     Settings,
     RoomBrowser,
     CreateRoom,
@@ -21,20 +23,22 @@ pub enum Screen {
     OtherProfile,
     SoloSetup,
     Solo,
+    Ranked,
 }
 
 impl Screen {
     pub fn hue(self) -> f32 {
         use crate::theme::hue;
         match self {
-            Self::Title | Self::Auth | Self::Menu => hue::PURPLE,
+            Self::Title | Self::Auth | Self::Menu | Self::PlayMenu => hue::PURPLE,
             Self::RoomBrowser
             | Self::CreateRoom
             | Self::JoinById
             | Self::RoomLobby
             | Self::Game
             | Self::SoloSetup
-            | Self::Solo => hue::BLUE,
+            | Self::Solo
+            | Self::Ranked => hue::BLUE,
             Self::Friends => hue::GREEN,
             Self::Profile | Self::OtherProfile => hue::PINK,
             Self::Settings => hue::ORANGE,
@@ -44,7 +48,7 @@ impl Screen {
     pub fn needs_connection(self) -> bool {
         matches!(
             self,
-            Self::RoomBrowser | Self::CreateRoom | Self::JoinById | Self::RoomLobby | Self::Game
+            Self::RoomBrowser | Self::CreateRoom | Self::JoinById | Self::RoomLobby | Self::Game | Self::Ranked
         )
     }
 }
@@ -114,7 +118,10 @@ pub struct ApiUserProfile {
     pub bio: Option<String>,
     pub favorite_music: Option<String>,
     pub total_matches: i64,
-    pub wins: i64,
+    pub casual_matches: i64,
+    pub casual_wins: i64,
+    pub ranked_series: i64,
+    pub ranked_series_won: i64,
     pub all_time_max_chain: i32,
     pub total_nuisance_sent: i64,
 }
@@ -154,6 +161,7 @@ pub struct FriendsData {
     pub confirm_remove: Option<String>,
     pub action_pending: Option<HttpSlot>,
     pub action_status: Status,
+    pub pages: [crate::ui::Pager; 3],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -185,7 +193,9 @@ pub struct ApiMatchPlayer {
 
 #[derive(serde::Deserialize)]
 pub struct ApiMatchEntry {
-    pub winner_slot: i16,
+    pub winner_slot: Option<i16>,
+    #[serde(default)]
+    pub ranked: bool,
     pub duration_secs: f64,
     pub player1: ApiMatchPlayer,
     pub player2: ApiMatchPlayer,
@@ -194,10 +204,9 @@ pub struct ApiMatchEntry {
 pub struct ProfileCore {
     pub user_id: String,
     pub info: ApiUserProfile,
-    pub match_history: Vec<ApiMatchEntry>,
+    pub history: crate::history::History,
     pub about_open: bool,
     pub profile_slot: Option<HttpSlot>,
-    pub history_slot: Option<HttpSlot>,
 }
 
 pub struct ProfileData {
@@ -206,74 +215,28 @@ pub struct ProfileData {
     pub account: Option<crate::account::AccountForm>,
 }
 
-#[cfg(target_arch = "wasm32")]
-fn local_storage() -> Option<web_sys::Storage> {
-    web_sys::window().and_then(|w| w.local_storage().ok().flatten())
-}
+const TOKEN_KEY: &str = "puyorust_token";
+const BEST_SCORE_KEY: &str = "rouillo_solo_best";
+const PLAYER_ID_KEY: &str = "puyorust_player_id";
 
 pub fn load_stored_token() -> Option<String> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        local_storage()
-            .and_then(|s| s.get_item("puyorust_token").ok().flatten())
-            .filter(|t| !t.is_empty())
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        None
-    }
+    storage::get(TOKEN_KEY)
 }
 
 pub fn save_token(token: &str) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(s) = local_storage() {
-            let _ = s.set_item("puyorust_token", token);
-        }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = token;
-    }
+    storage::set(TOKEN_KEY, token);
 }
 
 pub fn clear_stored_token() {
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(s) = local_storage() {
-            let _ = s.remove_item("puyorust_token");
-        }
-    }
+    storage::remove(TOKEN_KEY);
 }
 
-#[cfg(target_arch = "wasm32")]
-const BEST_SCORE_KEY: &str = "rouillo_solo_best";
-
 pub fn load_best_score() -> i32 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        local_storage()
-            .and_then(|s| s.get_item(BEST_SCORE_KEY).ok().flatten())
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        0
-    }
+    storage::get(BEST_SCORE_KEY).and_then(|v| v.parse().ok()).unwrap_or(0)
 }
 
 pub fn save_best_score(score: i32) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(s) = local_storage() {
-            let _ = s.set_item(BEST_SCORE_KEY, &score.to_string());
-        }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = score;
-    }
+    storage::set(BEST_SCORE_KEY, &score.to_string());
 }
 
 #[derive(Clone, Copy)]
@@ -296,8 +259,8 @@ impl Settings {
 
     pub fn label(i: usize) -> &'static str {
         match i {
-            0 => "DAS delay",
-            _ => "DAS speed",
+            0 => "Délai DAS",
+            _ => "Vitesse DAS",
         }
     }
 
@@ -322,12 +285,37 @@ impl Settings {
         }
     }
 
-    pub fn adjust(&mut self, i: usize, dir: i32) {
+    const KEYS: [&'static str; Self::COUNT] = ["rouillo_das_delay", "rouillo_das_speed"];
+
+    fn set(&mut self, i: usize, value: f32) {
         let (min, max) = Self::range(i);
-        let new = (self.value(i) + dir as f32 * Self::step(i)).clamp(min, max);
+        let value = value.clamp(min, max);
         match i {
-            0 => self.das_delay = new,
-            _ => self.das_speed = new,
+            0 => self.das_delay = value,
+            _ => self.das_speed = value,
+        }
+    }
+
+    pub fn adjust(&mut self, i: usize, dir: i32) {
+        self.set(i, self.value(i) + dir as f32 * Self::step(i));
+    }
+
+    pub fn load() -> Self {
+        let mut settings = Self::default();
+        for (i, key) in Self::KEYS.iter().enumerate() {
+            if let Some(value) = storage::get(key)
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|v| v.is_finite())
+            {
+                settings.set(i, value);
+            }
+        }
+        settings
+    }
+
+    pub fn save(self) {
+        for (i, key) in Self::KEYS.iter().enumerate() {
+            storage::set(key, &self.value(i).to_string());
         }
     }
 }
@@ -339,6 +327,7 @@ pub struct GameSession {
     pub my_slot: u8,
 
     pub opponent_disconnected: bool,
+    pub quit_menu: bool,
 
     pub input_seq: u32,
     pub my_ack: u32,
@@ -393,6 +382,7 @@ impl GameSession {
             board,
             my_slot,
             opponent_disconnected: false,
+            quit_menu: false,
             input_seq: 0,
             my_ack: 0,
             pending_inputs: Vec::new(),
@@ -484,24 +474,11 @@ fn gen_player_id() -> String {
 }
 
 pub fn load_or_create_player_id() -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(storage) = local_storage() {
-            if let Ok(Some(id)) = storage.get_item("puyorust_player_id") {
-                if !id.is_empty() {
-                    return id;
-                }
-            }
-            let id = gen_player_id();
-            let _ = storage.set_item("puyorust_player_id", &id);
-            return id;
-        }
-        gen_player_id()
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        gen_player_id()
-    }
+    storage::get(PLAYER_ID_KEY).unwrap_or_else(|| {
+        let id = gen_player_id();
+        storage::set(PLAYER_ID_KEY, &id);
+        id
+    })
 }
 
 #[derive(AppState)]
@@ -511,6 +488,7 @@ pub struct State {
     pub player_id: String,
     pub conn: Connection,
     pub rooms: Vec<RoomInfo>,
+    pub room_pager: crate::ui::Pager,
     pub lobby: Option<LobbyInfo>,
     pub text_input: TextInput,
     pub notice: Status,
@@ -525,9 +503,13 @@ pub struct State {
     pub title_seen: bool,
     pub pending_invitation: Option<(String, RoomId, String)>,
     pub pending_join: Option<RoomId>,
+    pub pending_queue: bool,
+    pub queued_at: Option<f64>,
+    pub series_over: Option<(Option<u8>, i32)>,
     pub invite_overlay: bool,
     pub invite_slot: Option<HttpSlot>,
     pub invite_friends: Vec<FriendEntry>,
+    pub invite_pager: crate::ui::Pager,
     pub outdated: bool,
     pub maintenance: bool,
     pub ui: crate::ui::Ui,
@@ -542,10 +524,11 @@ impl State {
         let player_id = load_or_create_player_id();
         Self {
             screen: Screen::Auth,
-            settings: Settings::default(),
+            settings: Settings::load(),
             player_id: player_id.clone(),
             conn: Connection::new(&player_id),
             rooms: Vec::new(),
+            room_pager: crate::ui::Pager::default(),
             lobby: None,
             text_input: TextInput::default(),
             notice: Status::Empty,
@@ -560,9 +543,13 @@ impl State {
             title_seen: false,
             pending_invitation: None,
             pending_join: None,
+            pending_queue: false,
+            queued_at: None,
+            series_over: None,
             invite_overlay: false,
             invite_slot: None,
             invite_friends: Vec::new(),
+            invite_pager: crate::ui::Pager::default(),
             outdated: false,
             maintenance: false,
             ui: crate::ui::Ui::default(),
@@ -571,5 +558,29 @@ impl State {
             solo: None,
             solo_best: load_best_score(),
         }
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn saved_settings_come_back_and_bad_ones_are_kept_in_range() {
+        let mut settings = Settings::default();
+        settings.adjust(0, 3);
+        settings.adjust(1, -1);
+        settings.save();
+        let loaded = Settings::load();
+        assert_eq!(
+            (loaded.das_delay, loaded.das_speed),
+            (settings.das_delay, settings.das_speed)
+        );
+
+        storage::set(Settings::KEYS[0], "99");
+        storage::set(Settings::KEYS[1], "NaN");
+        let loaded = Settings::load();
+        assert_eq!(loaded.das_delay, Settings::range(0).1, "clamped to the slowest allowed");
+        assert_eq!(loaded.das_speed, Settings::default().das_speed, "garbage is ignored");
     }
 }

@@ -8,48 +8,53 @@ use crate::{http, theme};
 enum MenuItem {
     Play,
     Solo,
+    Ranked,
+    Multiplayer,
     Friends,
     Settings,
     Logout,
+    Back,
 }
 
 impl MenuItem {
     fn label(self) -> &'static str {
         match self {
-            Self::Play => "Multijoueur",
+            Self::Play => "Jouer",
             Self::Solo => "Solo",
+            Self::Ranked => "Classé",
+            Self::Multiplayer => "Multijoueur",
             Self::Friends => "Amis",
             Self::Settings => "Paramètres",
             Self::Logout => "Déconnexion",
+            Self::Back => "Retour",
         }
     }
 
     fn color(self) -> Color {
         match self {
-            Self::Play => theme::bar::GREEN,
+            Self::Play | Self::Multiplayer => theme::bar::GREEN,
             Self::Solo => theme::bar::PURPLE,
+            Self::Ranked => theme::bar::ORANGE,
             Self::Friends => theme::bar::BLUE,
             Self::Settings => theme::bar::YELLOW,
-            Self::Logout => theme::bar::RED,
+            Self::Logout | Self::Back => theme::bar::RED,
         }
+    }
+}
+
+fn items(screen: Screen, logged_in: bool) -> &'static [MenuItem] {
+    match (screen, logged_in) {
+        (Screen::PlayMenu, true) => &[MenuItem::Solo, MenuItem::Ranked, MenuItem::Multiplayer, MenuItem::Back],
+        (Screen::PlayMenu, false) => &[MenuItem::Solo, MenuItem::Multiplayer, MenuItem::Back],
+        (_, true) => &[MenuItem::Play, MenuItem::Friends, MenuItem::Settings, MenuItem::Logout],
+        (_, false) => &[MenuItem::Play, MenuItem::Settings],
     }
 }
 
 const ROW_H: f32 = 64.0;
 
 /// The menu's rows, stacked with no gap under the title.
-fn menu_rows(view: View, logged_in: bool) -> impl Iterator<Item = (MenuItem, Rect)> {
-    let items: &[MenuItem] = if logged_in {
-        &[
-            MenuItem::Solo,
-            MenuItem::Play,
-            MenuItem::Friends,
-            MenuItem::Settings,
-            MenuItem::Logout,
-        ]
-    } else {
-        &[MenuItem::Solo, MenuItem::Play, MenuItem::Settings]
-    };
+fn menu_rows(view: View, items: &'static [MenuItem]) -> impl Iterator<Item = (MenuItem, Rect)> {
     let top = view.h / 2.0 - 60.0;
     items
         .iter()
@@ -69,14 +74,19 @@ fn outdated_btn(ww: f32) -> Rect {
     Rect::at(avatar.x - 20.0 - w, avatar.y + (avatar.h - h) / 2.0, w, h)
 }
 
-pub fn update_menu(state: &mut State) {
+pub fn update_menu(app: &App, state: &mut State) {
     let view = state.ui.view();
     let ww = view.w;
     let logged_in = state.auth.is_some();
 
-    let clicked = menu_rows(view, logged_in).find(|&(_, row)| state.ui.bar_clicked(row));
+    let clicked = menu_rows(view, items(state.screen, logged_in)).find(|&(_, row)| state.ui.bar_clicked(row));
     match clicked.map(|(item, _)| item) {
-        Some(MenuItem::Play) => start_play(state),
+        Some(MenuItem::Play) => {
+            state.notice.clear();
+            state.screen = Screen::PlayMenu;
+        }
+        Some(MenuItem::Multiplayer) => start_play(state),
+        Some(MenuItem::Ranked) => crate::ranked::enter(state),
         Some(MenuItem::Solo) => {
             state.notice.clear();
             state.screen = Screen::SoloSetup;
@@ -87,7 +97,12 @@ pub fn update_menu(state: &mut State) {
         }
         Some(MenuItem::Settings) => state.screen = Screen::Settings,
         Some(MenuItem::Logout) => do_logout(state),
-        None => {}
+        Some(MenuItem::Back) => state.screen = Screen::Menu,
+        None => {
+            if state.screen == Screen::PlayMenu && app.keyboard.was_pressed(KeyCode::Escape) {
+                state.screen = Screen::Menu;
+            }
+        }
     }
 
     if state.outdated && state.ui.clicked(outdated_btn(ww)) {
@@ -108,13 +123,20 @@ pub fn do_logout(state: &mut State) {
 }
 
 pub fn forget_session(state: &mut State) {
+    state.conn.disconnect();
+    state.lobby = None;
+    state.session = None;
+    clear_auth(state);
+    state.auth_form = AuthForm::default();
+    state.screen = Screen::Auth;
+}
+
+pub fn clear_auth(state: &mut State) {
     crate::state::clear_stored_token();
     state.auth = None;
-    state.auth_form = AuthForm::default();
     state.friends = None;
     state.profile = None;
     state.other_profile = None;
-    state.screen = Screen::Auth;
 }
 
 pub fn draw_menu(gfx: &mut Graphics, state: &State) {
@@ -129,7 +151,7 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
         .v_align_middle()
         .color(pal.title);
 
-    for (item, row) in menu_rows(state.ui.view(), state.auth.is_some()) {
+    for (item, row) in menu_rows(state.ui.view(), items(state.screen, state.auth.is_some())) {
         state
             .ui
             .menu_bar(&mut draw, &state.fonts, row, item.label(), item.color());
@@ -176,6 +198,7 @@ fn settings_back(view: View) -> Rect {
 pub fn update_settings(app: &mut App, state: &mut State) {
     let view = state.ui.view();
     let panel = settings_panel(view);
+    let before = (state.settings.das_delay, state.settings.das_speed);
     for i in 0..Settings::COUNT {
         if state.ui.clicked(panel.stepper(i).minus) {
             state.settings.adjust(i, -1);
@@ -183,6 +206,9 @@ pub fn update_settings(app: &mut App, state: &mut State) {
         if state.ui.clicked(panel.stepper(i).plus) {
             state.settings.adjust(i, 1);
         }
+    }
+    if (state.settings.das_delay, state.settings.das_speed) != before {
+        state.settings.save();
     }
     if state.ui.clicked(settings_back(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.screen = Screen::Menu;

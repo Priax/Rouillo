@@ -38,6 +38,22 @@ impl GameLayout {
 pub struct Role {
     pub is_host: bool,
     pub can_pause: bool,
+    pub series: Option<SeriesView>,
+}
+
+#[derive(Clone, Copy)]
+pub struct SeriesView {
+    pub wins: [u8; 2],
+    pub over: Option<(Option<bool>, i32)>,
+}
+
+impl Hud {
+    const fn series(self) -> Option<SeriesView> {
+        match self {
+            Self::Online(role) => role.series,
+            Self::Solo { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -64,22 +80,37 @@ impl Hud {
 }
 
 enum Overlay {
-    GameOver { i_lost: bool },
+    GameOver { i_lost: bool, draw: bool },
     OpponentGone,
     Paused,
+    QuitMenu,
 }
 
 impl Overlay {
     fn of(session: &GameSession, hud: Hud) -> Option<Self> {
         let me = hud.deciding(session);
+        if let Some(SeriesView {
+            over: Some((won, _)), ..
+        }) = hud.series()
+        {
+            return Some(Self::GameOver {
+                i_lost: won != Some(true),
+                draw: false,
+            });
+        }
         let i_lost = me.state == GameState::GameOver;
         let they_lost = hud.opponent().is_some() && session.other_board.state == GameState::GameOver;
         if i_lost || they_lost {
-            Some(Self::GameOver { i_lost })
+            Some(Self::GameOver {
+                i_lost,
+                draw: i_lost && they_lost,
+            })
         } else if session.opponent_disconnected {
             Some(Self::OpponentGone)
         } else if me.state == GameState::Paused {
             Some(Self::Paused)
+        } else if session.quit_menu {
+            Some(Self::QuitMenu)
         } else {
             None
         }
@@ -101,6 +132,12 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
         layout.sidebar_x,
         layout.mine.y,
     );
+    if let Some(series) = hud.series() {
+        draw.sharp_text(&fonts.text, &format!("Rounds: {} - {}", series.wins[0], series.wins[1]))
+            .position(layout.sidebar_x, layout.mine.y + 390.0)
+            .size(theme::size::LABEL)
+            .color(pal.text_muted);
+    }
     if let Hud::Solo {
         versus: false, best, ..
     } = hud
@@ -228,21 +265,54 @@ fn draw_overlay(
     let scrim = match overlay {
         Overlay::GameOver { .. } => theme::SCRIM_DARK,
         Overlay::OpponentGone => game::DISCONNECT_SCRIM,
-        Overlay::Paused => theme::SCRIM_LIGHT,
+        Overlay::Paused | Overlay::QuitMenu => theme::SCRIM_LIGHT,
     };
     draw.rect((0.0, 0.0), (layout.win_w, layout.win_h)).color(scrim);
+    if let (Overlay::GameOver { i_lost, draw: tie }, Some(series)) = (overlay, hud.series()) {
+        let (title, color) = match series.over {
+            Some((Some(true), _)) => ("VICTORY", theme::GOLD),
+            Some((Some(false), _)) => ("DEFEAT", theme::DANGER),
+            Some((None, _)) => ("SERIES CANCELLED", pal.text),
+            None if *tie => ("DRAW", pal.text),
+            None if *i_lost => ("ROUND LOST", theme::DANGER),
+            None => ("ROUND WON", theme::GOLD),
+        };
+        centered(draw, title, cy - 50.0, theme::size::HERO, color);
+        let score = format!("{} - {}", series.wins[0], series.wins[1]);
+        centered(draw, &score, cy + 5.0, theme::size::TITLE, pal.text);
+        let forfeited = series.wins.iter().all(|&w| w < config::RANKED_WINS);
+        let info = match series.over {
+            Some((Some(true), elo)) if forfeited => format!("Opponent forfeited, ELO {elo:+}"),
+            Some((Some(_), elo)) => format!("ELO {elo:+}"),
+            Some((None, _)) => "Server restarting, no ELO change".to_string(),
+            None => "Next round...".to_string(),
+        };
+        centered(draw, &info, cy + 50.0, theme::size::HEADING, pal.text_dim);
+        return;
+    }
     match overlay {
-        Overlay::GameOver { i_lost: true } => {
-            if matches!(hud, Hud::Solo { new_best: true, .. }) {
-                centered(draw, "NEW RECORD !", cy - 20.0, theme::size::HERO, theme::GOLD);
+        Overlay::GameOver { i_lost, draw: tie } => {
+            let (title, color) = if matches!(hud, Hud::Solo { new_best: true, .. }) {
+                ("NEW RECORD !", theme::GOLD)
+            } else if *tie {
+                ("DRAW", pal.text)
+            } else if *i_lost {
+                ("GAME OVER", theme::DANGER)
             } else {
-                centered(draw, "GAME OVER", cy - 20.0, theme::size::HERO, theme::DANGER);
-            }
+                ("YOU WIN !", theme::GOLD)
+            };
+            centered(draw, title, cy - 20.0, theme::size::HERO, color);
             centered(draw, "Press R to Restart", cy + 50.0, theme::size::HEADING, pal.text);
         }
-        Overlay::GameOver { i_lost: false } => {
-            centered(draw, "YOU WIN !", cy - 20.0, theme::size::HERO, theme::GOLD);
-            centered(draw, "Press R to Restart", cy + 50.0, theme::size::HEADING, pal.text);
+        Overlay::QuitMenu => {
+            centered(draw, "FORFEIT ?", cy - 40.0, theme::size::HERO, pal.text);
+            centered(
+                draw,
+                "Press ESC to resume",
+                cy + 30.0,
+                theme::size::HEADING,
+                pal.text_dim,
+            );
         }
         Overlay::OpponentGone => centered(
             draw,
@@ -316,6 +386,16 @@ pub fn exit_rows(view: View) -> (Rect, Rect) {
 
 fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, fonts: &Fonts, hud: Hud, forfeits: bool) {
     let (leave, back, has_back) = match hud {
+        Hud::Online(Role {
+            series: Some(series), ..
+        }) => {
+            let leave = if series.over.is_some() {
+                "Retour au menu"
+            } else {
+                "Abandonner (défaite)"
+            };
+            (leave, "", false)
+        }
         Hud::Solo { .. } => ("Quitter", "Recommencer", true),
         Hud::Online(role) if forfeits => ("Abandonner (défaite)", "Lobby (défaite)", role.is_host),
         Hud::Online(role) => ("Quitter la room", "Retour au lobby", role.is_host),

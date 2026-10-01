@@ -5,41 +5,49 @@ use crate::connection::Connection;
 use crate::state::{GameSession, Settings};
 use crate::ui::Ui;
 
+#[derive(Clone, Copy)]
+pub struct Online {
+    pub is_host: bool,
+    pub ranked: bool,
+    pub ended: bool,
+}
+
 pub fn update_game(
     app: &mut App,
     ui: &Ui,
     session: &mut GameSession,
     settings: Settings,
     conn: &mut Connection,
-    is_host: bool,
-) {
+    online: Online,
+) -> bool {
     if !conn.is_live() {
-        return;
+        return false;
     }
 
-    let game_over = session.decided();
+    let game_over = session.decided() || online.ended;
     let paused = session.board.state == GameState::Paused;
+    let is_host = online.is_host;
 
-    if paused || game_over || session.opponent_disconnected {
+    if paused || game_over || session.opponent_disconnected || session.quit_menu {
         let (leave_row, back_row) = crate::draw::exit_rows(ui.view());
         if ui.bar_clicked(leave_row) {
             conn.send(&ClientMessage::LeaveRoom);
-            return;
+            return true;
         }
         if is_host && ui.bar_clicked(back_row) {
             conn.send(&ClientMessage::ReturnToLobby);
-            return;
+            return false;
         }
     }
 
     if session.opponent_disconnected {
-        return;
+        return false;
     }
 
-    handle_global_input(app, session, conn);
+    handle_global_input(app, session, conn, online.ranked);
 
     let dt = app.timer.delta_f32();
-    if !game_over && !paused {
+    if !game_over && !paused && !session.quit_menu {
         handle_soft_drop_key(app, session, Some(conn));
         if session.predicted_board.state == GameState::Playing {
             handle_game_input(app, session, settings, Some(conn), dt);
@@ -53,6 +61,7 @@ pub fn update_game(
     }
 
     animate(session, dt);
+    false
 }
 
 pub fn animate(session: &mut GameSession, dt: f32) {
@@ -180,13 +189,17 @@ fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: In
     moved
 }
 
-fn handle_global_input(app: &App, session: &GameSession, conn: &mut Connection) {
-    if app.keyboard.was_pressed(KeyCode::KeyR) && session.decided() {
+fn handle_global_input(app: &App, session: &mut GameSession, conn: &mut Connection, ranked: bool) {
+    if !ranked && app.keyboard.was_pressed(KeyCode::KeyR) && session.decided() {
         conn.send(&ClientMessage::RequestRestart);
     }
 
     if app.keyboard.was_pressed(KeyCode::Escape) {
-        conn.send(&ClientMessage::TogglePause);
+        if ranked {
+            session.quit_menu = !session.quit_menu && !session.decided();
+        } else {
+            conn.send(&ClientMessage::TogglePause);
+        }
     }
 }
 

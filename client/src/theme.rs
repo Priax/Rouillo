@@ -130,6 +130,7 @@ pub mod bar {
     pub const PURPLE: Color = Color::from_rgb(0.52, 0.36, 0.86);
     pub const YELLOW: Color = Color::from_rgb(0.95, 0.66, 0.05);
     pub const RED: Color = Color::from_rgb(0.74, 0.14, 0.2);
+    pub const ORANGE: Color = Color::from_rgb(0.9, 0.42, 0.12);
 }
 
 pub mod size {

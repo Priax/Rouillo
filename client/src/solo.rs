@@ -209,7 +209,7 @@ pub fn update_setup(app: &mut App, state: &mut State) {
         state.solo = Some(SoloGame::new(state.solo_settings));
         state.screen = Screen::Solo;
     } else if state.ui.bar_clicked(panel.action_row(1)) || app.keyboard.was_pressed(KeyCode::Escape) {
-        state.screen = Screen::Menu;
+        state.screen = Screen::PlayMenu;
     }
 }
 

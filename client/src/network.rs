@@ -39,6 +39,9 @@ fn on_opened(state: &mut State, recovered: bool) {
     if let Some(id) = state.pending_join.take() {
         state.conn.send(&ClientMessage::JoinRoom { id });
     }
+    if std::mem::take(&mut state.pending_queue) {
+        state.conn.send(&ClientMessage::JoinQueue);
+    }
     if recovered {
         state.notice.clear();
     }
@@ -159,9 +162,16 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             }
         }
         ServerMessage::Lobby { info } => {
+            if state.lobby.as_ref().map(|l| l.id) != Some(info.id) {
+                state.series_over = None;
+            }
+            state.screen = if info.ranked.is_some() {
+                Screen::Ranked
+            } else {
+                Screen::RoomLobby
+            };
             state.lobby = Some(info);
             state.session = None;
-            state.screen = Screen::RoomLobby;
         }
         ServerMessage::JoinFailed { reason } => {
             state.notice = Status::error(reason);
@@ -226,6 +236,38 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             if let Some(session) = state.session.as_mut() {
                 session.opponent_disconnected = true;
                 session.last_server_msg = "OpponentDisconnected".to_string();
+            }
+        }
+        ServerMessage::QueueRefused { reason } => {
+            crate::ranked::leave(state);
+            state.notice = Status::error(reason);
+        }
+        ServerMessage::SeriesScore { wins } => {
+            if let Some(ranked) = state.lobby.as_mut().and_then(|l| l.ranked.as_mut()) {
+                ranked.wins = wins;
+            }
+        }
+        ServerMessage::SeriesOver {
+            winner_slot,
+            elo_change,
+        } => {
+            if state.series_over.is_none() {
+                if let Some(auth) = state.auth.as_mut() {
+                    auth.elo += elo_change;
+                }
+            }
+            state.series_over = Some((winner_slot, elo_change));
+        }
+        ServerMessage::SessionRevoked => {
+            if state.auth.is_some() {
+                crate::menu::clear_auth(state);
+                if matches!(
+                    state.screen,
+                    Screen::Profile | Screen::Friends | Screen::OtherProfile | Screen::Ranked
+                ) {
+                    state.screen = Screen::Menu;
+                }
+                state.notice = Status::info("Votre session a été fermée depuis un autre appareil.");
             }
         }
         ServerMessage::Pong { .. } => {}

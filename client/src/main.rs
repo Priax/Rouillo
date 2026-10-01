@@ -11,6 +11,7 @@ mod connection;
 mod cpu;
 mod draw;
 mod friends;
+mod history;
 mod http;
 mod interp;
 mod logic;
@@ -20,9 +21,11 @@ mod network;
 mod profile;
 mod profile_about;
 mod profile_edit;
+mod ranked;
 mod rooms;
 mod solo;
 mod state;
+mod storage;
 mod theme;
 mod title;
 mod ui;
@@ -103,7 +106,13 @@ fn type_char(state: &mut State, c: char) {
             state.text_input.insert(c);
         }
         Screen::Friends => {
-            if let Some(f) = state.friends.as_mut() {
+            if let Some(pager) = state
+                .friends
+                .as_mut()
+                .and_then(|f| f.pages.iter_mut().find(|p| p.focused()))
+            {
+                pager.type_char(c);
+            } else if let Some(f) = state.friends.as_mut() {
                 let allowed = c.is_alphanumeric() || c == '_' || c == '-' || c == ' ';
                 if allowed && f.search_input.len() < 36 {
                     f.search_input.insert(c);
@@ -116,9 +125,18 @@ fn type_char(state: &mut State, c: char) {
                     form.type_char(c);
                 } else if let Some(form) = p.account.as_mut() {
                     form.type_char(c);
+                } else {
+                    p.core.history.type_char(c);
                 }
             }
         }
+        Screen::OtherProfile => {
+            if let Some(p) = state.other_profile.as_mut() {
+                p.core.history.type_char(c);
+            }
+        }
+        Screen::RoomBrowser => state.room_pager.type_char(c),
+        Screen::RoomLobby if state.invite_overlay => state.invite_pager.type_char(c),
         _ => {}
     }
 }
@@ -182,9 +200,9 @@ fn update(app: &mut App, state: &mut State) {
     match state.screen {
         Screen::Title => title::update_title(app, state),
         Screen::Auth => login::update_auth(app, state),
-        Screen::Menu => menu::update_menu(state),
+        Screen::Menu | Screen::PlayMenu => menu::update_menu(app, state),
         Screen::Settings => menu::update_settings(app, state),
-        Screen::RoomBrowser => rooms::update_browser(state),
+        Screen::RoomBrowser => rooms::update_browser(app, state),
         Screen::CreateRoom => rooms::update_create_room(app, state),
         Screen::JoinById => rooms::update_join_by_id(app, state),
         Screen::RoomLobby => rooms::update_lobby(app, state),
@@ -192,9 +210,14 @@ fn update(app: &mut App, state: &mut State) {
         Screen::Friends => friends::update_friends(app, state),
         Screen::OtherProfile => profile::update_other_profile(app, state),
         Screen::SoloSetup => solo::update_setup(app, state),
+        Screen::Ranked => ranked::update(app, state),
         Screen::Solo => solo::update_game(app, state),
         Screen::Game => {
-            let is_host = state.lobby.as_ref().is_some_and(|l| l.is_host);
+            let online = logic::Online {
+                is_host: state.lobby.as_ref().is_some_and(|l| l.is_host),
+                ranked: state.lobby.as_ref().is_some_and(|l| l.ranked.is_some()),
+                ended: state.series_over.is_some(),
+            };
             let State {
                 session,
                 settings,
@@ -202,8 +225,11 @@ fn update(app: &mut App, state: &mut State) {
                 ui,
                 ..
             } = &mut *state;
-            if let Some(session) = session {
-                logic::update_game(app, ui, session, *settings, conn, is_host);
+            let left = session
+                .as_mut()
+                .is_some_and(|s| logic::update_game(app, ui, s, *settings, conn, online));
+            if left && online.ranked {
+                ranked::leave(state);
             }
         }
     }
@@ -229,7 +255,7 @@ fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
         pal.accent,
         ui::Edge::Top,
     );
-    let msg = format!("{from} t'invite dans \"{room_name}\"");
+    let msg = format!("{from} vous invite dans \"{room_name}\"");
     d.sharp_text(&state.fonts.text, &msg)
         .position(20.0, banner_y + 40.0)
         .size(theme::size::LABEL)
@@ -245,7 +271,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
     match state.screen {
         Screen::Title => title::draw_title(gfx, state),
         Screen::Auth => login::draw_auth(gfx, state),
-        Screen::Menu => menu::draw_menu(gfx, state),
+        Screen::Menu | Screen::PlayMenu => menu::draw_menu(gfx, state),
         Screen::Settings => menu::draw_settings(gfx, state),
         Screen::RoomBrowser => rooms::draw_browser(gfx, state),
         Screen::CreateRoom => rooms::draw_create_room(gfx, state),
@@ -255,6 +281,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         Screen::Friends => friends::draw_friends(gfx, state),
         Screen::OtherProfile => profile::draw_other_profile(gfx, state),
         Screen::SoloSetup => solo::draw_setup(gfx, state),
+        Screen::Ranked => ranked::draw(gfx, state),
         Screen::Solo => {
             if let Some(game) = state.solo.as_ref() {
                 let hud = game.hud(state.solo_best);
@@ -265,6 +292,16 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
             let role = draw::Role {
                 is_host: state.lobby.as_ref().is_some_and(|l| l.is_host),
                 can_pause: state.lobby.as_ref().is_some_and(|l| l.settings.pause.allows(l.is_host)),
+                series: state.lobby.as_ref().and_then(|l| {
+                    let ranked = l.ranked.as_ref()?;
+                    let me = usize::from(l.your_slot.clamp(1, 2) - 1);
+                    Some(draw::SeriesView {
+                        wins: [ranked.wins[me], ranked.wins[1 - me]],
+                        over: state
+                            .series_over
+                            .map(|(winner, elo)| (winner.map(|w| w == l.your_slot), elo)),
+                    })
+                }),
             };
             if let Some(session) = state.session.as_ref() {
                 draw::draw_game(app, gfx, session, &state.ui, &state.fonts, draw::Hud::Online(role));

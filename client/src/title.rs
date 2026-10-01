@@ -5,7 +5,7 @@ use crate::state::{Screen, State};
 use crate::theme;
 use crate::ui::SharpText;
 
-const PROMPT: &str = "Appuie sur une touche";
+const PROMPT: &str = "Appuyez sur une touche !!";
 const PULSE_SPEED: f64 = 3.0;
 pub const FADE: f32 = 1.2;
 

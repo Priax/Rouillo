@@ -30,13 +30,8 @@ const _: () =
 const INITIAL_WINDOW: f64 = 10.0;
 
 fn seed_from(player_id: &str) -> u64 {
-    // FNV-1a. `| 1` because xorshift degenerates on a zero state.
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in player_id.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100_0000_01b3);
-    }
-    h | 1
+    // `| 1` because xorshift degenerates on a zero state.
+    shared::fnv1a(player_id.as_bytes()) | 1
 }
 
 // xorshift64, returning a fraction in `[0, 1)`. Small and dependency-free;
