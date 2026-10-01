@@ -160,6 +160,8 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
             .color(color);
     }
 
+    crate::title::draw_version(&mut draw, state);
+
     state.ui.render(gfx, &draw);
 }
 

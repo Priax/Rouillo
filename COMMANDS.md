@@ -142,11 +142,13 @@ Le redémarrage attend la fin des parties en cours. Détails dans `DEPLOY.md` §
 ### Publier une release GitHub
 Le workflow `.github/workflows/release.yml` se déclenche sur un tag `v*` et construit les
 binaires **natifs** du client (Linux + Windows) attachés à une release brouillon, plus
-l'archive `rouillo-linux-x86_64.tar.gz` (binaire, `install.sh`, lanceur et icônes):
+l'archive `rouillo-linux-x86_64.tar.gz` (binaire, `install.sh`, lanceur et icônes).
+La version vient de `[workspace.package]` dans le `Cargo.toml` racine: la mettre à jour et
+la commiter avant le tag, sinon le workflow échoue.
 
 ```bash
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.8.28
+git push origin v0.8.28
 ```
 
 ---

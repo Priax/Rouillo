@@ -28,6 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Check the tag matches the version
+        shell: bash
+        run: |
+          version=$(tr -d '\r' < Cargo.toml | sed -n 's/^version = "\(.*\)"$/\1/p')
+          [ "$GITHUB_REF_NAME" = "v$version" ] \
+            || { echo "tag $GITHUB_REF_NAME, Cargo.toml says $version" >&2; exit 1; }
+
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
