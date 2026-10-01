@@ -23,6 +23,7 @@ mod rooms;
 mod solo;
 mod state;
 mod theme;
+mod title;
 mod ui;
 mod update;
 #[cfg(target_arch = "wasm32")]
@@ -64,6 +65,7 @@ fn setup(gfx: &mut Graphics) -> State {
         let slot = http::new_slot();
         http::get(http::api_url("me"), Some(token), Arc::clone(&slot));
         state.startup_check = Some(slot);
+        state.screen = Screen::Title;
     }
 
     state
@@ -158,6 +160,7 @@ fn update(app: &mut App, state: &mut State) {
     for c in web::take_typed().chars() {
         type_char(state, c);
     }
+    let was_title = state.screen == Screen::Title;
     let State { session, conn, .. } = state;
     if let Some(session) = session.as_mut() {
         session.clock += app.timer.delta_f32() as f64;
@@ -172,6 +175,7 @@ fn update(app: &mut App, state: &mut State) {
     network::handle_server_messages(state);
 
     match state.screen {
+        Screen::Title => title::update_title(app, state),
         Screen::Auth => login::update_auth(app, state),
         Screen::Menu => menu::update_menu(state),
         Screen::Settings => menu::update_settings(app, state),
@@ -198,7 +202,11 @@ fn update(app: &mut App, state: &mut State) {
             }
         }
     }
-    state.ui.set_screen(state.screen as usize, state.screen.hue());
+    if state.screen == Screen::Menu && !state.title_seen {
+        state.screen = Screen::Title;
+    }
+    let fade = if was_title { title::FADE } else { ui::TRANSITION };
+    state.ui.set_screen(state.screen as usize, state.screen.hue(), fade);
 }
 
 fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
@@ -230,6 +238,7 @@ fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
 
 fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
     match state.screen {
+        Screen::Title => title::draw_title(gfx, state),
         Screen::Auth => login::draw_auth(gfx, state),
         Screen::Menu => menu::draw_menu(gfx, state),
         Screen::Settings => menu::draw_settings(gfx, state),

@@ -7,6 +7,7 @@ use crate::ui::{Status, TextInput};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
+    Title,
     Auth,
     Menu,
     Settings,
@@ -26,7 +27,7 @@ impl Screen {
     pub fn hue(self) -> f32 {
         use crate::theme::hue;
         match self {
-            Self::Auth | Self::Menu => hue::PURPLE,
+            Self::Title | Self::Auth | Self::Menu => hue::PURPLE,
             Self::RoomBrowser
             | Self::CreateRoom
             | Self::JoinById
@@ -520,6 +521,7 @@ pub struct State {
     pub friends: Option<FriendsData>,
     pub other_profile: Option<OtherProfileData>,
     pub startup_check: Option<HttpSlot>,
+    pub title_seen: bool,
     pub pending_invitation: Option<(String, RoomId, String)>,
     pub pending_join: Option<RoomId>,
     pub invite_overlay: bool,
@@ -554,6 +556,7 @@ impl State {
             friends: None,
             other_profile: None,
             startup_check: None,
+            title_seen: false,
             pending_invitation: None,
             pending_join: None,
             invite_overlay: false,

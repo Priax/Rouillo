@@ -44,7 +44,7 @@ use crate::theme::{hue, Palette};
 const MAX_DT: f32 = 0.1;
 const SUPERSAMPLE: f32 = 2.0;
 const MAX_TARGET: f32 = 4096.0;
-const TRANSITION: f32 = 0.3;
+pub const TRANSITION: f32 = 0.3;
 
 const HOVER_SPEED: f32 = 18.0;
 const PRESS_SPEED: f32 = 30.0;
@@ -66,6 +66,7 @@ struct Inner {
     target_hue: f32,
     screen: Option<usize>,
     entered_at: f64,
+    fade: f32,
     palette: Palette,
     mouse: Mouse,
     input_off: bool,
@@ -87,6 +88,7 @@ impl Default for Inner {
             target_hue: hue::PURPLE,
             screen: None,
             entered_at: f64::NEG_INFINITY,
+            fade: TRANSITION,
             palette: Palette::new(hue::PURPLE),
             mouse: Mouse::default(),
             input_off: false,
@@ -162,7 +164,7 @@ impl Ui {
         inner.time += f64::from(inner.dt);
         inner.view = view;
         let turn = (inner.target_hue - inner.from_hue + 540.0).rem_euclid(360.0) - 180.0;
-        let progress = ease_out(transition_progress(inner.time, inner.entered_at));
+        let progress = ease_out(transition_progress(inner.time, inner.entered_at, inner.fade));
         inner.hue = (inner.from_hue + turn * progress).rem_euclid(360.0);
         inner.palette = Palette::new(inner.hue);
         inner.mouse = mouse;
@@ -186,10 +188,10 @@ impl Ui {
     }
 
     /// Tells which screen is shown, and its section's hue. A change of
-    /// screen starts a transition: the new one fades and slides in while the
-    /// palette moves to its hue, both along the same curve. The first screen
-    /// shows up at once.
-    pub fn set_screen(&self, screen: usize, hue: f32) {
+    /// screen starts a transition of `fade` seconds: the new one fades and
+    /// slides in while the palette moves to its hue, both along the same
+    /// curve. The first screen shows up at once.
+    pub fn set_screen(&self, screen: usize, hue: f32, fade: f32) {
         let mut inner = self.inner.borrow_mut();
         match inner.screen {
             Some(current) if current == screen => {}
@@ -198,6 +200,7 @@ impl Ui {
                 inner.from_hue = inner.hue;
                 inner.target_hue = hue;
                 inner.entered_at = inner.time;
+                inner.fade = fade;
             }
             None => {
                 inner.screen = Some(screen);
@@ -212,7 +215,7 @@ impl Ui {
     /// How far the current screen is into its entrance, eased, in `0..=1`.
     fn transition(&self) -> f32 {
         let inner = self.inner.borrow();
-        ease_out(transition_progress(inner.time, inner.entered_at))
+        ease_out(transition_progress(inner.time, inner.entered_at, inner.fade))
     }
 
     pub fn time(&self) -> f64 {
@@ -332,6 +335,7 @@ impl Ui {
             target_hue: _,
             screen: _,
             entered_at: _,
+            fade: _,
             palette: _,
             mouse,
             input_off,
@@ -392,8 +396,8 @@ fn supersample(view: View) -> f32 {
     SUPERSAMPLE.min(MAX_TARGET / largest)
 }
 
-fn transition_progress(time: f64, entered_at: f64) -> f32 {
-    ((time - entered_at) / f64::from(TRANSITION)).clamp(0.0, 1.0) as f32
+fn transition_progress(time: f64, entered_at: f64, fade: f32) -> f32 {
+    ((time - entered_at) / f64::from(fade)).clamp(0.0, 1.0) as f32
 }
 
 fn ease_out(t: f32) -> f32 {
@@ -443,7 +447,7 @@ mod tests {
     #[test]
     fn the_first_screen_shows_up_at_once() {
         let mut ui = Ui::default();
-        ui.set_screen(0, hue::GREEN);
+        ui.set_screen(0, hue::GREEN, TRANSITION);
         ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
         assert!((ui.transition() - 1.0).abs() < f32::EPSILON);
         assert!((ui.inner.borrow().hue - hue::GREEN).abs() < f32::EPSILON);
@@ -453,9 +457,9 @@ mod tests {
     fn a_new_screen_brings_its_colours_the_short_way_round() {
         let mut ui = Ui::default();
         let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
-        ui.set_screen(0, hue::PURPLE);
+        ui.set_screen(0, hue::PURPLE, TRANSITION);
         frame(&mut ui);
-        ui.set_screen(1, hue::PINK);
+        ui.set_screen(1, hue::PINK, TRANSITION);
         assert!(ui.transition() < f32::EPSILON, "the new screen starts hidden");
         frame(&mut ui);
         let h = ui.inner.borrow().hue;
@@ -465,12 +469,29 @@ mod tests {
         }
         assert!((ui.transition() - 1.0).abs() < f32::EPSILON, "done in {TRANSITION}s");
         assert!((ui.inner.borrow().hue - hue::PINK).abs() < 1e-3);
-        ui.set_screen(2, hue::ORANGE);
+        ui.set_screen(2, hue::ORANGE, TRANSITION);
         frame(&mut ui);
         let h = ui.inner.borrow().hue;
         assert!(h > hue::PINK || h < hue::ORANGE, "333 to 45 crosses 360, got {h}");
-        ui.set_screen(2, hue::ORANGE);
+        ui.set_screen(2, hue::ORANGE, TRANSITION);
         assert!(ui.transition() > 0.0, "staying on a screen does not restart it");
+    }
+
+    #[test]
+    fn a_transition_lasts_its_own_fade() {
+        let mut ui = Ui::default();
+        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
+        ui.set_screen(0, hue::PURPLE, TRANSITION);
+        frame(&mut ui);
+        ui.set_screen(1, hue::PURPLE, 1.2);
+        for _ in 0..30 {
+            frame(&mut ui);
+        }
+        assert!(ui.transition() < 1.0, "still fading after {TRANSITION}s");
+        for _ in 0..45 {
+            frame(&mut ui);
+        }
+        assert!((ui.transition() - 1.0).abs() < f32::EPSILON, "done in 1.2s");
     }
 
     #[test]

@@ -113,6 +113,9 @@ pub fn poll_startup_check(state: &mut State) {
             crate::state::clear_stored_token();
         }
     }
+    if state.auth.is_none() && state.screen == Screen::Title {
+        state.screen = Screen::Auth;
+    }
 }
 
 pub fn update_auth(app: &mut App, state: &mut State) {
