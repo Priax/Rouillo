@@ -324,6 +324,30 @@ fn ojama_fall_matches_the_tsu_table_in_every_column() {
     }
 }
 
+#[test]
+fn faster_drops_earn_a_point_per_cell() {
+    let mut b = empty_board();
+    b.active_piece = Some(piece(1, 2, 0));
+    b.hard_drop();
+    let cells = (GRID_HEIGHT - 2) as u32;
+    assert_eq!((b.score, b.nuisance_points), (cells as i32, cells));
+
+    let mut b = empty_board();
+    b.active_piece = Some(piece(1, 2, 0));
+    b.apply_input(InputKind::SoftDropPress);
+    while b.active_piece.is_some() {
+        b.tick();
+    }
+    assert_eq!((b.score, b.nuisance_points), (cells as i32, cells));
+
+    let mut b = empty_board();
+    b.active_piece = Some(piece(1, 2, 0));
+    while b.active_piece.is_some() {
+        b.tick();
+    }
+    assert_eq!((b.score, b.nuisance_points), (0, 0));
+}
+
 /// A pair locked with its satellite hanging over a hole: the satellite falls
 /// with gravity, the chain check waits for it to land and bounce.
 #[test]
@@ -643,7 +667,7 @@ struct Run {
 /// locking, chains and garbage instead of freezing on the first game over.
 /// A seed whose script reaches a chain of 3 within 6000 ticks: random play
 /// rarely chains, and the tests below need the resolution path exercised.
-const SCRIPT_SEED: u64 = 63;
+const SCRIPT_SEED: u64 = 628;
 
 fn run_script(seed: u64, ticks: u64, skip_input_at: Option<u64>) -> Run {
     let fresh = |s: u64| {
@@ -744,7 +768,7 @@ fn one_dropped_input_diverges() {
 ///
 /// It therefore fails whenever the simulation changes, deliberately or not. If
 /// the change was intended, re-read the diff, then paste the new value in.
-const GOLDEN_FINAL_HASH: u64 = 2_759_900_574_527_949_148;
+const GOLDEN_FINAL_HASH: u64 = 8_473_425_879_688_181_606;
 
 #[test]
 fn scripted_run_matches_its_recorded_outcome() {

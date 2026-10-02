@@ -697,16 +697,24 @@ impl Board {
 
     pub fn hard_drop(&mut self) {
         if let Some(mut piece) = self.active_piece.take() {
+            let mut cells = 0;
             loop {
                 piece.row += 1;
                 if self.check_collision(&piece) {
                     piece.row -= 1;
                     break;
                 }
+                cells += 1;
             }
             self.active_piece = Some(piece);
+            self.add_drop_bonus(cells);
             self.lock_piece();
         }
+    }
+
+    fn add_drop_bonus(&mut self, points: u32) {
+        self.score = self.score.saturating_add(i32::try_from(points).unwrap_or(i32::MAX));
+        self.nuisance_points = self.nuisance_points.saturating_add(points);
     }
 
     pub fn can_fall(&self) -> bool {
@@ -746,6 +754,9 @@ impl Board {
                 self.fall_offset -= CELL_UNITS;
                 if let Some(piece) = self.active_piece.as_mut() {
                     piece.row += 1;
+                }
+                if self.soft_dropping {
+                    self.add_drop_bonus(1);
                 }
             }
         }
