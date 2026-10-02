@@ -148,14 +148,22 @@ pub mod game {
     use notan::prelude::Color;
     use shared::PuyoType;
 
-    pub const BACKGROUND: Color = Color::from_rgb(0.05, 0.05, 0.05);
-    pub const BOARD: Color = Color::from_rgb(0.12, 0.12, 0.12);
-    pub const GRID: Color = Color::GRAY;
-    pub const PREVIEW: Color = Color::from_rgb(0.2, 0.2, 0.2);
-    pub const PREVIEW_NEXT: Color = Color::from_rgb(0.15, 0.15, 0.15);
-    pub const DEATH_CROSS: Color = Color::RED;
-    pub const GARBAGE_CORE: Color = Color::BLACK;
-    pub const ALL_CLEAR: Color = Color::from_rgb(1.0, 1.0, 0.0);
+    pub const BACKGROUND: Color = Color::from_rgb(0.07, 0.08, 0.15);
+    pub const PATTERN: Color = Color::from_rgba(0.55, 0.6, 1.0, 0.035);
+    pub const FRAME: Color = Color::from_rgb(0.62, 0.68, 0.95);
+    pub const FRAME_INNER: Color = Color::from_rgb(0.2, 0.22, 0.4);
+    pub const WELL: Color = Color::from_rgb(0.05, 0.05, 0.1);
+    pub const WELL_LANE: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.018);
+    pub const WELL_DOT: Color = Color::from_rgba(0.6, 0.6, 1.0, 0.14);
+    pub const PANEL: Color = Color::from_rgb(0.1, 0.11, 0.2);
+    pub const DEATH_CROSS: Color = Color::from_rgb(1.0, 0.3, 0.5);
+    pub const GARBAGE_INK: Color = Color::from_rgb(0.3, 0.32, 0.42);
+    pub const ROCK: Color = Color::from_rgb(0.55, 0.52, 0.58);
+    pub const ROCK_SHADE: Color = Color::from_rgb(0.3, 0.28, 0.34);
+    pub const STAR: Color = Color::from_rgb(1.0, 0.78, 0.2);
+    pub const MOON: Color = Color::from_rgb(0.95, 0.9, 0.6);
+    pub const TEXT_SHADOW: Color = Color::from_rgba(0.0, 0.0, 0.05, 0.75);
+    pub const ALL_CLEAR: Color = Color::from_rgb(1.0, 0.9, 0.3);
     pub const DISCONNECT_SCRIM: Color = Color::from_rgba(0.5, 0.0, 0.0, 0.5);
     #[cfg(debug_assertions)]
     pub const DEBUG_NET: Color = Color::MAGENTA;
@@ -164,12 +172,12 @@ pub mod game {
 
     pub const fn puyo(puyo_type: PuyoType) -> Color {
         match puyo_type {
-            PuyoType::Red => Color::RED,
-            PuyoType::Blue => Color::BLUE,
-            PuyoType::Yellow => Color::YELLOW,
-            PuyoType::Green => Color::GREEN,
-            PuyoType::Purple => Color::MAGENTA,
-            PuyoType::Garbage => Color::GRAY,
+            PuyoType::Red => Color::from_rgb(0.94, 0.27, 0.33),
+            PuyoType::Blue => Color::from_rgb(0.27, 0.56, 0.98),
+            PuyoType::Yellow => Color::from_rgb(1.0, 0.8, 0.2),
+            PuyoType::Green => Color::from_rgb(0.3, 0.82, 0.42),
+            PuyoType::Purple => Color::from_rgb(0.68, 0.42, 0.95),
+            PuyoType::Garbage => Color::from_rgb(0.8, 0.82, 0.9),
         }
     }
 

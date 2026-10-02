@@ -24,6 +24,7 @@ mod profile_edit;
 mod ranked;
 mod rooms;
 mod solo;
+mod sprites;
 mod state;
 mod storage;
 mod theme;
