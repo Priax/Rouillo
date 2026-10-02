@@ -29,12 +29,13 @@ pub fn update_game(
     let is_host = online.is_host;
 
     if paused || game_over || session.opponent_disconnected || session.quit_menu {
-        let (leave_row, back_row) = crate::draw::exit_rows(ui.view());
+        let with_back = is_host && !online.ranked;
+        let (leave_row, back_row) = crate::draw::exit_rows(ui.view(), with_back);
         if ui.bar_clicked(leave_row) {
             conn.send(&ClientMessage::LeaveRoom);
             return true;
         }
-        if is_host && ui.bar_clicked(back_row) {
+        if with_back && ui.bar_clicked(back_row) {
             conn.send(&ClientMessage::ReturnToLobby);
             return false;
         }

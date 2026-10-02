@@ -526,12 +526,15 @@ fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32)
 
 const EXIT_ROW_H: f32 = 60.0;
 
-pub fn exit_rows(view: View) -> (Rect, Rect) {
+pub fn exit_rows(view: View, with_back: bool) -> (Rect, Rect) {
     let top = view.h / 2.0 + 90.0;
-    (
-        Rect::at(0.0, top, view.w, EXIT_ROW_H),
-        Rect::at(0.0, top + EXIT_ROW_H, view.w, EXIT_ROW_H),
-    )
+    let first = Rect::at(0.0, top, view.w, EXIT_ROW_H);
+    let second = Rect::at(0.0, top + EXIT_ROW_H, view.w, EXIT_ROW_H);
+    if with_back {
+        (second, first)
+    } else {
+        (first, second)
+    }
 }
 
 fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, fonts: &Fonts, hud: Hud, forfeits: bool) {
@@ -550,7 +553,7 @@ fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, fonts: &Fonts, hud: Hud, forfeits
         Hud::Online(role) if forfeits => ("Abandonner (défaite)", "Lobby (défaite)", role.is_host),
         Hud::Online(role) => ("Quitter la room", "Retour au lobby", role.is_host),
     };
-    let (leave_row, back_row) = exit_rows(ui.view());
+    let (leave_row, back_row) = exit_rows(ui.view(), has_back);
     ui.menu_bar(draw, fonts, leave_row, leave, theme::bar::RED);
     if has_back {
         ui.menu_bar(draw, fonts, back_row, back, theme::bar::YELLOW);

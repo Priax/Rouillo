@@ -146,7 +146,7 @@ pub fn update_game(app: &mut App, state: &mut State) {
     }
     let (over, paused) = (game.over(), game.paused());
     if over || paused {
-        let (quit, again) = crate::draw::exit_rows(ui.view());
+        let (quit, again) = crate::draw::exit_rows(ui.view(), true);
         if ui.bar_clicked(quit) {
             *solo = None;
             *screen = Screen::SoloSetup;
