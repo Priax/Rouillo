@@ -54,20 +54,10 @@ impl SoloGame {
     }
 
     fn with_seed(settings: SoloSettings, seed: u64) -> Self {
-        let board = || {
-            let mut board = Board::new(
-                config::GRID_WIDTH,
-                config::GRID_HEIGHT,
-                seed,
-                settings.room.starting_level,
-                settings.room.colors,
-            );
-            board.spawn_piece();
-            board
-        };
+        let board = Board::for_match(seed, &settings.room);
         let mut session = GameSession::new(1);
-        session.predicted_board = board();
-        session.other_board = board();
+        session.predicted_board = board.clone();
+        session.other_board = board;
         Self {
             session,
             settings,
@@ -170,16 +160,9 @@ pub fn update_game(app: &mut App, state: &mut State) {
 
     let dt = app.timer.delta_f32();
     if over || paused {
-        game.session.sim_accumulator = 0.0;
-        logic::release_keys(&mut game.session);
+        logic::hold(&mut game.session);
     } else {
-        let session = &mut game.session;
-        logic::handle_soft_drop_key(app, session, None);
-        if session.predicted_board.state == GameState::Playing {
-            logic::handle_game_input(app, session, *settings, None, dt);
-        } else {
-            logic::release_keys(session);
-        }
+        logic::read_controls(app, &mut game.session, *settings, None, dt);
         game.step(dt);
         let score = game.session.predicted_board.score;
         if game.over() && game.cpu.is_none() && score > *solo_best {

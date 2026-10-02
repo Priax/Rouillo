@@ -179,7 +179,7 @@ impl AccountForm {
                 Outcome::Stay
             }
             Err(e) => {
-                self.status = Status::error(format!("Erreur réseau: {e}"));
+                self.status = Status::error(http::network_error(&e));
                 Outcome::Stay
             }
         }

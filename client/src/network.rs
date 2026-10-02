@@ -31,7 +31,6 @@ fn on_opened(state: &mut State, recovered: bool) {
     let hello = ClientMessage::Hello {
         player_id: state.player_id.clone(),
         auth_token: state.auth.as_ref().map(|a| a.token.clone()),
-        username: state.auth.as_ref().map(|a| a.username.clone()),
         last_disconnect_reason: state.conn.take_unreported_drop(),
     };
     state.conn.send(&hello);
@@ -39,7 +38,7 @@ fn on_opened(state: &mut State, recovered: bool) {
     if let Some(id) = state.pending_join.take() {
         state.conn.send(&ClientMessage::JoinRoom { id });
     }
-    if std::mem::take(&mut state.pending_queue) {
+    if state.screen == Screen::Ranked && state.ranked.resume_search() {
         state.conn.send(&ClientMessage::JoinQueue);
     }
     if recovered {
@@ -166,6 +165,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 state.series_over = None;
             }
             state.screen = if info.ranked.is_some() {
+                state.ranked.stop();
                 Screen::Ranked
             } else {
                 Screen::RoomLobby
@@ -239,9 +239,27 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             }
         }
         ServerMessage::QueueRefused { reason } => {
-            crate::ranked::leave(state);
+            state.ranked.stop();
             state.notice = Status::error(reason);
         }
+        ServerMessage::MatchFound {
+            opponent,
+            opponent_elo,
+            secs,
+        } => {
+            if state.ranked.match_found(opponent, opponent_elo, secs) {
+                crate::audio::play_all_clear();
+            }
+        }
+        ServerMessage::MatchCancelled { requeued } => {
+            state.ranked.match_cancelled(requeued);
+            state.notice = if requeued {
+                Status::info("L'adversaire n'a pas accepté, retour dans la file.")
+            } else {
+                Status::error("Partie non acceptée.")
+            };
+        }
+        ServerMessage::QueueCooldown { secs } => state.ranked.cooldown(secs),
         ServerMessage::SeriesScore { wins } => {
             if let Some(ranked) = state.lobby.as_mut().and_then(|l| l.ranked.as_mut()) {
                 ranked.wins = wins;

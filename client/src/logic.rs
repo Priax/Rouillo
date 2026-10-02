@@ -48,16 +48,10 @@ pub fn update_game(
 
     let dt = app.timer.delta_f32();
     if !game_over && !paused && !session.quit_menu {
-        handle_soft_drop_key(app, session, Some(conn));
-        if session.predicted_board.state == GameState::Playing {
-            handle_game_input(app, session, settings, Some(conn), dt);
-        } else {
-            release_keys(session);
-        }
+        read_controls(app, session, settings, Some(conn), dt);
         step_simulation(session, dt);
     } else {
-        session.sim_accumulator = 0.0;
-        release_keys(session);
+        hold(session);
     }
 
     animate(session, dt);
@@ -102,7 +96,27 @@ pub fn animate(session: &mut GameSession, dt: f32) {
 
 const PIECE_SMOOTH_RATE: f32 = 22.0;
 
-pub fn release_keys(session: &mut GameSession) {
+pub fn read_controls(
+    app: &App,
+    session: &mut GameSession,
+    settings: Settings,
+    mut conn: Option<&mut Connection>,
+    dt: f32,
+) {
+    handle_soft_drop_key(app, session, conn.as_deref_mut());
+    if session.predicted_board.state == GameState::Playing {
+        handle_game_input(app, session, settings, conn, dt);
+    } else {
+        release_keys(session);
+    }
+}
+
+pub fn hold(session: &mut GameSession) {
+    session.sim_accumulator = 0.0;
+    release_keys(session);
+}
+
+fn release_keys(session: &mut GameSession) {
     session.key_timer_left = 0.0;
     session.key_timer_right = 0.0;
 }
@@ -203,7 +217,7 @@ fn handle_global_input(app: &App, session: &mut GameSession, conn: &mut Connecti
     }
 }
 
-pub fn handle_game_input(
+fn handle_game_input(
     app: &App,
     session: &mut GameSession,
     settings: Settings,
@@ -222,28 +236,21 @@ pub fn handle_game_input(
         return;
     }
 
-    let left_pressed = session.key_timer_left == 0.0;
-    let left = autorepeat(
-        &mut session.key_timer_left,
-        app.keyboard.is_down(KeyCode::ArrowLeft),
-        delta_time,
-        settings,
-    );
-    for i in 0..left {
-        if send_input(session, conn.as_deref_mut(), InputKind::MoveLeft) && i == 0 && left_pressed {
-            crate::audio::play_move();
-        }
-    }
-    let right_pressed = session.key_timer_right == 0.0;
-    let right = autorepeat(
-        &mut session.key_timer_right,
-        app.keyboard.is_down(KeyCode::ArrowRight),
-        delta_time,
-        settings,
-    );
-    for i in 0..right {
-        if send_input(session, conn.as_deref_mut(), InputKind::MoveRight) && i == 0 && right_pressed {
-            crate::audio::play_move();
+    for (key, kind) in [
+        (KeyCode::ArrowLeft, InputKind::MoveLeft),
+        (KeyCode::ArrowRight, InputKind::MoveRight),
+    ] {
+        let timer = if kind == InputKind::MoveLeft {
+            &mut session.key_timer_left
+        } else {
+            &mut session.key_timer_right
+        };
+        let first = *timer == 0.0;
+        let moves = autorepeat(timer, app.keyboard.is_down(key), delta_time, settings);
+        for i in 0..moves {
+            if send_input(session, conn.as_deref_mut(), kind) && i == 0 && first {
+                crate::audio::play_move();
+            }
         }
     }
 }
@@ -269,7 +276,7 @@ fn autorepeat(timer: &mut f32, held: bool, dt: f32, settings: Settings) -> u32 {
     moves
 }
 
-pub fn handle_soft_drop_key(app: &App, session: &mut GameSession, conn: Option<&mut Connection>) {
+fn handle_soft_drop_key(app: &App, session: &mut GameSession, conn: Option<&mut Connection>) {
     let down = app.keyboard.is_down(KeyCode::ArrowDown);
     if down != session.soft_drop_held {
         session.soft_drop_held = down;

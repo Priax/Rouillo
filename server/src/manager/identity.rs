@@ -36,7 +36,7 @@ impl Manager {
         }
         self.conn_username.remove(&conn);
         self.conn_session.remove(&conn);
-        self.queue.retain(|e| e.conn != conn);
+        self.leave_queue(conn);
     }
 
     pub(super) fn revoke(&mut self, user: Uuid, keep: Option<Uuid>) {

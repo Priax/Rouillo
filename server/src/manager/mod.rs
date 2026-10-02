@@ -7,7 +7,6 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::room::{Member, Phase, Room, Series, SeriesResult};
-use crate::sim::Sim;
 use crate::{db, ConnId, Token};
 
 pub mod friends;
@@ -17,8 +16,9 @@ pub mod ranked;
 mod rooms;
 
 use friends::FriendCheck;
-use ranked::{QueueEntry, RankedCheck};
+use ranked::{PendingMatch, QueueEntry, RankedCheck};
 
+pub const COUNTDOWN_SECS: f32 = 3.0;
 pub const GRACE: Duration = Duration::from_secs(config::RECONNECT_GRACE_SECS);
 
 const MAX_PLAYER_ID: usize = 64;
@@ -43,10 +43,12 @@ pub struct Manager {
     pub checks_in_flight: HashSet<ConnId>,
     pub last_invite: HashMap<ConnId, Instant>,
     unsaved_matches: Vec<db::MatchRecord>,
-    unsaved_series: Vec<(Uuid, Uuid)>,
+    unsaved_series: Vec<db::SeriesRecord>,
     user_conns: HashMap<Uuid, HashSet<ConnId>>,
     conn_session: HashMap<ConnId, Uuid>,
     pub queue: Vec<QueueEntry>,
+    pub pending_matches: Vec<PendingMatch>,
+    queue_cooldowns: HashMap<Uuid, Instant>,
     ranked_checks: Vec<RankedCheck>,
     ranked_checking: HashSet<ConnId>,
     closing: bool,
@@ -119,6 +121,9 @@ pub enum Command {
     LeaveQueue {
         conn: ConnId,
     },
+    AcceptMatch {
+        conn: ConnId,
+    },
     RankedCheckDone {
         check: RankedCheck,
         profile: Option<(i32, i64)>,
@@ -152,7 +157,8 @@ impl Command {
             | Self::Restart { conn }
             | Self::InviteFriend { conn, .. }
             | Self::JoinQueue { conn }
-            | Self::LeaveQueue { conn } => Some(*conn),
+            | Self::LeaveQueue { conn }
+            | Self::AcceptMatch { conn } => Some(*conn),
         }
     }
 }
@@ -178,6 +184,8 @@ impl Manager {
             user_conns: HashMap::new(),
             conn_session: HashMap::new(),
             queue: Vec::new(),
+            pending_matches: Vec::new(),
+            queue_cooldowns: HashMap::new(),
             ranked_checks: Vec::new(),
             ranked_checking: HashSet::new(),
             closing: false,
@@ -209,6 +217,7 @@ impl Manager {
         for entry in std::mem::take(&mut self.queue) {
             self.refuse_queue(entry.conn, JOIN_MAINTENANCE);
         }
+        self.cancel_pending_for_maintenance();
         info!(
             "Maintenance: {} partie(s) en cours à laisser finir",
             self.games_running()
@@ -276,26 +285,8 @@ impl Manager {
     }
 
     fn send_lobby(&mut self, id: RoomId) {
-        let msgs: Vec<(ConnId, Vec<u8>)> = match self.rooms.get(&id) {
-            Some(room) => room
-                .members
-                .iter()
-                .enumerate()
-                .filter_map(|(i, m)| {
-                    let c = m.conn?;
-                    let msg = ServerMessage::Lobby {
-                        info: room.lobby_info_for(i),
-                    };
-                    match shared::encode(&msg) {
-                        Ok(payload) => Some((c, payload)),
-                        Err(e) => {
-                            error!("encode Lobby failed: {e}");
-                            None
-                        }
-                    }
-                })
-                .collect(),
-            None => return,
+        let Some(msgs) = self.rooms.get(&id).map(Room::lobby_payloads) else {
+            return;
         };
         for (c, payload) in msgs {
             self.deliver(c, payload);
@@ -394,7 +385,8 @@ impl Manager {
             Command::InviteFriend { conn, target_user_id } => self.request_invite(conn, &target_user_id),
             Command::FriendCheckDone { check, friends } => self.friend_check_done(check, friends),
             Command::JoinQueue { conn } => self.join_queue(conn),
-            Command::LeaveQueue { conn } => self.queue.retain(|e| e.conn != conn),
+            Command::LeaveQueue { conn } => self.leave_queue(conn),
+            Command::AcceptMatch { conn } => self.accept_match(conn),
             Command::RankedCheckDone { check, profile } => self.ranked_check_done(check, profile),
             Command::Revoke { user_id, keep } => self.revoke(user_id, keep),
             Command::Shutdown => self.begin_shutdown(),
@@ -443,6 +435,7 @@ impl Manager {
             self.series_game_won(id, winner);
         }
         self.advance_series();
+        self.expire_matches();
         self.matchmake();
     }
 

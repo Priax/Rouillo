@@ -594,7 +594,6 @@ fn decode_survives_corrupted_messages() {
         bitcode::serialize(&ClientMessage::Hello {
             player_id: "p".repeat(32),
             auth_token: Some("t".repeat(36)),
-            username: Some("name".into()),
             last_disconnect_reason: Some("read: boom".into()),
         })
         .unwrap(),
@@ -1166,7 +1165,6 @@ fn client_samples() -> Vec<ClientMessage> {
         ClientMessage::Hello {
             player_id: "p".into(),
             auth_token: Some("t".into()),
-            username: Some("u".into()),
             last_disconnect_reason: Some("r".into()),
         },
         ClientMessage::Input {
@@ -1187,10 +1185,11 @@ fn client_samples() -> Vec<ClientMessage> {
         ClientMessage::Ping { id: 5 },
         ClientMessage::JoinQueue,
         ClientMessage::LeaveQueue,
+        ClientMessage::AcceptMatch,
     ]
 }
 
-const CLIENT_VARIANTS: usize = 15;
+const CLIENT_VARIANTS: usize = 16;
 
 fn client_variant(m: &ClientMessage) -> usize {
     match m {
@@ -1209,6 +1208,7 @@ fn client_variant(m: &ClientMessage) -> usize {
         ClientMessage::Ping { .. } => 12,
         ClientMessage::JoinQueue => 13,
         ClientMessage::LeaveQueue => 14,
+        ClientMessage::AcceptMatch => 15,
     }
 }
 
@@ -1286,6 +1286,13 @@ fn server_samples() -> Vec<ServerMessage> {
         ServerMessage::Pong { id: 8 },
         ServerMessage::Maintenance,
         ServerMessage::QueueRefused { reason: "q".into() },
+        ServerMessage::MatchFound {
+            opponent: "o".into(),
+            opponent_elo: 990,
+            secs: 10,
+        },
+        ServerMessage::MatchCancelled { requeued: true },
+        ServerMessage::QueueCooldown { secs: 60 },
         ServerMessage::SeriesScore { wins: [1, 2] },
         ServerMessage::SeriesOver {
             winner_slot: Some(2),
@@ -1295,7 +1302,7 @@ fn server_samples() -> Vec<ServerMessage> {
     ]
 }
 
-const SERVER_VARIANTS: usize = 14;
+const SERVER_VARIANTS: usize = 17;
 
 fn server_variant(m: &ServerMessage) -> usize {
     match m {
@@ -1313,6 +1320,9 @@ fn server_variant(m: &ServerMessage) -> usize {
         ServerMessage::SeriesScore { .. } => 11,
         ServerMessage::SeriesOver { .. } => 12,
         ServerMessage::SessionRevoked => 13,
+        ServerMessage::MatchFound { .. } => 14,
+        ServerMessage::MatchCancelled { .. } => 15,
+        ServerMessage::QueueCooldown { .. } => 16,
     }
 }
 
@@ -1345,7 +1355,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (4, 12_514_917_666_170_902_045);
+const PROTOCOL_DIGEST: (u32, u64) = (5, 2_812_844_150_312_989_760);
 
 #[test]
 fn protocol_changes_bump_the_version() {

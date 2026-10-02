@@ -252,7 +252,7 @@ pub struct RankedInfo {
     pub wins: [u8; 2],
 }
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 pub const OUTDATED_FRAME: &str = "outdated";
 
@@ -261,7 +261,6 @@ pub enum ClientMessage {
     Hello {
         player_id: String,
         auth_token: Option<String>,
-        username: Option<String>,
         last_disconnect_reason: Option<String>,
     },
     Input {
@@ -293,6 +292,7 @@ pub enum ClientMessage {
     },
     JoinQueue,
     LeaveQueue,
+    AcceptMatch,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -332,6 +332,17 @@ pub enum ServerMessage {
     QueueRefused {
         reason: String,
     },
+    MatchFound {
+        opponent: String,
+        opponent_elo: i32,
+        secs: u32,
+    },
+    MatchCancelled {
+        requeued: bool,
+    },
+    QueueCooldown {
+        secs: u32,
+    },
     SeriesScore {
         wins: [u8; 2],
     },
@@ -352,7 +363,11 @@ pub fn link_score(link: u32, colours: usize, cleared: u32, group_bonuses: u32) -
 }
 
 impl PuyoType {
-    pub fn random_with_seed<R: Rng>(rng: &mut R, colors: u32) -> Self {
+    fn random_pair<R: Rng>(rng: &mut R, colors: u32) -> (Self, Self) {
+        (Self::random(rng, colors), Self::random(rng, colors))
+    }
+
+    fn random<R: Rng>(rng: &mut R, colors: u32) -> Self {
         let n = colors.clamp(1, 5);
         match rng.random_range(0..n) {
             0 => Self::Red,
@@ -530,14 +545,8 @@ pub struct RngPosition {
 impl Board {
     pub fn new(width: usize, height: usize, seed: u64, start_level: u32, colors: u32) -> Self {
         let mut rng = BoardRng::from_seed(seed);
-        let n1 = (
-            PuyoType::random_with_seed(&mut rng.pieces, colors),
-            PuyoType::random_with_seed(&mut rng.pieces, colors),
-        );
-        let n2 = (
-            PuyoType::random_with_seed(&mut rng.pieces, colors),
-            PuyoType::random_with_seed(&mut rng.pieces, colors),
-        );
+        let n1 = PuyoType::random_pair(&mut rng.pieces, colors);
+        let n2 = PuyoType::random_pair(&mut rng.pieces, colors);
 
         let mut board = Self {
             width,
@@ -574,6 +583,18 @@ impl Board {
         board
     }
 
+    pub fn for_match(seed: u64, settings: &RoomSettings) -> Self {
+        let mut board = Self::new(
+            config::GRID_WIDTH,
+            config::GRID_HEIGHT,
+            seed,
+            settings.starting_level,
+            settings.colors,
+        );
+        board.spawn_piece();
+        board
+    }
+
     pub fn spawn_piece(&mut self) {
         if self.cells[VISIBLE_ROW_OFFSET][SPAWN_COL].is_some() {
             self.state = GameState::GameOver;
@@ -581,10 +602,7 @@ impl Board {
         }
         let (c1, c2) = self.next_types;
         self.next_types = self.next_next_types;
-        self.next_next_types = (
-            PuyoType::random_with_seed(&mut self.rng.pieces, self.colors),
-            PuyoType::random_with_seed(&mut self.rng.pieces, self.colors),
-        );
+        self.next_next_types = PuyoType::random_pair(&mut self.rng.pieces, self.colors);
         let new_piece = ActivePuyo {
             row: 1,
             col: small(SPAWN_COL),
@@ -1026,10 +1044,6 @@ impl Board {
     }
 
     fn next_pair(&mut self) {
-        if self.cells[VISIBLE_ROW_OFFSET][SPAWN_COL].is_some() {
-            self.state = GameState::GameOver;
-            return;
-        }
         let ac = self.check_all_clear();
         self.last_was_all_clear = ac;
         if ac {
@@ -1090,19 +1104,6 @@ impl Board {
         self.cells
             .iter()
             .all(|row| row.iter().all(std::option::Option::is_none))
-    }
-
-    pub fn toggle_pause(&mut self) {
-        match self.state {
-            GameState::Paused => {
-                self.state = self.previous_state.take().unwrap_or(GameState::Playing);
-            }
-            GameState::GameOver => {}
-            _ => {
-                self.previous_state = Some(self.state);
-                self.state = GameState::Paused;
-            }
-        }
     }
 
     pub fn set_paused(&mut self, paused: bool) {

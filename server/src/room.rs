@@ -19,6 +19,17 @@ pub struct Member {
     pub user_id: Option<Uuid>,
 }
 
+impl Member {
+    pub const fn present(token: Token, conn: ConnId, user_id: Option<Uuid>) -> Self {
+        Self {
+            token,
+            conn: Some(conn),
+            disconnect_at: None,
+            user_id,
+        }
+    }
+}
+
 pub struct Series {
     pub users: [Uuid; 2],
     pub names: [String; 2],
@@ -46,6 +57,44 @@ pub struct Room {
 }
 
 impl Room {
+    pub fn new(id: RoomId, name: String, members: Vec<Member>, settings: RoomSettings, series: Option<Series>) -> Self {
+        Self {
+            id,
+            name,
+            host: members[0].token.clone(),
+            members,
+            settings,
+            phase: Phase::Lobby,
+            sim: Sim::new(&settings),
+            series,
+        }
+    }
+
+    pub fn back_to_lobby(&mut self) {
+        self.phase = Phase::Lobby;
+        self.sim.finished = false;
+        self.sim.set_paused(false);
+    }
+
+    pub fn lobby_payloads(&self) -> Vec<(ConnId, Vec<u8>)> {
+        self.members
+            .iter()
+            .enumerate()
+            .filter_map(|(i, m)| {
+                let msg = ServerMessage::Lobby {
+                    info: self.lobby_info_for(i),
+                };
+                match shared::encode(&msg) {
+                    Ok(payload) => Some((m.conn?, payload)),
+                    Err(e) => {
+                        error!("encode Lobby failed: {e}");
+                        None
+                    }
+                }
+            })
+            .collect()
+    }
+
     fn send_to_members(&self, payload: &[u8], outgoing: &mut Vec<(ConnId, Vec<u8>)>) {
         for m in &self.members {
             if let Some(c) = m.conn {
@@ -71,17 +120,7 @@ impl Room {
             return true;
         }
         if t.ceil() as u8 != before {
-            for (i, m) in self.members.iter().enumerate() {
-                if let Some(c) = m.conn {
-                    let msg = ServerMessage::Lobby {
-                        info: self.lobby_info_for(i),
-                    };
-                    match shared::encode(&msg) {
-                        Ok(payload) => outgoing.push((c, payload)),
-                        Err(e) => error!("encode Lobby failed: {e}"),
-                    }
-                }
-            }
+            outgoing.extend(self.lobby_payloads());
         }
         false
     }

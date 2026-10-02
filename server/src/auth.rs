@@ -263,6 +263,21 @@ struct AuthResponse {
     elo: i32,
 }
 
+impl AuthResponse {
+    fn new(user: db::User, token: Uuid) -> Self {
+        Self {
+            token,
+            user_id: user.id,
+            username: user.username,
+            elo: user.elo,
+        }
+    }
+}
+
+fn done() -> warp::reply::Json {
+    warp::reply::json(&serde_json::json!({}))
+}
+
 #[derive(Serialize)]
 struct UserProfile {
     id: Uuid,
@@ -343,12 +358,7 @@ async fn handle_register(
     let token = db::create_session(&pool, user.id).await.map_err(internal)?;
 
     Ok(warp::reply::with_status(
-        warp::reply::json(&AuthResponse {
-            token,
-            user_id: user.id,
-            username: user.username,
-            elo: user.elo,
-        }),
+        warp::reply::json(&AuthResponse::new(user, token)),
         warp::http::StatusCode::CREATED,
     ))
 }
@@ -391,17 +401,12 @@ async fn handle_login(
 
     let token = db::create_session(&pool, user.id).await.map_err(internal)?;
 
-    Ok(warp::reply::json(&AuthResponse {
-        token,
-        user_id: user.id,
-        username: user.username,
-        elo: user.elo,
-    }))
+    Ok(warp::reply::json(&AuthResponse::new(user, token)))
 }
 
 async fn handle_logout(token: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
     db::delete_session(&pool, token).await.map_err(internal)?;
-    Ok(warp::reply::json(&serde_json::json!({})))
+    Ok(done())
 }
 
 async fn check_password(user: &db::User, password: String, checks: &PasswordChecks) -> Result<(), Rejection> {
@@ -438,7 +443,7 @@ async fn handle_change_password(
         .map_err(internal)?;
     db::set_password(&pool, user.id, hash, token).await.map_err(internal)?;
     revoke(&cmd_tx, user.id, token).await;
-    Ok(warp::reply::json(&serde_json::json!({})))
+    Ok(done())
 }
 
 async fn handle_logout_all(
@@ -448,7 +453,7 @@ async fn handle_logout_all(
 ) -> Result<impl Reply, Rejection> {
     db::delete_user_sessions(&pool, user.id).await.map_err(internal)?;
     revoke(&cmd_tx, user.id, token).await;
-    Ok(warp::reply::json(&serde_json::json!({})))
+    Ok(done())
 }
 
 async fn handle_delete_account(
@@ -461,7 +466,7 @@ async fn handle_delete_account(
     check_password(&user, body.password, &checks).await?;
     db::delete_user(&pool, user.id).await.map_err(internal)?;
     revoke(&cmd_tx, user.id, token).await;
-    Ok(warp::reply::json(&serde_json::json!({})))
+    Ok(done())
 }
 
 async fn revoke(cmd_tx: &mpsc::Sender<Command>, user_id: Uuid, keep: Uuid) {
@@ -658,10 +663,7 @@ async fn handle_send_friend_request(
     }
 
     match db::send_friend_request(&pool, me.id, body.user_id).await {
-        Ok(()) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({})),
-            warp::http::StatusCode::CREATED,
-        )),
+        Ok(()) => Ok(warp::reply::with_status(done(), warp::http::StatusCode::CREATED)),
         Err(db::FriendshipError::SelfRequest) => Err(reject(ApiError::SelfFriendRequest)),
         Err(db::FriendshipError::AlreadyExists) => Err(reject(ApiError::FriendRequestExists)),
         Err(db::FriendshipError::UserNotFound) => Err(reject(ApiError::NotFound)),
@@ -675,7 +677,7 @@ async fn handle_accept_friend(requester_id: Uuid, me: db::User, pool: DbPool) ->
         .map_err(internal)?;
 
     if found {
-        Ok(warp::reply::json(&serde_json::json!({})))
+        Ok(done())
     } else {
         Err(reject(ApiError::NotFound))
     }
@@ -685,7 +687,7 @@ async fn handle_remove_friend(other_id: Uuid, me: db::User, pool: DbPool) -> Res
     let found = db::remove_friend(&pool, me.id, other_id).await.map_err(internal)?;
 
     if found {
-        Ok(warp::reply::json(&serde_json::json!({})))
+        Ok(done())
     } else {
         Err(reject(ApiError::NotFound))
     }

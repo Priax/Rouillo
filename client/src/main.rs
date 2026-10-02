@@ -168,6 +168,7 @@ fn update_invitation(state: &mut State) {
                 state.pending_join = Some(room_id);
             }
             state.solo = None;
+            state.ranked.stop();
             state.screen = Screen::RoomBrowser;
         }
     } else if state.ui.clicked(decline_btn) {
@@ -230,7 +231,7 @@ fn update(app: &mut App, state: &mut State) {
                 .as_mut()
                 .is_some_and(|s| logic::update_game(app, ui, s, *settings, conn, online));
             if left && online.ranked {
-                ranked::leave(state);
+                ranked::enter(state);
             }
         }
     }
@@ -311,7 +312,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
     }
     draw_invitation_banner(gfx, state);
     draw_maintenance_banner(gfx, state);
-    draw_reconnect_banner(app, gfx, state);
+    draw_reconnect_banner(gfx, state);
     state.ui.present(gfx);
 }
 
@@ -343,7 +344,7 @@ fn draw_maintenance_banner(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &d);
 }
 
-fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
+fn draw_reconnect_banner(gfx: &mut Graphics, state: &State) {
     let Some((attempts, secs_left)) = state.conn.recovering(connection::now_secs()) else {
         return;
     };
@@ -356,7 +357,7 @@ fn draw_reconnect_banner(app: &mut App, gfx: &mut Graphics, state: &State) {
         theme::WARNING,
         ui::Edge::Bottom,
     );
-    let dots = ".".repeat(1 + (app.timer.elapsed_f32() * 2.0) as usize % 3);
+    let dots = state.ui.waiting_dots();
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
     d.sharp_text(&state.fonts.text, &msg)
         .position(ww / 2.0, 22.0)

@@ -220,6 +220,10 @@ impl Ui {
         ease_out(transition_progress(inner.time, inner.entered_at, inner.fade))
     }
 
+    pub fn waiting_dots(&self) -> String {
+        ".".repeat(1 + (self.time() * 2.0) as usize % 3)
+    }
+
     pub fn time(&self) -> f64 {
         self.inner.borrow().time
     }

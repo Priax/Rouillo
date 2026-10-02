@@ -247,7 +247,7 @@ fn poll_search(state: &mut State) {
             }
         }
         Ok(resp) => f.search_status = Status::error(http::error_message(&resp)),
-        Err(e) => f.search_status = Status::error(format!("Erreur réseau: {e}")),
+        Err(e) => f.search_status = Status::error(http::network_error(&e)),
     }
 }
 
@@ -266,7 +266,7 @@ fn poll_add(state: &mut State) {
             false
         }
         Err(e) => {
-            f.add_status = Status::error(format!("Erreur réseau: {e}"));
+            f.add_status = Status::error(http::network_error(&e));
             false
         }
     };
@@ -290,7 +290,7 @@ fn poll_action(state: &mut State) {
             true
         }
         Err(e) => {
-            f.action_status = Status::error(format!("Erreur réseau: {e}"));
+            f.action_status = Status::error(http::network_error(&e));
             false
         }
     };

@@ -41,10 +41,7 @@ impl Manager {
         }
         self.clients.insert(conn, Some(id));
         if let Some(old) = replaced {
-            self.clients.remove(&old);
-            self.conn_token.remove(&old);
-            self.forget_identity(old);
-            self.senders.remove(&old);
+            self.forget_conn(old);
         }
         self.sync_after_attach(id, conn);
         info!("Reconnexion room #{id} (conn {conn})");
@@ -118,6 +115,10 @@ impl Manager {
 
     pub(super) fn drop_connection(&mut self, conn: ConnId) {
         self.mark_disconnected(conn);
+        self.forget_conn(conn);
+    }
+
+    fn forget_conn(&mut self, conn: ConnId) {
         self.clients.remove(&conn);
         self.conn_token.remove(&conn);
         self.forget_identity(conn);
@@ -128,6 +129,7 @@ impl Manager {
     }
 
     pub(super) fn leave_current(&mut self, conn: ConnId) {
+        self.leave_queue(conn);
         let Some(id) = self.room_of(conn) else {
             return;
         };
@@ -157,9 +159,7 @@ impl Manager {
                     room.host = room.members[0].token.clone();
                 }
                 if room.members.len() < 2 && !matches!(room.phase, Phase::Lobby) {
-                    room.phase = Phase::Lobby;
-                    room.sim.finished = false;
-                    room.sim.paused = false;
+                    room.back_to_lobby();
                 }
                 false
             }

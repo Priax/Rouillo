@@ -28,6 +28,10 @@ pub fn json<T: serde::de::DeserializeOwned>(resp: &ehttp::Response) -> Option<T>
     serde_json::from_str(resp.text()?).ok()
 }
 
+pub fn network_error(e: &str) -> String {
+    format!("Erreur réseau: {e}")
+}
+
 pub fn error_message(resp: &ehttp::Response) -> String {
     let body = serde_json::from_str::<serde_json::Value>(resp.text().unwrap_or_default()).ok();
     let body = body.as_ref();
@@ -133,6 +137,12 @@ fn json_body(url: String, method: ehttp::Method, body: String) -> ehttp::Request
     };
     push_header(&mut req, "content-type", "application/json".to_owned());
     req
+}
+
+pub fn get_user(user_id: &str, token: Option<String>) -> HttpSlot {
+    let slot = new_slot();
+    get(api_url(&format!("users/{user_id}")), token, Arc::clone(&slot));
+    slot
 }
 
 pub fn get(url: String, token: Option<String>, slot: HttpSlot) {

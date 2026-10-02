@@ -83,12 +83,7 @@ impl Manager {
         }
         self.leave_current(conn);
         if let Some(room) = self.rooms.get_mut(&id) {
-            room.members.push(Member {
-                token,
-                conn: Some(conn),
-                disconnect_at: None,
-                user_id,
-            });
+            room.members.push(Member::present(token, conn, user_id));
         }
         self.clients.insert(conn, Some(id));
         self.sync_after_attach(id, conn);
@@ -134,23 +129,14 @@ impl Manager {
         self.leave_current(conn);
         let id = self.next_id;
         self.next_id += 1;
-        let settings = RoomSettings::default();
         let user_id = self.conn_user_id.get(&conn).copied();
-        let room = Room {
+        let room = Room::new(
             id,
-            name: clean_name(name),
-            host: token.clone(),
-            members: vec![Member {
-                token,
-                conn: Some(conn),
-                disconnect_at: None,
-                user_id,
-            }],
-            settings,
-            phase: Phase::Lobby,
-            sim: Sim::new(&settings),
-            series: None,
-        };
+            clean_name(name),
+            vec![Member::present(token, conn, user_id)],
+            RoomSettings::default(),
+            None,
+        );
         self.rooms.insert(id, room);
         self.clients.insert(conn, Some(id));
         self.send_lobby(id);
@@ -184,7 +170,7 @@ impl Manager {
                     if room.series.is_none() && room.is_host_conn(conn) {
                         room.phase = match room.phase {
                             Phase::Lobby if !closing && room.members.len() >= 2 && room.all_connected() => {
-                                Phase::CountingDown(3.0)
+                                Phase::CountingDown(COUNTDOWN_SECS)
                             }
                             Phase::Lobby => Phase::Lobby,
                             Phase::CountingDown(_) => Phase::Lobby,
@@ -213,9 +199,7 @@ impl Manager {
         let Some(slot) = host_slot else { return };
         self.record_forfeit(id, slot, "l'hôte a interrompu la partie");
         if let Some(room) = self.rooms.get_mut(&id) {
-            room.phase = Phase::Lobby;
-            room.sim.finished = false;
-            room.sim.paused = false;
+            room.back_to_lobby();
         }
         self.send_lobby(id);
         self.room_list_dirty = true;

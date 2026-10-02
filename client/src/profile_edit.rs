@@ -155,7 +155,7 @@ pub fn poll(state: &mut State) {
             }
         }
         Ok(resp) => form.status = Status::error(http::error_message(&resp)),
-        Err(e) => form.status = Status::error(format!("Erreur réseau: {e}")),
+        Err(e) => form.status = Status::error(http::network_error(&e)),
     }
 }
 

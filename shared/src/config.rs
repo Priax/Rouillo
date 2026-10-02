@@ -56,6 +56,9 @@ pub const COLOR_BONUS: [u32; 6] = [0, 0, 3, 6, 12, 24];
 pub const GROUP_BONUS: [u32; 8] = [0, 2, 3, 4, 5, 6, 7, 10];
 
 pub const RANKED_WINS: u8 = 3;
+pub const RANKED_MIN_CASUAL: i64 = 5;
+pub const MATCH_ACCEPT_SECS: u32 = 10;
+pub const QUEUE_COOLDOWN_SECS: u32 = 60;
 
 pub const SERVER_PORT: u16 = 8080;
 pub const CHANNEL_CAPACITY: usize = 256;

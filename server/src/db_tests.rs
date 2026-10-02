@@ -24,6 +24,15 @@ fn game(ranked: bool, p1: Option<Uuid>, p2: Option<Uuid>, winner_slot: u8) -> Ma
     }
 }
 
+fn series(winner: Uuid, loser: Uuid) -> db::SeriesRecord {
+    db::SeriesRecord {
+        winner,
+        loser,
+        winner_delta: 16,
+        loser_delta: -16,
+    }
+}
+
 async fn elo(pool: &PgPool, id: Uuid) -> i32 {
     sqlx::query_scalar("SELECT elo FROM users WHERE id = $1")
         .bind(id)
@@ -122,7 +131,7 @@ async fn db_games_never_move_elo_only_series_do(pool: PgPool) {
         .unwrap();
     assert_eq!((elo(&pool, alice).await, elo(&pool, bob).await), (1000, 1000));
 
-    db::record_series(&pool, alice, bob).await.unwrap();
+    db::record_series(&pool, series(alice, bob)).await.unwrap();
     assert_eq!((elo(&pool, alice).await, elo(&pool, bob).await), (1016, 984));
 }
 
@@ -147,9 +156,9 @@ async fn db_casual_and_ranked_win_rates_are_counted_apart(pool: PgPool) {
             .await
             .unwrap();
     }
-    db::record_series(&pool, alice, bob).await.unwrap();
-    db::record_series(&pool, bob, alice).await.unwrap();
-    db::record_series(&pool, alice, bob).await.unwrap();
+    db::record_series(&pool, series(alice, bob)).await.unwrap();
+    db::record_series(&pool, series(bob, alice)).await.unwrap();
+    db::record_series(&pool, series(alice, bob)).await.unwrap();
 
     let p = db::get_user_profile(&pool, alice).await.unwrap().unwrap();
     assert_eq!((p.casual_matches, p.casual_wins), (3, 1), "a draw is played, not won");
@@ -188,7 +197,9 @@ async fn db_history_pages_do_not_overlap(pool: PgPool) {
 #[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
 async fn db_a_series_against_a_deleted_account_changes_nothing(pool: PgPool) {
     let alice = user(&pool, "alice").await;
-    db::record_series(&pool, alice, Uuid::from_u128(42)).await.unwrap();
+    db::record_series(&pool, series(alice, Uuid::from_u128(42)))
+        .await
+        .unwrap();
     assert_eq!(elo(&pool, alice).await, 1000);
 }
 

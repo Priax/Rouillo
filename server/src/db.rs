@@ -211,7 +211,21 @@ pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), 
     tx.commit().await
 }
 
-pub async fn record_series(pool: &DbPool, winner: Uuid, loser: Uuid) -> Result<(), sqlx::Error> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeriesRecord {
+    pub winner: Uuid,
+    pub loser: Uuid,
+    pub winner_delta: i32,
+    pub loser_delta: i32,
+}
+
+pub async fn record_series(pool: &DbPool, rec: SeriesRecord) -> Result<(), sqlx::Error> {
+    let SeriesRecord {
+        winner,
+        loser,
+        winner_delta,
+        loser_delta,
+    } = rec;
     let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO ranked_series (winner_id, loser_id) \
@@ -221,17 +235,16 @@ pub async fn record_series(pool: &DbPool, winner: Uuid, loser: Uuid) -> Result<(
     .bind(loser)
     .execute(&mut *tx)
     .await?;
-    let elo = |id: Uuid| sqlx::query_scalar::<_, i32>("SELECT elo FROM users WHERE id = $1 FOR UPDATE").bind(id);
-    let w = elo(winner).fetch_optional(&mut *tx).await?;
-    let l = elo(loser).fetch_optional(&mut *tx).await?;
-    let (Some(w), Some(l)) = (w, l) else {
+    let exists = |id: Uuid| sqlx::query_scalar::<_, i32>("SELECT elo FROM users WHERE id = $1 FOR UPDATE").bind(id);
+    let both = exists(winner).fetch_optional(&mut *tx).await?.is_some()
+        && exists(loser).fetch_optional(&mut *tx).await?.is_some();
+    if !both {
         return tx.commit().await;
-    };
-    let [new_w, new_l] = compute_elo(w, l, 0);
-    for (id, new) in [(winner, new_w), (loser, new_l)] {
-        sqlx::query("UPDATE users SET elo = $2 WHERE id = $1")
+    }
+    for (id, delta) in [(winner, winner_delta), (loser, loser_delta)] {
+        sqlx::query("UPDATE users SET elo = GREATEST(elo + $2, 0) WHERE id = $1")
             .bind(id)
-            .bind(new)
+            .bind(delta)
             .execute(&mut *tx)
             .await?;
     }

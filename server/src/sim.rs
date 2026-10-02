@@ -69,8 +69,10 @@ impl Sim {
     }
 
     pub fn new(settings: &RoomSettings) -> Self {
+        let board = Board::for_match(rand::rng().random(), settings);
+        let piece_id = board.piece_id;
         Self {
-            boards: Self::fresh_boards(settings),
+            boards: [board.clone(), board],
             tick: 0,
             queued_inputs: [Vec::new(), Vec::new()],
             garbage_in_flight: Vec::new(),
@@ -87,7 +89,7 @@ impl Sim {
             pieces_placed: [0; 2],
             prev_chain: [0; 2],
             prev_all_clear: [false; 2],
-            prev_piece_id: [0; 2],
+            prev_piece_id: [piece_id; 2],
             last_sent_rng: None,
         }
     }
@@ -198,46 +200,9 @@ impl Sim {
         }
     }
 
-    fn fresh_boards(s: &RoomSettings) -> [Board; 2] {
-        let seed: u64 = rand::rng().random();
-        [
-            Board::new(
-                config::GRID_WIDTH,
-                config::GRID_HEIGHT,
-                seed,
-                s.starting_level,
-                s.colors,
-            ),
-            Board::new(
-                config::GRID_WIDTH,
-                config::GRID_HEIGHT,
-                seed,
-                s.starting_level,
-                s.colors,
-            ),
-        ]
-    }
-
     pub fn reset_boards(&mut self, s: &RoomSettings) {
-        self.boards = Self::fresh_boards(s);
-        self.boards[0].spawn_piece();
-        self.boards[1].spawn_piece();
-        self.tick = 0;
-        self.queued_inputs = [Vec::new(), Vec::new()];
-        self.garbage_in_flight.clear();
-        self.late_inputs = [0; 2];
-        self.paused = false;
-        self.finished = false;
-        self.last_seq = [0; 2];
-        self.start = Instant::now();
-        self.max_chain = [0; 2];
-        self.total_chains = [0; 2];
-        self.nuisance_sent = [0; 2];
-        self.all_clears = [0; 2];
-        self.pieces_placed = [0; 2];
-        self.prev_chain = [0; 2];
-        self.prev_all_clear = [false; 2];
-        self.prev_piece_id = [self.boards[0].piece_id, self.boards[1].piece_id];
-        self.last_sent_rng = None;
+        let last_restart = self.last_restart;
+        *self = Self::new(s);
+        self.last_restart = last_restart;
     }
 }

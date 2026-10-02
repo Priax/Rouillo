@@ -1,6 +1,5 @@
 use super::*;
 
-pub const MIN_CASUAL_GAMES: i64 = 5;
 pub const NEXT_GAME_DELAY: Duration = Duration::from_secs(4);
 const QUEUE_WINDOW_BASE: f32 = 100.0;
 const QUEUE_WINDOW_PER_SEC: f32 = 20.0;
@@ -10,11 +9,20 @@ const QUEUE_GUEST: &str = "Connectez-vous pour jouer en classé.";
 const QUEUE_BUSY: &str = "Ce compte est déjà en classé.";
 const QUEUE_UNKNOWN: &str = "Compte introuvable.";
 
+pub const ACCEPT_WINDOW: Duration = Duration::from_secs(config::MATCH_ACCEPT_SECS as u64);
+pub const QUEUE_COOLDOWN: Duration = Duration::from_secs(config::QUEUE_COOLDOWN_SECS as u64);
+
 pub struct QueueEntry {
     pub conn: ConnId,
     pub user_id: Uuid,
     pub elo: i32,
     pub since: Instant,
+}
+
+pub struct PendingMatch {
+    pub entries: [QueueEntry; 2],
+    pub accepted: [bool; 2],
+    pub deadline: Instant,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -28,7 +36,7 @@ fn queue_window(waited: Duration) -> f32 {
 }
 
 impl Manager {
-    pub fn take_unsaved_series(&mut self) -> Vec<(Uuid, Uuid)> {
+    pub fn take_unsaved_series(&mut self) -> Vec<db::SeriesRecord> {
         std::mem::take(&mut self.unsaved_series)
     }
 
@@ -66,6 +74,10 @@ impl Manager {
 
     pub(super) fn in_ranked(&self, user: Uuid) -> bool {
         self.queue.iter().any(|e| e.user_id == user)
+            || self
+                .pending_matches
+                .iter()
+                .any(|m| m.entries.iter().any(|e| e.user_id == user))
             || self.rooms.values().any(|r| {
                 r.series
                     .as_ref()
@@ -92,6 +104,10 @@ impl Manager {
             self.refuse_queue(conn, QUEUE_BUSY);
             return;
         }
+        if let Some(left) = self.cooldown_left(user_id) {
+            self.send_cooldown(conn, left);
+            return;
+        }
         if !self.conn_token.contains_key(&conn) || !self.ranked_checking.insert(conn) {
             return;
         }
@@ -108,8 +124,8 @@ impl Manager {
             self.refuse_queue(conn, QUEUE_UNKNOWN);
             return;
         };
-        if casual < MIN_CASUAL_GAMES {
-            let left = MIN_CASUAL_GAMES - casual;
+        if casual < config::RANKED_MIN_CASUAL {
+            let left = config::RANKED_MIN_CASUAL - casual;
             let plural = if left > 1 { "s" } else { "" };
             self.refuse_queue(
                 conn,
@@ -161,10 +177,108 @@ impl Manager {
         let mut entries: Vec<Option<QueueEntry>> = std::mem::take(&mut self.queue).into_iter().map(Some).collect();
         for (i, j) in pairs {
             if let (Some(a), Some(b)) = (entries[i].take(), entries[j].take()) {
-                self.start_series(&a, &b);
+                self.propose_match([a, b]);
             }
         }
         self.queue = entries.into_iter().flatten().collect();
+    }
+
+    fn propose_match(&mut self, entries: [QueueEntry; 2]) {
+        for (side, entry) in entries.iter().enumerate() {
+            let other = &entries[1 - side];
+            let found = ServerMessage::MatchFound {
+                opponent: self.display_name(other.conn),
+                opponent_elo: other.elo,
+                secs: config::MATCH_ACCEPT_SECS,
+            };
+            self.deliver_msg(entry.conn, &found);
+        }
+        self.pending_matches.push(PendingMatch {
+            entries,
+            accepted: [false; 2],
+            deadline: Instant::now() + ACCEPT_WINDOW,
+        });
+    }
+
+    fn display_name(&self, conn: ConnId) -> String {
+        self.conn_username
+            .get(&conn)
+            .cloned()
+            .unwrap_or_else(|| "Joueur".to_string())
+    }
+
+    fn pending_of(&self, conn: ConnId) -> Option<(usize, usize)> {
+        self.pending_matches
+            .iter()
+            .enumerate()
+            .find_map(|(i, m)| m.entries.iter().position(|e| e.conn == conn).map(|side| (i, side)))
+    }
+
+    pub(super) fn accept_match(&mut self, conn: ConnId) {
+        let Some((i, side)) = self.pending_of(conn) else {
+            return;
+        };
+        self.pending_matches[i].accepted[side] = true;
+        if self.pending_matches[i].accepted == [true, true] {
+            let [a, b] = self.pending_matches.swap_remove(i).entries;
+            self.start_series(&a, &b);
+        }
+    }
+
+    pub(super) fn leave_queue(&mut self, conn: ConnId) {
+        self.queue.retain(|e| e.conn != conn);
+        if let Some((i, side)) = self.pending_of(conn) {
+            let pending = self.pending_matches.swap_remove(i);
+            let mut missed = [false; 2];
+            missed[side] = true;
+            self.cancel_match(pending, missed);
+        }
+    }
+
+    pub(super) fn expire_matches(&mut self) {
+        let now = Instant::now();
+        self.queue_cooldowns.retain(|_, until| *until > now);
+        let (due, waiting) = std::mem::take(&mut self.pending_matches)
+            .into_iter()
+            .partition(|m| now >= m.deadline);
+        self.pending_matches = waiting;
+        for pending in due {
+            let missed = pending.accepted.map(|a| !a);
+            self.cancel_match(pending, missed);
+        }
+    }
+
+    fn cancel_match(&mut self, pending: PendingMatch, missed: [bool; 2]) {
+        for (entry, missed) in pending.entries.into_iter().zip(missed) {
+            if missed {
+                self.queue_cooldowns
+                    .insert(entry.user_id, Instant::now() + QUEUE_COOLDOWN);
+                self.deliver_msg(entry.conn, &ServerMessage::MatchCancelled { requeued: false });
+                self.send_cooldown(entry.conn, QUEUE_COOLDOWN);
+            } else if self.conn_user_id.get(&entry.conn) == Some(&entry.user_id) {
+                self.deliver_msg(entry.conn, &ServerMessage::MatchCancelled { requeued: true });
+                self.queue.push(entry);
+            }
+        }
+    }
+
+    pub(super) fn cancel_pending_for_maintenance(&mut self) {
+        for pending in std::mem::take(&mut self.pending_matches) {
+            for entry in pending.entries {
+                self.refuse_queue(entry.conn, JOIN_MAINTENANCE);
+            }
+        }
+    }
+
+    fn cooldown_left(&self, user: Uuid) -> Option<Duration> {
+        let until = *self.queue_cooldowns.get(&user)?;
+        let now = Instant::now();
+        (until > now).then(|| until - now)
+    }
+
+    fn send_cooldown(&mut self, conn: ConnId, left: Duration) {
+        let secs = left.as_secs_f32().ceil() as u32;
+        self.deliver_msg(conn, &ServerMessage::QueueCooldown { secs });
     }
 
     pub(super) fn start_series(&mut self, a: &QueueEntry, b: &QueueEntry) {
@@ -174,13 +288,7 @@ impl Manager {
         ) else {
             return;
         };
-        let name = |conn| {
-            self.conn_username
-                .get(&conn)
-                .cloned()
-                .unwrap_or_else(|| "Joueur".to_string())
-        };
-        let names = [name(a.conn), name(b.conn)];
+        let names = [self.display_name(a.conn), self.display_name(b.conn)];
         self.leave_current(a.conn);
         self.leave_current(b.conn);
         let id = self.next_id;
@@ -189,29 +297,20 @@ impl Manager {
             pause: PausePolicy::Nobody,
             ..RoomSettings::default()
         };
-        let member = |token, conn, user| Member {
-            token,
-            conn: Some(conn),
-            disconnect_at: None,
-            user_id: Some(user),
+        let members = vec![
+            Member::present(token_a, a.conn, Some(a.user_id)),
+            Member::present(token_b, b.conn, Some(b.user_id)),
+        ];
+        let series = Series {
+            users: [a.user_id, b.user_id],
+            names,
+            elos: [a.elo, b.elo],
+            wins: [0, 0],
+            next_game_at: None,
+            result: None,
         };
-        let room = Room {
-            id,
-            name: "Classé".to_string(),
-            host: token_a.clone(),
-            members: vec![member(token_a, a.conn, a.user_id), member(token_b, b.conn, b.user_id)],
-            settings,
-            phase: Phase::CountingDown(3.0),
-            sim: Sim::new(&settings),
-            series: Some(Series {
-                users: [a.user_id, b.user_id],
-                names,
-                elos: [a.elo, b.elo],
-                wins: [0, 0],
-                next_game_at: None,
-                result: None,
-            }),
-        };
+        let mut room = Room::new(id, "Classé".to_string(), members, settings, Some(series));
+        room.phase = Phase::CountingDown(COUNTDOWN_SECS);
         self.rooms.insert(id, room);
         self.clients.insert(a.conn, Some(id));
         self.clients.insert(b.conn, Some(id));
@@ -283,7 +382,12 @@ impl Manager {
         series.result = Some(result);
         series.next_game_at = None;
         if let Some(w) = winner {
-            self.unsaved_series.push((series.users[w], series.users[1 - w]));
+            self.unsaved_series.push(db::SeriesRecord {
+                winner: series.users[w],
+                loser: series.users[1 - w],
+                winner_delta: elo_changes[w],
+                loser_delta: elo_changes[1 - w],
+            });
             info!("Série room #{id} terminée, slot {} gagne", w + 1);
         }
         let conns: Vec<(usize, ConnId)> = self

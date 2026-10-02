@@ -104,10 +104,10 @@ fn run_side_effects(mgr: &mut Manager, pool: &db::DbPool, cmd_tx: &mpsc::Sender<
             }
         });
     }
-    for (winner, loser) in mgr.take_unsaved_series() {
+    for rec in mgr.take_unsaved_series() {
         let pool = pool.clone();
         saves.spawn(async move {
-            if let Err(e) = db::record_series(&pool, winner, loser).await {
+            if let Err(e) = db::record_series(&pool, rec).await {
                 error!("Series save: {e}");
             }
         });

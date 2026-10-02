@@ -64,7 +64,7 @@ fn poll_auth(state: &mut State) {
     };
     match result {
         Err(e) => {
-            state.auth_form.status = Status::error(format!("Erreur réseau: {e}"));
+            state.auth_form.status = Status::error(http::network_error(&e));
         }
         Ok(resp) => {
             if resp.status == 200 || resp.status == 201 {

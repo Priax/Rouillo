@@ -46,12 +46,7 @@ fn poll_core_profile(core: &mut ProfileCore) -> Option<ProfileLoad> {
 }
 
 fn load_core(user_id: String, username: String, elo: i32, token: Option<String>) -> ProfileCore {
-    let profile_slot = http::new_slot();
-    http::get(
-        http::api_url(&format!("users/{user_id}")),
-        token.clone(),
-        Arc::clone(&profile_slot),
-    );
+    let profile_slot = http::get_user(&user_id, token.clone());
     ProfileCore {
         history: History::load(user_id.clone(), token),
         user_id,
@@ -559,7 +554,7 @@ fn poll_friend(state: &mut State) {
             p.friend_status = Status::error(http::error_message(&resp));
         }
         Err(e) => {
-            p.friend_status = Status::error(format!("Erreur réseau: {e}"));
+            p.friend_status = Status::error(http::network_error(&e));
         }
     }
 }

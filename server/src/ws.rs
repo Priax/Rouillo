@@ -246,7 +246,6 @@ async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::Sender<Command
                             ClientMessage::Hello {
                                 player_id,
                                 auth_token,
-                                username: _,
                                 last_disconnect_reason,
                             } => {
                                 greeted = true;
@@ -286,6 +285,7 @@ async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::Sender<Command
                             },
                             ClientMessage::JoinQueue => Command::JoinQueue { conn },
                             ClientMessage::LeaveQueue => Command::LeaveQueue { conn },
+                            ClientMessage::AcceptMatch => Command::AcceptMatch { conn },
                         };
                         if cmd_tx_recv.send(cmd).await.is_err() {
                             break;
