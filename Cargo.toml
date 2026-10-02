@@ -7,7 +7,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.8.31"
+version = "0.8.32"
 
 [profile.release]
 strip = true
