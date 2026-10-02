@@ -12,8 +12,16 @@ if ! cargo +nightly fmt --all --check; then
     exit 1
 fi
 
+echo "Cargo.lock..."
+if ! cargo metadata --locked --format-version 1 >/dev/null 2>&1; then
+    echo
+    echo "Cargo.lock n'est pas à jour : lance 'cargo update --workspace', puis 'git add Cargo.lock', puis recommite."
+    echo "(Pour une nouvelle version, scripts/release.sh X.Y.Z fait tout.)"
+    exit 1
+fi
+
 echo "clippy (stable, comme la CI)..."
-if ! cargo +stable clippy --workspace --all-targets -- -D warnings; then
+if ! cargo +stable clippy --locked --workspace --all-targets -- -D warnings; then
     echo
     echo "clippy a trouvé des problèmes : corrige-les, puis recommite."
     exit 1
