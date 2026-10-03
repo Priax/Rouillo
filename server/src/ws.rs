@@ -293,6 +293,9 @@ async fn handle_connection(ws: WebSocket, cmd_tx: mpsc::Sender<Command>, conn: C
                         ClientMessage::JoinQueue => Command::JoinQueue { conn },
                         ClientMessage::LeaveQueue => Command::LeaveQueue { conn },
                         ClientMessage::AcceptMatch => Command::AcceptMatch { conn },
+                        ClientMessage::Chat { text } => Command::Chat { conn, text },
+                        ClientMessage::Spectate { id } => Command::Spectate { conn, id },
+                        ClientMessage::WatchFriend { user_id } => Command::WatchFriend { conn, user_id },
                     };
                     if cmd_tx_recv.send(cmd).await.is_err() {
                         break;

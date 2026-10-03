@@ -85,10 +85,17 @@ pub fn update_browser(app: &App, state: &mut State) {
         .room_pager
         .update(app, &state.ui, &state.fonts, &state.keys, pager_area(view), pages);
 
-    let clicked = shown_rooms(state).find_map(|(i, room)| state.ui.clicked(room_row(view, i)).then_some(room.id));
-    if let Some(id) = clicked {
+    let clicked = shown_rooms(state)
+        .find(|&(i, _)| state.ui.clicked(room_row(view, i)))
+        .map(|(_, room)| (room.id, watch_only(room)));
+    if let Some((id, watch)) = clicked {
         state.notice.clear();
-        send(state, &ClientMessage::JoinRoom { id });
+        let msg = if watch {
+            ClientMessage::Spectate { id }
+        } else {
+            ClientMessage::JoinRoom { id }
+        };
+        send(state, &msg);
         return;
     }
 
@@ -161,6 +168,11 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &draw);
 }
 
+/// A full room, or one already playing, is joined as a spectator.
+fn watch_only(room: &RoomInfo) -> bool {
+    room.ranked || (!room.friends_only && (room.players >= room.max || room.in_game))
+}
+
 fn draw_room_row(draw: &mut Draw, state: &State, row: Rect, index: usize, room: &RoomInfo) {
     let pal = state.ui.palette();
     let fonts = &state.fonts;
@@ -188,6 +200,32 @@ fn draw_room_row(draw: &mut Draw, state: &State, row: Rect, index: usize, room: 
         pills.push(Pill {
             text: "Amis",
             color: theme::SUCCESS,
+            size: theme::size::SMALL,
+        });
+    }
+    if room.ranked {
+        pills.push(Pill {
+            text: "Classé",
+            color: theme::bar::ORANGE,
+            size: theme::size::SMALL,
+        });
+    }
+    let watchers = format!(
+        "{} spectateur{}",
+        room.spectators,
+        if room.spectators > 1 { "s" } else { "" }
+    );
+    if room.spectators > 0 {
+        pills.push(Pill {
+            text: &watchers,
+            color: pal.text_dim,
+            size: theme::size::SMALL,
+        });
+    }
+    if watch_only(room) {
+        pills.push(Pill {
+            text: "Regarder",
+            color: theme::LINK,
             size: theme::size::SMALL,
         });
     }
@@ -317,6 +355,12 @@ fn lobby_leave(view: View) -> Rect {
     lobby_panel(view).action_row(2)
 }
 
+fn lobby_chat(view: View) -> Rect {
+    let card = lobby_panel(view).card;
+    let x = card.x + card.w + 24.0;
+    Rect::at(x, card.y, (view.w - 24.0 - x).min(460.0), card.h)
+}
+
 fn invite_modal(view: View) -> Modal {
     Modal::new(view, 600.0)
 }
@@ -389,6 +433,11 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         return;
     }
 
+    if let Some(text) = state.chat.edit(&app.keyboard, &state.keys) {
+        send(state, &ClientMessage::Chat { text });
+    }
+    state.chat.click(&state.ui, &state.fonts, lobby_chat(view));
+
     if info.is_host && info.countdown.is_none() {
         for i in 0..RoomSettings::COUNT {
             if state.ui.clicked(lobby_panel(view).stepper(i).minus) {
@@ -409,8 +458,13 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
     }
 
     let (_, _, launch_enabled) = launch_bar(&info, state.maintenance);
-    if info.is_host && launch_enabled && state.ui.bar_clicked(lobby_launch(view)) {
-        send(state, &ClientMessage::ToggleCountdown);
+    if launch_enabled && state.ui.bar_clicked(lobby_launch(view)) {
+        let msg = if info.your_slot == 0 {
+            ClientMessage::JoinRoom { id: info.id }
+        } else {
+            ClientMessage::ToggleCountdown
+        };
+        send(state, &msg);
         return;
     }
 
@@ -422,7 +476,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         return;
     }
 
-    if state.auth.is_some() && state.ui.bar_clicked(lobby_invite(view)) {
+    if info.your_slot != 0 && state.auth.is_some() && state.ui.bar_clicked(lobby_invite(view)) {
         state.invite_overlay = true;
         if state.invite_friends.is_empty() && state.invite_slot.is_none() {
             let token = state.auth.as_ref().map(|a| a.token.clone());
@@ -464,11 +518,12 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     state
         .ui
         .menu_bar_enabled(&mut draw, fonts, lobby_launch(view), label, color, enabled);
-    if state.auth.is_some() {
+    if info.your_slot != 0 && state.auth.is_some() {
         state
             .ui
             .menu_bar(&mut draw, fonts, lobby_invite(view), "Inviter un ami", theme::bar::BLUE);
     }
+    state.chat.draw_card(&mut draw, &state.ui, fonts, lobby_chat(view));
     state
         .ui
         .menu_bar(&mut draw, fonts, lobby_leave(view), "Quitter la room", theme::bar::RED);
@@ -493,6 +548,10 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
 fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool) {
     if maintenance {
         ("Le serveur redémarre...", theme::bar::GREEN, false)
+    } else if info.your_slot == 0 && info.players < 2 && info.countdown.is_none() {
+        ("Prendre la place", theme::bar::GREEN, true)
+    } else if info.your_slot == 0 {
+        ("Vous regardez cette room", theme::bar::GREEN, false)
     } else if !info.is_host {
         ("En attente de l'hôte...", theme::bar::GREEN, false)
     } else if info.countdown.is_some() {
@@ -513,6 +572,11 @@ fn draw_lobby_header(draw: &mut Draw, state: &State, info: &LobbyInfo) {
     state.ui.header_band(draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     let id = format!("Room #{}", info.id);
     let players = format!("{}/2 joueurs", info.players);
+    let watchers = format!(
+        "{} spectateur{}",
+        info.spectators,
+        if info.spectators > 1 { "s" } else { "" }
+    );
     let away = info.players.saturating_sub(info.connected);
     let away_text = format!("{away} déconnecté");
     let mut pills = vec![
@@ -531,6 +595,13 @@ fn draw_lobby_header(draw: &mut Draw, state: &State, info: &LobbyInfo) {
         pills.push(Pill {
             text: &away_text,
             color: theme::WARNING,
+            size: theme::size::SMALL,
+        });
+    }
+    if info.spectators > 0 {
+        pills.push(Pill {
+            text: &watchers,
+            color: pal.text_dim,
             size: theme::size::SMALL,
         });
     }

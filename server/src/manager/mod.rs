@@ -6,7 +6,7 @@ use tokio::time::{Duration, Instant};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::room::{Member, Phase, Room, Series, SeriesResult};
+use crate::room::{Member, Phase, Room, Series, SeriesResult, Spectator};
 use crate::{db, ConnId, Token};
 
 pub mod friends;
@@ -14,6 +14,7 @@ mod identity;
 mod presence;
 pub mod ranked;
 mod rooms;
+pub mod social;
 
 use friends::FriendCheck;
 use ranked::{PendingMatch, QueueEntry, RankedCheck};
@@ -27,6 +28,8 @@ const JOIN_UNAVAILABLE: &str = "Room indisponible";
 const JOIN_FRIENDS_ONLY: &str = "Cette room est réservée aux amis de l'hôte.";
 const JOIN_MAINTENANCE: &str = "Le serveur redémarre, réessayez dans un instant.";
 const JOIN_SAME_ACCOUNT: &str = "Ce compte est déjà dans cette room.";
+const WATCH_NOBODY: &str = "Cet ami ne joue pas en ce moment.";
+const WATCH_NOT_FRIENDS: &str = "Seuls les amis peuvent regarder cette partie.";
 
 pub struct Manager {
     pub rooms: HashMap<RoomId, Room>,
@@ -51,6 +54,7 @@ pub struct Manager {
     queue_cooldowns: HashMap<Uuid, Instant>,
     ranked_checks: Vec<RankedCheck>,
     ranked_checking: HashSet<ConnId>,
+    chat_budget: HashMap<ConnId, (f32, Instant)>,
     closing: bool,
 }
 
@@ -124,6 +128,18 @@ pub enum Command {
     AcceptMatch {
         conn: ConnId,
     },
+    Chat {
+        conn: ConnId,
+        text: String,
+    },
+    Spectate {
+        conn: ConnId,
+        id: RoomId,
+    },
+    WatchFriend {
+        conn: ConnId,
+        user_id: String,
+    },
     RankedCheckDone {
         check: RankedCheck,
         profile: Option<(i32, i64)>,
@@ -163,7 +179,10 @@ impl Command {
             | Self::InviteFriend { conn, .. }
             | Self::JoinQueue { conn }
             | Self::LeaveQueue { conn }
-            | Self::AcceptMatch { conn } => Some(*conn),
+            | Self::AcceptMatch { conn }
+            | Self::Chat { conn, .. }
+            | Self::Spectate { conn, .. }
+            | Self::WatchFriend { conn, .. } => Some(*conn),
         }
     }
 }
@@ -193,6 +212,7 @@ impl Manager {
             queue_cooldowns: HashMap::new(),
             ranked_checks: Vec::new(),
             ranked_checking: HashSet::new(),
+            chat_budget: HashMap::new(),
             closing: false,
         }
     }
@@ -281,7 +301,7 @@ impl Manager {
     }
 
     fn send_room(&mut self, id: RoomId, payload: &[u8]) {
-        let Some(conns) = self.rooms.get(&id).map(Room::connected_conns) else {
+        let Some(conns) = self.rooms.get(&id).map(Room::audience) else {
             return;
         };
         for c in conns {
@@ -309,7 +329,7 @@ impl Manager {
     pub fn public_room_list(&self) -> Vec<RoomInfo> {
         self.rooms
             .values()
-            .filter(|r| !r.settings.friends_only && r.series.is_none())
+            .filter(|r| !r.settings.friends_only)
             .map(Room::info)
             .collect()
     }
@@ -392,6 +412,9 @@ impl Manager {
             Command::JoinQueue { conn } => self.join_queue(conn),
             Command::LeaveQueue { conn } => self.leave_queue(conn),
             Command::AcceptMatch { conn } => self.accept_match(conn),
+            Command::Chat { conn, text } => self.chat(conn, &text),
+            Command::Spectate { conn, id } => self.spectate(conn, id),
+            Command::WatchFriend { conn, user_id } => self.watch_friend(conn, &user_id),
             Command::RankedCheckDone { check, profile } => self.ranked_check_done(check, profile),
             Command::Revoke { user_id, keep } => self.revoke(user_id, keep),
             Command::Rename { user_id, username } => self.rename(user_id, &username),

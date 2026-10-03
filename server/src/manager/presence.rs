@@ -96,6 +96,9 @@ impl Manager {
         let Some(id) = self.room_of(conn) else {
             return;
         };
+        if self.leave_audience(conn, id) {
+            return;
+        }
         let (notify, in_game) = if let Some(room) = self.rooms.get_mut(&id) {
             let Some(slot) = room.slot_of_conn(conn) else {
                 return;
@@ -138,6 +141,7 @@ impl Manager {
         self.checks_in_flight.remove(&conn);
         self.ranked_checking.remove(&conn);
         self.last_invite.remove(&conn);
+        self.chat_budget.remove(&conn);
     }
 
     pub(super) fn leave_current(&mut self, conn: ConnId) {
@@ -146,6 +150,9 @@ impl Manager {
             return;
         };
         self.clients.insert(conn, None);
+        if self.leave_audience(conn, id) {
+            return;
+        }
         let Some(slot) = self.rooms.get(&id).and_then(|r| r.slot_of_conn(conn)) else {
             return;
         };
@@ -184,7 +191,7 @@ impl Manager {
         };
 
         if closed {
-            self.rooms.remove(&id);
+            self.close_room(id);
         } else {
             self.send_lobby(id);
         }

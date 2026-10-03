@@ -18,16 +18,20 @@ mod triangles;
 mod view;
 
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 pub use button::Icon;
-pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge, Pill};
+pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge, Persona, Pill};
+mod clipboard;
 pub use field::{area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field};
 pub use fonts::{Face, Fonts};
 pub use input::TextInput;
 pub use keys::EditKeys;
+#[cfg(target_arch = "wasm32")]
+pub use keys::Shortcuts;
 pub use modal::Modal;
 use notan::draw::{CreateDraw, Draw, DrawImages};
 use notan::math::{vec2, Mat3};
@@ -76,6 +80,11 @@ struct Inner {
     drawn: HashMap<u64, u32>,
     caret_text: Option<u64>,
     caret_since: f64,
+    /// The widget a gamepad points at, and whether the pad is in use: the
+    /// mouse moving hands control back to it.
+    focus: Option<(u64, u32)>,
+    pad: bool,
+    pointer: (f32, f32),
 }
 
 impl Default for Inner {
@@ -98,6 +107,9 @@ impl Default for Inner {
             drawn: HashMap::new(),
             caret_text: None,
             caret_since: 0.0,
+            focus: None,
+            pad: false,
+            pointer: (0.0, 0.0),
         }
     }
 }
@@ -199,6 +211,7 @@ impl Ui {
             Some(current) if current == screen => {}
             Some(_) => {
                 inner.screen = Some(screen);
+                inner.focus = None;
                 inner.from_hue = inner.hue;
                 inner.target_hue = hue;
                 inner.entered_at = inner.time;
@@ -311,6 +324,68 @@ impl Ui {
     /// Whether the caret of the focused field, standing at `at` in `text`,
     /// is lit this frame. It blinks, and starts over lit whenever the text
     /// changes or the caret moves, so that it never vanishes under the typing.
+    /// Leaves gamepad control as soon as the mouse moves.
+    pub fn note_pointer(&mut self, real: Mouse) {
+        let inner = self.inner.get_mut();
+        if (real.x, real.y) != inner.pointer {
+            inner.pointer = (real.x, real.y);
+            inner.pad = false;
+        }
+    }
+
+    /// A click on the widget the gamepad points at, to stand for the mouse.
+    pub fn pad_click(&self) -> Option<Mouse> {
+        let inner = self.inner.borrow();
+        let w = inner.widgets.get(&inner.focus?).filter(|w| inner.pad && w.live)?;
+        let (x, y) = w.rect.center();
+        Some(Mouse {
+            x,
+            y,
+            down: true,
+            pressed: true,
+        })
+    }
+
+    /// Moves the gamepad's pointer to the nearest live widget in `dir`, or
+    /// onto the screen's first widget if it pointed at none.
+    pub fn move_focus(&self, (dx, dy): (f32, f32)) {
+        let mut inner = self.inner.borrow_mut();
+        let live: Vec<((u64, u32), (f32, f32))> = inner
+            .widgets
+            .iter()
+            .filter(|(_, w)| w.live)
+            .map(|(k, w)| (*k, w.rect.center()))
+            .collect();
+        let current = inner.focus.and_then(|f| live.iter().find(|(k, _)| *k == f).copied());
+        let next = match current.filter(|_| inner.pad) {
+            None => live
+                .iter()
+                .min_by(|a, b| {
+                    (a.1 .1, a.1 .0)
+                        .partial_cmp(&(b.1 .1, b.1 .0))
+                        .unwrap_or(Ordering::Equal)
+                })
+                .map(|(k, _)| *k),
+            Some((_, (cx, cy))) => live
+                .iter()
+                .filter_map(|(k, (x, y))| {
+                    let (ox, oy) = (x - cx, y - cy);
+                    let along = ox * dx + oy * dy;
+                    let across = (ox * dy - oy * dx).abs();
+                    (along > 1.0).then_some((*k, along + 2.0 * across))
+                })
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
+                .map(|(k, _)| k)
+                .or(inner.focus),
+        };
+        inner.focus = next;
+        inner.pad = next.is_some();
+    }
+
+    pub fn mouse(&self) -> Mouse {
+        self.inner.borrow().mouse
+    }
+
     pub fn caret_on(&self, text: &str, at: usize) -> bool {
         let mut inner = self.inner.borrow_mut();
         let text = Some(hash_of(&(text, at)));
@@ -349,6 +424,9 @@ impl Ui {
             drawn,
             caret_text: _,
             caret_since: _,
+            focus,
+            pad,
+            pointer: _,
         } = &mut *inner;
         let live = enabled && !*input_off;
 
@@ -373,7 +451,12 @@ impl Ui {
         });
         w.rect = rect;
         w.area = area;
-        let over = live && w.contains(mouse.x, mouse.y);
+        let over = live
+            && if *pad {
+                *focus == Some(key)
+            } else {
+                w.contains(mouse.x, mouse.y)
+            };
         let entered = over && !w.hovered && !fresh;
         w.live = live;
         w.hovered = over;
@@ -441,6 +524,44 @@ mod tests {
     fn frame(ui: &mut Ui, mouse: Mouse, draws: &[(&str, Rect)]) -> Vec<Response> {
         ui.begin_frame(1.0 / 60.0, View::default(), mouse);
         draws.iter().map(|(label, r)| ui.interact(label, *r, true)).collect()
+    }
+
+    #[test]
+    fn a_gamepad_walks_to_the_nearest_button_and_clicks_it() {
+        let mut ui = Ui::default();
+        let grid = [
+            ("a", Rect::at(100.0, 100.0, 100.0, 40.0)),
+            ("b", Rect::at(300.0, 100.0, 100.0, 40.0)),
+            ("c", Rect::at(100.0, 200.0, 100.0, 40.0)),
+            ("far", Rect::at(900.0, 600.0, 100.0, 40.0)),
+        ];
+        frame(&mut ui, AWAY, &grid);
+        ui.note_pointer(AWAY);
+        frame(&mut ui, AWAY, &grid);
+        ui.move_focus((1.0, 0.0));
+        let click = ui.pad_click().expect("the first button gets the focus");
+        assert!(grid[0].1.contains(click.x, click.y), "starts at the top left");
+        ui.move_focus((1.0, 0.0));
+        let click = ui.pad_click().unwrap();
+        assert!(grid[1].1.contains(click.x, click.y), "right goes to b");
+        ui.move_focus((0.0, 1.0));
+        let click = ui.pad_click().unwrap();
+        assert!(
+            grid[2].1.contains(click.x, click.y),
+            "down from b lands on c, the nearest below"
+        );
+        ui.move_focus((0.0, -1.0));
+        ui.move_focus((0.0, -1.0));
+        let click = ui.pad_click().unwrap();
+        assert!(grid[0].1.contains(click.x, click.y), "nothing above a: the focus stays");
+
+        let hovered = frame(&mut ui, AWAY, &grid);
+        assert!(
+            hovered[0].hover > 0.0 && hovered[1].hover == 0.0,
+            "the focus shows as a hover"
+        );
+        ui.note_pointer(ON_A);
+        assert!(ui.pad_click().is_none(), "moving the mouse hands control back");
     }
 
     #[test]

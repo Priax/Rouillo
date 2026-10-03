@@ -540,6 +540,8 @@ fn decode_accepts_large_legitimate_message() {
             max: 2,
             in_game: false,
             friends_only: false,
+            spectators: 0,
+            ranked: false,
         })
         .collect();
     let bytes = encode(&ServerMessage::RoomList { rooms }).expect("encode");
@@ -607,6 +609,8 @@ fn decode_survives_corrupted_messages() {
                     max: 2,
                     in_game: false,
                     friends_only: false,
+                    spectators: 0,
+                    ranked: false,
                 })
                 .collect(),
         })
@@ -1186,10 +1190,13 @@ fn client_samples() -> Vec<ClientMessage> {
         ClientMessage::JoinQueue,
         ClientMessage::LeaveQueue,
         ClientMessage::AcceptMatch,
+        ClientMessage::Chat { text: "c".into() },
+        ClientMessage::Spectate { id: 9 },
+        ClientMessage::WatchFriend { user_id: "u".into() },
     ]
 }
 
-const CLIENT_VARIANTS: usize = 16;
+const CLIENT_VARIANTS: usize = 19;
 
 fn client_variant(m: &ClientMessage) -> usize {
     match m {
@@ -1209,6 +1216,9 @@ fn client_variant(m: &ClientMessage) -> usize {
         ClientMessage::JoinQueue => 13,
         ClientMessage::LeaveQueue => 14,
         ClientMessage::AcceptMatch => 15,
+        ClientMessage::Chat { .. } => 16,
+        ClientMessage::Spectate { .. } => 17,
+        ClientMessage::WatchFriend { .. } => 18,
     }
 }
 
@@ -1258,6 +1268,8 @@ fn server_samples() -> Vec<ServerMessage> {
                 max: 2,
                 in_game: false,
                 friends_only: true,
+                spectators: 3,
+                ranked: true,
             }],
         },
         ServerMessage::Lobby {
@@ -1275,6 +1287,8 @@ fn server_samples() -> Vec<ServerMessage> {
                     opponent_elo: 1010,
                     wins: [2, 1],
                 }),
+                names: vec!["a".into(), "b".into()],
+                spectators: 4,
             },
         },
         ServerMessage::JoinFailed { reason: "x".into() },
@@ -1299,10 +1313,15 @@ fn server_samples() -> Vec<ServerMessage> {
             elo_change: -16,
         },
         ServerMessage::SessionRevoked,
+        ServerMessage::Chat {
+            from: "f".into(),
+            text: "t".into(),
+            spectator: true,
+        },
     ]
 }
 
-const SERVER_VARIANTS: usize = 17;
+const SERVER_VARIANTS: usize = 18;
 
 fn server_variant(m: &ServerMessage) -> usize {
     match m {
@@ -1323,6 +1342,7 @@ fn server_variant(m: &ServerMessage) -> usize {
         ServerMessage::MatchFound { .. } => 14,
         ServerMessage::MatchCancelled { .. } => 15,
         ServerMessage::QueueCooldown { .. } => 16,
+        ServerMessage::Chat { .. } => 17,
     }
 }
 
@@ -1355,7 +1375,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (5, 2_812_844_150_312_989_760);
+const PROTOCOL_DIGEST: (u32, u64) = (6, 4_530_893_389_962_419_823);
 
 #[test]
 fn protocol_changes_bump_the_version() {

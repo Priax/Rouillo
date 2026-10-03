@@ -56,6 +56,8 @@ fn translate(code: &str) -> Option<&'static str> {
         "username_taken" => "Ce pseudo est déjà pris.",
         "friend_request_exists" => "Une demande d'ami existe déjà.",
         "too_many_requests" => "Trop de tentatives, réessayez plus tard.",
+        "bad_image" => "Image illisible: envoyez un PNG, JPEG, WebP ou GIF.",
+        "image_too_large" => "Image trop grande (5 Mo et 6000 pixels au plus).",
         "bad_query" | "invalid_body" => "Requête invalide.",
         "internal" => "Erreur du serveur, réessayez plus tard.",
         _ => return None,
@@ -74,6 +76,11 @@ pub fn encode_query(value: &str) -> String {
 
 pub fn api_url(path: &str) -> String {
     format!("{}/api/{}", api_base(), path.trim_start_matches('/'))
+}
+
+/// A path the API answered with, such as an image's, made absolute.
+pub fn resource_url(path: &str) -> String {
+    format!("{}{path}", api_base())
 }
 
 fn api_base() -> String {
@@ -162,6 +169,16 @@ pub fn delete_req(url: String, token: Option<String>, slot: HttpSlot) {
         method: ehttp::Method::DELETE,
         ..ehttp::Request::get(url)
     };
+    send(req, token, slot);
+}
+
+pub fn put_bytes(url: String, body: Vec<u8>, token: Option<String>, slot: HttpSlot) {
+    let mut req = ehttp::Request {
+        method: ehttp::Method::PUT,
+        body,
+        ..ehttp::Request::get(url)
+    };
+    push_header(&mut req, "content-type", "application/octet-stream".to_owned());
     send(req, token, slot);
 }
 

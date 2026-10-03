@@ -3,10 +3,108 @@ use std::rc::Rc;
 
 use wasm_bindgen::convert::FromWasmAbi;
 use wasm_bindgen::prelude::*;
-use web_sys::{CompositionEvent, Event, EventTarget, HtmlInputElement, KeyboardEvent};
+use web_sys::{ClipboardEvent, CompositionEvent, Event, EventTarget, FileReader, HtmlInputElement, KeyboardEvent};
+
+use crate::picker::{Picked, MAX_BYTES, TOO_HEAVY};
+use crate::ui::Shortcuts;
 
 thread_local! {
     static TYPED: RefCell<String> = const { RefCell::new(String::new()) };
+    static WANT_TEXT: Cell<bool> = const { Cell::new(true) };
+    static INPUT: RefCell<Option<HtmlInputElement>> = const { RefCell::new(None) };
+    static SHORTCUTS: Cell<Shortcuts> = Cell::new(Shortcuts::default());
+    static SELECTION: RefCell<String> = const { RefCell::new(String::new()) };
+    static PICKED: RefCell<Option<Picked>> = const { RefCell::new(None) };
+}
+
+fn picked(result: Picked) {
+    PICKED.with(|p| *p.borrow_mut() = Some(result));
+}
+
+pub fn take_picked() -> Option<Picked> {
+    PICKED.with(|p| p.borrow_mut().take())
+}
+
+/// Opens the browser's file chooser. It must run soon after a click: browsers
+/// only open it in answer to the player.
+pub fn pick_file() {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let Some(input) = document
+        .create_element("input")
+        .ok()
+        .and_then(|e| e.dyn_into::<HtmlInputElement>().ok())
+    else {
+        return;
+    };
+    input.set_type("file");
+    input.set_accept("image/png,image/jpeg,image/webp,image/gif");
+    let chooser = input.clone();
+    listen(&input, "change", move |_: Event| {
+        let Some(file) = chooser.files().and_then(|f| f.get(0)) else {
+            picked(Picked::Cancelled);
+            return;
+        };
+        if file.size() > MAX_BYTES as f64 {
+            picked(Picked::Failed(TOO_HEAVY));
+            return;
+        }
+        let Ok(reader) = FileReader::new() else { return };
+        let done = reader.clone();
+        listen(&reader, "load", move |_: Event| {
+            let bytes = done
+                .result()
+                .map(|buf| js_sys::Uint8Array::new(&buf).to_vec())
+                .map_or(Picked::Failed("Fichier illisible."), Picked::File);
+            picked(bytes);
+        });
+        let _ = reader.read_as_array_buffer(&file);
+    });
+    input.click();
+}
+
+pub fn take_shortcuts() -> Shortcuts {
+    SHORTCUTS.with(Cell::take)
+}
+
+/// What the focused field has selected, for the browser's copy and cut.
+pub fn set_selection(text: &str) {
+    SELECTION.with(|s| {
+        let mut s = s.borrow_mut();
+        if *s != text {
+            text.clone_into(&mut s);
+        }
+    });
+}
+
+fn give_selection(e: &ClipboardEvent) -> bool {
+    let text = SELECTION.with(|s| s.borrow().clone());
+    if text.is_empty() {
+        return false;
+    }
+    if let Some(data) = e.clipboard_data() {
+        let _ = data.set_data("text/plain", &text);
+        e.prevent_default();
+    }
+    true
+}
+
+/// Whether the screen has a text field: only then does the hidden input keep
+/// the focus, since a focused input brings up a phone's on-screen keyboard.
+pub fn want_text(on: bool) {
+    if WANT_TEXT.with(|w| w.replace(on)) == on {
+        return;
+    }
+    INPUT.with(|input| {
+        if let Some(input) = input.borrow().as_ref() {
+            let _ = if on { input.focus() } else { input.blur() };
+        }
+    });
+}
+
+fn wanted() -> bool {
+    WANT_TEXT.with(Cell::get)
 }
 
 pub fn take_typed() -> String {
@@ -67,6 +165,7 @@ pub fn start_text_input() {
         return;
     };
     let _ = input.focus();
+    INPUT.with(|slot| *slot.borrow_mut() = Some(input.clone()));
 
     let composing = Rc::new(Cell::new(false));
     {
@@ -94,7 +193,9 @@ pub fn start_text_input() {
     for event in ["focus", "mouseup", "touchend"] {
         let input = input.clone();
         listen(&window, event, move |_: Event| {
-            let _ = input.focus();
+            if wanted() {
+                let _ = input.focus();
+            }
         });
     }
     let focused = {
@@ -106,12 +207,31 @@ pub fn start_text_input() {
                 .is_some_and(|e| e == *input.as_ref())
         }
     };
+    listen(&window, "copy", |e: ClipboardEvent| {
+        give_selection(&e);
+    });
+    listen(&window, "cut", |e: ClipboardEvent| {
+        if give_selection(&e) {
+            SHORTCUTS.with(|s| s.set(Shortcuts { cut: true, ..s.get() }));
+        }
+    });
     listen(&window, "keydown", move |e: KeyboardEvent| {
         if e.key() == "Tab" {
             e.prevent_default();
         }
+        if (e.ctrl_key() || e.meta_key()) && e.key().eq_ignore_ascii_case("a") {
+            e.prevent_default();
+            SHORTCUTS.with(|s| {
+                s.set(Shortcuts {
+                    select_all: true,
+                    ..s.get()
+                })
+            });
+        }
         if !focused() {
-            let _ = input.focus();
+            if wanted() {
+                let _ = input.focus();
+            }
             let key = e.key();
             if key.chars().count() == 1 && !e.ctrl_key() && !e.meta_key() {
                 typed(&key);

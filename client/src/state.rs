@@ -24,13 +24,15 @@ pub enum Screen {
     SoloSetup,
     Solo,
     Ranked,
+    Leaderboard,
+    Help,
 }
 
 impl Screen {
     pub fn hue(self) -> f32 {
         use crate::theme::hue;
         match self {
-            Self::Title | Self::Auth | Self::Menu | Self::PlayMenu => hue::PURPLE,
+            Self::Title | Self::Auth | Self::Menu | Self::PlayMenu | Self::Help => hue::PURPLE,
             Self::RoomBrowser
             | Self::CreateRoom
             | Self::JoinById
@@ -41,7 +43,7 @@ impl Screen {
             | Self::Ranked => hue::BLUE,
             Self::Friends => hue::GREEN,
             Self::Profile | Self::OtherProfile => hue::PINK,
-            Self::Settings => hue::ORANGE,
+            Self::Settings | Self::Leaderboard => hue::ORANGE,
         }
     }
 
@@ -94,6 +96,7 @@ pub struct AuthInfo {
     pub user_id: String,
     pub username: String,
     pub elo: i32,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -102,6 +105,8 @@ pub struct ApiAuthResponse {
     pub user_id: String,
     pub username: String,
     pub elo: i32,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -109,11 +114,17 @@ pub struct ApiMeResponse {
     pub id: String,
     pub username: String,
     pub elo: i32,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
 pub struct ApiUserProfile {
     pub username: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub banner_url: Option<String>,
     pub elo: i32,
     pub bio: Option<String>,
     pub favorite_music: Option<String>,
@@ -131,6 +142,8 @@ pub struct FriendEntry {
     pub user_id: String,
     pub username: String,
     pub elo: i32,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -145,6 +158,8 @@ pub struct UserSearchEntry {
     pub user_id: String,
     pub username: String,
     pub elo: i32,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 pub struct FriendsData {
@@ -211,6 +226,7 @@ pub struct ProfileCore {
 
 pub struct ProfileData {
     pub core: ProfileCore,
+    pub prev_screen: Screen,
     pub edit: Option<crate::profile_edit::EditForm>,
     pub account: Option<crate::account::AccountForm>,
 }
@@ -328,6 +344,8 @@ pub struct GameSession {
 
     pub opponent_disconnected: bool,
     pub quit_menu: bool,
+    /// The names above the boards, own first; a spectator's are both players'.
+    pub labels: Option<[String; 2]>,
 
     pub input_seq: u32,
     pub my_ack: u32,
@@ -383,6 +401,7 @@ impl GameSession {
             my_slot,
             opponent_disconnected: false,
             quit_menu: false,
+            labels: None,
             input_seq: 0,
             my_ack: 0,
             pending_inputs: Vec::new(),
@@ -449,6 +468,10 @@ impl TurnAnim {
 }
 
 impl GameSession {
+    pub const fn spectating(&self) -> bool {
+        self.my_slot == 0
+    }
+
     pub fn decided(&self) -> bool {
         self.board.state == GameState::GameOver || self.other_board.state == GameState::GameOver
     }
@@ -494,6 +517,7 @@ pub struct State {
     pub notice: Status,
     pub session: Option<GameSession>,
     pub fonts: crate::ui::Fonts,
+    pub images: crate::images::Images,
     pub auth: Option<AuthInfo>,
     pub auth_form: AuthForm,
     pub profile: Option<ProfileData>,
@@ -504,7 +528,11 @@ pub struct State {
     pub title_seen: bool,
     pub pending_invitation: Option<(String, RoomId, String)>,
     pub pending_join: Option<RoomId>,
+    pub pending_watch: Option<String>,
     pub ranked: crate::ranked::RankedView,
+    pub chat: crate::chat::Chat,
+    pub demo: Option<crate::demo::Demo>,
+    pub leaderboard: Option<crate::leaderboard::Leaderboard>,
     pub series_over: Option<(Option<u8>, i32)>,
     pub invite_overlay: bool,
     pub invite_slot: Option<HttpSlot>,
@@ -514,6 +542,10 @@ pub struct State {
     pub maintenance: bool,
     pub ui: crate::ui::Ui,
     pub keys: crate::ui::EditKeys,
+    pub controls: crate::controls::Controls,
+    pub bindings_panel: crate::bindings_panel::BindingsPanel,
+    pub pads: crate::pads::Pads,
+    pub touch: crate::touch::TouchPad,
     pub solo_settings: crate::solo::SoloSettings,
     pub solo: Option<crate::solo::SoloGame>,
     pub solo_best: i32,
@@ -534,6 +566,7 @@ impl State {
             notice: Status::Empty,
             session: None,
             fonts,
+            images: crate::images::Images::default(),
             auth: None,
             auth_form: AuthForm::default(),
             profile: None,
@@ -544,7 +577,11 @@ impl State {
             title_seen: false,
             pending_invitation: None,
             pending_join: None,
+            pending_watch: None,
             ranked: crate::ranked::RankedView::default(),
+            chat: crate::chat::Chat::default(),
+            demo: None,
+            leaderboard: None,
             series_over: None,
             invite_overlay: false,
             invite_slot: None,
@@ -554,6 +591,10 @@ impl State {
             maintenance: false,
             ui: crate::ui::Ui::default(),
             keys: crate::ui::EditKeys::default(),
+            controls: crate::controls::Controls::load(),
+            bindings_panel: crate::bindings_panel::BindingsPanel::default(),
+            pads: crate::pads::Pads::new(),
+            touch: crate::touch::TouchPad::default(),
             solo_settings: crate::solo::SoloSettings::default(),
             solo: None,
             solo_best: load_best_score(),

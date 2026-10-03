@@ -1,7 +1,4 @@
-#[cfg(target_arch = "wasm32")]
 pub const NOTICE: &str = "Une nouvelle version est disponible.";
-#[cfg(not(target_arch = "wasm32"))]
-pub const NOTICE: &str = "Une nouvelle version est disponible sur GitHub.";
 
 #[cfg(target_arch = "wasm32")]
 pub fn apply() {
@@ -10,9 +7,14 @@ pub fn apply() {
     }
 }
 
-// A native build cannot replace itself (yet): open the download page instead.
+/// A native build installs the signed release it found; without one (GitHub
+/// unreachable, or a release still building) it opens the download page.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn apply() {
+    if matches!(crate::updater::status(), crate::updater::Status::Available(_)) {
+        crate::updater::install();
+        return;
+    }
     use std::process::Command;
     const RELEASES: &str = "https://github.com/Priax/Rouillo/releases/latest";
     let opened = if cfg!(target_os = "windows") {
@@ -25,4 +27,20 @@ pub fn apply() {
     if let Err(e) = opened {
         eprintln!("[update] impossible d'ouvrir {RELEASES}: {e}");
     }
+}
+
+/// What the update is doing, to show next to its button.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn progress() -> Option<String> {
+    match crate::updater::status() {
+        crate::updater::Status::Installing => Some("Téléchargement de la mise à jour...".to_owned()),
+        crate::updater::Status::Failed(e) => Some(format!("Mise à jour impossible: {e}")),
+        crate::updater::Status::Done => Some("Redémarrage...".to_owned()),
+        _ => None,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn progress() -> Option<String> {
+    None
 }

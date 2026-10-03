@@ -8,3 +8,6 @@ perf.data*
 deploy/
 
 .env
+
+# Signing keys never go in the repository.
+*.pem

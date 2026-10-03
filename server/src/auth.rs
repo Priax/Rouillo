@@ -3,12 +3,13 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
+use axum::body::Bytes;
+use axum::extract::rejection::{BytesRejection, JsonRejection, PathRejection, QueryRejection};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequest, FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ use tracing::error;
 use uuid::Uuid;
 
 use crate::db::{self, DbPool};
+use crate::images::{self, ImageError, Kind};
 use crate::manager::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +37,8 @@ enum ApiError {
     FriendRequestExists,
     TooManyRequests,
     InvalidBody,
+    BadImage,
+    ImageTooLarge,
     Internal,
 }
 
@@ -88,7 +92,9 @@ impl ApiError {
             | Self::BioTooLong
             | Self::MusicTooLong
             | Self::SelfFriendRequest
-            | Self::InvalidBody => StatusCode::BAD_REQUEST,
+            | Self::InvalidBody
+            | Self::BadImage => StatusCode::BAD_REQUEST,
+            Self::ImageTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Unauthorized | Self::BadCredentials => StatusCode::UNAUTHORIZED,
             Self::WrongPassword => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
@@ -114,6 +120,8 @@ impl ApiError {
             Self::FriendRequestExists => "friend_request_exists",
             Self::TooManyRequests => "too_many_requests",
             Self::InvalidBody => "invalid_body",
+            Self::BadImage => "bad_image",
+            Self::ImageTooLarge => "image_too_large",
             Self::Internal => "internal",
         }
     }
@@ -134,6 +142,8 @@ impl ApiError {
             Self::FriendRequestExists => "Friend request already exists",
             Self::TooManyRequests => "Too many requests, please try again later",
             Self::InvalidBody => "Invalid request body",
+            Self::BadImage => "The image must be a PNG, JPEG, WebP or GIF picture",
+            Self::ImageTooLarge => "The image must weigh 5 MB and measure 6000 pixels at most",
             Self::Internal => "Internal server error",
         }
     }
@@ -265,6 +275,10 @@ type FriendLimit = RateMap;
 const MAX_FRIEND_REQS: u32 = 30;
 const FRIEND_WINDOW: Duration = Duration::from_secs(600);
 
+type UploadLimit = RateMap;
+const MAX_UPLOADS: u32 = 20;
+const UPLOAD_WINDOW: Duration = Duration::from_hours(1);
+
 type SearchLimit = RateMap;
 const MAX_SEARCHES: u32 = 60;
 const SEARCH_WINDOW: Duration = Duration::from_secs(60);
@@ -310,6 +324,7 @@ struct AuthResponse {
     user_id: Uuid,
     username: String,
     elo: i32,
+    avatar_url: Option<String>,
 }
 
 impl AuthResponse {
@@ -319,6 +334,7 @@ impl AuthResponse {
             user_id: user.id,
             username: user.username,
             elo: user.elo,
+            avatar_url: user.avatar_url,
         }
     }
 }
@@ -348,6 +364,7 @@ struct Api {
     password_checks: PasswordChecks,
     friend_limit: FriendLimit,
     search_limit: SearchLimit,
+    upload_limit: UploadLimit,
 }
 
 struct Bearer(Uuid);
@@ -457,7 +474,7 @@ async fn handle_login(
         .as_ref()
         .map_or_else(|| db::dummy_hash().to_owned(), |u| u.password_hash().to_owned());
     let password = body.password.clone();
-    let ok = db::run_hash(move || db::verify_password(&password, &hash))
+    let ok = db::run_heavy(move || db::verify_password(&password, &hash))
         .await
         .map_err(internal)?;
 
@@ -489,7 +506,7 @@ async fn check_password(user: &db::User, password: String, checks: &PasswordChec
         return Err(ApiError::TooManyRequests);
     }
     let hash = user.password_hash().to_owned();
-    let ok = db::run_hash(move || db::verify_password(&password, &hash))
+    let ok = db::run_heavy(move || db::verify_password(&password, &hash))
         .await
         .map_err(internal)?;
     if !ok {
@@ -514,7 +531,7 @@ async fn handle_change_password(
     }
     check_password(&user, body.current, &checks).await?;
     let new = body.new;
-    let hash = db::run_hash(move || db::hash_password(&new))
+    let hash = db::run_heavy(move || db::hash_password(&new))
         .await
         .map_err(internal)?
         .map_err(internal)?;
@@ -551,6 +568,88 @@ async fn handle_rename(
         })
         .await;
     Ok(Json(UserProfile::from(renamed)))
+}
+
+async fn upload(
+    api: Api,
+    user: db::User,
+    kind: Kind,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<Json<UserProfile>, ApiError> {
+    let body = body.map_err(|e| {
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            ApiError::ImageTooLarge
+        } else {
+            ApiError::InvalidBody
+        }
+    })?;
+    if !rate_take(&api.upload_limit, &user.id.to_string(), MAX_UPLOADS, UPLOAD_WINDOW) {
+        return Err(ApiError::TooManyRequests);
+    }
+    let image = db::run_heavy(move || images::process(kind, &body))
+        .await
+        .map_err(internal)?
+        .map_err(|e| match e {
+            ImageError::Unreadable => ApiError::BadImage,
+            ImageError::TooBig => ApiError::ImageTooLarge,
+        })?;
+    let user = db::set_image(&api.pool, user.id, kind, image).await.map_err(internal)?;
+    Ok(Json(UserProfile::from(user)))
+}
+
+async fn handle_avatar_upload(
+    State(api): State<Api>,
+    Authed(user): Authed,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+    upload(api, user, Kind::Avatar, body).await
+}
+
+async fn handle_banner_upload(
+    State(api): State<Api>,
+    Authed(user): Authed,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+    upload(api, user, Kind::Banner, body).await
+}
+
+async fn remove_image(api: &Api, user: &db::User, kind: Kind) -> Result<Json<UserProfile>, ApiError> {
+    let user = db::delete_image(&api.pool, user.id, kind).await.map_err(internal)?;
+    Ok(Json(UserProfile::from(user)))
+}
+
+async fn handle_avatar_delete(State(api): State<Api>, Authed(user): Authed) -> Result<impl IntoResponse, ApiError> {
+    remove_image(&api, &user, Kind::Avatar).await
+}
+
+async fn handle_banner_delete(State(api): State<Api>, Authed(user): Authed) -> Result<impl IntoResponse, ApiError> {
+    remove_image(&api, &user, Kind::Banner).await
+}
+
+async fn serve_image(api: &Api, user_id: Uuid, kind: Kind) -> Result<Response, ApiError> {
+    let data = db::get_image(&api.pool, user_id, kind)
+        .await
+        .map_err(internal)?
+        .ok_or(ApiError::NotFound)?;
+    let headers = [
+        (header::CONTENT_TYPE, kind.content_type()),
+        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+    ];
+    Ok((headers, data).into_response())
+}
+
+async fn handle_avatar_get(
+    State(api): State<Api>,
+    PathParam(user_id): PathParam<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    serve_image(&api, user_id, Kind::Avatar).await
+}
+
+async fn handle_banner_get(
+    State(api): State<Api>,
+    PathParam(user_id): PathParam<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    serve_image(&api, user_id, Kind::Banner).await
 }
 
 async fn handle_logout_all(
@@ -734,6 +833,19 @@ struct FriendListResponse {
 }
 
 #[derive(Deserialize)]
+struct LeaderboardQuery {
+    me: Option<Uuid>,
+}
+
+async fn handle_leaderboard(
+    State(Api { pool, .. }): State<Api>,
+    Params(query): Params<LeaderboardQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let rows = db::leaderboard(&pool, query.me).await.map_err(internal)?;
+    Ok(Json(rows))
+}
+
+#[derive(Deserialize)]
 struct UserSearchQuery {
     q: Option<String>,
 }
@@ -836,6 +948,7 @@ pub fn routes(pool: DbPool, cmd_tx: mpsc::Sender<Command>) -> Router {
         password_checks: new_rate_map(),
         friend_limit: new_rate_map(),
         search_limit: new_rate_map(),
+        upload_limit: new_rate_map(),
     };
     Router::new()
         .route("/api/register", post(handle_register))
@@ -845,7 +958,22 @@ pub fn routes(pool: DbPool, cmd_tx: mpsc::Sender<Command>) -> Router {
         .route("/api/me", get(handle_me).patch(handle_patch_me))
         .route("/api/me/password", post(handle_change_password))
         .route("/api/me/username", post(handle_rename))
+        .route(
+            "/api/me/avatar",
+            put(handle_avatar_upload)
+                .delete(handle_avatar_delete)
+                .layer(DefaultBodyLimit::max(images::MAX_UPLOAD)),
+        )
+        .route(
+            "/api/me/banner",
+            put(handle_banner_upload)
+                .delete(handle_banner_delete)
+                .layer(DefaultBodyLimit::max(images::MAX_UPLOAD)),
+        )
+        .route("/api/users/{id}/avatar", get(handle_avatar_get))
+        .route("/api/users/{id}/banner", get(handle_banner_get))
         .route("/api/me/delete", post(handle_delete_account))
+        .route("/api/leaderboard", get(handle_leaderboard))
         .route("/api/users/search", get(handle_search_users))
         .route("/api/users/{id}", get(handle_user_profile))
         .route("/api/users/{id}/matches", get(handle_match_history))

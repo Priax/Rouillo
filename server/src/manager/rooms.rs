@@ -21,7 +21,7 @@ impl Manager {
         if !self.conn_token.contains_key(&conn) {
             return;
         }
-        if self.room_of(conn) == Some(id) {
+        if self.rooms.get(&id).is_some_and(|r| r.slot_of_conn(conn).is_some()) {
             return;
         }
         if self.closing {
@@ -82,8 +82,9 @@ impl Manager {
             return;
         }
         self.leave_current(conn);
+        let name = self.display_name(conn);
         if let Some(room) = self.rooms.get_mut(&id) {
-            room.members.push(Member::present(token, conn, user_id));
+            room.members.push(Member::present(token, conn, user_id, name));
         }
         self.clients.insert(conn, Some(id));
         self.sync_after_attach(id, conn);
@@ -130,13 +131,8 @@ impl Manager {
         let id = self.next_id;
         self.next_id += 1;
         let user_id = self.conn_user_id.get(&conn).copied();
-        let room = Room::new(
-            id,
-            clean_name(name),
-            vec![Member::present(token, conn, user_id)],
-            RoomSettings::default(),
-            None,
-        );
+        let member = Member::present(token, conn, user_id, self.display_name(conn));
+        let room = Room::new(id, clean_name(name), vec![member], RoomSettings::default(), None);
         self.rooms.insert(id, room);
         self.clients.insert(conn, Some(id));
         self.send_lobby(id);
@@ -224,7 +220,8 @@ impl Manager {
         if let Some(id) = self.room_of(conn) {
             let toggled = self
                 .with_room(id, |room| {
-                    let allowed = room.game_running()
+                    let allowed = room.slot_of_conn(conn).is_some()
+                        && room.game_running()
                         && room.all_connected()
                         && room.settings.pause.allows(room.is_host_conn(conn));
                     if allowed {
@@ -249,6 +246,7 @@ impl Manager {
             let restarted = self
                 .with_room(id, |room| {
                     if room.series.is_none()
+                        && room.slot_of_conn(conn).is_some()
                         && matches!(room.phase, Phase::Playing)
                         && room.sim.finished
                         && room.all_connected()

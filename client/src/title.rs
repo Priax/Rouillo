@@ -31,10 +31,11 @@ pub fn update_title(app: &App, state: &mut State) {
     }
     state.title_seen = true;
     crate::audio::play_ui_click();
-    state.screen = if state.auth.is_some() {
-        Screen::Menu
-    } else {
+    let checking = state.startup_check.is_some() || state.startup_retry_at.is_some();
+    state.screen = if state.auth.is_none() && checking {
         Screen::Auth
+    } else {
+        Screen::Menu
     };
 }
 

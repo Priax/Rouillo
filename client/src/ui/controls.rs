@@ -1,6 +1,7 @@
 use notan::draw::{Draw, DrawShapes};
+use notan::prelude::Texture;
 
-use super::{list_row, portrait, Fonts, Rect, SharpText, Ui};
+use super::{list_row, portrait, Fonts, Persona, Rect, SharpText, Ui};
 use crate::theme;
 
 const UNDERLINE: f32 = 3.0;
@@ -36,7 +37,7 @@ impl Ui {
     }
 
     /// A round avatar showing the player's initial.
-    pub fn avatar(&self, draw: &mut Draw, fonts: &Fonts, rect: Rect, name: &str) {
+    pub fn avatar(&self, draw: &mut Draw, fonts: &Fonts, rect: Rect, name: &str, picture: Option<&Texture>) {
         let pal = self.palette();
         let r = self.interact(name, rect, true);
         if r.entered {
@@ -44,7 +45,12 @@ impl Ui {
         }
         let center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
         let radius = rect.w.min(rect.h) / 2.0 * (1.0 + 0.05 * r.hover);
-        portrait(draw, &pal, fonts, center, radius, name, r.hover);
+        let who = Persona {
+            name,
+            glow: r.hover,
+            picture,
+        };
+        portrait(draw, &pal, fonts, center, radius, &who);
     }
 
     /// Text that can be clicked: it takes the link colour and an underline

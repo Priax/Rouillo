@@ -7,23 +7,25 @@ use sqlx::PgPool;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
+use crate::images::Kind;
+
 pub type DbPool = PgPool;
 
 static DUMMY_HASH: OnceLock<String> = OnceLock::new();
 
-const MAX_CONCURRENT_HASH_OPS: usize = 1;
-static HASH_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+const MAX_CONCURRENT_HEAVY_OPS: usize = 1;
+static HEAVY_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 
-fn hash_semaphore() -> &'static Semaphore {
-    HASH_SEMAPHORE.get_or_init(|| Semaphore::new(MAX_CONCURRENT_HASH_OPS))
+fn heavy_semaphore() -> &'static Semaphore {
+    HEAVY_SEMAPHORE.get_or_init(|| Semaphore::new(MAX_CONCURRENT_HEAVY_OPS))
 }
 
-pub async fn run_hash<F, T>(f: F) -> Result<T, sqlx::Error>
+pub async fn run_heavy<F, T>(f: F) -> Result<T, sqlx::Error>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    let _permit = hash_semaphore()
+    let _permit = heavy_semaphore()
         .acquire()
         .await
         .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
@@ -74,7 +76,7 @@ pub async fn init_pool(database_url: &str) -> Result<DbPool, sqlx::Error> {
 
 pub async fn create_user(pool: &DbPool, username: &str, password: &str) -> Result<User, sqlx::Error> {
     let password = password.to_owned();
-    let hash = run_hash(move || hash_password(&password))
+    let hash = run_heavy(move || hash_password(&password))
         .await?
         .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
     sqlx::query_as::<_, User>("INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING *")
@@ -141,6 +143,66 @@ pub async fn rename_user(pool: &DbPool, user_id: Uuid, username: &str) -> Result
         .bind(user_id)
         .bind(username)
         .fetch_one(pool)
+        .await
+}
+
+fn image_url(user_id: Uuid, kind: Kind, version: i32) -> String {
+    format!("/api/users/{user_id}/{}?v={version}", kind.name())
+}
+
+pub async fn set_image(pool: &DbPool, user_id: Uuid, kind: Kind, data: Vec<u8>) -> Result<User, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let version = sqlx::query_scalar::<_, i32>(
+        "INSERT INTO user_images (user_id, kind, data) VALUES ($1, $2, $3) \
+         ON CONFLICT (user_id, kind) DO UPDATE \
+         SET data = EXCLUDED.data, version = user_images.version + 1 \
+         RETURNING version",
+    )
+    .bind(user_id)
+    .bind(kind.name())
+    .bind(data)
+    .fetch_one(&mut *tx)
+    .await?;
+    let url = image_url(user_id, kind, version);
+    let user = set_image_url(&mut tx, user_id, kind, Some(url)).await?;
+    tx.commit().await?;
+    Ok(user)
+}
+
+pub async fn delete_image(pool: &DbPool, user_id: Uuid, kind: Kind) -> Result<User, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM user_images WHERE user_id = $1 AND kind = $2")
+        .bind(user_id)
+        .bind(kind.name())
+        .execute(&mut *tx)
+        .await?;
+    let user = set_image_url(&mut tx, user_id, kind, None).await?;
+    tx.commit().await?;
+    Ok(user)
+}
+
+async fn set_image_url(
+    tx: &mut sqlx::PgConnection,
+    user_id: Uuid,
+    kind: Kind,
+    url: Option<String>,
+) -> Result<User, sqlx::Error> {
+    let query = match kind {
+        Kind::Avatar => "UPDATE users SET avatar_url = $2 WHERE id = $1 RETURNING *",
+        Kind::Banner => "UPDATE users SET banner_url = $2 WHERE id = $1 RETURNING *",
+    };
+    sqlx::query_as::<_, User>(query)
+        .bind(user_id)
+        .bind(url)
+        .fetch_one(tx)
+        .await
+}
+
+pub async fn get_image(pool: &DbPool, user_id: Uuid, kind: Kind) -> Result<Option<Vec<u8>>, sqlx::Error> {
+    sqlx::query_scalar::<_, Vec<u8>>("SELECT data FROM user_images WHERE user_id = $1 AND kind = $2")
+        .bind(user_id)
+        .bind(kind.name())
+        .fetch_optional(pool)
         .await
 }
 
@@ -354,6 +416,42 @@ pub async fn get_user_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<Use
     .await
 }
 
+pub const LEADERBOARD_SIZE: i64 = 100;
+
+#[derive(sqlx::FromRow, serde::Serialize)]
+pub struct LeaderboardRow {
+    pub rank: i64,
+    pub user_id: Uuid,
+    pub username: String,
+    pub elo: i32,
+    pub series: i64,
+    pub series_won: i64,
+    pub avatar_url: Option<String>,
+}
+
+pub async fn leaderboard(pool: &DbPool, me: Option<Uuid>) -> Result<Vec<LeaderboardRow>, sqlx::Error> {
+    sqlx::query_as::<_, LeaderboardRow>(
+        "WITH players AS (
+             SELECT u.id, u.username, u.elo, u.avatar_url,
+                    COUNT(s.id) AS series,
+                    COUNT(s.id) FILTER (WHERE s.winner_id = u.id) AS series_won
+             FROM users u
+             JOIN ranked_series s ON s.winner_id = u.id OR s.loser_id = u.id
+             GROUP BY u.id
+         ), ranked AS (
+             SELECT *, RANK() OVER (ORDER BY elo DESC) AS rank FROM players
+         )
+         SELECT rank, id AS user_id, username, elo, series, series_won, avatar_url
+         FROM ranked
+         WHERE rank <= $1 OR id = $2
+         ORDER BY rank, lower(username)",
+    )
+    .bind(LEADERBOARD_SIZE)
+    .bind(me)
+    .fetch_all(pool)
+    .await
+}
+
 #[derive(sqlx::FromRow)]
 pub struct MatchRow {
     pub id: Uuid,
@@ -391,6 +489,7 @@ pub struct FriendEntry {
     pub user_id: Uuid,
     pub username: String,
     pub elo: i32,
+    pub avatar_url: Option<String>,
 }
 
 pub struct FriendList {
@@ -451,13 +550,14 @@ pub struct UserSearchEntry {
     pub user_id: Uuid,
     pub username: String,
     pub elo: i32,
+    pub avatar_url: Option<String>,
 }
 
 pub async fn search_users(pool: &DbPool, query: &str, exclude_id: Uuid) -> Result<Vec<UserSearchEntry>, sqlx::Error> {
     let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
     let pattern = format!("%{escaped}%");
     sqlx::query_as::<_, UserSearchEntry>(
-        "SELECT id AS user_id, username, elo FROM users \
+        "SELECT id AS user_id, username, elo, avatar_url FROM users \
          WHERE username ILIKE $1 AND id != $2 \
          ORDER BY elo DESC LIMIT 10",
     )
@@ -469,7 +569,7 @@ pub async fn search_users(pool: &DbPool, query: &str, exclude_id: Uuid) -> Resul
 
 pub async fn list_friends(pool: &DbPool, me: Uuid) -> Result<FriendList, sqlx::Error> {
     let friends = sqlx::query_as::<_, FriendEntry>(
-        "SELECT u.id AS user_id, u.username, u.elo
+        "SELECT u.id AS user_id, u.username, u.elo, u.avatar_url
          FROM friendships f
          JOIN users u ON u.id = CASE WHEN f.user_id = $1 THEN f.friend_id ELSE f.user_id END
          WHERE (f.user_id = $1 OR f.friend_id = $1) AND f.status = 'accepted'",
@@ -479,7 +579,7 @@ pub async fn list_friends(pool: &DbPool, me: Uuid) -> Result<FriendList, sqlx::E
     .await?;
 
     let sent = sqlx::query_as::<_, FriendEntry>(
-        "SELECT u.id AS user_id, u.username, u.elo
+        "SELECT u.id AS user_id, u.username, u.elo, u.avatar_url
          FROM friendships f
          JOIN users u ON u.id = f.friend_id
          WHERE f.user_id = $1 AND f.status = 'pending'",
@@ -489,7 +589,7 @@ pub async fn list_friends(pool: &DbPool, me: Uuid) -> Result<FriendList, sqlx::E
     .await?;
 
     let received = sqlx::query_as::<_, FriendEntry>(
-        "SELECT u.id AS user_id, u.username, u.elo
+        "SELECT u.id AS user_id, u.username, u.elo, u.avatar_url
          FROM friendships f
          JOIN users u ON u.id = f.user_id
          WHERE f.friend_id = $1 AND f.status = 'pending'",

@@ -38,6 +38,9 @@ fn on_opened(state: &mut State, recovered: bool) {
     if let Some(id) = state.pending_join.take() {
         state.conn.send(&ClientMessage::JoinRoom { id });
     }
+    if let Some(user_id) = state.pending_watch.take() {
+        state.conn.send(&ClientMessage::WatchFriend { user_id });
+    }
     if state.screen == Screen::Ranked && state.ranked.resume_search() {
         state.conn.send(&ClientMessage::JoinQueue);
     }
@@ -150,6 +153,33 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
     }
 }
 
+fn board_labels(info: &shared::LobbyInfo) -> Option<[String; 2]> {
+    let name = |i: usize| info.names.get(i).cloned().unwrap_or_default();
+    match info.your_slot {
+        0 => Some([name(0), name(1)]),
+        slot => Some(["YOU".to_owned(), name(2 - usize::from(slot))]),
+    }
+}
+
+/// A spectator draws what the server sent: there are no inputs to predict.
+fn watch(
+    session: &mut GameSession,
+    board: Board,
+    other_board: Board,
+    tick: u32,
+    incoming: Vec<IncomingGarbage>,
+    opp_incoming: Vec<IncomingGarbage>,
+) {
+    session.predicted_board = board.clone();
+    session.board = board;
+    session.other_board = other_board;
+    session.server_tick = tick;
+    session.local_tick = tick;
+    session.incoming = incoming;
+    session.opp_incoming = opp_incoming;
+    crate::logic::announce_events(session);
+}
+
 fn process_message(state: &mut State, msg: ServerMessage) {
     match msg {
         ServerMessage::RoomList { rooms } => {
@@ -163,6 +193,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         ServerMessage::Lobby { info } => {
             if state.lobby.as_ref().map(|l| l.id) != Some(info.id) {
                 state.series_over = None;
+                state.chat.clear();
             }
             state.screen = if info.ranked.is_some() {
                 state.ranked.stop();
@@ -179,6 +210,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         ServerMessage::GameStart => {
             let slot = state.lobby.as_ref().map_or(1, |l| l.your_slot);
             let mut session = GameSession::new(slot);
+            session.labels = state.lobby.as_ref().and_then(board_labels);
             session.last_server_msg = "GameStart".to_string();
             state.session = Some(session);
             state.screen = Screen::Game;
@@ -196,7 +228,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         } => {
             if let Some(session) = state.session.as_mut() {
                 let (mut board, mut other_board, ack, my_rng, opp_rng, incoming, opp_incoming) = match session.my_slot {
-                    1 => (*p1_board, *p2_board, p1_ack, p1_rng, p2_rng, p1_incoming, p2_incoming),
+                    0 | 1 => (*p1_board, *p2_board, p1_ack, p1_rng, p2_rng, p1_incoming, p2_incoming),
                     2 => (*p2_board, *p1_board, p2_ack, p2_rng, p1_rng, p2_incoming, p1_incoming),
                     _ => return,
                 };
@@ -211,6 +243,10 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session
                     .opponent_view
                     .push(tick, other_board.clone(), crate::connection::now_secs());
+                if session.spectating() {
+                    watch(session, board, other_board, tick, incoming, opp_incoming);
+                    return;
+                }
                 reconcile(
                     session,
                     Update {
@@ -228,6 +264,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             if let Some(session) = state.session.as_mut() {
                 let mut fresh = GameSession::new(session.my_slot);
                 fresh.ping_rtt_ms = session.ping_rtt_ms;
+                fresh.labels = session.labels.take();
                 fresh.last_server_msg = "Restart".to_string();
                 *session = fresh;
             }
@@ -276,6 +313,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             }
             state.series_over = Some((winner_slot, elo_change));
         }
+        ServerMessage::Chat { from, text, spectator } => state.chat.push(&from, &text, spectator),
         ServerMessage::SessionRevoked => {
             if state.auth.is_some() {
                 crate::menu::clear_auth(state);

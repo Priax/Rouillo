@@ -16,6 +16,10 @@ impl Rect {
         [(self.x, self.y), (right, self.y), (right, bottom), (self.x, bottom)]
     }
 
+    pub fn center(&self) -> (f32, f32) {
+        (self.x + self.w / 2.0, self.y + self.h / 2.0)
+    }
+
     pub fn contains(&self, mx: f32, my: f32) -> bool {
         mx >= self.x && mx < self.x + self.w && my >= self.y && my < self.y + self.h
     }

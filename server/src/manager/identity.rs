@@ -1,8 +1,17 @@
 use super::*;
 
+pub(super) const GUEST_NAME: &str = "Invité";
+
 impl Manager {
     pub(super) fn conn_of_user(&self, user: Uuid) -> Option<ConnId> {
         self.user_conns.get(&user).and_then(|conns| conns.iter().min().copied())
+    }
+
+    pub(super) fn display_name(&self, conn: ConnId) -> String {
+        self.conn_username
+            .get(&conn)
+            .cloned()
+            .unwrap_or_else(|| GUEST_NAME.to_string())
     }
 
     pub(super) fn set_identity(
@@ -43,6 +52,31 @@ impl Manager {
         let conns: Vec<ConnId> = self.user_conns.get(&user).into_iter().flatten().copied().collect();
         for conn in conns {
             self.conn_username.insert(conn, name.to_owned());
+        }
+        let mut renamed = Vec::new();
+        for room in self.rooms.values_mut() {
+            let seats = room
+                .members
+                .iter_mut()
+                .filter(|m| m.user_id == Some(user))
+                .map(|m| &mut m.name);
+            let seats = seats.chain(
+                room.spectators
+                    .iter_mut()
+                    .filter(|s| s.user_id == Some(user))
+                    .map(|s| &mut s.name),
+            );
+            let mut any = false;
+            for seat in seats {
+                name.clone_into(seat);
+                any = true;
+            }
+            if any {
+                renamed.push(room.id);
+            }
+        }
+        for id in renamed {
+            self.refresh_lobby(id);
         }
         let series = self.rooms.values_mut().filter_map(|r| r.series.as_mut());
         for s in series.filter(|s| s.result.is_none()) {

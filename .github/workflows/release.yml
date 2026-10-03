@@ -41,7 +41,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
-            libgl1-mesa-dev libxkbcommon-dev libasound2-dev
+            libgl1-mesa-dev libxkbcommon-dev libasound2-dev libudev-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -71,11 +71,41 @@ jobs:
           cp -r assets/linux/share "pkg/$dir/share"
           tar -czf "$dir.tar.gz" -C pkg "$dir"
 
-      - name: Attach binary to GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: Keep the files for the release
+        uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: ${{ matrix.asset }}
+          path: |
             ${{ matrix.asset }}
             rouillo-linux-x86_64.tar.gz
-          draft: true
+          if-no-files-found: ignore
+
+  # The game updates itself from the latest release, so only a signed and
+  # complete set of files is published, all at once.
+  publish:
+    name: Sign and publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Sign the binaries
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          [ -n "$RELEASE_SIGNING_KEY" ] || { echo "the RELEASE_SIGNING_KEY secret is missing" >&2; exit 1; }
+          key=$(mktemp)
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key"
+          scripts/sign-release.sh "$key" "${GITHUB_REF_NAME#v}" dist/rouillo-linux-x86_64 dist/rouillo-windows-x86_64.exe
+          rm "$key"
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
           generate_release_notes: true

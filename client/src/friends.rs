@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use notan::draw::Draw;
@@ -105,9 +106,41 @@ fn remove_btn(ww: f32, col: usize, row: usize) -> Rect {
     row_button(list_row_rect(ww, col, row), 6.0, 110.0)
 }
 
+fn watch_btn(ww: f32, row: usize) -> Rect {
+    row_button(list_row_rect(ww, 0, row), 122.0, 110.0)
+}
+
+type Pictures = HashMap<String, Texture>;
+
+fn pictures<'a>(gfx: &mut Graphics, state: &State, urls: impl Iterator<Item = &'a Option<String>>) -> Pictures {
+    urls.flatten()
+        .filter_map(|url| Some((url.clone(), state.images.get(gfx, url)?)))
+        .collect()
+}
+
+fn avatar(
+    draw: &mut Draw,
+    ui: &Ui,
+    fonts: &Fonts,
+    (x, cy): (f32, f32),
+    name: &str,
+    url: Option<&String>,
+    pics: &Pictures,
+) {
+    let who = ui::Persona {
+        name,
+        glow: 0.0,
+        picture: url.and_then(|u| pics.get(u)),
+    };
+    ui::portrait(draw, &ui.palette(), fonts, (x + AVATAR_R, cy), AVATAR_R, &who);
+}
+
+const AVATAR_R: f32 = 15.0;
+const AVATAR_ROOM: f32 = 2.0 * AVATAR_R + 10.0;
+
 fn name_zone(ww: f32, col: usize, row: usize) -> Rect {
     let rect = list_row_rect(ww, col, row);
-    let first_button = [remove_btn(ww, 0, row), accept_btn(ww, row), remove_btn(ww, 2, row)][col];
+    let first_button = [watch_btn(ww, row), accept_btn(ww, row), remove_btn(ww, 2, row)][col];
     Rect::at(rect.x, rect.y, first_button.x - rect.x - 8.0, rect.h)
 }
 
@@ -305,6 +338,7 @@ fn poll_action(state: &mut State) {
 }
 
 enum FriendAction {
+    Watch(String),
     StartRemove(String),
     ConfirmRemove(String),
     CancelRemove,
@@ -375,8 +409,10 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     if let Some(uid) = add {
         send_add_request(state, &uid);
     }
-    if let Some(action) = action {
-        apply_action(state, action);
+    match action {
+        Some(FriendAction::Watch(user_id)) => watch(state, user_id),
+        Some(action) => apply_action(state, action),
+        None => {}
     }
 }
 
@@ -439,6 +475,9 @@ fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
         if ui.clicked(remove_btn(ww, 0, i)) {
             return Some(FriendAction::StartRemove(e.user_id.clone()));
         }
+        if ui.clicked(watch_btn(ww, i)) {
+            return Some(FriendAction::Watch(e.user_id.clone()));
+        }
     }
     for (i, e) in f.pages[1].shown(&f.received, MAX_ROWS) {
         if ui.clicked(accept_btn(ww, i)) {
@@ -456,12 +495,26 @@ fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
     None
 }
 
+/// Watches a friend's game: the server says where it is, or that there is none.
+fn watch(state: &mut State, user_id: String) {
+    state.notice.clear();
+    if state.conn.is_live() {
+        state.conn.send(&shared::ClientMessage::WatchFriend { user_id });
+    } else {
+        state.pending_watch = Some(user_id);
+        state.conn.connect(crate::connection::now_secs());
+        state.rooms.clear();
+    }
+    state.screen = Screen::RoomBrowser;
+}
+
 fn apply_action(state: &mut State, action: FriendAction) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let Some(f) = state.friends.as_mut() else {
         return;
     };
     match action {
+        FriendAction::Watch(_) => {}
         FriendAction::StartRemove(id) => f.confirm_remove = Some(id),
         FriendAction::CancelRemove => f.confirm_remove = None,
         FriendAction::ConfirmRemove(id) | FriendAction::Reject(id) | FriendAction::Cancel(id) => {
@@ -493,8 +546,10 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
         .color(pal.text);
 
     if let Some(f) = &state.friends {
-        draw_search(&mut draw, &state.ui, &state.fonts, f, ww);
-        draw_lists(&mut draw, &state.ui, &state.fonts, f, ww);
+        let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
+        let pics = pictures(gfx, state, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
+        draw_search(&mut draw, &state.ui, &state.fonts, f, (ww, &pics));
+        draw_lists(&mut draw, &state.ui, &state.fonts, f, (ww, &pics));
 
         state.ui.button(&mut draw, &state.fonts, back_btn(wh), "Retour");
         let label = if f.list_slot.is_some() { "..." } else { "Rafraîchir" };
@@ -505,7 +560,7 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &draw);
 }
 
-fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {
+fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pics): (f32, &Pictures)) {
     let pal = ui.palette();
     let field = search_box(ww);
     draw.sharp_text(&fonts.text, "Rechercher un ami")
@@ -548,8 +603,17 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
         let row = result_row(ww, i);
         let mid = row.y + row.h / 2.0;
         list_row(draw, &pal, row, i);
+        avatar(
+            draw,
+            ui,
+            fonts,
+            (row.x + 10.0, mid),
+            &e.username,
+            e.avatar_url.as_ref(),
+            pics,
+        );
         draw.sharp_text(&fonts.text, &e.username)
-            .position(row.x + 14.0, mid)
+            .position(row.x + 10.0 + AVATAR_ROOM, mid)
             .size(theme::size::LABEL)
             .v_align_middle()
             .color(pal.text);
@@ -576,7 +640,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32
     }
 }
 
-fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32) {
+fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pics): (f32, &Pictures)) {
     let pal = ui.palette();
     let columns = [
         ("Amis", &f.friends, "Aucun ami pour l'instant"),
@@ -617,7 +681,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             ui,
             fonts,
             (ww, 0),
-            (columns[0].1, &f.pages[0]),
+            (columns[0].1, &f.pages[0], pics),
             columns[0].2,
             |draw, fonts, entry, i| {
                 if confirm == Some(entry.user_id.as_str()) {
@@ -625,6 +689,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
                     ui.button(draw, fonts, confirm_no_btn(ww, i), "Non");
                 } else {
                     let active = !busy && confirm.is_none();
+                    ui.button_enabled(draw, fonts, watch_btn(ww, i), "Regarder", confirm.is_none());
                     ui.button_enabled(draw, fonts, remove_btn(ww, 0, i), "Retirer", active);
                 }
             },
@@ -634,7 +699,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             ui,
             fonts,
             (ww, 1),
-            (columns[1].1, &f.pages[1]),
+            (columns[1].1, &f.pages[1], pics),
             columns[1].2,
             |draw, fonts, _, i| {
                 ui.button_enabled(draw, fonts, accept_btn(ww, i), "Accepter", !busy);
@@ -646,7 +711,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
             ui,
             fonts,
             (ww, 2),
-            (columns[2].1, &f.pages[2]),
+            (columns[2].1, &f.pages[2], pics),
             columns[2].2,
             |draw, fonts, _, i| {
                 ui.button_enabled(draw, fonts, remove_btn(ww, 2, i), "Annuler", !busy);
@@ -676,7 +741,7 @@ fn draw_col<F>(
     ui: &Ui,
     fonts: &Fonts,
     (ww, col): (f32, usize),
-    (list, pager): (&[FriendEntry], &Pager),
+    (list, pager, pics): (&[FriendEntry], &Pager, &Pictures),
     empty_msg: &str,
     draw_buttons: F,
 ) where
@@ -693,21 +758,32 @@ fn draw_col<F>(
             .color(pal.text_muted);
         return;
     }
-    let room = name_zone(ww, col, 0).w - 12.0;
+    let room = name_zone(ww, col, 0).w - 12.0 - AVATAR_ROOM;
     for (i, e) in pager.shown(list, MAX_ROWS) {
         let row = list_row_rect(ww, col, i);
         list_row(draw, pal, row, i);
         ui.row(draw, name_zone(ww, col, i), i, &format!("friend:{col}:{}", e.user_id));
+        let mid = row.y + row.h / 2.0;
+        avatar(
+            draw,
+            ui,
+            fonts,
+            (row.x + 8.0, mid),
+            &e.username,
+            e.avatar_url.as_ref(),
+            pics,
+        );
+        let text_x = row.x + 8.0 + AVATAR_ROOM;
         draw.sharp_text(
             &fonts.text,
             &fonts.fit(Face::Text, &e.username, theme::size::BODY, room),
         )
-        .position(row.x + 10.0, row.y + row.h / 2.0 - 8.0)
+        .position(text_x, mid - 8.0)
         .size(theme::size::BODY)
         .v_align_middle()
         .color(pal.text);
         draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
-            .position(row.x + 10.0, row.y + row.h / 2.0 + 10.0)
+            .position(text_x, mid + 10.0)
             .size(theme::size::SMALL)
             .v_align_middle()
             .color(theme::GOLD);

@@ -230,6 +230,8 @@ pub struct RoomInfo {
     pub max: u8,
     pub in_game: bool,
     pub friends_only: bool,
+    pub spectators: u8,
+    pub ranked: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -243,6 +245,8 @@ pub struct LobbyInfo {
     pub is_host: bool,
     pub countdown: Option<u8>,
     pub ranked: Option<RankedInfo>,
+    pub names: Vec<String>,
+    pub spectators: u8,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -252,7 +256,10 @@ pub struct RankedInfo {
     pub wins: [u8; 2],
 }
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
+
+pub const MAX_CHAT_CHARS: usize = 200;
+pub const MAX_SPECTATORS: usize = 20;
 
 pub const OUTDATED_FRAME: &str = "outdated";
 
@@ -293,6 +300,15 @@ pub enum ClientMessage {
     JoinQueue,
     LeaveQueue,
     AcceptMatch,
+    Chat {
+        text: String,
+    },
+    Spectate {
+        id: RoomId,
+    },
+    WatchFriend {
+        user_id: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -351,6 +367,11 @@ pub enum ServerMessage {
         elo_change: i32,
     },
     SessionRevoked,
+    Chat {
+        from: String,
+        text: String,
+        spectator: bool,
+    },
 }
 
 pub const MAX_USERNAME_CHARS: usize = 24;

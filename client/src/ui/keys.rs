@@ -35,16 +35,36 @@ impl KeyRepeat {
 #[derive(Default)]
 pub struct EditKeys {
     pub erase: KeyRepeat,
+    pub delete: KeyRepeat,
     pub left: KeyRepeat,
     pub right: KeyRepeat,
     pub up: KeyRepeat,
     pub down: KeyRepeat,
+    pub home: bool,
+    pub end: bool,
+    pub shift: bool,
+    pub ctrl: bool,
+    pub select_all: bool,
+    pub copy: bool,
+    pub cut: bool,
+    pub paste: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    typed: Shortcuts,
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct Shortcuts {
+    pub select_all: bool,
+    pub copy: bool,
+    pub cut: bool,
+    pub paste: bool,
 }
 
 impl EditKeys {
     pub fn update(&mut self, keyboard: &Keyboard, dt: f32) {
         let keys = [
             (&mut self.erase, KeyCode::Backspace),
+            (&mut self.delete, KeyCode::Delete),
             (&mut self.left, KeyCode::ArrowLeft),
             (&mut self.right, KeyCode::ArrowRight),
             (&mut self.up, KeyCode::ArrowUp),
@@ -52,6 +72,37 @@ impl EditKeys {
         ];
         for (key, code) in keys {
             key.update(keyboard.is_down(code), dt);
+        }
+        self.home = keyboard.was_pressed(KeyCode::Home);
+        self.end = keyboard.was_pressed(KeyCode::End);
+        let down = |codes: &[KeyCode]| codes.iter().any(|&c| keyboard.is_down(c));
+        self.shift = down(&[KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        self.ctrl = down(&[
+            KeyCode::ControlLeft,
+            KeyCode::ControlRight,
+            KeyCode::SuperLeft,
+            KeyCode::SuperRight,
+        ]);
+        #[cfg(target_arch = "wasm32")]
+        let typed = crate::web::take_shortcuts();
+        #[cfg(not(target_arch = "wasm32"))]
+        let typed = std::mem::take(&mut self.typed);
+        self.select_all = typed.select_all;
+        self.copy = typed.copy;
+        self.cut = typed.cut;
+        self.paste = typed.paste;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// A letter typed with Ctrl held: the letter follows the keyboard layout,
+    /// where key codes are positions.
+    pub fn shortcut(&mut self, letter: char) {
+        match letter.to_ascii_lowercase() {
+            'a' => self.typed.select_all = true,
+            'c' => self.typed.copy = true,
+            'x' => self.typed.cut = true,
+            'v' => self.typed.paste = true,
+            _ => {}
         }
     }
 }

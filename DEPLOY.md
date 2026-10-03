@@ -360,7 +360,24 @@ Si `shared/` a changé (protocole), **incrémenter `PROTOCOL_VERSION`** (`shared
 et republier aussi le client (version du `Cargo.toml` racine puis tag `vX.Y.Z`): un ancien client ne peut plus parler au nouveau
 serveur (bitcode n'est pas auto-descriptif). Grâce au numéro de version, le serveur refuse
 l'ancien client proprement: celui-ci affiche un bouton « Mettre à jour » à côté du profil
-(rechargement de la page en web, ouverture de la page des releases en natif).
+(rechargement de la page en web; en natif, téléchargement et installation de la release, voir §13).
+
+## 13. Releases du client natif et mise à jour automatique
+
+Le tag `vX.Y.Z` lance `.github/workflows/release.yml`: les binaires Linux et Windows sont
+compilés, puis signés par `scripts/sign-release.sh` et publiés (plus en brouillon). Le jeu
+natif lit la dernière release au démarrage et, si elle est plus récente, installe le binaire
+après avoir vérifié sa signature (nom, version et SHA-256), puis se relance.
+
+- Clé privée: `~/.config/rouillo-release/signing-key.pem` (Ed25519), à garder aussi ailleurs
+  (gestionnaire de mots de passe). Son contenu entier va dans le secret GitHub
+  `RELEASE_SIGNING_KEY` (Settings → Secrets and variables → Actions). Sans lui, le job de
+  publication échoue.
+- Clé publique: dans `client/src/updater.rs` (`PUBLIC_KEY`). Changer de clé veut dire
+  publier un client avec la nouvelle clé publique: les clients plus anciens refuseront les
+  releases signées par la nouvelle, et devront être retéléchargés à la main.
+- Vérifier la chaîne de signature en local:
+  `RELEASE_KEY=~/.config/rouillo-release/signing-key.pem cargo test -p client the_release_script -- --ignored`
 
 ## Pièges rencontrés
 

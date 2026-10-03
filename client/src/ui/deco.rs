@@ -1,5 +1,5 @@
-use notan::draw::{Draw, DrawShapes};
-use notan::prelude::Color;
+use notan::draw::{Draw, DrawImages, DrawShapes};
+use notan::prelude::{Color, Texture};
 
 use super::{Face, Fonts, Rect, SharpText};
 use crate::theme::{self, Palette};
@@ -104,18 +104,25 @@ const PILL_GAP: f32 = 10.0;
 
 /// A player's round portrait with their initial. `glow` in `0..=1` lightens
 /// it, for avatars that react to the pointer.
-pub fn portrait(
-    draw: &mut Draw,
-    pal: &Palette,
-    fonts: &Fonts,
-    (cx, cy): (f32, f32),
-    radius: f32,
-    name: &str,
-    glow: f32,
-) {
+/// Who a portrait shows: a picture when there is one, else the name's initial.
+pub struct Persona<'a> {
+    pub name: &'a str,
+    pub glow: f32,
+    pub picture: Option<&'a Texture>,
+}
+
+pub fn portrait(draw: &mut Draw, pal: &Palette, fonts: &Fonts, (cx, cy): (f32, f32), radius: f32, who: &Persona) {
+    let Persona { name, glow, picture } = *who;
     draw.circle(radius)
         .position(cx, cy)
         .color(theme::mix(pal.avatar, pal.avatar_hover, glow));
+    if let Some(picture) = picture {
+        draw.image(picture)
+            .position(cx - radius, cy - radius)
+            .size(2.0 * radius, 2.0 * radius);
+        draw.circle(radius).position(cx, cy).stroke(2.0).color(pal.accent);
+        return;
+    }
     draw.circle(radius).position(cx, cy).stroke(2.0).color(pal.accent);
     let initial: String = name
         .chars()

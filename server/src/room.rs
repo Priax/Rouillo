@@ -17,17 +17,25 @@ pub struct Member {
     pub conn: Option<ConnId>,
     pub disconnect_at: Option<Instant>,
     pub user_id: Option<Uuid>,
+    pub name: String,
 }
 
 impl Member {
-    pub const fn present(token: Token, conn: ConnId, user_id: Option<Uuid>) -> Self {
+    pub const fn present(token: Token, conn: ConnId, user_id: Option<Uuid>, name: String) -> Self {
         Self {
             token,
             conn: Some(conn),
             disconnect_at: None,
             user_id,
+            name,
         }
     }
+}
+
+pub struct Spectator {
+    pub conn: ConnId,
+    pub user_id: Option<Uuid>,
+    pub name: String,
 }
 
 pub struct Series {
@@ -54,6 +62,7 @@ pub struct Room {
     pub phase: Phase,
     pub sim: Sim,
     pub series: Option<Series>,
+    pub spectators: Vec<Spectator>,
 }
 
 impl Room {
@@ -67,6 +76,7 @@ impl Room {
             phase: Phase::Lobby,
             sim: Sim::new(&settings),
             series,
+            spectators: Vec::new(),
         }
     }
 
@@ -77,30 +87,33 @@ impl Room {
     }
 
     pub fn lobby_payloads(&self) -> Vec<(ConnId, Vec<u8>)> {
-        self.members
+        let encode = |info: LobbyInfo| match shared::encode(&ServerMessage::Lobby { info }) {
+            Ok(payload) => Some(payload),
+            Err(e) => {
+                error!("encode Lobby failed: {e}");
+                None
+            }
+        };
+        let members = self
+            .members
             .iter()
             .enumerate()
-            .filter_map(|(i, m)| {
-                let msg = ServerMessage::Lobby {
-                    info: self.lobby_info_for(i),
-                };
-                match shared::encode(&msg) {
-                    Ok(payload) => Some((m.conn?, payload)),
-                    Err(e) => {
-                        error!("encode Lobby failed: {e}");
-                        None
-                    }
-                }
-            })
-            .collect()
+            .filter_map(|(i, m)| Some((m.conn?, encode(self.lobby_info_for(i))?)));
+        let spectators = encode(self.spectator_info())
+            .map(|payload| self.spectators.iter().map(move |s| (s.conn, payload.clone())))
+            .into_iter()
+            .flatten();
+        members.chain(spectators).collect()
     }
 
-    fn send_to_members(&self, payload: &[u8], outgoing: &mut Vec<(ConnId, Vec<u8>)>) {
-        for m in &self.members {
-            if let Some(c) = m.conn {
-                outgoing.push((c, payload.to_vec()));
-            }
+    fn send_to_audience(&self, payload: &[u8], outgoing: &mut Vec<(ConnId, Vec<u8>)>) {
+        for c in self.audience() {
+            outgoing.push((c, payload.to_vec()));
         }
+    }
+
+    pub fn spectator_slot(&self, conn: ConnId) -> Option<usize> {
+        self.spectators.iter().position(|s| s.conn == conn)
     }
 
     /// Returns whether the room list changed (the game started).
@@ -114,7 +127,7 @@ impl Room {
             self.phase = Phase::Playing;
             self.sim.reset_boards(&self.settings);
             match shared::encode(&ServerMessage::GameStart) {
-                Ok(payload) => self.send_to_members(&payload, outgoing),
+                Ok(payload) => self.send_to_audience(&payload, outgoing),
                 Err(e) => error!("encode GameStart failed: {e}"),
             }
             return true;
@@ -160,7 +173,7 @@ impl Room {
             let msg = self.sim.state_update(just_finished);
             self.sim.last_sent_rng = Some(self.sim.rng_positions());
             match shared::encode(&msg) {
-                Ok(upd) => self.send_to_members(&upd, outgoing),
+                Ok(upd) => self.send_to_audience(&upd, outgoing),
                 Err(e) => error!("encode StateUpdate failed: {e}"),
             }
         }
@@ -180,8 +193,10 @@ impl Room {
         self.members.iter().all(|m| m.conn.is_some())
     }
 
-    pub fn connected_conns(&self) -> Vec<ConnId> {
-        self.members.iter().filter_map(|m| m.conn).collect()
+    /// Everyone who sees the room: its connected players, then its spectators.
+    pub fn audience(&self) -> Vec<ConnId> {
+        let players = self.members.iter().filter_map(|m| m.conn);
+        players.chain(self.spectators.iter().map(|s| s.conn)).collect()
     }
 
     pub fn lobby_info_for(&self, idx: usize) -> LobbyInfo {
@@ -202,6 +217,27 @@ impl Room {
                 opponent_elo: s.elos[1 - idx],
                 wins: s.wins,
             }),
+            names: self.members.iter().map(|m| m.name.clone()).collect(),
+            spectators: self.spectators.len() as u8,
+        }
+    }
+
+    pub fn spectator_info(&self) -> LobbyInfo {
+        LobbyInfo {
+            id: self.id,
+            name: self.name.clone(),
+            settings: self.settings,
+            players: self.members.len() as u8,
+            connected: self.members.iter().filter(|m| m.conn.is_some()).count() as u8,
+            your_slot: 0,
+            is_host: false,
+            countdown: match self.phase {
+                Phase::CountingDown(t) => Some(t.ceil() as u8),
+                _ => None,
+            },
+            ranked: None,
+            names: self.members.iter().map(|m| m.name.clone()).collect(),
+            spectators: self.spectators.len() as u8,
         }
     }
 
@@ -244,6 +280,8 @@ impl Room {
             max: 2,
             in_game: !matches!(self.phase, Phase::Lobby),
             friends_only: self.settings.friends_only,
+            spectators: self.spectators.len() as u8,
+            ranked: self.series.is_some(),
         }
     }
 }

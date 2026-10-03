@@ -74,6 +74,11 @@ impl SoloGame {
         }
     }
 
+    /// Whether nothing is being played: the game is over or paused.
+    pub fn idle(&self) -> bool {
+        self.over() || self.paused()
+    }
+
     fn over(&self) -> bool {
         self.session.predicted_board.state == GameState::GameOver
             || (self.cpu.is_some() && self.session.other_board.state == GameState::GameOver)
@@ -134,14 +139,16 @@ pub fn update_game(app: &mut App, state: &mut State) {
         ui,
         screen,
         solo_best,
+        controls,
         ..
     } = state;
+    let input = controls.frame;
     let Some(game) = solo.as_mut() else {
         *screen = Screen::SoloSetup;
         return;
     };
 
-    if !game.over() && app.keyboard.was_pressed(KeyCode::Escape) {
+    if !game.over() && input.pause {
         game.set_paused(!game.paused());
     }
     let (over, paused) = (game.over(), game.paused());
@@ -152,7 +159,7 @@ pub fn update_game(app: &mut App, state: &mut State) {
             *screen = Screen::SoloSetup;
             return;
         }
-        if ui.bar_clicked(again) || (over && app.keyboard.was_pressed(KeyCode::KeyR)) {
+        if ui.bar_clicked(again) || (over && input.restart) {
             *game = SoloGame::new(game.settings);
             return;
         }
@@ -162,7 +169,7 @@ pub fn update_game(app: &mut App, state: &mut State) {
     if over || paused {
         logic::hold(&mut game.session);
     } else {
-        logic::read_controls(app, &mut game.session, *settings, None, dt);
+        logic::read_controls(&input, &mut game.session, *settings, None, dt);
         game.step(dt);
         let score = game.session.predicted_board.score;
         if game.over() && game.cpu.is_none() && score > *solo_best {

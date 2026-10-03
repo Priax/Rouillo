@@ -200,13 +200,6 @@ impl Manager {
         });
     }
 
-    fn display_name(&self, conn: ConnId) -> String {
-        self.conn_username
-            .get(&conn)
-            .cloned()
-            .unwrap_or_else(|| "Joueur".to_string())
-    }
-
     fn pending_of(&self, conn: ConnId) -> Option<(usize, usize)> {
         self.pending_matches
             .iter()
@@ -298,8 +291,8 @@ impl Manager {
             ..RoomSettings::default()
         };
         let members = vec![
-            Member::present(token_a, a.conn, Some(a.user_id)),
-            Member::present(token_b, b.conn, Some(b.user_id)),
+            Member::present(token_a, a.conn, Some(a.user_id), names[0].clone()),
+            Member::present(token_b, b.conn, Some(b.user_id), names[1].clone()),
         ];
         let series = Series {
             users: [a.user_id, b.user_id],
@@ -442,7 +435,7 @@ impl Manager {
             member.token.clear();
         }
         if room.members.iter().all(|m| m.conn.is_none()) {
-            self.rooms.remove(&id);
+            self.close_room(id);
         }
     }
 }

@@ -37,6 +37,12 @@ fn caret(draw: &mut Draw, ui: &Ui, input: &TextInput, x: f32, mid: f32, size: f3
     }
 }
 
+fn highlight(draw: &mut Draw, ui: &Ui, x0: f32, x1: f32, mid: f32, size: f32) {
+    let h = size * 1.3;
+    draw.rect((x0, mid - h / 2.0), (x1 - x0, h))
+        .color(ui.palette().accent.with_alpha(0.35));
+}
+
 fn room(r: Rect) -> f32 {
     r.w - 2.0 * PADDING - CARET_W - 1.0
 }
@@ -81,6 +87,12 @@ pub fn text_field(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Fiel
     } else {
         (fonts.head(Face::Text, line.visible(), line.size, room(r)), pal.text)
     };
+    if let Some((a, b)) = field.input.shown_selection().filter(|_| field.focused) {
+        let end = line.from + text.len();
+        let (a, b) = (a.clamp(line.from, end), b.clamp(line.from, end));
+        let at = |i: usize| x + fonts.width(Face::Text, &line.text[line.from..i], line.size);
+        highlight(draw, ui, at(a), at(b), mid, line.size);
+    }
     draw.sharp_text(&fonts.text, text)
         .position(x + placeholder_shift(field), mid)
         .size(line.size)
@@ -93,14 +105,29 @@ pub fn text_field(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Fiel
     }
 }
 
+/// Places the caret where the field is clicked, and selects while the
+/// button stays down. Returns whether the field was clicked.
 pub fn field_clicked(ui: &Ui, fonts: &Fonts, r: Rect, input: &mut TextInput) -> bool {
-    let Some((x, _)) = ui.click_in(r) else {
-        return false;
+    let at = |input: &TextInput, x: f32| {
+        let line = line(fonts, r, input);
+        line.from + fonts.index_at(Face::Text, line.visible(), line.size, x - r.x - PADDING)
     };
-    let line = line(fonts, r, input);
-    let at = line.from + fonts.index_at(Face::Text, line.visible(), line.size, x - r.x - PADDING);
-    input.set_caret_shown(at);
-    true
+    if let Some((x, _)) = ui.click_in(r) {
+        let at = at(input, x);
+        input.set_caret_shown(at, false);
+        input.dragging = true;
+        return true;
+    }
+    if input.dragging {
+        let mouse = ui.mouse();
+        if mouse.down {
+            let at = at(input, mouse.x);
+            input.set_caret_shown(at, true);
+        } else {
+            input.dragging = false;
+        }
+    }
+    false
 }
 
 fn placeholder_shift(field: &Field) -> f32 {
@@ -194,7 +221,14 @@ pub fn text_area(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Field
             .v_align_middle()
             .color(pal.text_muted);
     }
+    let selection = field.input.selection().filter(|_| field.focused);
     for (i, row) in area.rows.iter().skip(area.first).take(area.visible).enumerate() {
+        let end = row.start + row.text.len();
+        if let Some((a, b)) = selection.filter(|&(a, b)| a <= end && b > row.start) {
+            let (a, b) = (a.max(row.start), b.min(end));
+            let at = |j: usize| x + fonts.width(Face::Text, &row.text[..j - row.start], AREA_TEXT);
+            highlight(draw, ui, at(a), at(b).max(at(a) + 4.0), line_mid(i), AREA_TEXT);
+        }
         draw.sharp_text(&fonts.text, row.text)
             .position(x, line_mid(i))
             .size(AREA_TEXT)
@@ -214,23 +248,42 @@ pub fn text_area(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Field
 }
 
 pub fn area_clicked(ui: &Ui, fonts: &Fonts, r: Rect, input: &mut TextInput) -> bool {
-    let Some((x, y)) = ui.click_in(r) else {
-        return false;
+    let at = |input: &TextInput, x: f32, y: f32| {
+        let area = area(fonts, r, input);
+        let row = (area.first as f32 + ((y - r.y - PADDING) / AREA_LINE_H).floor()).max(0.0) as usize;
+        area.rows[row.min(area.rows.len() - 1)].at(fonts, x - r.x - PADDING)
     };
-    let area = area(fonts, r, input);
-    let row = area.first + ((y - r.y - PADDING) / AREA_LINE_H) as usize;
-    let at = area.rows[row.min(area.rows.len() - 1)].at(fonts, x - r.x - PADDING);
-    input.set_caret(at);
-    true
+    if let Some((x, y)) = ui.click_in(r) {
+        let at = at(input, x, y);
+        input.set_caret(at);
+        input.dragging = true;
+        return true;
+    }
+    if input.dragging {
+        let mouse = ui.mouse();
+        if mouse.down {
+            let at = at(input, mouse.x, mouse.y);
+            input.move_caret(at, true);
+        } else {
+            input.dragging = false;
+        }
+    }
+    false
 }
 
 pub fn area_keys(fonts: &Fonts, r: Rect, input: &mut TextInput, keys: &EditKeys) {
-    input.edit(keys);
+    input.edit_line(keys);
     for (key, down) in [(&keys.up, false), (&keys.down, true)] {
         if key.fired() {
             let at = vertical_step(fonts, r, input, down);
-            input.set_caret(at);
+            input.move_caret(at, keys.shift);
         }
+    }
+    if keys.home || keys.end {
+        let area = area(fonts, r, input);
+        let row = &area.rows[area.caret_row];
+        let at = row.at(fonts, if keys.home { 0.0 } else { f32::INFINITY });
+        input.move_caret(at, keys.shift);
     }
 }
 

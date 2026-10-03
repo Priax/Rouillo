@@ -4,6 +4,7 @@ use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::http::{self, HttpSlot};
+use crate::picker::{self, Picked};
 use crate::state::{ApiUserProfile, State};
 use crate::theme;
 use crate::ui::{
@@ -53,6 +54,21 @@ impl EditField {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Picture {
+    Avatar,
+    Banner,
+}
+
+impl Picture {
+    const fn path(self) -> &'static str {
+        match self {
+            Self::Avatar => "me/avatar",
+            Self::Banner => "me/banner",
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct EditForm {
     pub bio: TextInput,
@@ -60,6 +76,8 @@ pub struct EditForm {
     pub focused: EditField,
     pub pending: Option<HttpSlot>,
     pub status: Status,
+    picking: Option<Picture>,
+    uploading: Option<HttpSlot>,
 }
 
 impl EditForm {
@@ -135,7 +153,71 @@ fn buttons(cx: f32) -> (Rect, Rect) {
     )
 }
 
+fn picture_buttons(cx: f32) -> [(Picture, bool, Rect); 4] {
+    let y = buttons(cx).0.y + 54.0 + 50.0;
+    let at = |i: f32| Rect::at(cx - 315.0 + i * 160.0, y, 150.0, 46.0);
+    [
+        (Picture::Avatar, true, at(0.0)),
+        (Picture::Avatar, false, at(1.0)),
+        (Picture::Banner, true, at(2.0)),
+        (Picture::Banner, false, at(3.0)),
+    ]
+}
+
+fn picture_url(info: &ApiUserProfile, picture: Picture) -> Option<&str> {
+    match picture {
+        Picture::Avatar => info.avatar_url.as_deref(),
+        Picture::Banner => info.banner_url.as_deref(),
+    }
+}
+
+fn poll_pictures(state: &mut State) {
+    let token = state.auth.as_ref().map(|a| a.token.clone());
+    let Some(p) = state.profile.as_mut() else { return };
+    let Some(form) = p.edit.as_mut() else { return };
+    if let Some(picture) = form.picking {
+        match picker::take() {
+            Some(Picked::File(bytes)) => {
+                let slot = http::new_slot();
+                http::put_bytes(http::api_url(picture.path()), bytes, token, Arc::clone(&slot));
+                form.uploading = Some(slot);
+                form.status = Status::info("Envoi de l'image...");
+                form.picking = None;
+            }
+            Some(Picked::Failed(msg)) => {
+                form.status = Status::error(msg);
+                form.picking = None;
+            }
+            Some(Picked::Cancelled) => form.picking = None,
+            None => {}
+        }
+    }
+    let Some(result) = http::take(&mut form.uploading) else {
+        return;
+    };
+    match result {
+        Ok(resp) if resp.status == 200 => {
+            #[derive(serde::Deserialize)]
+            struct Pictures {
+                avatar_url: Option<String>,
+                banner_url: Option<String>,
+            }
+            if let Some(urls) = http::json::<Pictures>(&resp) {
+                p.core.info.avatar_url.clone_from(&urls.avatar_url);
+                p.core.info.banner_url = urls.banner_url;
+                if let Some(auth) = state.auth.as_mut() {
+                    auth.avatar_url = urls.avatar_url;
+                }
+                form.status = Status::success("Image mise à jour.");
+            }
+        }
+        Ok(resp) => form.status = Status::error(http::error_message(&resp)),
+        Err(e) => form.status = Status::error(http::network_error(&e)),
+    }
+}
+
 pub fn poll(state: &mut State) {
+    poll_pictures(state);
     let Some(p) = state.profile.as_mut() else { return };
     let Some(form) = p.edit.as_mut() else { return };
     let Some(result) = http::take(&mut form.pending) else {
@@ -195,6 +277,21 @@ pub fn update(app: &mut App, state: &mut State) {
     if field_clicked(ui, fonts, EditField::Music.rect(cx), &mut form.music) {
         form.focused = EditField::Music;
     }
+    if form.uploading.is_none() {
+        for (picture, change, rect) in picture_buttons(cx) {
+            if !ui.clicked(rect) {
+                continue;
+            }
+            if change {
+                form.picking = Some(picture);
+                picker::open();
+            } else if picture_url(&profile.core.info, picture).is_some() {
+                let slot = http::new_slot();
+                http::delete_req(http::api_url(picture.path()), token.clone(), Arc::clone(&slot));
+                form.uploading = Some(slot);
+            }
+        }
+    }
     let wants_save = app.keyboard.was_pressed(KeyCode::Enter) && form.enter();
     let (save_btn, cancel_btn) = buttons(cx);
     if ui.clicked(save_btn) || wants_save {
@@ -205,7 +302,7 @@ pub fn update(app: &mut App, state: &mut State) {
     }
 }
 
-pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, cx: f32) {
+pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: &ApiUserProfile, cx: f32) {
     let pal = ui.palette();
     for which in EditField::ALL {
         let rect = which.rect(cx);
@@ -250,6 +347,18 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, cx: f32) {
         !saving,
     );
     ui.button(draw, fonts, cancel_btn, "Annuler");
+
+    let busy = form.uploading.is_some();
+    for (picture, change, rect) in picture_buttons(cx) {
+        let label = match (picture, change) {
+            (Picture::Avatar, true) => "Changer l'avatar",
+            (Picture::Avatar, false) => "Retirer l'avatar",
+            (Picture::Banner, true) => "Changer la bannière",
+            (Picture::Banner, false) => "Retirer la bannière",
+        };
+        let enabled = !busy && (change || picture_url(info, picture).is_some());
+        ui.button_enabled(draw, fonts, rect, label, enabled);
+    }
 
     if let Some((msg, color)) = form.status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)

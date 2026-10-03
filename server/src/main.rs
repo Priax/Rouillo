@@ -1,5 +1,6 @@
 mod auth;
 mod db;
+mod images;
 mod manager;
 mod room;
 mod sim;

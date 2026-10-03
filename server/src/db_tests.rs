@@ -390,6 +390,65 @@ async fn db_a_player_can_rename_with_their_password(pool: PgPool) {
     assert!(db::verify_password("password123", renamed.password_hash()));
 }
 
+fn noisy_png(w: u32, h: u32) -> Vec<u8> {
+    let mut seed = 7u32;
+    let img = image::RgbaImage::from_fn(w, h, |_, _| {
+        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+        let [a, b, c, _] = seed.to_le_bytes();
+        image::Rgba([a, b, c, 255])
+    });
+    let mut out = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .unwrap();
+    out
+}
+
+#[sqlx::test]
+#[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
+async fn db_avatars_are_uploaded_served_and_removed(pool: PgPool) {
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+    let alice = user(&pool, "alice").await;
+    let token = db::create_session(&pool, alice).await.unwrap();
+    let api = login_api(pool.clone());
+    let send = |method: &str, path: &str, body: Vec<u8>, authed: bool| {
+        let mut req = Request::builder().method(method).uri(path);
+        if authed {
+            req = req.header("authorization", format!("Bearer {token}"));
+        }
+        api.clone().oneshot(req.body(Body::from(body)).unwrap())
+    };
+    let json = |bytes: &[u8]| serde_json::from_slice::<serde_json::Value>(bytes).unwrap();
+    let read = |r: axum::response::Response| async move {
+        let status = r.status().as_u16();
+        (status, axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap())
+    };
+
+    let picture = noisy_png(300, 300);
+    assert!(picture.len() > 64 * 1024, "setup: bigger than the JSON limit");
+    let (status, body) = read(send("PUT", "/api/me/avatar", picture, true).await.unwrap()).await;
+    assert_eq!(status, 200, "{body:?}");
+    let url = json(&body)["avatar_url"].as_str().unwrap().to_owned();
+    assert!(url.starts_with(&format!("/api/users/{alice}/avatar?v=")), "{url}");
+
+    let (status, body) = read(send("GET", &url, Vec::new(), false).await.unwrap()).await;
+    assert_eq!(status, 200);
+    assert_eq!(image::guess_format(&body).unwrap(), image::ImageFormat::Png);
+
+    let (status, body) = read(send("PUT", "/api/me/avatar", b"nope".to_vec(), true).await.unwrap()).await;
+    assert_eq!((status, json(&body)["code"].as_str()), (400, Some("bad_image")));
+    let (status, body) = read(send("PUT", "/api/me/banner", vec![0; 6 << 20], true).await.unwrap()).await;
+    assert_eq!((status, json(&body)["code"].as_str()), (413, Some("image_too_large")));
+    let (status, _) = read(send("PUT", "/api/me/avatar", noisy_png(10, 10), false).await.unwrap()).await;
+    assert_eq!(status, 401);
+
+    let (status, body) = read(send("DELETE", "/api/me/avatar", Vec::new(), true).await.unwrap()).await;
+    assert_eq!((status, json(&body)["avatar_url"].is_null()), (200, true));
+    let (status, _) = read(send("GET", &url, Vec::new(), false).await.unwrap()).await;
+    assert_eq!(status, 404);
+}
+
 #[sqlx::test]
 #[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
 async fn db_case_variants_share_one_failure_budget(pool: PgPool) {
@@ -400,6 +459,27 @@ async fn db_case_variants_share_one_failure_budget(pool: PgPool) {
         statuses.extend(wrong_logins_as(&api, "203.0.113.9", name, 5).await);
     }
     assert_eq!(count(&statuses, 401), 10, "{statuses:?}");
+}
+
+#[sqlx::test]
+#[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
+async fn db_the_leaderboard_ranks_ranked_players_by_elo(pool: PgPool) {
+    let alice = user(&pool, "alice").await;
+    let bob = user(&pool, "bob").await;
+    let carol = user(&pool, "carol").await;
+    let casual = user(&pool, "casual_only").await;
+    db::record_series(&pool, series(alice, bob)).await.unwrap();
+    db::record_series(&pool, series(alice, carol)).await.unwrap();
+    db::record_match_result(&pool, game(false, Some(casual), Some(alice), 1))
+        .await
+        .unwrap();
+    let rows = db::leaderboard(&pool, None).await.unwrap();
+    let order: Vec<_> = rows.iter().map(|r| (r.rank, r.username.as_str())).collect();
+    assert_eq!(order[0], (1, "alice"));
+    assert_eq!(rows[0].series_won, 2);
+    assert!(rows.iter().all(|r| r.user_id != casual), "never played ranked");
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[1].rank, rows[2].rank, "bob and carol share a rank");
 }
 
 #[sqlx::test]

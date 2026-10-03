@@ -6,7 +6,7 @@ use crate::config;
 use crate::sprites::{self, Joint, Layer, Mood, Nuisance, Puyo};
 use crate::state::GameSession;
 use crate::theme::{self, game, Palette};
-use crate::ui::{Fonts, Rect, SharpText, Ui, View};
+use crate::ui::{Face, Fonts, Rect, SharpText, Ui, View};
 
 const FRAME_PAD: f32 = 10.0;
 const COLUMN_W: f32 = 170.0;
@@ -105,7 +105,12 @@ impl Hud {
 }
 
 enum Overlay {
-    GameOver { i_lost: bool, draw: bool },
+    GameOver {
+        i_lost: bool,
+        draw: bool,
+    },
+    /// A watched game ended: the winner's name, none for a draw.
+    Watched(Option<String>),
     OpponentGone,
     Paused,
     QuitMenu,
@@ -125,7 +130,13 @@ impl Overlay {
         }
         let i_lost = me.state == GameState::GameOver;
         let they_lost = hud.opponent().is_some() && session.other_board.state == GameState::GameOver;
-        if i_lost || they_lost {
+        if (i_lost || they_lost) && session.spectating() {
+            let names = session.labels.as_ref();
+            let winner = names
+                .filter(|_| !(i_lost && they_lost))
+                .map(|n| n[usize::from(i_lost)].clone());
+            Some(Self::Watched(winner))
+        } else if i_lost || they_lost {
             Some(Self::GameOver {
                 i_lost,
                 draw: i_lost && they_lost,
@@ -166,7 +177,7 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
         );
     }
     if let Some(overlay) = Overlay::of(session, hud) {
-        let game_over = matches!(overlay, Overlay::GameOver { .. });
+        let game_over = matches!(overlay, Overlay::GameOver { .. } | Overlay::Watched(_));
         let leaving_forfeits = !game_over && !session.opponent_disconnected;
         draw_overlay(&mut draw, &pal, fonts, &overlay, &layout, hud, time);
         draw_exit_buttons(&mut draw, ui, fonts, hud, leaving_forfeits);
@@ -211,7 +222,9 @@ fn draw_boards(
     };
     draw_board(draw, me, layout.mine, piece, time);
     draw_lock_meter(draw, me, layout.mine);
-    draw_header(draw, fonts, "YOU", pal.text, session.my_nuisance(), layout.mine);
+    let labels = session.labels.as_ref();
+    let mine = labels.map_or("YOU", |l| l[0].as_str());
+    draw_header(draw, fonts, mine, pal.text, session.my_nuisance(), layout.mine);
     let mut stats = vec![("SCORE", me.score.to_string())];
     if let Hud::Solo {
         versus: false, best, ..
@@ -234,6 +247,7 @@ fn draw_boards(
         satellite: session.opp_turn.satellite(),
     };
     draw_board(draw, opp_board, layout.theirs, piece, time);
+    let opponent = labels.map_or(opponent, |l| l[1].as_str());
     draw_header(
         draw,
         fonts,
@@ -299,7 +313,8 @@ fn draw_stats(draw: &mut Draw, pal: &Palette, fonts: &Fonts, (x, mut y): (f32, f
 fn draw_header(draw: &mut Draw, fonts: &Fonts, name: &str, color: Color, nuisance: u32, area: Rect) {
     let frame = framed(area);
     let tray = Rect::at(frame.x, frame.y - TRAY_H - 8.0, frame.w, TRAY_H);
-    draw.sharp_text(&fonts.display, name)
+    let name = fonts.fit(Face::Display, name, theme::size::HEADING, frame.w - 8.0);
+    draw.sharp_text(&fonts.display, &name)
         .position(frame.x + 4.0, tray.y - 40.0)
         .size(theme::size::HEADING)
         .color(color);
@@ -413,7 +428,7 @@ fn draw_overlay(
             .color(color);
     };
     let scrim = match overlay {
-        Overlay::GameOver { .. } => theme::SCRIM_DARK,
+        Overlay::GameOver { .. } | Overlay::Watched(_) => theme::SCRIM_DARK,
         Overlay::OpponentGone => game::DISCONNECT_SCRIM,
         Overlay::Paused | Overlay::QuitMenu => theme::SCRIM_LIGHT,
     };
@@ -441,6 +456,13 @@ fn draw_overlay(
         return;
     }
     match overlay {
+        Overlay::Watched(winner) => {
+            let title = winner
+                .as_ref()
+                .map_or_else(|| "DRAW".to_owned(), |w| format!("{w} WINS"));
+            let title = fonts.fit(Face::Display, &title, theme::size::HERO, layout.win_w - 80.0);
+            centered(draw, &title, cy - 20.0, theme::size::HERO, theme::GOLD);
+        }
         Overlay::GameOver { i_lost, draw: tie } => {
             let (title, color) = if matches!(hud, Hud::Solo { new_best: true, .. }) {
                 ("NEW RECORD !", theme::GOLD)
@@ -784,6 +806,20 @@ fn pop_look(puyo: &mut Puyo, frame: u32) {
         puyo.flash = 0.55;
     }
 }
+
+/// The help's demonstration: one board in a frame, its piece turning smoothly,
+/// with the chain counter over it.
+pub fn draw_demo(draw: &mut Draw, fonts: &Fonts, demo: &crate::demo::Demo, area: Rect, time: f32) {
+    let piece = Piece {
+        offset: (fall_step(&demo.board), 0.0),
+        satellite: demo.turn.satellite(),
+    };
+    draw_board(draw, &demo.board, area, piece, time);
+    draw_chain_anim(draw, fonts, demo.chain, area);
+}
+
+pub const BOARD_W: f32 = config::GRID_WIDTH as f32 * config::CELL_SIZE;
+pub const BOARD_H: f32 = (config::GRID_HEIGHT - config::VISIBLE_ROW_OFFSET) as f32 * config::CELL_SIZE;
 
 fn draw_chain_anim(draw: &mut Draw, fonts: &Fonts, chain_display: Option<(u32, f32)>, board: Rect) {
     let Some((count, t)) = chain_display else {

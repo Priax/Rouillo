@@ -17,4 +17,6 @@ canvas {
     box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
     outline: none;
     user-select: none;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
 }

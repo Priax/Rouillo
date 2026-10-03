@@ -18,12 +18,22 @@ pub enum FriendCheck {
         inviter: Uuid,
         target: Uuid,
     },
+    /// May `watcher` watch `room`: a friends-only room's host, or the friend
+    /// it looked for, must be a friend. `host` is the token the answer is about.
+    Watch {
+        conn: ConnId,
+        room: RoomId,
+        host: Token,
+        from: Option<RoomId>,
+        watcher: Uuid,
+        other: Uuid,
+    },
 }
 
 impl FriendCheck {
     fn conn(&self) -> ConnId {
         match self {
-            Self::Join { conn, .. } | Self::Invite { conn, .. } => *conn,
+            Self::Join { conn, .. } | Self::Invite { conn, .. } | Self::Watch { conn, .. } => *conn,
         }
     }
 
@@ -31,6 +41,7 @@ impl FriendCheck {
         match self {
             Self::Join { joiner, host_user, .. } => (*joiner, *host_user),
             Self::Invite { inviter, target, .. } => (*inviter, *target),
+            Self::Watch { watcher, other, .. } => (*watcher, *other),
         }
     }
 }
@@ -44,7 +55,8 @@ impl Manager {
         let Some(inviter) = self.conn_user_id.get(&conn).copied() else {
             return;
         };
-        let Some(room) = self.room_of(conn).filter(|&id| self.series(id).is_none()) else {
+        let member = |id: &RoomId| self.rooms.get(id).is_some_and(|r| r.slot_of_conn(conn).is_some());
+        let Some(room) = self.room_of(conn).filter(|id| self.series(*id).is_none() && member(id)) else {
             return;
         };
         let Ok(target) = Uuid::parse_str(target) else { return };
@@ -104,6 +116,18 @@ impl Manager {
             } => self.finish_join_check(conn, room, &host, from, friends),
             FriendCheck::Invite { conn, room, target, .. } => {
                 self.finish_invite_check(conn, room, target, friends);
+            }
+            FriendCheck::Watch {
+                conn,
+                room,
+                host,
+                from,
+                other,
+                ..
+            } => {
+                if self.room_of(conn) == from {
+                    self.finish_watch_check(conn, room, &host, other, friends);
+                }
             }
         }
     }

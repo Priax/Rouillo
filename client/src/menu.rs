@@ -9,6 +9,8 @@ enum MenuItem {
     Play,
     Solo,
     Ranked,
+    Leaderboard,
+    Help,
     Multiplayer,
     Friends,
     Settings,
@@ -22,6 +24,8 @@ impl MenuItem {
             Self::Play => "Jouer",
             Self::Solo => "Solo",
             Self::Ranked => "Classé",
+            Self::Leaderboard => "Classement",
+            Self::Help => "Aide",
             Self::Multiplayer => "Multijoueur",
             Self::Friends => "Amis",
             Self::Settings => "Paramètres",
@@ -33,8 +37,8 @@ impl MenuItem {
     fn color(self) -> Color {
         match self {
             Self::Play | Self::Multiplayer => theme::bar::GREEN,
-            Self::Solo => theme::bar::PURPLE,
-            Self::Ranked => theme::bar::ORANGE,
+            Self::Solo | Self::Help => theme::bar::PURPLE,
+            Self::Ranked | Self::Leaderboard => theme::bar::ORANGE,
             Self::Friends => theme::bar::BLUE,
             Self::Settings => theme::bar::YELLOW,
             Self::Logout | Self::Back => theme::bar::RED,
@@ -46,8 +50,20 @@ fn items(screen: Screen, logged_in: bool) -> &'static [MenuItem] {
     match (screen, logged_in) {
         (Screen::PlayMenu, true) => &[MenuItem::Solo, MenuItem::Ranked, MenuItem::Multiplayer, MenuItem::Back],
         (Screen::PlayMenu, false) => &[MenuItem::Solo, MenuItem::Multiplayer, MenuItem::Back],
-        (_, true) => &[MenuItem::Play, MenuItem::Friends, MenuItem::Settings, MenuItem::Logout],
-        (_, false) => &[MenuItem::Play, MenuItem::Settings],
+        (_, true) => &[
+            MenuItem::Play,
+            MenuItem::Leaderboard,
+            MenuItem::Friends,
+            MenuItem::Help,
+            MenuItem::Settings,
+            MenuItem::Logout,
+        ],
+        (_, false) => &[
+            MenuItem::Play,
+            MenuItem::Leaderboard,
+            MenuItem::Help,
+            MenuItem::Settings,
+        ],
     }
 }
 
@@ -87,6 +103,8 @@ pub fn update_menu(app: &App, state: &mut State) {
         }
         Some(MenuItem::Multiplayer) => start_play(state),
         Some(MenuItem::Ranked) => crate::ranked::enter(state),
+        Some(MenuItem::Leaderboard) => crate::leaderboard::enter(state),
+        Some(MenuItem::Help) => crate::help::enter(state),
         Some(MenuItem::Solo) => {
             state.notice.clear();
             state.screen = Screen::SoloSetup;
@@ -110,7 +128,7 @@ pub fn update_menu(app: &App, state: &mut State) {
     }
 
     if logged_in && state.ui.clicked(avatar_rect(ww)) {
-        crate::profile::enter_profile(state);
+        crate::profile::enter_profile(state, Screen::Menu);
         state.screen = Screen::Profile;
     }
 }
@@ -157,14 +175,24 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
             .menu_bar(&mut draw, &state.fonts, row, item.label(), item.color());
     }
     if state.outdated {
-        state
-            .ui
-            .button(&mut draw, &state.fonts, outdated_btn(ww), "Mettre à jour");
+        let btn = outdated_btn(ww);
+        state.ui.button(&mut draw, &state.fonts, btn, "Mettre à jour");
+        if let Some(text) = crate::update::progress() {
+            draw.sharp_text(&state.fonts.text, &text)
+                .position(btn.x + btn.w, btn.y + btn.h + 18.0)
+                .size(theme::size::SMALL)
+                .h_align_right()
+                .v_align_middle()
+                .color(pal.text_dim);
+        }
     }
 
     if let Some(auth) = &state.auth {
         let avatar = avatar_rect(ww);
-        state.ui.avatar(&mut draw, &state.fonts, avatar, &auth.username);
+        let picture = state.images.get_opt(gfx, auth.avatar_url.as_deref());
+        state
+            .ui
+            .avatar(&mut draw, &state.fonts, avatar, &auth.username, picture.as_ref());
         draw.sharp_text(&state.fonts.text, &auth.username)
             .position(avatar.x + avatar.w / 2.0, avatar.y + avatar.h + 16.0)
             .size(theme::size::BODY)
@@ -197,6 +225,16 @@ fn settings_back(view: View) -> Rect {
 
 pub fn update_settings(app: &mut App, state: &mut State) {
     let view = state.ui.view();
+    let capturing = state.bindings_panel.capturing();
+    if state
+        .bindings_panel
+        .update(app, &state.ui, &state.pads, &mut state.controls.bindings)
+    {
+        state.controls.bindings.save();
+    }
+    if capturing {
+        return;
+    }
     let panel = settings_panel(view);
     let before = (state.settings.das_delay, state.settings.das_speed);
     for i in 0..Settings::COUNT {
@@ -243,6 +281,9 @@ pub fn draw_settings(gfx: &mut Graphics, state: &State) {
         );
     }
 
+    state
+        .bindings_panel
+        .draw(&mut draw, &state.ui, &state.fonts, &state.controls.bindings);
     state.ui.button(&mut draw, &state.fonts, settings_back(view), "Retour");
     state.ui.render(gfx, &draw);
 }

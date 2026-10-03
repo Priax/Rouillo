@@ -5,17 +5,27 @@ use shared::{config, ClientMessage};
 
 mod account;
 mod audio;
+mod bindings_panel;
+mod chat;
 mod connection;
+mod controls;
+
 mod cpu;
+mod demo;
 mod draw;
 mod friends;
+mod help;
 mod history;
 mod http;
+mod images;
 mod interp;
+mod leaderboard;
 mod logic;
 mod login;
 mod menu;
 mod network;
+mod pads;
+mod picker;
 mod profile;
 mod profile_about;
 mod profile_edit;
@@ -27,11 +37,15 @@ mod state;
 mod storage;
 mod theme;
 mod title;
+mod touch;
 mod ui;
 mod update;
+#[cfg(not(target_arch = "wasm32"))]
+mod updater;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
+use pads::{Pad, Pads};
 use state::{Screen, State};
 use ui::{Rect, SharpText};
 
@@ -64,6 +78,9 @@ fn setup(gfx: &mut Graphics) -> State {
         audio::unlock_on_gesture();
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    updater::check();
+
     if state::load_stored_token().is_some() {
         login::check_stored_session(&mut state);
         state.screen = Screen::Title;
@@ -84,6 +101,11 @@ fn event(state: &mut State, evt: Event) {
 
 fn type_char(state: &mut State, c: char) {
     if c.is_control() {
+        return;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if state.keys.ctrl {
+        state.keys.shortcut(c);
         return;
     }
     match state.screen {
@@ -133,9 +155,89 @@ fn type_char(state: &mut State, c: char) {
             }
         }
         Screen::RoomBrowser => state.room_pager.type_char(c),
+        Screen::Settings => state.bindings_panel.type_char(c),
         Screen::RoomLobby if state.invite_overlay => state.invite_pager.type_char(c),
+        Screen::RoomLobby => state.chat.type_char(c),
+        Screen::Game if state.chat.open => state.chat.type_char(c),
         _ => {}
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wants_text(state: &State) -> bool {
+    match state.screen {
+        Screen::Auth | Screen::CreateRoom | Screen::JoinById | Screen::Friends => true,
+        Screen::RoomLobby => state.chat.focused,
+        Screen::Game => state.chat.open,
+        Screen::Profile => state
+            .profile
+            .as_ref()
+            .is_some_and(|p| p.edit.is_some() || p.account.is_some()),
+        _ => false,
+    }
+}
+
+fn game_chat_area(state: &State) -> Rect {
+    let view = state.ui.view();
+    let (w, h) = (380.0, 230.0);
+    let y = if state.touch.active { 110.0 } else { view.h - h - 20.0 };
+    Rect::at(20.0, y, w, h)
+}
+
+/// Whether the player may type in a game: a spectator always, a player only
+/// when the board does not need the keys.
+fn can_chat(state: &State) -> bool {
+    state.session.as_ref().is_some_and(|s| {
+        s.spectating() || s.decided() || s.opponent_disconnected || s.board.state == shared::GameState::Paused
+    })
+}
+
+/// Runs the in-game chat and returns the game's input for this frame, without
+/// the keys the chat took.
+fn game_chat(app: &App, state: &mut State) -> controls::Frame {
+    let mut input = state.controls.frame;
+    if !can_chat(state) {
+        state.chat.open = false;
+        return input;
+    }
+    let area = game_chat_area(state);
+    if state.chat.open {
+        input.pause = false;
+        input.restart = false;
+        if app.keyboard.was_pressed(KeyCode::Escape) {
+            state.chat.open = false;
+        } else if let Some(text) = state.chat.edit(&app.keyboard, &state.keys) {
+            state.conn.send(&ClientMessage::Chat { text });
+            state.chat.open = false;
+        }
+    } else if app.keyboard.was_pressed(KeyCode::Enter) || state.chat.click(&state.ui, &state.fonts, area) {
+        state.chat.open = true;
+    }
+    input
+}
+
+/// Whether the gamepad drives the menus: everywhere but a board being played.
+fn pad_menus(state: &State) -> bool {
+    if state.bindings_panel.capturing() {
+        return false;
+    }
+    match state.screen {
+        Screen::Game => can_chat(state) && !state.chat.open || state.session.as_ref().is_some_and(|s| s.quit_menu),
+        Screen::Solo => state.solo.as_ref().is_some_and(solo::SoloGame::idle),
+        _ => true,
+    }
+}
+
+fn pad_direction(pads: &Pads) -> Option<(f32, f32)> {
+    [
+        (Pad::DPadUp, (0.0, -1.0)),
+        (Pad::DPadDown, (0.0, 1.0)),
+        (Pad::DPadLeft, (-1.0, 0.0)),
+        (Pad::DPadRight, (1.0, 0.0)),
+    ]
+    .into_iter()
+    .find(|(pad, _)| pads.pressed(*pad))
+    .map(|(_, dir)| dir)
 }
 
 const BANNER_H: f32 = 80.0;
@@ -175,8 +277,38 @@ fn update_invitation(state: &mut State) {
 fn update(app: &mut App, state: &mut State) {
     let dt = app.timer.delta_f32();
     let view = ui::View::of(app);
-    state.ui.begin_frame(dt, view, ui::Mouse::of(app, view));
+    state.pads.update();
+    let nav = pad_menus(state);
+    let real = ui::Mouse::of(app, view);
+    state.ui.note_pointer(real);
+    let mouse = if nav && state.pads.pressed(Pad::South) {
+        state.ui.pad_click().unwrap_or(real)
+    } else {
+        real
+    };
+    state.ui.begin_frame(dt, view, mouse);
+    if nav {
+        if let Some(dir) = pad_direction(&state.pads) {
+            state.ui.move_focus(dir);
+        }
+        if state.pads.pressed(Pad::East) {
+            app.keyboard.pressed.insert(KeyCode::Escape);
+        }
+    }
     state.keys.update(&app.keyboard, dt);
+    #[cfg(not(target_arch = "wasm32"))]
+    match updater::status() {
+        updater::Status::Available(_) => state.outdated = true,
+        updater::Status::Done => std::process::exit(0),
+        _ => {}
+    }
+    let in_game = matches!(state.screen, Screen::Game | Screen::Solo);
+    let (touch_held, touch_pause) = state.touch.read(app, view, in_game);
+    state
+        .controls
+        .update(&app.keyboard, &state.pads, touch_held, touch_pause);
+    #[cfg(target_arch = "wasm32")]
+    web::want_text(wants_text(state));
     #[cfg(target_arch = "wasm32")]
     for c in web::take_typed().chars() {
         type_char(state, c);
@@ -207,6 +339,8 @@ fn update(app: &mut App, state: &mut State) {
         Screen::OtherProfile => profile::update_other_profile(app, state),
         Screen::SoloSetup => solo::update_setup(app, state),
         Screen::Ranked => ranked::update(app, state),
+        Screen::Leaderboard => leaderboard::update(app, state),
+        Screen::Help => help::update(app, state),
         Screen::Solo => solo::update_game(app, state),
         Screen::Game => {
             let online = logic::Online {
@@ -214,6 +348,7 @@ fn update(app: &mut App, state: &mut State) {
                 ranked: state.lobby.as_ref().is_some_and(|l| l.ranked.is_some()),
                 ended: state.series_over.is_some(),
             };
+            let input = game_chat(app, state);
             let State {
                 session,
                 settings,
@@ -223,7 +358,7 @@ fn update(app: &mut App, state: &mut State) {
             } = &mut *state;
             let left = session
                 .as_mut()
-                .is_some_and(|s| logic::update_game(app, ui, s, *settings, conn, online));
+                .is_some_and(|s| logic::update_game(app, &input, ui, s, *settings, conn, online));
             if left && online.ranked {
                 ranked::enter(state);
             }
@@ -278,6 +413,8 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         Screen::OtherProfile => profile::draw_other_profile(gfx, state),
         Screen::SoloSetup => solo::draw_setup(gfx, state),
         Screen::Ranked => ranked::draw(gfx, state),
+        Screen::Leaderboard => leaderboard::draw(gfx, state),
+        Screen::Help => help::draw(gfx, state),
         Screen::Solo => {
             if let Some(game) = state.solo.as_ref() {
                 let hud = game.hud(state.solo_best);
@@ -304,9 +441,26 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
             }
         }
     }
+    if matches!(state.screen, Screen::Game | Screen::Solo) {
+        let mut d = state.ui.canvas(gfx);
+        if state.screen == Screen::Game {
+            let hint = can_chat(state).then_some("Entrée pour écrire");
+            state
+                .chat
+                .draw_overlay(&mut d, &state.ui, &state.fonts, game_chat_area(state), hint);
+        }
+        state.touch.draw(&mut d, &state.fonts, state.ui.view());
+        state.ui.render(gfx, &d);
+    }
     draw_invitation_banner(gfx, state);
     draw_maintenance_banner(gfx, state);
     draw_reconnect_banner(gfx, state);
+    let view = state.ui.view();
+    if state.touch.active && view.w < view.h {
+        let mut d = state.ui.canvas(gfx);
+        touch::draw_turn_hint(&mut d, &state.fonts, view);
+        state.ui.render(gfx, &d);
+    }
     state.ui.present(gfx);
 }
 

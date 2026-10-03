@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use notan::draw::Draw;
+use notan::draw::{Draw, DrawImages, DrawShapes};
 use notan::prelude::*;
 
 use crate::account::{self, AccountForm, Outcome};
@@ -108,13 +108,36 @@ const STAT_ROWS: usize = 4;
 const PAGER_H: f32 = 52.0;
 const STAT_ROW_H: f32 = 32.0;
 
-fn draw_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore) {
+/// Draws `picture` over the whole of `r`, cropped to keep its proportions.
+fn cover(draw: &mut Draw, picture: &Texture, r: Rect) {
+    let (tw, th) = picture.size();
+    let scale = (r.w / tw).max(r.h / th);
+    let (sw, sh) = (r.w / scale, r.h / scale);
+    draw.image(picture)
+        .position(r.x, r.y)
+        .size(r.w, r.h)
+        .crop(((tw - sw) / 2.0, (th - sh) / 2.0), (sw, sh));
+}
+
+fn draw_header(draw: &mut Draw, gfx: &mut Graphics, state: &State, core: &ProfileCore) {
+    let (ui, fonts) = (&state.ui, &state.fonts);
     let pal = ui.palette();
     let view = ui.view();
     ui.header_band(draw, Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H));
+    if let Some(banner) = state.images.get_opt(gfx, core.info.banner_url.as_deref()) {
+        let r = Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H - 2.0);
+        cover(draw, &banner, r);
+        draw.rect((r.x, r.y), (r.w, r.h)).color(Color::BLACK.with_alpha(0.35));
+    }
     let radius = 48.0;
     let (px, py) = (60.0 + radius, PROFILE_HEADER_H / 2.0);
-    portrait(draw, &pal, fonts, (px, py), radius, &core.info.username, 0.0);
+    let avatar = state.images.get_opt(gfx, core.info.avatar_url.as_deref());
+    let who = ui::Persona {
+        name: &core.info.username,
+        glow: 0.0,
+        picture: avatar.as_ref(),
+    };
+    portrait(draw, &pal, fonts, (px, py), radius, &who);
     let text_x = px + radius + 28.0;
     let name = fonts.fit(
         Face::Display,
@@ -359,7 +382,7 @@ fn draw_match_row(
         .color(pal.text_muted);
 }
 
-pub fn enter_profile(state: &mut State) {
+pub fn enter_profile(state: &mut State, prev: Screen) {
     let Some(auth) = &state.auth else {
         return;
     };
@@ -371,6 +394,7 @@ pub fn enter_profile(state: &mut State) {
     );
     state.profile = Some(ProfileData {
         core,
+        prev_screen: prev,
         edit: None,
         account: None,
     });
@@ -405,8 +429,8 @@ pub fn update_profile(app: &mut App, state: &mut State) {
         let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(cx, wh);
 
         if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
-            state.profile = None;
-            state.screen = Screen::Menu;
+            let prev = state.profile.take().map_or(Screen::Menu, |p| p.prev_screen);
+            state.screen = prev;
             return;
         }
         if state.ui.clicked(edit_btn) {
@@ -491,10 +515,10 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
         return;
     };
 
-    draw_header(&mut draw, &state.ui, &state.fonts, &profile.core);
+    draw_header(&mut draw, gfx, state, &profile.core);
 
     if let Some(form) = &profile.edit {
-        profile_edit::draw(&state.ui, &mut draw, &state.fonts, form, cx);
+        profile_edit::draw(&state.ui, &mut draw, &state.fonts, form, &profile.core.info, cx);
     } else if let Some(form) = &profile.account {
         account::draw(&state.ui, &mut draw, &state.fonts, form, cx);
     } else {
@@ -654,7 +678,7 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
         return;
     };
 
-    draw_header(&mut draw, &state.ui, &state.fonts, &p.core);
+    draw_header(&mut draw, gfx, state, &p.core);
     state.ui.set_input(!p.core.about_open);
     draw_stats_panel(&mut draw, &state.ui, &state.fonts, &p.core, p.load_failed);
     draw_history_panel(&mut draw, &state.ui, &state.fonts, &p.core, false);

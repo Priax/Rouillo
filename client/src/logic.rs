@@ -2,6 +2,7 @@ use notan::prelude::*;
 use shared::{config, ClientMessage, GameState, InputKind, StampedInput};
 
 use crate::connection::Connection;
+use crate::controls::{Action, Frame};
 use crate::state::{GameSession, Settings};
 use crate::ui::Ui;
 
@@ -14,6 +15,7 @@ pub struct Online {
 
 pub fn update_game(
     app: &mut App,
+    input: &Frame,
     ui: &Ui,
     session: &mut GameSession,
     settings: Settings,
@@ -41,15 +43,24 @@ pub fn update_game(
         }
     }
 
+    let dt = app.timer.delta_f32();
+    if session.spectating() {
+        if input.pause {
+            conn.send(&ClientMessage::LeaveRoom);
+            return true;
+        }
+        animate(session, dt);
+        return false;
+    }
+
     if session.opponent_disconnected {
         return false;
     }
 
-    handle_global_input(app, session, conn, online.ranked);
+    handle_global_input(input, session, conn, online.ranked);
 
-    let dt = app.timer.delta_f32();
     if !game_over && !paused && !session.quit_menu {
-        read_controls(app, session, settings, Some(conn), dt);
+        read_controls(input, session, settings, Some(conn), dt);
         step_simulation(session, dt);
     } else {
         hold(session);
@@ -98,15 +109,15 @@ pub fn animate(session: &mut GameSession, dt: f32) {
 const PIECE_SMOOTH_RATE: f32 = 22.0;
 
 pub fn read_controls(
-    app: &App,
+    input: &Frame,
     session: &mut GameSession,
     settings: Settings,
     mut conn: Option<&mut Connection>,
     dt: f32,
 ) {
-    handle_soft_drop_key(app, session, conn.as_deref_mut());
+    handle_soft_drop_key(input, session, conn.as_deref_mut());
     if session.predicted_board.state == GameState::Playing {
-        handle_game_input(app, session, settings, conn, dt);
+        handle_game_input(input, session, settings, conn, dt);
     } else {
         release_keys(session);
     }
@@ -204,12 +215,12 @@ fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: In
     moved
 }
 
-fn handle_global_input(app: &App, session: &mut GameSession, conn: &mut Connection, ranked: bool) {
-    if !ranked && app.keyboard.was_pressed(KeyCode::KeyR) && session.decided() {
+fn handle_global_input(input: &Frame, session: &mut GameSession, conn: &mut Connection, ranked: bool) {
+    if !ranked && input.restart && session.decided() {
         conn.send(&ClientMessage::RequestRestart);
     }
 
-    if app.keyboard.was_pressed(KeyCode::Escape) {
+    if input.pause {
         if ranked {
             session.quit_menu = !session.quit_menu && !session.decided();
         } else {
@@ -219,27 +230,27 @@ fn handle_global_input(app: &App, session: &mut GameSession, conn: &mut Connecti
 }
 
 fn handle_game_input(
-    app: &App,
+    input: &Frame,
     session: &mut GameSession,
     settings: Settings,
     mut conn: Option<&mut Connection>,
     delta_time: f32,
 ) {
-    if app.keyboard.was_pressed(KeyCode::ArrowUp) || app.keyboard.was_pressed(KeyCode::KeyZ) {
+    if input.pressed(Action::RotateCw) {
         send_input(session, conn.as_deref_mut(), InputKind::RotateCW);
     }
-    if app.keyboard.was_pressed(KeyCode::KeyX) || app.keyboard.was_pressed(KeyCode::KeyW) {
+    if input.pressed(Action::RotateCcw) {
         send_input(session, conn.as_deref_mut(), InputKind::RotateCCW);
     }
 
-    if app.keyboard.was_pressed(KeyCode::Space) || app.keyboard.was_pressed(KeyCode::Enter) {
+    if input.pressed(Action::HardDrop) {
         send_input(session, conn, InputKind::HardDrop);
         return;
     }
 
-    for (key, kind) in [
-        (KeyCode::ArrowLeft, InputKind::MoveLeft),
-        (KeyCode::ArrowRight, InputKind::MoveRight),
+    for (action, kind) in [
+        (Action::Left, InputKind::MoveLeft),
+        (Action::Right, InputKind::MoveRight),
     ] {
         let timer = if kind == InputKind::MoveLeft {
             &mut session.key_timer_left
@@ -247,7 +258,7 @@ fn handle_game_input(
             &mut session.key_timer_right
         };
         let first = *timer == 0.0;
-        let moves = autorepeat(timer, app.keyboard.is_down(key), delta_time, settings);
+        let moves = autorepeat(timer, input.held(action), delta_time, settings);
         for i in 0..moves {
             if send_input(session, conn.as_deref_mut(), kind) && i == 0 && first {
                 crate::audio::play_move();
@@ -277,8 +288,8 @@ fn autorepeat(timer: &mut f32, held: bool, dt: f32, settings: Settings) -> u32 {
     moves
 }
 
-fn handle_soft_drop_key(app: &App, session: &mut GameSession, conn: Option<&mut Connection>) {
-    let down = app.keyboard.is_down(KeyCode::ArrowDown);
+fn handle_soft_drop_key(input: &Frame, session: &mut GameSession, conn: Option<&mut Connection>) {
+    let down = input.held(Action::SoftDrop);
     if down != session.soft_drop_held {
         session.soft_drop_held = down;
         let kind = if down {

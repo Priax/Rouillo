@@ -77,6 +77,7 @@ fn poll_auth(state: &mut State) {
                             user_id: r.user_id,
                             username: r.username,
                             elo: r.elo,
+                            avatar_url: r.avatar_url,
                         });
                         state.auth_form = AuthForm::default();
                         state.screen = Screen::Menu;
@@ -121,6 +122,7 @@ pub fn poll_startup_check(state: &mut State) {
                     user_id: me.id,
                     username: me.username,
                     elo: me.elo,
+                    avatar_url: me.avatar_url,
                 });
                 state.auth_form.status.clear();
                 state.screen = Screen::Menu;
