@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use notan::prelude::*;
 
+use crate::connection::now_secs;
 use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, State};
 use crate::ui::{self, field_clicked, text_field, Field, Rect, SharpText, Status, View};
 use crate::{http, theme};
@@ -91,30 +92,50 @@ fn poll_auth(state: &mut State) {
     }
 }
 
+const STARTUP_RETRY_SECS: f64 = 5.0;
+
+pub fn check_stored_session(state: &mut State) {
+    state.startup_retry_at = None;
+    let Some(token) = crate::state::load_stored_token() else {
+        return;
+    };
+    let slot = http::new_slot();
+    http::get(http::api_url("me"), Some(token), Arc::clone(&slot));
+    state.startup_check = Some(slot);
+}
+
 pub fn poll_startup_check(state: &mut State) {
+    let waiting = state.auth.is_none() && matches!(state.screen, Screen::Title | Screen::Auth);
+    if waiting && state.startup_retry_at.is_some_and(|t| now_secs() >= t) {
+        check_stored_session(state);
+    }
     let Some(result) = http::take(&mut state.startup_check) else {
         return;
     };
     match result {
         Ok(resp) if resp.status == 200 => {
-            if let Some(me) = http::json::<ApiMeResponse>(&resp) {
-                if let Some(token) = crate::state::load_stored_token() {
-                    state.auth = Some(AuthInfo {
-                        token,
-                        user_id: me.id,
-                        username: me.username,
-                        elo: me.elo,
-                    });
-                    state.screen = Screen::Menu;
-                }
+            let me = http::json::<ApiMeResponse>(&resp).filter(|_| waiting);
+            if let (Some(me), Some(token)) = (me, crate::state::load_stored_token()) {
+                state.auth = Some(AuthInfo {
+                    token,
+                    user_id: me.id,
+                    username: me.username,
+                    elo: me.elo,
+                });
+                state.auth_form.status.clear();
+                state.screen = Screen::Menu;
+            }
+        }
+        Ok(resp) if resp.status == 401 => {
+            crate::state::clear_stored_token();
+            if state.screen == Screen::Title {
+                state.screen = Screen::Auth;
             }
         }
         _ => {
-            crate::state::clear_stored_token();
+            state.startup_retry_at = Some(now_secs() + STARTUP_RETRY_SECS);
+            state.auth_form.status = Status::info("Serveur injoignable, nouvel essai dans quelques secondes...");
         }
-    }
-    if state.auth.is_none() && state.screen == Screen::Title {
-        state.screen = Screen::Auth;
     }
 }
 

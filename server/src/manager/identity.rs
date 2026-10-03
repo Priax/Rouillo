@@ -39,6 +39,19 @@ impl Manager {
         self.leave_queue(conn);
     }
 
+    pub(super) fn rename(&mut self, user: Uuid, name: &str) {
+        let conns: Vec<ConnId> = self.user_conns.get(&user).into_iter().flatten().copied().collect();
+        for conn in conns {
+            self.conn_username.insert(conn, name.to_owned());
+        }
+        let series = self.rooms.values_mut().filter_map(|r| r.series.as_mut());
+        for s in series.filter(|s| s.result.is_none()) {
+            for i in (0..2).filter(|&i| s.users[i] == user) {
+                s.names[i] = name.to_owned();
+            }
+        }
+    }
+
     pub(super) fn revoke(&mut self, user: Uuid, keep: Option<Uuid>) {
         let conns: Vec<ConnId> = self
             .user_conns

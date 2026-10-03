@@ -671,6 +671,23 @@ fn join_answer_after_the_room_filled_is_refused() {
 }
 
 #[test]
+fn a_rename_shows_in_the_next_invitation() {
+    let mut mgr = new_mgr();
+    let mut rx2 = inviter_and_target(&mut mgr);
+    mgr.handle(Command::Rename {
+        user_id: Uuid::from_u128(1),
+        username: "Alicia".into(),
+    });
+    invite_b(&mut mgr);
+    let check = mgr.take_friend_checks().pop().expect("an invite check");
+    mgr.handle(Command::FriendCheckDone { check, friends: true });
+    assert!(has(&drain(&mut rx2), |m| matches!(
+        m,
+        ServerMessage::FriendInvitation { from_username, .. } if from_username == "Alicia"
+    )));
+}
+
+#[test]
 fn invite_bookkeeping_is_cleaned_up_on_disconnect() {
     let mut mgr = new_mgr();
     let _rx2 = inviter_and_target(&mut mgr);
@@ -1057,6 +1074,51 @@ fn real_reconnection_still_rebinds_the_seat() {
     let b = mgr.rooms[&1].members.iter().find(|m| m.token == "B").unwrap();
     assert_eq!(b.conn, Some(3));
     assert!(!mgr.rooms[&1].sim.paused);
+}
+
+#[test]
+fn another_account_on_the_same_browser_frees_the_seat_instead_of_taking_it() {
+    let mut mgr = new_mgr();
+    let (_rx1, _rx2) = running_game(&mut mgr);
+    mgr.handle(Command::Unregister { conn: 2 });
+    let _rx3 = reg(&mut mgr, 3);
+    hello_as(&mut mgr, 3, "B", 9);
+    assert_eq!(mgr.room_of(3), None, "the new account got the old seat");
+    assert_eq!(mgr.rooms[&1].members.len(), 1);
+    let saved = mgr.take_unsaved_matches();
+    assert_eq!(saved.len(), 1, "the abandoned game is recorded");
+    assert_eq!(saved[0].winner_slot, Some(1));
+}
+
+#[test]
+fn another_account_in_a_second_tab_leaves_a_live_seat_alone() {
+    let mut mgr = new_mgr();
+    let (_rx1, _rx2) = running_game(&mut mgr);
+    let _rx3 = reg(&mut mgr, 3);
+    hello_as(&mut mgr, 3, "B", 9);
+    assert_eq!(mgr.room_of(3), None);
+    assert_eq!(mgr.rooms[&1].members[1].conn, Some(2), "the playing tab lost its seat");
+    assert!(mgr.rooms[&1].game_running());
+    assert!(mgr.take_unsaved_matches().is_empty());
+}
+
+#[test]
+fn the_same_account_still_gets_its_seat_back() {
+    let mut mgr = new_mgr();
+    let _rx1 = reg(&mut mgr, 1);
+    hello_as(&mut mgr, 1, "A", 1);
+    mgr.handle(Command::CreateRoom {
+        conn: 1,
+        name: "R".into(),
+    });
+    let _rx2 = reg(&mut mgr, 2);
+    hello_as(&mut mgr, 2, "B", 2);
+    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Unregister { conn: 2 });
+    let _rx3 = reg(&mut mgr, 3);
+    hello_as(&mut mgr, 3, "B", 2);
+    assert_eq!(mgr.room_of(3), Some(1));
+    assert_eq!(mgr.rooms[&1].members[1].conn, Some(3));
 }
 
 #[tokio::test]

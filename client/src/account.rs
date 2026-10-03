@@ -18,6 +18,7 @@ const TOP: f32 = 230.0;
 pub enum Page {
     #[default]
     Choose,
+    Username,
     Password,
     LogoutAll,
     Delete,
@@ -25,6 +26,7 @@ pub enum Page {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Choice {
+    Username,
     Password,
     LogoutAll,
     Delete,
@@ -32,10 +34,17 @@ enum Choice {
 }
 
 impl Choice {
-    const ALL: [Self; 4] = [Self::Password, Self::LogoutAll, Self::Delete, Self::Back];
+    const ALL: [Self; 5] = [
+        Self::Username,
+        Self::Password,
+        Self::LogoutAll,
+        Self::Delete,
+        Self::Back,
+    ];
 
     const fn label(self) -> &'static str {
         match self {
+            Self::Username => "Changer de pseudo",
             Self::Password => "Changer le mot de passe",
             Self::LogoutAll => "Se déconnecter de partout",
             Self::Delete => "Supprimer le compte",
@@ -64,6 +73,12 @@ pub enum Outcome {
     Stay,
     Close,
     LoggedOut(&'static str),
+    Renamed(String),
+}
+
+#[derive(serde::Deserialize)]
+struct Renamed {
+    username: String,
 }
 
 impl AccountForm {
@@ -77,7 +92,11 @@ impl AccountForm {
         *self = Self {
             page,
             current: TextInput::masked(),
-            new: TextInput::masked(),
+            new: if page == Page::Username {
+                TextInput::default()
+            } else {
+                TextInput::masked()
+            },
             confirm: TextInput::masked(),
             ..Self::default()
         };
@@ -85,6 +104,7 @@ impl AccountForm {
 
     fn labels(&self) -> &'static [&'static str] {
         match self.page {
+            Page::Username => &["Mot de passe actuel", "Nouveau pseudo"],
             Page::Password => &["Mot de passe actuel", "Nouveau mot de passe", "Confirmez le nouveau"],
             Page::Delete => &["Mot de passe"],
             Page::Choose | Page::LogoutAll => &[],
@@ -108,8 +128,16 @@ impl AccountForm {
     }
 
     pub fn type_char(&mut self, c: char) {
-        if self.focused < self.labels().len() && self.input(self.focused).len() < MAX_PASSWORD {
-            let i = self.focused;
+        let i = self.focused;
+        if i >= self.labels().len() {
+            return;
+        }
+        let full = if self.page == Page::Username && i == 1 {
+            self.new.chars().count() >= shared::MAX_USERNAME_CHARS
+        } else {
+            self.input(i).len() >= MAX_PASSWORD
+        };
+        if !full {
             self.input_mut(i).insert(c);
         }
     }
@@ -117,6 +145,9 @@ impl AccountForm {
     fn check(&self) -> Result<(), &'static str> {
         if !self.labels().is_empty() && self.current.is_empty() {
             return Err("Entrez votre mot de passe actuel.");
+        }
+        if self.page == Page::Username && !shared::valid_username(self.new.trim()) {
+            return Err("Le pseudo doit faire 3 à 24 caractères (lettres, chiffres ou _).");
         }
         if self.page == Page::Password {
             if self.new.chars().count() < MIN_PASSWORD {
@@ -143,6 +174,10 @@ impl AccountForm {
                 "me/password",
                 serde_json::json!({ "current": &*self.current, "new": &*self.new }).to_string(),
             ),
+            Page::Username => (
+                "me/username",
+                serde_json::json!({ "username": self.new.trim(), "password": &*self.current }).to_string(),
+            ),
             Page::LogoutAll => ("logout-all", String::new()),
             Page::Delete => (
                 "me/delete",
@@ -165,6 +200,12 @@ impl AccountForm {
         };
         match result {
             Ok(resp) if resp.status == 200 => match self.page {
+                Page::Username => {
+                    let name = http::json::<Renamed>(&resp).map_or_else(|| self.new.trim().to_owned(), |r| r.username);
+                    self.show(Page::Choose);
+                    self.status = Status::success("Pseudo changé.");
+                    Outcome::Renamed(name)
+                }
                 Page::Password => {
                     self.show(Page::Choose);
                     self.status = Status::success("Mot de passe changé, vos autres sessions sont déconnectées.");
@@ -204,7 +245,7 @@ fn buttons(cx: f32, form: &AccountForm) -> (Rect, Rect) {
 
 const fn confirm_label(page: Page) -> &'static str {
     match page {
-        Page::Password => "Enregistrer",
+        Page::Username | Page::Password => "Enregistrer",
         Page::LogoutAll => "Confirmer",
         Page::Delete => "Supprimer",
         Page::Choose => "",
@@ -215,7 +256,7 @@ const fn warning(page: Page) -> Option<&'static str> {
     match page {
         Page::LogoutAll => Some("Toutes vos sessions seront fermées, celle-ci comprise."),
         Page::Delete => Some("Définitif: votre profil, votre ELO et vos amis seront supprimés !"),
-        Page::Choose | Page::Password => None,
+        Page::Choose | Page::Username | Page::Password => None,
     }
 }
 
@@ -237,6 +278,7 @@ pub fn update(
         for choice in Choice::ALL {
             if ui.clicked(choice.rect(cx)) {
                 match choice {
+                    Choice::Username => form.show(Page::Username),
                     Choice::Password => form.show(Page::Password),
                     Choice::LogoutAll => form.show(Page::LogoutAll),
                     Choice::Delete => form.show(Page::Delete),
@@ -382,6 +424,21 @@ mod tests {
         assert!(form.check().is_ok());
         form.show(Page::LogoutAll);
         assert!(form.check().is_ok());
+    }
+
+    #[test]
+    fn a_new_username_is_checked_and_capped() {
+        let mut form = AccountForm::open();
+        form.show(Page::Username);
+        typed(&mut form, 0, "secret123");
+        typed(&mut form, 1, "a b");
+        assert!(form.check().is_err());
+        form.new.erase();
+        form.new.erase();
+        typed(&mut form, 1, "_Été");
+        assert!(form.check().is_ok(), "{:?}", &*form.new);
+        typed(&mut form, 1, &"x".repeat(40));
+        assert_eq!(form.new.chars().count(), shared::MAX_USERNAME_CHARS);
     }
 
     #[test]

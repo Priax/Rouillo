@@ -85,7 +85,7 @@ pub async fn create_user(pool: &DbPool, username: &str, password: &str) -> Resul
 }
 
 pub async fn find_user_by_username(pool: &DbPool, username: &str) -> Result<Option<User>, sqlx::Error> {
-    sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
+    sqlx::query_as::<_, User>("SELECT * FROM users WHERE lower(username) = lower($1)")
         .bind(username)
         .fetch_optional(pool)
         .await
@@ -134,6 +134,14 @@ pub async fn set_password(pool: &DbPool, user_id: Uuid, hash: String, keep: Uuid
         .execute(&mut *tx)
         .await?;
     tx.commit().await
+}
+
+pub async fn rename_user(pool: &DbPool, user_id: Uuid, username: &str) -> Result<User, sqlx::Error> {
+    sqlx::query_as::<_, User>("UPDATE users SET username = $2 WHERE id = $1 RETURNING *")
+        .bind(user_id)
+        .bind(username)
+        .fetch_one(pool)
+        .await
 }
 
 pub async fn delete_user_sessions(pool: &DbPool, user_id: Uuid) -> Result<(), sqlx::Error> {

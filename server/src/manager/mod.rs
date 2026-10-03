@@ -132,6 +132,10 @@ pub enum Command {
         user_id: Uuid,
         keep: Option<Uuid>,
     },
+    Rename {
+        user_id: Uuid,
+        username: String,
+    },
     Shutdown,
 }
 
@@ -142,6 +146,7 @@ impl Command {
             | Self::FriendCheckDone { .. }
             | Self::RankedCheckDone { .. }
             | Self::Revoke { .. }
+            | Self::Rename { .. }
             | Self::Shutdown => None,
             Self::Unregister { conn }
             | Self::Hello { conn, .. }
@@ -389,6 +394,7 @@ impl Manager {
             Command::AcceptMatch { conn } => self.accept_match(conn),
             Command::RankedCheckDone { check, profile } => self.ranked_check_done(check, profile),
             Command::Revoke { user_id, keep } => self.revoke(user_id, keep),
+            Command::Rename { user_id, username } => self.rename(user_id, &username),
             Command::Shutdown => self.begin_shutdown(),
         }
     }
@@ -458,9 +464,7 @@ impl Manager {
                 .and_then(|r| r.members.iter().position(|m| m.token == token))
             {
                 info!("Grâce expirée, retrait room #{id}");
-                self.record_forfeit(id, slot, "jamais revenu après sa déconnexion");
-                self.forfeit_series(id, slot);
-                self.remove_member(id, slot);
+                self.release_seat(id, slot, "jamais revenu après sa déconnexion");
             }
         }
     }

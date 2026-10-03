@@ -295,8 +295,12 @@ fn login_api(pool: PgPool) -> axum::Router {
 }
 
 async fn wrong_logins(api: &axum::Router, ip: &str, count: usize) -> Vec<u16> {
+    wrong_logins_as(api, ip, "alice", count).await
+}
+
+async fn wrong_logins_as(api: &axum::Router, ip: &str, username: &str, count: usize) -> Vec<u16> {
     use tower::ServiceExt;
-    let body = serde_json::json!({ "username": "alice", "password": "wrong-password" }).to_string();
+    let body = serde_json::json!({ "username": username, "password": "wrong-password" }).to_string();
     let peer = format!("{ip}:5000");
     let tries = (0..count).map(|_| {
         let req = crate::auth::tests::post_json("/api/login", Some(&peer), None, body.clone());
@@ -337,6 +341,65 @@ async fn db_an_account_caps_failures_from_every_address(pool: PgPool) {
         checked += count(&wrong_logins(&api, &format!("198.51.100.{i}"), 10).await, 401);
     }
     assert_eq!(checked, 100, "100 failures an hour, whatever the address");
+}
+
+#[sqlx::test]
+#[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
+async fn db_usernames_are_unique_whatever_their_case(pool: PgPool) {
+    user(&pool, "Alice").await;
+    let taken = db::create_user(&pool, "aLICE", "password123").await;
+    assert!(
+        matches!(&taken, Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("23505")),
+        "a second Alice was created"
+    );
+    let found = db::find_user_by_username(&pool, "ALICE").await.unwrap();
+    assert_eq!(found.map(|u| u.username).as_deref(), Some("Alice"));
+}
+
+#[sqlx::test]
+#[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
+async fn db_a_player_can_rename_with_their_password(pool: PgPool) {
+    use tower::ServiceExt;
+    let alice = user(&pool, "alice").await;
+    user(&pool, "Bob").await;
+    let token = db::create_session(&pool, alice).await.unwrap();
+    let api = login_api(pool.clone());
+    let rename = |name: &str, password: &str| {
+        let body = serde_json::json!({ "username": name, "password": password }).to_string();
+        let mut req = crate::auth::tests::post_json("/api/me/username", None, None, body);
+        req.headers_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+        api.clone().oneshot(req)
+    };
+    let status = |r: axum::response::Response| r.status().as_u16();
+    assert_eq!(status(rename("Alicia", "wrong-password").await.unwrap()), 403);
+    assert_eq!(
+        status(rename("bob", "password123").await.unwrap()),
+        409,
+        "Bob in another case"
+    );
+    assert_eq!(status(rename("a b", "password123").await.unwrap()), 400);
+    assert_eq!(
+        status(rename("Alice", "password123").await.unwrap()),
+        200,
+        "own name, new case"
+    );
+    assert_eq!(status(rename("Alicia", "password123").await.unwrap()), 200);
+    let renamed = db::find_user_by_username(&pool, "alicia").await.unwrap().unwrap();
+    assert_eq!((renamed.id, renamed.username.as_str()), (alice, "Alicia"));
+    assert!(db::verify_password("password123", renamed.password_hash()));
+}
+
+#[sqlx::test]
+#[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
+async fn db_case_variants_share_one_failure_budget(pool: PgPool) {
+    user(&pool, "alice").await;
+    let api = login_api(pool);
+    let mut statuses = Vec::new();
+    for name in ["alice", "ALICE", "Alice", "aLiCe"] {
+        statuses.extend(wrong_logins_as(&api, "203.0.113.9", name, 5).await);
+    }
+    assert_eq!(count(&statuses, 401), 10, "{statuses:?}");
 }
 
 #[sqlx::test]

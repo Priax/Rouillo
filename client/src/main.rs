@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use notan::app::Event;
 use notan::draw::DrawConfig;
 use notan::prelude::*;
@@ -66,10 +64,8 @@ fn setup(gfx: &mut Graphics) -> State {
         audio::unlock_on_gesture();
     }
 
-    if let Some(token) = state::load_stored_token() {
-        let slot = http::new_slot();
-        http::get(http::api_url("me"), Some(token), Arc::clone(&slot));
-        state.startup_check = Some(slot);
+    if state::load_stored_token().is_some() {
+        login::check_stored_session(&mut state);
         state.screen = Screen::Title;
     }
 
@@ -92,7 +88,7 @@ fn type_char(state: &mut State, c: char) {
     }
     match state.screen {
         Screen::Auth => match state.auth_form.focused {
-            state::AuthField::Username if state.auth_form.username.chars().count() < 24 => {
+            state::AuthField::Username if state.auth_form.username.chars().count() < shared::MAX_USERNAME_CHARS => {
                 state.auth_form.username.insert(c);
             }
             state::AuthField::Password if state.auth_form.password.len() < 64 => {
@@ -192,9 +188,7 @@ fn update(app: &mut App, state: &mut State) {
         session.ping_rtt_ms = conn.rtt_ms();
     }
 
-    if state.startup_check.is_some() {
-        login::poll_startup_check(state);
-    }
+    login::poll_startup_check(state);
 
     update_invitation(state);
     network::handle_server_messages(state);

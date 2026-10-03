@@ -294,6 +294,12 @@ struct ChangePasswordBody {
 }
 
 #[derive(Deserialize)]
+struct RenameBody {
+    username: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
 struct DeleteAccountBody {
     password: String,
 }
@@ -387,11 +393,6 @@ impl FromRequestParts<Api> for Authed {
     }
 }
 
-fn validate_username(u: &str) -> bool {
-    let n = u.chars().count();
-    (3..=24).contains(&n) && u.chars().all(|c| c.is_alphanumeric() || c == '_')
-}
-
 fn validate_password(p: &str) -> bool {
     let n = p.len();
     (8..=1024).contains(&n)
@@ -404,7 +405,7 @@ async fn handle_register(
     ClientAddr(client): ClientAddr,
     JsonBody(body): JsonBody<RegisterBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if !validate_username(&body.username) {
+    if !shared::valid_username(&body.username) {
         return Err(ApiError::BadUsername);
     }
     if !validate_password(&body.password) {
@@ -438,11 +439,12 @@ async fn handle_login(
     ClientAddr(client): ClientAddr,
     JsonBody(body): JsonBody<LoginBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if !validate_username(&body.username) {
+    if !shared::valid_username(&body.username) {
         return Err(ApiError::BadCredentials);
     }
-    let pair = attempt_key(client.as_deref(), &body.username);
-    let counters = limits.counters(&pair, client.as_deref(), &body.username);
+    let account = body.username.to_lowercase();
+    let pair = attempt_key(client.as_deref(), &account);
+    let counters = limits.counters(&pair, client.as_deref(), &account);
     if !reserve(&counters) {
         return Err(ApiError::TooManyRequests);
     }
@@ -519,6 +521,36 @@ async fn handle_change_password(
     db::set_password(&pool, user.id, hash, token).await.map_err(internal)?;
     revoke(&cmd_tx, user.id, token).await;
     Ok(done())
+}
+
+async fn handle_rename(
+    State(Api {
+        pool,
+        password_checks: checks,
+        cmd_tx,
+        ..
+    }): State<Api>,
+    Authed(user): Authed,
+    JsonBody(body): JsonBody<RenameBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    if !shared::valid_username(&body.username) {
+        return Err(ApiError::BadUsername);
+    }
+    check_password(&user, body.password, &checks).await?;
+    let renamed = match db::rename_user(&pool, user.id, &body.username).await {
+        Ok(u) => u,
+        Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("23505") => {
+            return Err(ApiError::UsernameTaken);
+        }
+        Err(e) => return Err(internal(e)),
+    };
+    let _ = cmd_tx
+        .send(Command::Rename {
+            user_id: renamed.id,
+            username: renamed.username.clone(),
+        })
+        .await;
+    Ok(Json(UserProfile::from(renamed)))
 }
 
 async fn handle_logout_all(
@@ -812,6 +844,7 @@ pub fn routes(pool: DbPool, cmd_tx: mpsc::Sender<Command>) -> Router {
         .route("/api/logout-all", post(handle_logout_all))
         .route("/api/me", get(handle_me).patch(handle_patch_me))
         .route("/api/me/password", post(handle_change_password))
+        .route("/api/me/username", post(handle_rename))
         .route("/api/me/delete", post(handle_delete_account))
         .route("/api/users/search", get(handle_search_users))
         .route("/api/users/{id}", get(handle_user_profile))

@@ -6,14 +6,26 @@ impl Manager {
             warn!("WS {conn}: player_id invalide, ignoré");
             return;
         }
+        let user = self.conn_user_id.get(&conn).copied();
         let room = match self.room_of_token(&token) {
-            Some(id) if self.series_over(id) => {
-                if let Some(slot) = self.rooms[&id].members.iter().position(|m| m.token == token) {
-                    self.detach_ranked(id, slot);
+            Some(id) => {
+                let seat = self.rooms[&id].members.iter().position(|m| m.token == token);
+                match seat {
+                    Some(slot) if self.series_over(id) => {
+                        self.detach_ranked(id, slot);
+                        None
+                    }
+                    Some(slot) if self.rooms[&id].members[slot].user_id != user => {
+                        if self.rooms[&id].members[slot].conn.is_none() {
+                            info!("WS {conn}: autre compte sur ce navigateur, place libérée room #{id}");
+                            self.release_seat(id, slot, "un autre compte a repris son navigateur");
+                        }
+                        None
+                    }
+                    _ => Some(id),
                 }
-                None
             }
-            room => room,
+            None => None,
         };
         self.conn_token.insert(conn, token);
         if let Some(id) = room {
@@ -137,7 +149,11 @@ impl Manager {
         let Some(slot) = self.rooms.get(&id).and_then(|r| r.slot_of_conn(conn)) else {
             return;
         };
-        self.record_forfeit(id, slot, "a quitté la partie");
+        self.release_seat(id, slot, "a quitté la partie");
+    }
+
+    pub(super) fn release_seat(&mut self, id: RoomId, slot: usize, why: &str) {
+        self.record_forfeit(id, slot, why);
         self.forfeit_series(id, slot);
         self.remove_member(id, slot);
     }

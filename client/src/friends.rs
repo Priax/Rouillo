@@ -3,13 +3,12 @@ use std::sync::Arc;
 use notan::draw::Draw;
 use notan::prelude::*;
 
-use crate::http;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
-use crate::theme::{self, Palette};
 use crate::ui::{
     self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Pager, Pill, Rect, SharpText,
     Status, TextInput, Ui,
 };
+use crate::{http, theme};
 
 const FIELD_H: f32 = 44.0;
 const RESULTS_TOP: f32 = 128.0;
@@ -104,6 +103,12 @@ fn result_view_btn(ww: f32, row: usize) -> Rect {
 
 fn remove_btn(ww: f32, col: usize, row: usize) -> Rect {
     row_button(list_row_rect(ww, col, row), 6.0, 110.0)
+}
+
+fn name_zone(ww: f32, col: usize, row: usize) -> Rect {
+    let rect = list_row_rect(ww, col, row);
+    let first_button = [remove_btn(ww, 0, row), accept_btn(ww, row), remove_btn(ww, 2, row)][col];
+    Rect::at(rect.x, rect.y, first_button.x - rect.x - 8.0, rect.h)
 }
 
 fn accept_btn(ww: f32, row: usize) -> Rect {
@@ -360,7 +365,7 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     let Some(f) = &state.friends else {
         return;
     };
-    if let Some((uid, uname)) = clicked_profile(f, &state.ui, ww) {
+    if let Some((uid, uname)) = clicked_profile(f, &state.ui, ww).or_else(|| clicked_listed(f, &state.ui, ww)) {
         crate::profile::enter_other_profile(state, uid, uname, Screen::Friends);
         state.screen = Screen::OtherProfile;
         return;
@@ -387,6 +392,18 @@ fn clicked_profile(f: &FriendsData, ui: &Ui, ww: f32) -> Option<(String, String)
         .enumerate()
         .find(|&(i, _)| ui.clicked(result_view_btn(ww, i)))?;
     Some((e.user_id.clone(), e.username.clone()))
+}
+
+fn clicked_listed(f: &FriendsData, ui: &Ui, ww: f32) -> Option<(String, String)> {
+    if f.list_slot.is_some() {
+        return None;
+    }
+    lists(f).into_iter().enumerate().find_map(|(col, list)| {
+        f.pages[col]
+            .shown(list, MAX_ROWS)
+            .find(|&(i, _)| ui.clicked(name_zone(ww, col, i)))
+            .map(|(_, e)| (e.user_id.clone(), e.username.clone()))
+    })
 }
 
 fn clicked_add(f: &FriendsData, ui: &Ui, ww: f32) -> Option<String> {
@@ -597,7 +614,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
         let confirm = f.confirm_remove.as_deref();
         draw_col(
             draw,
-            &pal,
+            ui,
             fonts,
             (ww, 0),
             (columns[0].1, &f.pages[0]),
@@ -614,7 +631,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
         );
         draw_col(
             draw,
-            &pal,
+            ui,
             fonts,
             (ww, 1),
             (columns[1].1, &f.pages[1]),
@@ -626,7 +643,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
         );
         draw_col(
             draw,
-            &pal,
+            ui,
             fonts,
             (ww, 2),
             (columns[2].1, &f.pages[2]),
@@ -656,7 +673,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, ww: f32)
 
 fn draw_col<F>(
     draw: &mut Draw,
-    pal: &Palette,
+    ui: &Ui,
     fonts: &Fonts,
     (ww, col): (f32, usize),
     (list, pager): (&[FriendEntry], &Pager),
@@ -665,6 +682,7 @@ fn draw_col<F>(
 ) where
     F: Fn(&mut Draw, &Fonts, &FriendEntry, usize),
 {
+    let pal = &ui.palette();
     if list.is_empty() {
         let card = column_card(ww, col);
         draw.sharp_text(&fonts.text, empty_msg)
@@ -675,11 +693,11 @@ fn draw_col<F>(
             .color(pal.text_muted);
         return;
     }
-    let first_button = [remove_btn(ww, 0, 0), accept_btn(ww, 0), remove_btn(ww, 2, 0)][col];
-    let room = first_button.x - list_row_rect(ww, col, 0).x - 20.0;
+    let room = name_zone(ww, col, 0).w - 12.0;
     for (i, e) in pager.shown(list, MAX_ROWS) {
         let row = list_row_rect(ww, col, i);
         list_row(draw, pal, row, i);
+        ui.row(draw, name_zone(ww, col, i), i, &format!("friend:{col}:{}", e.user_id));
         draw.sharp_text(
             &fonts.text,
             &fonts.fit(Face::Text, &e.username, theme::size::BODY, room),

@@ -353,6 +353,12 @@ pub enum ServerMessage {
     SessionRevoked,
 }
 
+pub const MAX_USERNAME_CHARS: usize = 24;
+
+pub fn valid_username(name: &str) -> bool {
+    (3..=MAX_USERNAME_CHARS).contains(&name.chars().count()) && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
 pub fn group_bonus(size: u32) -> u32 {
     GROUP_BONUS[size.saturating_sub(4).min(7) as usize]
 }

@@ -470,6 +470,14 @@ fn update_account(app: &App, state: &mut State) {
             crate::menu::forget_session(state);
             state.auth_form.status = Status::success(msg);
         }
+        Outcome::Renamed(name) => {
+            if let Some(p) = profile.as_mut() {
+                p.core.info.username.clone_from(&name);
+            }
+            if let Some(auth) = state.auth.as_mut() {
+                auth.username = name;
+            }
+        }
     }
 }
 
