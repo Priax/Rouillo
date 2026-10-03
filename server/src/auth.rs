@@ -3,13 +3,18 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequest, FromRequestParts, Path, Query, State};
+use axum::http::request::Parts;
+use axum::http::{header, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, post};
+use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::error;
 use uuid::Uuid;
-use warp::http::StatusCode;
-use warp::{Filter, Rejection, Reply};
 
 use crate::db::{self, DbPool};
 use crate::manager::Command;
@@ -33,7 +38,46 @@ enum ApiError {
     Internal,
 }
 
-impl warp::reject::Reject for ApiError {}
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let body = Json(serde_json::json!({ "error": self.message(), "code": self.code() }));
+        (self.status(), body).into_response()
+    }
+}
+
+impl From<JsonRejection> for ApiError {
+    fn from(_: JsonRejection) -> Self {
+        Self::InvalidBody
+    }
+}
+
+impl From<PathRejection> for ApiError {
+    fn from(_: PathRejection) -> Self {
+        Self::NotFound
+    }
+}
+
+impl From<QueryRejection> for ApiError {
+    fn from(_: QueryRejection) -> Self {
+        Self::NotFound
+    }
+}
+
+#[derive(FromRequest)]
+#[from_request(via(Json), rejection(ApiError))]
+struct JsonBody<T>(T);
+
+#[derive(FromRequestParts)]
+#[from_request(via(Path), rejection(ApiError))]
+struct PathParam<T>(T);
+
+#[derive(FromRequestParts)]
+#[from_request(via(Query), rejection(ApiError))]
+struct Params<T>(T);
+
+pub async fn not_found() -> Response {
+    ApiError::NotFound.into_response()
+}
 
 impl ApiError {
     const fn status(self) -> StatusCode {
@@ -95,13 +139,9 @@ impl ApiError {
     }
 }
 
-fn reject(e: ApiError) -> Rejection {
-    warp::reject::custom(e)
-}
-
-fn internal<E: std::fmt::Display>(e: E) -> Rejection {
+fn internal<E: std::fmt::Display>(e: E) -> ApiError {
     error!("{e}");
-    reject(ApiError::Internal)
+    ApiError::Internal
 }
 
 type RateMap = Arc<Mutex<HashMap<String, (u32, Instant)>>>;
@@ -207,13 +247,16 @@ fn client_key(peer: Option<SocketAddr>, forwarded_for: Option<&str>) -> Option<S
     })
 }
 
-pub fn client_addr() -> impl Filter<Extract = (Option<String>,), Error = std::convert::Infallible> + Clone {
-    warp::addr::remote().and(warp::header::headers_cloned()).map(
-        |peer: Option<SocketAddr>, headers: warp::http::HeaderMap| {
-            let xff = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
-            client_key(peer, xff)
-        },
-    )
+pub struct ClientAddr(pub Option<String>);
+
+impl<S: Send + Sync> FromRequestParts<S> for ClientAddr {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        let peer = parts.extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0);
+        let xff = parts.headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+        Ok(Self(client_key(peer, xff)))
+    }
 }
 
 type PasswordChecks = RateMap;
@@ -274,8 +317,8 @@ impl AuthResponse {
     }
 }
 
-fn done() -> warp::reply::Json {
-    warp::reply::json(&serde_json::json!({}))
+fn done() -> Json<serde_json::Value> {
+    Json(serde_json::json!({}))
 }
 
 #[derive(Serialize)]
@@ -290,33 +333,58 @@ struct UserProfile {
     created_at: DateTime<Utc>,
 }
 
-fn with<T: Clone + Send + 'static>(value: T) -> impl Filter<Extract = (T,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || value.clone())
+#[derive(Clone)]
+struct Api {
+    pool: DbPool,
+    cmd_tx: mpsc::Sender<Command>,
+    login_limits: LoginLimits,
+    registrations: IpLimit,
+    password_checks: PasswordChecks,
+    friend_limit: FriendLimit,
+    search_limit: SearchLimit,
 }
 
-fn bearer_token() -> impl Filter<Extract = (Uuid,), Error = Rejection> + Clone {
-    warp::header::optional::<String>("authorization").and_then(|h: Option<String>| async move {
-        h.as_deref()
+struct Bearer(Uuid);
+
+impl<S: Send + Sync> FromRequestParts<S> for Bearer {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, ApiError> {
+        parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
             .and_then(|t| Uuid::parse_str(t).ok())
-            .ok_or_else(|| reject(ApiError::Unauthorized))
-    })
+            .map(Self)
+            .ok_or(ApiError::Unauthorized)
+    }
 }
 
-fn authed(pool: DbPool) -> impl Filter<Extract = (db::User,), Error = Rejection> + Clone {
-    authed_session(pool).map(|(user, _token): (db::User, Uuid)| user)
+struct Session(db::User, Uuid);
+
+impl FromRequestParts<Api> for Session {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, api: &Api) -> Result<Self, ApiError> {
+        let Bearer(token) = Bearer::from_request_parts(parts, api).await?;
+        db::find_user_by_token(&api.pool, token)
+            .await
+            .map_err(internal)?
+            .map(|user| Self(user, token))
+            .ok_or(ApiError::Unauthorized)
+    }
 }
 
-fn authed_session(pool: DbPool) -> impl Filter<Extract = ((db::User, Uuid),), Error = Rejection> + Clone {
-    bearer_token()
-        .and(with(pool))
-        .and_then(|token: Uuid, pool: DbPool| async move {
-            db::find_user_by_token(&pool, token)
-                .await
-                .map_err(internal)?
-                .map(|user| (user, token))
-                .ok_or_else(|| reject(ApiError::Unauthorized))
-        })
+struct Authed(db::User);
+
+impl FromRequestParts<Api> for Authed {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, api: &Api) -> Result<Self, ApiError> {
+        let Session(user, _) = Session::from_request_parts(parts, api).await?;
+        Ok(Self(user))
+    }
 }
 
 fn validate_username(u: &str) -> bool {
@@ -330,52 +398,53 @@ fn validate_password(p: &str) -> bool {
 }
 
 async fn handle_register(
-    body: RegisterBody,
-    pool: DbPool,
-    client: Option<String>,
-    registrations: IpLimit,
-) -> Result<impl Reply, Rejection> {
+    State(Api {
+        pool, registrations, ..
+    }): State<Api>,
+    ClientAddr(client): ClientAddr,
+    JsonBody(body): JsonBody<RegisterBody>,
+) -> Result<impl IntoResponse, ApiError> {
     if !validate_username(&body.username) {
-        return Err(reject(ApiError::BadUsername));
+        return Err(ApiError::BadUsername);
     }
     if !validate_password(&body.password) {
-        return Err(reject(ApiError::BadPassword));
+        return Err(ApiError::BadPassword);
     }
     if let Some(ip) = &client {
         if !rate_take(&registrations, ip, MAX_REGISTRATIONS_PER_IP, REGISTER_WINDOW) {
-            return Err(reject(ApiError::TooManyRequests));
+            return Err(ApiError::TooManyRequests);
         }
     }
 
     let user = match db::create_user(&pool, &body.username, &body.password).await {
         Ok(u) => u,
         Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("23505") => {
-            return Err(reject(ApiError::UsernameTaken));
+            return Err(ApiError::UsernameTaken);
         }
         Err(e) => return Err(internal(e)),
     };
 
     let token = db::create_session(&pool, user.id).await.map_err(internal)?;
 
-    Ok(warp::reply::with_status(
-        warp::reply::json(&AuthResponse::new(user, token)),
-        warp::http::StatusCode::CREATED,
-    ))
+    Ok((StatusCode::CREATED, Json(AuthResponse::new(user, token))))
 }
 
 async fn handle_login(
-    body: LoginBody,
-    pool: DbPool,
-    limits: LoginLimits,
-    client: Option<String>,
-) -> Result<impl Reply, Rejection> {
+    State(Api {
+        pool,
+        login_limits: limits,
+        ..
+    }): State<Api>,
+    ClientAddr(client): ClientAddr,
+    JsonBody(body): JsonBody<LoginBody>,
+) -> Result<impl IntoResponse, ApiError> {
     if !validate_username(&body.username) {
-        return Err(reject(ApiError::BadCredentials));
+        return Err(ApiError::BadCredentials);
     }
     let pair = attempt_key(client.as_deref(), &body.username);
     let counters = limits.counters(&pair, client.as_deref(), &body.username);
     if !reserve(&counters) {
-        return Err(reject(ApiError::TooManyRequests));
+        return Err(ApiError::TooManyRequests);
     }
 
     let user = db::find_user_by_username(&pool, &body.username)
@@ -391,7 +460,7 @@ async fn handle_login(
         .map_err(internal)?;
 
     let (Some(user), true) = (user, ok) else {
-        return Err(reject(ApiError::BadCredentials));
+        return Err(ApiError::BadCredentials);
     };
 
     for &(map, key, ..) in &counters {
@@ -401,39 +470,45 @@ async fn handle_login(
 
     let token = db::create_session(&pool, user.id).await.map_err(internal)?;
 
-    Ok(warp::reply::json(&AuthResponse::new(user, token)))
+    Ok(Json(AuthResponse::new(user, token)))
 }
 
-async fn handle_logout(token: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
+async fn handle_logout(
+    State(Api { pool, .. }): State<Api>,
+    Bearer(token): Bearer,
+) -> Result<impl IntoResponse, ApiError> {
     db::delete_session(&pool, token).await.map_err(internal)?;
     Ok(done())
 }
 
-async fn check_password(user: &db::User, password: String, checks: &PasswordChecks) -> Result<(), Rejection> {
+async fn check_password(user: &db::User, password: String, checks: &PasswordChecks) -> Result<(), ApiError> {
     let key = user.id.to_string();
     if !rate_take(checks, &key, MAX_ATTEMPTS, WINDOW) {
-        return Err(reject(ApiError::TooManyRequests));
+        return Err(ApiError::TooManyRequests);
     }
     let hash = user.password_hash().to_owned();
     let ok = db::run_hash(move || db::verify_password(&password, &hash))
         .await
         .map_err(internal)?;
     if !ok {
-        return Err(reject(ApiError::WrongPassword));
+        return Err(ApiError::WrongPassword);
     }
     rate_clear(checks, &key);
     Ok(())
 }
 
 async fn handle_change_password(
-    (user, token): (db::User, Uuid),
-    body: ChangePasswordBody,
-    pool: DbPool,
-    checks: PasswordChecks,
-    cmd_tx: mpsc::Sender<Command>,
-) -> Result<impl Reply, Rejection> {
+    State(Api {
+        pool,
+        password_checks: checks,
+        cmd_tx,
+        ..
+    }): State<Api>,
+    Session(user, token): Session,
+    JsonBody(body): JsonBody<ChangePasswordBody>,
+) -> Result<impl IntoResponse, ApiError> {
     if !validate_password(&body.new) {
-        return Err(reject(ApiError::BadPassword));
+        return Err(ApiError::BadPassword);
     }
     check_password(&user, body.current, &checks).await?;
     let new = body.new;
@@ -447,22 +522,24 @@ async fn handle_change_password(
 }
 
 async fn handle_logout_all(
-    (user, token): (db::User, Uuid),
-    pool: DbPool,
-    cmd_tx: mpsc::Sender<Command>,
-) -> Result<impl Reply, Rejection> {
+    State(Api { pool, cmd_tx, .. }): State<Api>,
+    Session(user, token): Session,
+) -> Result<impl IntoResponse, ApiError> {
     db::delete_user_sessions(&pool, user.id).await.map_err(internal)?;
     revoke(&cmd_tx, user.id, token).await;
     Ok(done())
 }
 
 async fn handle_delete_account(
-    (user, token): (db::User, Uuid),
-    body: DeleteAccountBody,
-    pool: DbPool,
-    checks: PasswordChecks,
-    cmd_tx: mpsc::Sender<Command>,
-) -> Result<impl Reply, Rejection> {
+    State(Api {
+        pool,
+        password_checks: checks,
+        cmd_tx,
+        ..
+    }): State<Api>,
+    Session(user, token): Session,
+    JsonBody(body): JsonBody<DeleteAccountBody>,
+) -> Result<impl IntoResponse, ApiError> {
     check_password(&user, body.password, &checks).await?;
     db::delete_user(&pool, user.id).await.map_err(internal)?;
     revoke(&cmd_tx, user.id, token).await;
@@ -493,23 +570,27 @@ impl From<db::User> for UserProfile {
     }
 }
 
-async fn handle_me(user: db::User) -> Result<impl Reply, Rejection> {
-    Ok(warp::reply::json(&UserProfile::from(user)))
+async fn handle_me(Authed(user): Authed) -> Result<impl IntoResponse, ApiError> {
+    Ok(Json(UserProfile::from(user)))
 }
 
-async fn handle_patch_me(user: db::User, body: PatchMeBody, pool: DbPool) -> Result<impl Reply, Rejection> {
+async fn handle_patch_me(
+    State(Api { pool, .. }): State<Api>,
+    Authed(user): Authed,
+    JsonBody(body): JsonBody<PatchMeBody>,
+) -> Result<impl IntoResponse, ApiError> {
     if body.bio.as_deref().is_some_and(|s| s.chars().count() > 500) {
-        return Err(reject(ApiError::BioTooLong));
+        return Err(ApiError::BioTooLong);
     }
     if body.favorite_music.as_deref().is_some_and(|s| s.chars().count() > 200) {
-        return Err(reject(ApiError::MusicTooLong));
+        return Err(ApiError::MusicTooLong);
     }
 
     let updated = db::update_profile(&pool, user.id, body.bio, body.favorite_music)
         .await
         .map_err(internal)?;
 
-    Ok(warp::reply::json(&UserProfile::from(updated)))
+    Ok(Json(UserProfile::from(updated)))
 }
 
 #[derive(Serialize)]
@@ -541,28 +622,32 @@ struct MatchHistoryQuery {
     offset: Option<String>,
 }
 
-fn int_param(value: Option<&str>, default: i64) -> Result<i64, Rejection> {
+fn int_param(value: Option<&str>, default: i64) -> Result<i64, ApiError> {
     value.map_or(Ok(default), |s| {
-        s.parse::<i64>()
-            .ok()
-            .filter(|&n| n >= 0)
-            .ok_or_else(|| reject(ApiError::BadQuery))
+        s.parse::<i64>().ok().filter(|&n| n >= 0).ok_or(ApiError::BadQuery)
     })
 }
 
-async fn handle_user_profile(user_id: Uuid, pool: DbPool) -> Result<impl Reply, Rejection> {
+async fn handle_user_profile(
+    State(Api { pool, .. }): State<Api>,
+    PathParam(user_id): PathParam<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
     let row = db::get_user_profile(&pool, user_id)
         .await
         .map_err(internal)?
-        .ok_or_else(|| reject(ApiError::NotFound))?;
+        .ok_or(ApiError::NotFound)?;
 
-    Ok(warp::reply::json(&row))
+    Ok(Json(row))
 }
 
-async fn handle_match_history(user_id: Uuid, query: MatchHistoryQuery, pool: DbPool) -> Result<impl Reply, Rejection> {
+async fn handle_match_history(
+    State(Api { pool, .. }): State<Api>,
+    PathParam(user_id): PathParam<Uuid>,
+    Params(query): Params<MatchHistoryQuery>,
+) -> Result<impl IntoResponse, ApiError> {
     let exists = db::user_exists(&pool, user_id).await.map_err(internal)?;
     if !exists {
-        return Err(reject(ApiError::NotFound));
+        return Err(ApiError::NotFound);
     }
     let limit = int_param(query.limit.as_deref(), 20)?.clamp(1, 100);
     let offset = int_param(query.offset.as_deref(), 0)?;
@@ -601,7 +686,7 @@ async fn handle_match_history(user_id: Uuid, query: MatchHistoryQuery, pool: DbP
         })
         .collect();
 
-    Ok(warp::reply::json(&entries))
+    Ok(Json(entries))
 }
 
 #[derive(Deserialize)]
@@ -622,29 +707,35 @@ struct UserSearchQuery {
 }
 
 async fn handle_search_users(
-    me: db::User,
-    query: UserSearchQuery,
-    pool: DbPool,
-    limit: SearchLimit,
-) -> Result<impl Reply, Rejection> {
+    State(Api {
+        pool,
+        search_limit: limit,
+        ..
+    }): State<Api>,
+    Authed(me): Authed,
+    Params(query): Params<UserSearchQuery>,
+) -> Result<impl IntoResponse, ApiError> {
     let key = me.id.to_string();
     if !rate_take(&limit, &key, MAX_SEARCHES, SEARCH_WINDOW) {
-        return Err(reject(ApiError::TooManyRequests));
+        return Err(ApiError::TooManyRequests);
     }
 
     let q = query.q.as_deref().unwrap_or("").trim().to_owned();
     if q.len() < 2 {
-        return Ok(warp::reply::json(&Vec::<db::UserSearchEntry>::new()));
+        return Ok(Json(Vec::<db::UserSearchEntry>::new()));
     }
 
     let results = db::search_users(&pool, &q, me.id).await.map_err(internal)?;
-    Ok(warp::reply::json(&results))
+    Ok(Json(results))
 }
 
-async fn handle_list_friends(me: db::User, pool: DbPool) -> Result<impl Reply, Rejection> {
+async fn handle_list_friends(
+    State(Api { pool, .. }): State<Api>,
+    Authed(me): Authed,
+) -> Result<impl IntoResponse, ApiError> {
     let list = db::list_friends(&pool, me.id).await.map_err(internal)?;
 
-    Ok(warp::reply::json(&FriendListResponse {
+    Ok(Json(FriendListResponse {
         friends: list.friends,
         sent: list.sent,
         received: list.received,
@@ -652,26 +743,33 @@ async fn handle_list_friends(me: db::User, pool: DbPool) -> Result<impl Reply, R
 }
 
 async fn handle_send_friend_request(
-    me: db::User,
-    body: SendFriendRequestBody,
-    pool: DbPool,
-    limit: FriendLimit,
-) -> Result<impl Reply, Rejection> {
+    State(Api {
+        pool,
+        friend_limit: limit,
+        ..
+    }): State<Api>,
+    Authed(me): Authed,
+    JsonBody(body): JsonBody<SendFriendRequestBody>,
+) -> Result<impl IntoResponse, ApiError> {
     let key = me.id.to_string();
     if !rate_take(&limit, &key, MAX_FRIEND_REQS, FRIEND_WINDOW) {
-        return Err(reject(ApiError::TooManyRequests));
+        return Err(ApiError::TooManyRequests);
     }
 
     match db::send_friend_request(&pool, me.id, body.user_id).await {
-        Ok(()) => Ok(warp::reply::with_status(done(), warp::http::StatusCode::CREATED)),
-        Err(db::FriendshipError::SelfRequest) => Err(reject(ApiError::SelfFriendRequest)),
-        Err(db::FriendshipError::AlreadyExists) => Err(reject(ApiError::FriendRequestExists)),
-        Err(db::FriendshipError::UserNotFound) => Err(reject(ApiError::NotFound)),
+        Ok(()) => Ok((StatusCode::CREATED, done())),
+        Err(db::FriendshipError::SelfRequest) => Err(ApiError::SelfFriendRequest),
+        Err(db::FriendshipError::AlreadyExists) => Err(ApiError::FriendRequestExists),
+        Err(db::FriendshipError::UserNotFound) => Err(ApiError::NotFound),
         Err(db::FriendshipError::Db(e)) => Err(internal(e)),
     }
 }
 
-async fn handle_accept_friend(requester_id: Uuid, me: db::User, pool: DbPool) -> Result<impl Reply, Rejection> {
+async fn handle_accept_friend(
+    State(Api { pool, .. }): State<Api>,
+    PathParam(requester_id): PathParam<Uuid>,
+    Authed(me): Authed,
+) -> Result<impl IntoResponse, ApiError> {
     let found = db::accept_friend_request(&pool, me.id, requester_id)
         .await
         .map_err(internal)?;
@@ -679,224 +777,75 @@ async fn handle_accept_friend(requester_id: Uuid, me: db::User, pool: DbPool) ->
     if found {
         Ok(done())
     } else {
-        Err(reject(ApiError::NotFound))
+        Err(ApiError::NotFound)
     }
 }
 
-async fn handle_remove_friend(other_id: Uuid, me: db::User, pool: DbPool) -> Result<impl Reply, Rejection> {
+async fn handle_remove_friend(
+    State(Api { pool, .. }): State<Api>,
+    PathParam(other_id): PathParam<Uuid>,
+    Authed(me): Authed,
+) -> Result<impl IntoResponse, ApiError> {
     let found = db::remove_friend(&pool, me.id, other_id).await.map_err(internal)?;
 
     if found {
         Ok(done())
     } else {
-        Err(reject(ApiError::NotFound))
+        Err(ApiError::NotFound)
     }
 }
 
-pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, std::convert::Infallible> {
-    let e = if let Some(&e) = err.find::<ApiError>() {
-        e
-    } else if err.find::<warp::body::BodyDeserializeError>().is_some()
-        || err.find::<warp::reject::PayloadTooLarge>().is_some()
-        || err.find::<warp::reject::LengthRequired>().is_some()
-        || err.find::<warp::reject::UnsupportedMediaType>().is_some()
-    {
-        ApiError::InvalidBody
-    } else {
-        ApiError::NotFound
+pub fn routes(pool: DbPool, cmd_tx: mpsc::Sender<Command>) -> Router {
+    let api = Api {
+        pool,
+        cmd_tx,
+        login_limits: LoginLimits::default(),
+        registrations: new_rate_map(),
+        password_checks: new_rate_map(),
+        friend_limit: new_rate_map(),
+        search_limit: new_rate_map(),
     };
-    Ok(warp::reply::with_status(
-        warp::reply::json(&serde_json::json!({ "error": e.message(), "code": e.code() })),
-        e.status(),
-    ))
-}
-
-pub fn routes(
-    pool: DbPool,
-    cmd_tx: mpsc::Sender<Command>,
-) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    let cmd_tx = with(cmd_tx);
-    let api = warp::path("api");
-    let db = pool.clone();
-    let pool = with(pool);
-    let body_limit = warp::body::content_length_limit(16 * 1024);
-    let login_limits = LoginLimits::default();
-    let friend_limit: FriendLimit = new_rate_map();
-    let search_limit: SearchLimit = new_rate_map();
-    let registrations: IpLimit = new_rate_map();
-    let password_checks = with(new_rate_map());
-
-    let register = api
-        .and(warp::path("register"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(body_limit)
-        .and(warp::body::json())
-        .and(pool.clone())
-        .and(client_addr())
-        .and(with(registrations))
-        .and_then(handle_register);
-
-    let login = api
-        .and(warp::path("login"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(body_limit)
-        .and(warp::body::json())
-        .and(pool.clone())
-        .and(with(login_limits))
-        .and(client_addr())
-        .and_then(handle_login);
-
-    let friend_limit = with(friend_limit);
-
-    let logout = api
-        .and(warp::path("logout"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(bearer_token())
-        .and(pool.clone())
-        .and_then(handle_logout);
-
-    let logout_all = api
-        .and(warp::path("logout-all"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(authed_session(db.clone()))
-        .and(pool.clone())
-        .and(cmd_tx.clone())
-        .and_then(handle_logout_all);
-
-    let me_password = api
-        .and(warp::path("me"))
-        .and(warp::path("password"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(authed_session(db.clone()))
-        .and(body_limit)
-        .and(warp::body::json())
-        .and(pool.clone())
-        .and(password_checks.clone())
-        .and(cmd_tx.clone())
-        .and_then(handle_change_password);
-
-    let me_delete = api
-        .and(warp::path("me"))
-        .and(warp::path("delete"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(authed_session(db.clone()))
-        .and(body_limit)
-        .and(warp::body::json())
-        .and(pool.clone())
-        .and(password_checks)
-        .and(cmd_tx)
-        .and_then(handle_delete_account);
-
-    let me_get = api
-        .and(warp::path("me"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(authed(db.clone()))
-        .and_then(handle_me);
-
-    let me_patch = api
-        .and(warp::path("me"))
-        .and(warp::path::end())
-        .and(warp::patch())
-        .and(authed(db.clone()))
-        .and(body_limit)
-        .and(warp::body::json())
-        .and(pool.clone())
-        .and_then(handle_patch_me);
-
-    let users_search = api
-        .and(warp::path("users"))
-        .and(warp::path("search"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(authed(db.clone()))
-        .and(warp::query::<UserSearchQuery>())
-        .and(pool.clone())
-        .and(with(search_limit))
-        .and_then(handle_search_users);
-
-    let user_profile = api
-        .and(warp::path("users"))
-        .and(warp::path::param::<Uuid>())
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(pool.clone())
-        .and_then(handle_user_profile);
-
-    let match_history = api
-        .and(warp::path("users"))
-        .and(warp::path::param::<Uuid>())
-        .and(warp::path("matches"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(warp::query::<MatchHistoryQuery>())
-        .and(pool.clone())
-        .and_then(handle_match_history);
-
-    let friends_get = api
-        .and(warp::path("friends"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(authed(db.clone()))
-        .and(pool.clone())
-        .and_then(handle_list_friends);
-
-    let friends_post = api
-        .and(warp::path("friends"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(authed(db.clone()))
-        .and(body_limit)
-        .and(warp::body::json())
-        .and(pool.clone())
-        .and(friend_limit)
-        .and_then(handle_send_friend_request);
-
-    let friends_accept = api
-        .and(warp::path("friends"))
-        .and(warp::path::param::<Uuid>())
-        .and(warp::path("accept"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(authed(db.clone()))
-        .and(pool.clone())
-        .and_then(handle_accept_friend);
-
-    let friends_delete = api
-        .and(warp::path("friends"))
-        .and(warp::path::param::<Uuid>())
-        .and(warp::path::end())
-        .and(warp::delete())
-        .and(authed(db))
-        .and(pool)
-        .and_then(handle_remove_friend);
-
-    register
-        .or(login)
-        .or(logout)
-        .or(logout_all)
-        .or(me_password)
-        .or(me_delete)
-        .or(me_get)
-        .or(me_patch)
-        .or(users_search)
-        .or(user_profile)
-        .or(match_history)
-        .or(friends_get)
-        .or(friends_post)
-        .or(friends_accept)
-        .or(friends_delete)
+    Router::new()
+        .route("/api/register", post(handle_register))
+        .route("/api/login", post(handle_login))
+        .route("/api/logout", post(handle_logout))
+        .route("/api/logout-all", post(handle_logout_all))
+        .route("/api/me", get(handle_me).patch(handle_patch_me))
+        .route("/api/me/password", post(handle_change_password))
+        .route("/api/me/delete", post(handle_delete_account))
+        .route("/api/users/search", get(handle_search_users))
+        .route("/api/users/{id}", get(handle_user_profile))
+        .route("/api/users/{id}/matches", get(handle_match_history))
+        .route(
+            "/api/friends",
+            get(handle_list_friends).post(handle_send_friend_request),
+        )
+        .route("/api/friends/{id}", delete(handle_remove_friend))
+        .route("/api/friends/{id}/accept", post(handle_accept_friend))
+        .layer(DefaultBodyLimit::max(16 * 1024))
+        .with_state(api)
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
     use super::*;
+
+    pub(crate) fn post_json(path: &str, peer: Option<&str>, forwarded: Option<&str>, body: String) -> Request<Body> {
+        let mut req = Request::post(path).header("content-type", "application/json");
+        if let Some(f) = forwarded {
+            req = req.header("x-forwarded-for", f);
+        }
+        let mut req = req.body(Body::from(body)).unwrap();
+        if let Some(p) = peer {
+            req.extensions_mut()
+                .insert(ConnectInfo(p.parse::<SocketAddr>().unwrap()));
+        }
+        req
+    }
 
     fn addr(s: &str) -> Option<SocketAddr> {
         Some(s.parse().unwrap())
@@ -947,24 +896,21 @@ mod tests {
             .acquire_timeout(Duration::from_millis(50))
             .connect_lazy("postgres://nobody@127.0.0.1:1/none")
             .unwrap();
-        let api = routes(pool, mpsc::channel(8).0).recover(handle_rejection);
+        let api = routes(pool, mpsc::channel(8).0);
         let register = |from: &'static str, n: u32| {
-            warp::test::request()
-                .method("POST")
-                .path("/api/register")
-                .remote_addr("127.0.0.1:40000".parse().unwrap())
-                .header("x-forwarded-for", from)
-                .json(&serde_json::json!({ "username": format!("user_{n}"), "password": "password123" }))
+            let body = serde_json::json!({ "username": format!("user_{n}"), "password": "password123" });
+            let req = post_json("/api/register", Some("127.0.0.1:40000"), Some(from), body.to_string());
+            api.clone().oneshot(req)
         };
         for n in 0..MAX_REGISTRATIONS_PER_IP {
-            let res = register("203.0.113.7", n).reply(&api).await;
+            let res = register("203.0.113.7", n).await.unwrap();
             assert_ne!(res.status(), 429, "attempt {n} limited too early");
         }
-        let res = register("203.0.113.7", 999).reply(&api).await;
+        let res = register("203.0.113.7", 999).await.unwrap();
         assert_eq!(res.status(), 429);
-        let res = register("198.51.100.1, 203.0.113.7", 1000).reply(&api).await;
+        let res = register("198.51.100.1, 203.0.113.7", 1000).await.unwrap();
         assert_eq!(res.status(), 429);
-        let res = register("198.51.100.1", 1001).reply(&api).await;
+        let res = register("198.51.100.1", 1001).await.unwrap();
         assert_ne!(res.status(), 429);
     }
 
@@ -973,15 +919,14 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://nobody@127.0.0.1:1/none")
             .unwrap();
-        let api = routes(pool, mpsc::channel(8).0).recover(handle_rejection);
-        let res = warp::test::request()
-            .method("POST")
-            .path("/api/register")
-            .json(&serde_json::json!({ "username": "a", "password": "password123" }))
-            .reply(&api)
-            .await;
+        let body = serde_json::json!({ "username": "a", "password": "password123" }).to_string();
+        let res = routes(pool, mpsc::channel(8).0)
+            .oneshot(post_json("/api/register", None, None, body))
+            .await
+            .unwrap();
         assert_eq!(res.status(), 400);
-        let body: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "bad_username");
         assert!(body["error"].is_string(), "old clients still read 'error'");
     }
@@ -990,19 +935,14 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://nobody@127.0.0.1:1/none")
             .unwrap();
-        let api = routes(pool, mpsc::channel(8).0).recover(handle_rejection);
-        let res = warp::test::request()
-            .method("POST")
-            .path(path)
-            .header("content-type", "application/json")
-            .body(body)
-            .reply(&api)
-            .await;
-        let json: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
-        (
-            res.status().as_u16(),
-            json["code"].as_str().unwrap_or_default().to_owned(),
-        )
+        let res = routes(pool, mpsc::channel(8).0)
+            .oneshot(post_json(path, None, None, body))
+            .await
+            .unwrap();
+        let status = res.status().as_u16();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        (status, json["code"].as_str().unwrap_or_default().to_owned())
     }
 
     #[tokio::test]

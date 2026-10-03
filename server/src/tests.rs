@@ -1,7 +1,9 @@
+use futures_util::{SinkExt, StreamExt};
 use shared::{
     config, ClientMessage, GameState, IncomingGarbage, InputKind, LobbyInfo, PausePolicy, PuyoType, RoomId,
     ServerMessage,
 };
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
 use super::*;
@@ -865,18 +867,30 @@ fn limiter_disconnects_a_sustained_flood() {
     assert_eq!(l.check(t0), Verdict::Disconnect);
 }
 
-async fn connect() -> (warp::test::WsClient, mpsc::Receiver<Command>) {
+type WsClient = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn connect() -> (WsClient, mpsc::Receiver<Command>) {
     connect_to(&format!("/ws?v={}", shared::PROTOCOL_VERSION)).await
 }
 
-async fn connect_to(path: &str) -> (warp::test::WsClient, mpsc::Receiver<Command>) {
+async fn connect_to(path: &str) -> (WsClient, mpsc::Receiver<Command>) {
     let (tx, rx) = mpsc::channel(CMD_CHAN_CAP);
-    let client = warp::test::ws()
-        .path(path)
-        .handshake(ws_route(tx, lazy_pool()))
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    let app = ws_route(tx, lazy_pool()).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let (client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}{path}"))
         .await
         .expect("handshake");
     (client, rx)
+}
+
+async fn closed(client: &mut WsClient) {
+    while let Some(msg) = client.next().await {
+        if matches!(msg, Ok(WsMessage::Close(_)) | Err(_)) {
+            return;
+        }
+    }
 }
 
 #[tokio::test]
@@ -884,15 +898,19 @@ async fn an_outdated_client_is_told_so_and_dropped() {
     let other = shared::PROTOCOL_VERSION + 1;
     for path in ["/ws".to_string(), format!("/ws?v={other}")] {
         let (mut client, mut rx) = connect_to(&path).await;
-        let msg = tokio::time::timeout(Duration::from_secs(5), client.recv())
+        let msg = tokio::time::timeout(Duration::from_secs(5), client.next())
             .await
             .expect("no reply")
+            .expect("stream ended")
             .expect("recv");
-        assert_eq!(msg.to_str(), Ok(shared::OUTDATED_FRAME), "{path}");
-        tokio::time::timeout(Duration::from_secs(5), client.recv_closed())
+        assert_eq!(msg.to_text().ok(), Some(shared::OUTDATED_FRAME), "{path}");
+        let close = tokio::time::timeout(Duration::from_secs(5), client.next())
             .await
-            .expect("the server kept the connection open")
-            .expect("closed cleanly");
+            .expect("the server kept the connection open");
+        assert!(
+            matches!(close, Some(Ok(WsMessage::Close(Some(ref f)))) if u16::from(f.code) == 4426),
+            "{path}: {close:?}"
+        );
         assert!(rx.try_recv().is_err(), "{path}: an outdated client reached the manager");
     }
 }
@@ -903,8 +921,8 @@ async fn an_up_to_date_client_is_registered() {
     commands_until(&mut rx, |c| matches!(c, Command::Register { .. })).await;
 }
 
-fn frame(msg: &ClientMessage) -> warp::ws::Message {
-    warp::ws::Message::binary(shared::encode(msg).expect("encode"))
+fn frame(msg: &ClientMessage) -> WsMessage {
+    WsMessage::binary(shared::encode(msg).expect("encode"))
 }
 
 async fn commands_until(rx: &mut mpsc::Receiver<Command>, stop: impl Fn(&Command) -> bool) -> Vec<Command> {
@@ -932,12 +950,13 @@ async fn flooding_client_is_throttled_then_disconnected() {
     });
     let started = Instant::now();
     for _ in 0..3_000 {
-        client.send(input.clone()).await;
+        if client.send(input.clone()).await.is_err() {
+            break;
+        }
     }
-    tokio::time::timeout(Duration::from_secs(5), client.recv_closed())
+    tokio::time::timeout(Duration::from_secs(5), closed(&mut client))
         .await
-        .expect("server did not close the flooding connection")
-        .expect("closed cleanly");
+        .expect("server did not close the flooding connection");
     let refill = started.elapsed().as_secs_f64() * CLIENT_MSG_RATE;
 
     let cmds = commands_until(&mut rx, |c| matches!(c, Command::Unregister { .. })).await;
@@ -962,9 +981,9 @@ async fn only_the_first_hello_per_connection_counts() {
         last_disconnect_reason: None,
     });
     for _ in 0..5 {
-        client.send(hello.clone()).await;
+        client.send(hello.clone()).await.expect("send");
     }
-    client.send(frame(&ClientMessage::RequestRoomList)).await;
+    client.send(frame(&ClientMessage::RequestRoomList)).await.expect("send");
     let cmds = commands_until(&mut rx, |c| matches!(c, Command::RequestRoomList { .. })).await;
     let hellos = cmds.iter().filter(|c| matches!(c, Command::Hello { .. })).count();
     assert_eq!(hellos, 1);
@@ -980,9 +999,10 @@ async fn a_normal_session_gets_everything_through() {
                 seq,
                 tick: 0,
             }))
-            .await;
+            .await
+            .expect("send");
     }
-    client.send(frame(&ClientMessage::RequestRoomList)).await;
+    client.send(frame(&ClientMessage::RequestRoomList)).await.expect("send");
     let cmds = commands_until(&mut rx, |c| matches!(c, Command::RequestRoomList { .. })).await;
     assert_eq!(cmds.iter().filter(|c| matches!(c, Command::Input { .. })).count(), 100);
 }
@@ -1042,18 +1062,19 @@ fn real_reconnection_still_rebinds_the_seat() {
 #[tokio::test]
 async fn a_ping_is_answered_without_reaching_the_manager() {
     let (mut client, mut rx) = connect().await;
-    client.send(frame(&ClientMessage::Ping { id: 7 })).await;
+    client.send(frame(&ClientMessage::Ping { id: 7 })).await.expect("send");
 
-    let reply = tokio::time::timeout(Duration::from_secs(5), client.recv())
+    let reply = tokio::time::timeout(Duration::from_secs(5), client.next())
         .await
         .expect("no pong came back")
+        .expect("stream ended")
         .expect("socket error");
     assert!(matches!(
-        shared::decode::<ServerMessage>(reply.as_bytes()),
+        shared::decode::<ServerMessage>(&reply.into_data()),
         Some(ServerMessage::Pong { id: 7 })
     ));
 
-    client.send(frame(&ClientMessage::RequestRoomList)).await;
+    client.send(frame(&ClientMessage::RequestRoomList)).await.expect("send");
     let cmds = commands_until(&mut rx, |c| matches!(c, Command::RequestRoomList { .. })).await;
     assert!(
         matches!(cmds.first(), Some(Command::Register { .. })),
@@ -1078,10 +1099,7 @@ async fn accepted_sockets_inherit_nodelay() {
 async fn a_silent_socket_is_closed() {
     let (mut client, _rx) = connect().await;
 
-    client
-        .recv_closed()
-        .await
-        .expect("the server kept a socket that had gone quiet");
+    closed(&mut client).await;
 }
 
 fn last_update_tick(rx: &mut mpsc::Receiver<Vec<u8>>) -> Option<u32> {

@@ -3,6 +3,13 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use axum::extract::rejection::QueryRejection;
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use shared::{config, ClientMessage, ServerMessage};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -10,9 +17,8 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tracing::{info, warn};
 use uuid::Uuid;
-use warp::{Filter, Reply};
 
-use crate::auth::client_addr;
+use crate::auth::ClientAddr;
 use crate::manager::Command;
 use crate::{db, ConnId};
 
@@ -130,53 +136,52 @@ impl Drop for IpSlot {
     }
 }
 
-pub fn ws_route(
+#[derive(Clone)]
+struct WsState {
     cmd_tx: mpsc::Sender<Command>,
     pool: db::DbPool,
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    let conn_counter = Arc::new(AtomicU64::new(1));
-    let ip_conns: IpConns = Arc::default();
-    warp::path("ws")
-        .and(warp::ws())
-        .and(warp::query::<WsQuery>())
-        .and(client_addr())
-        .and(warp::any().map(move || cmd_tx.clone()))
-        .and(warp::any().map(move || Arc::clone(&conn_counter)))
-        .and(warp::any().map(move || pool.clone()))
-        .and(warp::any().map(move || Arc::clone(&ip_conns)))
-        .map(
-            |ws: warp::ws::Ws,
-             query: WsQuery,
-             client: Option<String>,
-             cmd_tx,
-             counter: Arc<AtomicU64>,
-             pool: db::DbPool,
-             ip_conns: IpConns| {
-                let Ok(slot) = IpSlot::take(&ip_conns, client) else {
-                    warn!("WS refusé: trop de connexions depuis la même IP");
-                    return warp::reply::with_status("Too many connections", warp::http::StatusCode::TOO_MANY_REQUESTS)
-                        .into_response();
-                };
-                let conn = counter.fetch_add(1, Ordering::Relaxed);
-                let ws = ws
-                    .max_message_size(MAX_CLIENT_MESSAGE)
-                    .max_frame_size(MAX_CLIENT_MESSAGE);
-                if query.v == Some(shared::PROTOCOL_VERSION) {
-                    ws.on_upgrade(move |socket| async move {
-                        handle_connection(socket, cmd_tx, conn, pool).await;
-                        drop(slot);
-                    })
-                    .into_response()
-                } else {
-                    info!(
-                        "WS {conn} refusé: protocole {:?}, attendu {}",
-                        query.v,
-                        shared::PROTOCOL_VERSION
-                    );
-                    ws.on_upgrade(reject_outdated).into_response()
-                }
-            },
-        )
+    counter: Arc<AtomicU64>,
+    ip_conns: IpConns,
+}
+
+pub fn ws_route(cmd_tx: mpsc::Sender<Command>, pool: db::DbPool) -> Router {
+    let state = WsState {
+        cmd_tx,
+        pool,
+        counter: Arc::new(AtomicU64::new(1)),
+        ip_conns: IpConns::default(),
+    };
+    Router::new().route("/ws", get(upgrade)).with_state(state)
+}
+
+async fn upgrade(
+    State(state): State<WsState>,
+    ws: WebSocketUpgrade,
+    query: Result<Query<WsQuery>, QueryRejection>,
+    ClientAddr(client): ClientAddr,
+) -> Response {
+    let Ok(slot) = IpSlot::take(&state.ip_conns, client) else {
+        warn!("WS refusé: trop de connexions depuis la même IP");
+        return (StatusCode::TOO_MANY_REQUESTS, "Too many connections").into_response();
+    };
+    let conn = state.counter.fetch_add(1, Ordering::Relaxed);
+    let ws = ws
+        .max_message_size(MAX_CLIENT_MESSAGE)
+        .max_frame_size(MAX_CLIENT_MESSAGE);
+    let version = query.ok().and_then(|Query(q)| q.v);
+    if version == Some(shared::PROTOCOL_VERSION) {
+        let WsState { cmd_tx, pool, .. } = state;
+        ws.on_upgrade(move |socket| async move {
+            handle_connection(socket, cmd_tx, conn, pool).await;
+            drop(slot);
+        })
+    } else {
+        info!(
+            "WS {conn} refusé: protocole {version:?}, attendu {}",
+            shared::PROTOCOL_VERSION
+        );
+        ws.on_upgrade(reject_outdated)
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -188,15 +193,18 @@ struct WsQuery {
 // (426: HTTP's Upgrade Required).
 const CLOSE_OUTDATED: u16 = 4426;
 
-async fn reject_outdated(ws: warp::ws::WebSocket) {
+async fn reject_outdated(ws: WebSocket) {
     let (mut tx, _rx) = ws.split();
-    let _ = tx.send(warp::ws::Message::text(shared::OUTDATED_FRAME)).await;
+    let _ = tx.send(Message::text(shared::OUTDATED_FRAME)).await;
     let _ = tx
-        .send(warp::ws::Message::close_with(CLOSE_OUTDATED, shared::OUTDATED_FRAME))
+        .send(Message::Close(Some(CloseFrame {
+            code: CLOSE_OUTDATED,
+            reason: shared::OUTDATED_FRAME.into(),
+        })))
         .await;
 }
 
-async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::Sender<Command>, conn: ConnId, pool: db::DbPool) {
+async fn handle_connection(ws: WebSocket, cmd_tx: mpsc::Sender<Command>, conn: ConnId, pool: db::DbPool) {
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
     let (to_client_tx, mut to_client_rx) = mpsc::channel::<Vec<u8>>(CLIENT_CHAN_CAP);
     let pong_tx = to_client_tx.clone();
@@ -211,7 +219,7 @@ async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::Sender<Command
 
     let mut send_task = tokio::spawn(async move {
         while let Some(payload) = to_client_rx.recv().await {
-            if user_ws_tx.send(warp::ws::Message::binary(payload)).await.is_err() {
+            if user_ws_tx.send(Message::binary(payload)).await.is_err() {
                 break;
             }
         }
@@ -238,58 +246,56 @@ async fn handle_connection(ws: warp::ws::WebSocket, cmd_tx: mpsc::Sender<Command
                     break;
                 }
             }
-            if let Ok(msg) = result {
-                if msg.is_binary() {
-                    if let Some(client_msg) = shared::decode::<ClientMessage>(msg.as_bytes()) {
-                        let cmd = match client_msg {
-                            ClientMessage::Hello { .. } if greeted => continue,
-                            ClientMessage::Hello {
-                                player_id,
-                                auth_token,
-                                last_disconnect_reason,
-                            } => {
-                                greeted = true;
-                                let session = auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok());
-                                let user = match session {
-                                    Some(token_uuid) => db::find_user_by_token(&pool, token_uuid).await.ok().flatten(),
-                                    None => None,
-                                };
-                                Command::Hello {
-                                    conn,
-                                    token: player_id,
-                                    session: session.filter(|_| user.is_some()),
-                                    user_id: user.as_ref().map(|u| u.id),
-                                    username: user.map(|u| u.username),
-                                    last_disconnect_reason: last_disconnect_reason.as_deref().map(log_safe),
-                                }
-                            }
-                            ClientMessage::Ping { id } => {
-                                if let Ok(bytes) = shared::encode(&ServerMessage::Pong { id }) {
-                                    let _ = pong_tx.try_send(bytes);
-                                }
-                                continue;
-                            }
-                            ClientMessage::Input { kind, seq, tick } => Command::Input { conn, kind, seq, tick },
-                            ClientMessage::TogglePause => Command::TogglePause { conn },
-                            ClientMessage::RequestRestart => Command::Restart { conn },
-                            ClientMessage::RequestRoomList => Command::RequestRoomList { conn },
-                            ClientMessage::CreateRoom { name } => Command::CreateRoom { conn, name },
-                            ClientMessage::JoinRoom { id } => Command::JoinRoom { conn, id },
-                            ClientMessage::LeaveRoom => Command::LeaveRoom { conn },
-                            ClientMessage::SetRoomSetting { index, dir } => Command::SetSetting { conn, index, dir },
-                            ClientMessage::ToggleCountdown => Command::ToggleCountdown { conn },
-                            ClientMessage::ReturnToLobby => Command::ReturnToLobby { conn },
-                            ClientMessage::InviteFriend { user_id } => Command::InviteFriend {
+            if let Ok(Message::Binary(bytes)) = result {
+                if let Some(client_msg) = shared::decode::<ClientMessage>(&bytes) {
+                    let cmd = match client_msg {
+                        ClientMessage::Hello { .. } if greeted => continue,
+                        ClientMessage::Hello {
+                            player_id,
+                            auth_token,
+                            last_disconnect_reason,
+                        } => {
+                            greeted = true;
+                            let session = auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok());
+                            let user = match session {
+                                Some(token_uuid) => db::find_user_by_token(&pool, token_uuid).await.ok().flatten(),
+                                None => None,
+                            };
+                            Command::Hello {
                                 conn,
-                                target_user_id: user_id,
-                            },
-                            ClientMessage::JoinQueue => Command::JoinQueue { conn },
-                            ClientMessage::LeaveQueue => Command::LeaveQueue { conn },
-                            ClientMessage::AcceptMatch => Command::AcceptMatch { conn },
-                        };
-                        if cmd_tx_recv.send(cmd).await.is_err() {
-                            break;
+                                token: player_id,
+                                session: session.filter(|_| user.is_some()),
+                                user_id: user.as_ref().map(|u| u.id),
+                                username: user.map(|u| u.username),
+                                last_disconnect_reason: last_disconnect_reason.as_deref().map(log_safe),
+                            }
                         }
+                        ClientMessage::Ping { id } => {
+                            if let Ok(bytes) = shared::encode(&ServerMessage::Pong { id }) {
+                                let _ = pong_tx.try_send(bytes);
+                            }
+                            continue;
+                        }
+                        ClientMessage::Input { kind, seq, tick } => Command::Input { conn, kind, seq, tick },
+                        ClientMessage::TogglePause => Command::TogglePause { conn },
+                        ClientMessage::RequestRestart => Command::Restart { conn },
+                        ClientMessage::RequestRoomList => Command::RequestRoomList { conn },
+                        ClientMessage::CreateRoom { name } => Command::CreateRoom { conn, name },
+                        ClientMessage::JoinRoom { id } => Command::JoinRoom { conn, id },
+                        ClientMessage::LeaveRoom => Command::LeaveRoom { conn },
+                        ClientMessage::SetRoomSetting { index, dir } => Command::SetSetting { conn, index, dir },
+                        ClientMessage::ToggleCountdown => Command::ToggleCountdown { conn },
+                        ClientMessage::ReturnToLobby => Command::ReturnToLobby { conn },
+                        ClientMessage::InviteFriend { user_id } => Command::InviteFriend {
+                            conn,
+                            target_user_id: user_id,
+                        },
+                        ClientMessage::JoinQueue => Command::JoinQueue { conn },
+                        ClientMessage::LeaveQueue => Command::LeaveQueue { conn },
+                        ClientMessage::AcceptMatch => Command::AcceptMatch { conn },
+                    };
+                    if cmd_tx_recv.send(cmd).await.is_err() {
+                        break;
                     }
                 }
             }

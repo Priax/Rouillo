@@ -5,12 +5,18 @@ mod room;
 mod sim;
 mod ws;
 
+use std::future::IntoFuture;
+use std::net::SocketAddr;
+
+use axum::extract::Request;
+use axum::http::StatusCode;
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use shared::config;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio::time::{interval, Duration, Instant};
 use tracing::{error, info, warn};
-use warp::Filter;
 
 use crate::manager::{Command, Manager};
 use crate::ws::{bind_listener, ws_route, CMD_CHAN_CAP};
@@ -210,6 +216,27 @@ async fn watch_signals(cmd_tx: mpsc::Sender<Command>) {
     std::process::exit(1);
 }
 
+async fn log_request(req: Request, next: Next) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_owned();
+    let start = Instant::now();
+    let res = next.run(req).await;
+    let status = res.status();
+    if status == StatusCode::SWITCHING_PROTOCOLS {
+        return res;
+    }
+    let ms = start.elapsed().as_millis();
+    let msg = format!("{method} {path} {} {ms}ms", status.as_u16());
+    if status.is_server_error() {
+        error!("{msg}");
+    } else if status.is_client_error() {
+        warn!("{msg}");
+    } else {
+        info!("{msg}");
+    }
+    res
+}
+
 #[tokio::main]
 async fn main() {
     #[cfg(feature = "console")]
@@ -263,29 +290,17 @@ async fn main() {
         }
     });
 
-    let routes = ws_route(cmd_tx.clone(), pool.clone())
-        .or(auth::routes(pool, cmd_tx))
-        .recover(auth::handle_rejection)
-        .with(warp::log::custom(|info| {
-            if info.status() == warp::http::StatusCode::SWITCHING_PROTOCOLS {
-                return;
-            }
-            let ms = info.elapsed().as_millis();
-            let status = info.status();
-            let msg = format!("{} {} {} {}ms", info.method(), info.path(), status.as_u16(), ms);
-            if status.is_server_error() {
-                error!("{msg}");
-            } else if status.is_client_error() {
-                warn!("{msg}");
-            } else {
-                info!("{msg}");
-            }
-        }));
+    let app = ws_route(cmd_tx.clone(), pool.clone())
+        .merge(auth::routes(pool, cmd_tx))
+        .fallback(auth::not_found)
+        .method_not_allowed_fallback(auth::not_found)
+        .layer(middleware::from_fn(log_request));
 
-    let server = warp::serve(routes).incoming(bind_listener((bind, port).into())).run();
+    let listener = bind_listener((bind, port).into());
+    let server = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).into_future();
     // The manager only returns once a shutdown has let the games finish.
     tokio::select! {
-        () = server => {}
+        res = server => if let Err(e) = res { error!("Serveur HTTP: {e}") },
         _ = manager => {}
     }
 }

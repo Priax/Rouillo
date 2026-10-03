@@ -290,28 +290,22 @@ async fn db_a_profile_counts_wins_from_either_slot(pool: PgPool) {
     assert_eq!(history.len(), 2, "the limit holds");
 }
 
-fn login_api(pool: PgPool) -> impl warp::Filter<Extract = impl warp::Reply, Error = std::convert::Infallible> + Clone {
-    use warp::Filter;
-    crate::auth::routes(pool, tokio::sync::mpsc::channel(8).0).recover(crate::auth::handle_rejection)
+fn login_api(pool: PgPool) -> axum::Router {
+    crate::auth::routes(pool, tokio::sync::mpsc::channel(8).0)
 }
 
-async fn wrong_logins<F>(api: &F, ip: &str, count: usize) -> Vec<u16>
-where
-    F: warp::Filter + Clone + Send + Sync + 'static,
-    F::Extract: warp::Reply + Send,
-{
+async fn wrong_logins(api: &axum::Router, ip: &str, count: usize) -> Vec<u16> {
+    use tower::ServiceExt;
+    let body = serde_json::json!({ "username": "alice", "password": "wrong-password" }).to_string();
+    let peer = format!("{ip}:5000");
     let tries = (0..count).map(|_| {
-        warp::test::request()
-            .method("POST")
-            .path("/api/login")
-            .remote_addr(format!("{ip}:5000").parse().unwrap())
-            .json(&serde_json::json!({ "username": "alice", "password": "wrong-password" }))
-            .reply(api)
+        let req = crate::auth::tests::post_json("/api/login", Some(&peer), None, body.clone());
+        api.clone().oneshot(req)
     });
     futures_util::future::join_all(tries)
         .await
-        .iter()
-        .map(|r| r.status().as_u16())
+        .into_iter()
+        .map(|r| r.unwrap().status().as_u16())
         .collect()
 }
 

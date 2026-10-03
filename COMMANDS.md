@@ -5,7 +5,7 @@ Aide-mémoire de tout ce qu'on peut lancer sur le projet. Workspace Cargo à 3 c
 | Crate    | Rôle                          | Cible            |
 |----------|-------------------------------|------------------|
 | `shared` | logique de jeu + protocole    | lib (+ benches)  |
-| `server` | serveur autoritatif warp+tokio| binaire natif    |
+| `server` | serveur autoritatif axum+tokio| binaire natif    |
 | `client` | jeu: **natif (notan)** OU **WASM (navigateur)** | bin natif + WASM |
 
 ---
