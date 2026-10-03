@@ -1318,10 +1318,11 @@ fn server_samples() -> Vec<ServerMessage> {
             text: "t".into(),
             spectator: true,
         },
+        ServerMessage::Spectators { count: 3 },
     ]
 }
 
-const SERVER_VARIANTS: usize = 18;
+const SERVER_VARIANTS: usize = 19;
 
 fn server_variant(m: &ServerMessage) -> usize {
     match m {
@@ -1343,6 +1344,7 @@ fn server_variant(m: &ServerMessage) -> usize {
         ServerMessage::MatchCancelled { .. } => 15,
         ServerMessage::QueueCooldown { .. } => 16,
         ServerMessage::Chat { .. } => 17,
+        ServerMessage::Spectators { .. } => 18,
     }
 }
 
@@ -1375,7 +1377,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (6, 4_530_893_389_962_419_823);
+const PROTOCOL_DIGEST: (u32, u64) = (7, 2_608_409_267_914_912_748);
 
 #[test]
 fn protocol_changes_bump_the_version() {

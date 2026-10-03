@@ -64,6 +64,7 @@ pub struct Role {
     pub is_host: bool,
     pub can_pause: bool,
     pub series: Option<SeriesView>,
+    pub watchers: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -164,6 +165,9 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
     draw_boards(&mut draw, &pal, fonts, session, &layout, hud, time);
     draw_sidebar(&mut draw, &pal, fonts, session, &layout, hud, time);
     draw_chain_anim(&mut draw, fonts, session.chain_display, layout.mine);
+    if let Hud::Online(Role { watchers: 1.., .. }) = hud {
+        draw_watchers(&mut draw, &pal, fonts, hud, layout.win_w);
+    }
     if session.all_clear_timer > 0.0 {
         let alpha = (session.all_clear_timer / 3.0).min(1.0);
         let (cx, cy) = (layout.mine.x + layout.mine.w / 2.0, layout.mine.y + layout.mine.h / 2.0);
@@ -188,6 +192,25 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
     }
 
     ui.render(gfx, &draw);
+}
+
+fn draw_watchers(draw: &mut Draw, pal: &Palette, fonts: &Fonts, hud: Hud, win_w: f32) {
+    let Hud::Online(role) = hud else { return };
+    let count = role.watchers.to_string();
+    let (cx, cy) = (win_w - 70.0, 34.0);
+    draw.rect((cx - 46.0, cy - 18.0), (92.0, 36.0))
+        .corner_radius(18.0)
+        .color(Color::BLACK.with_alpha(0.45));
+    let eye = (cx - 18.0, cy);
+    draw.ellipse(eye, (15.0, 9.0)).color(pal.text);
+    draw.circle(5.5).position(eye.0, eye.1).color(Color::BLACK);
+    draw.circle(1.8).position(eye.0 + 1.8, eye.1 - 1.8).color(pal.text);
+    draw.sharp_text(&fonts.display, &count)
+        .position(cx + 18.0, cy)
+        .size(theme::size::EMPHASIS)
+        .h_align_center()
+        .v_align_middle()
+        .color(pal.text);
 }
 
 fn draw_backdrop(draw: &mut Draw, w: f32, h: f32, time: f32) {

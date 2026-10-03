@@ -256,7 +256,7 @@ pub struct RankedInfo {
     pub wins: [u8; 2],
 }
 
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 pub const MAX_CHAT_CHARS: usize = 200;
 pub const MAX_SPECTATORS: usize = 20;
@@ -371,6 +371,9 @@ pub enum ServerMessage {
         from: String,
         text: String,
         spectator: bool,
+    },
+    Spectators {
+        count: u8,
     },
 }
 

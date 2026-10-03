@@ -144,6 +144,8 @@ pub struct FriendEntry {
     pub elo: i32,
     #[serde(default)]
     pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub playing: bool,
 }
 
 #[derive(serde::Deserialize)]

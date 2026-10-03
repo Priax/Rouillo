@@ -475,7 +475,7 @@ fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
         if ui.clicked(remove_btn(ww, 0, i)) {
             return Some(FriendAction::StartRemove(e.user_id.clone()));
         }
-        if ui.clicked(watch_btn(ww, i)) {
+        if e.playing && ui.clicked(watch_btn(ww, i)) {
             return Some(FriendAction::Watch(e.user_id.clone()));
         }
     }
@@ -689,7 +689,9 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pic
                     ui.button(draw, fonts, confirm_no_btn(ww, i), "Non");
                 } else {
                     let active = !busy && confirm.is_none();
-                    ui.button_enabled(draw, fonts, watch_btn(ww, i), "Regarder", confirm.is_none());
+                    if entry.playing {
+                        ui.button_enabled(draw, fonts, watch_btn(ww, i), "Regarder", confirm.is_none());
+                    }
                     ui.button_enabled(draw, fonts, remove_btn(ww, 0, i), "Retirer", active);
                 }
             },

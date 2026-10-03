@@ -874,10 +874,21 @@ async fn handle_search_users(
 }
 
 async fn handle_list_friends(
-    State(Api { pool, .. }): State<Api>,
+    State(Api { pool, cmd_tx, .. }): State<Api>,
     Authed(me): Authed,
 ) -> Result<impl IntoResponse, ApiError> {
-    let list = db::list_friends(&pool, me.id).await.map_err(internal)?;
+    let mut list = db::list_friends(&pool, me.id).await.map_err(internal)?;
+    let users = list.friends.iter().map(|f| f.user_id).collect();
+    let (reply, answer) = tokio::sync::oneshot::channel();
+    let _ = cmd_tx.send(Command::Playing { users, reply }).await;
+    let playing = tokio::time::timeout(Duration::from_secs(1), answer)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default();
+    for friend in &mut list.friends {
+        friend.playing = playing.contains(&friend.user_id);
+    }
 
     Ok(Json(FriendListResponse {
         friends: list.friends,

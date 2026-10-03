@@ -424,6 +424,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         Screen::Game => {
             let role = draw::Role {
                 is_host: state.lobby.as_ref().is_some_and(|l| l.is_host),
+                watchers: state.lobby.as_ref().map_or(0, |l| l.spectators),
                 can_pause: state.lobby.as_ref().is_some_and(|l| l.settings.pause.allows(l.is_host)),
                 series: state.lobby.as_ref().and_then(|l| {
                     let ranked = l.ranked.as_ref()?;

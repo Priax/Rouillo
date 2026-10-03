@@ -140,6 +140,11 @@ pub enum Command {
         conn: ConnId,
         user_id: String,
     },
+    /// Which of `users` are in a room, for the friend list.
+    Playing {
+        users: Vec<Uuid>,
+        reply: tokio::sync::oneshot::Sender<Vec<Uuid>>,
+    },
     RankedCheckDone {
         check: RankedCheck,
         profile: Option<(i32, i64)>,
@@ -163,6 +168,7 @@ impl Command {
             | Self::RankedCheckDone { .. }
             | Self::Revoke { .. }
             | Self::Rename { .. }
+            | Self::Playing { .. }
             | Self::Shutdown => None,
             Self::Unregister { conn }
             | Self::Hello { conn, .. }
@@ -415,6 +421,9 @@ impl Manager {
             Command::Chat { conn, text } => self.chat(conn, &text),
             Command::Spectate { conn, id } => self.spectate(conn, id),
             Command::WatchFriend { conn, user_id } => self.watch_friend(conn, &user_id),
+            Command::Playing { users, reply } => {
+                let _ = reply.send(self.playing(&users));
+            }
             Command::RankedCheckDone { check, profile } => self.ranked_check_done(check, profile),
             Command::Revoke { user_id, keep } => self.revoke(user_id, keep),
             Command::Rename { user_id, username } => self.rename(user_id, &username),

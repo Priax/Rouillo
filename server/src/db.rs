@@ -490,6 +490,9 @@ pub struct FriendEntry {
     pub username: String,
     pub elo: i32,
     pub avatar_url: Option<String>,
+    /// Set from the game server, not the database: whether they are in a room.
+    #[sqlx(default)]
+    pub playing: bool,
 }
 
 pub struct FriendList {

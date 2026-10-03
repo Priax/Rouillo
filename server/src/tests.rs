@@ -763,6 +763,55 @@ fn a_disconnected_spectator_is_gone_at_once() {
     assert!(!mgr.rooms[&1].sim.paused, "only a player's drop pauses");
 }
 
+#[test]
+fn players_in_a_game_hear_how_many_people_watch() {
+    let mut mgr = new_mgr();
+    let (mut rx1, _rx2) = running_game(&mut mgr);
+    drain(&mut rx1);
+    let counts = |rx: &mut mpsc::Receiver<Vec<u8>>| -> Vec<u8> {
+        drain(rx)
+            .into_iter()
+            .filter_map(|m| match m {
+                ServerMessage::Spectators { count } => Some(count),
+                _ => None,
+            })
+            .collect()
+    };
+    let _rx3 = spectator(&mut mgr, 3);
+    let mut rx4 = spectator(&mut mgr, 4);
+    assert_eq!(counts(&mut rx1), vec![1, 2]);
+    drain(&mut rx4);
+    mgr.handle(Command::Unregister { conn: 3 });
+    assert_eq!(counts(&mut rx1), vec![1]);
+    assert_eq!(counts(&mut rx4), vec![1]);
+}
+
+fn playing(mgr: &mut Manager, users: Vec<Uuid>) -> Vec<Uuid> {
+    let (reply, mut answer) = tokio::sync::oneshot::channel();
+    mgr.handle(Command::Playing { users, reply });
+    answer.try_recv().expect("answered at once")
+}
+
+#[test]
+fn the_friend_list_learns_who_is_in_a_room() {
+    let mut mgr = new_mgr();
+    let _rx1 = reg(&mut mgr, 1);
+    hello_as(&mut mgr, 1, "A", 1);
+    mgr.handle(Command::CreateRoom {
+        conn: 1,
+        name: "R".into(),
+    });
+    let _rx2 = reg(&mut mgr, 2);
+    hello_as(&mut mgr, 2, "B", 2);
+    let (u1, u2, u3) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+    assert_eq!(playing(&mut mgr, vec![u1, u2, u3]), vec![u1]);
+    mgr.handle(Command::Unregister { conn: 1 });
+    assert!(
+        playing(&mut mgr, vec![u1]).is_empty(),
+        "gone players are not shown as playing"
+    );
+}
+
 fn watch_check(mgr: &mut Manager) -> FriendCheck {
     let checks = mgr.take_friend_checks();
     assert_eq!(checks.len(), 1, "exactly one lookup expected");

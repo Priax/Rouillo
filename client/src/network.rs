@@ -314,6 +314,11 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             state.series_over = Some((winner_slot, elo_change));
         }
         ServerMessage::Chat { from, text, spectator } => state.chat.push(&from, &text, spectator),
+        ServerMessage::Spectators { count } => {
+            if let Some(lobby) = state.lobby.as_mut() {
+                lobby.spectators = count;
+            }
+        }
         ServerMessage::SessionRevoked => {
             if state.auth.is_some() {
                 crate::menu::clear_auth(state);

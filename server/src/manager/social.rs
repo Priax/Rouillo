@@ -57,6 +57,18 @@ impl Manager {
         }
     }
 
+    /// Those of `users` sitting in a room with their connection up.
+    pub(super) fn playing(&self, users: &[Uuid]) -> Vec<Uuid> {
+        let seated: HashSet<Uuid> = self
+            .rooms
+            .values()
+            .flat_map(|r| r.members.iter())
+            .filter(|m| m.conn.is_some())
+            .filter_map(|m| m.user_id)
+            .collect();
+        users.iter().copied().filter(|u| seated.contains(u)).collect()
+    }
+
     /// Watches the game a friend is in, wherever it is.
     pub(super) fn watch_friend(&mut self, conn: ConnId, friend: &str) {
         let (Some(watcher), Ok(friend)) = (self.conn_user_id.get(&conn).copied(), Uuid::parse_str(friend)) else {
@@ -134,6 +146,7 @@ impl Manager {
         };
         let Some(room) = self.rooms.get_mut(&id) else { return };
         room.spectators.push(spectator);
+        let count = room.spectators.len() as u8;
         let playing = matches!(room.phase, Phase::Playing);
         let snapshot = playing.then(|| room.sim.state_update(true));
         let lobby = room.spectator_info();
@@ -146,6 +159,7 @@ impl Manager {
             self.deliver_msg(conn, &ServerMessage::GameStart);
             self.deliver_msg(conn, &snapshot);
         }
+        self.send_room_msg(id, &ServerMessage::Spectators { count });
         self.room_list_dirty = true;
         info!("WS {conn} regarde la room #{id}");
     }
@@ -159,8 +173,10 @@ impl Manager {
             return false;
         };
         room.spectators.remove(i);
+        let count = room.spectators.len() as u8;
         self.clients.insert(conn, None);
         self.refresh_lobby(id);
+        self.send_room_msg(id, &ServerMessage::Spectators { count });
         self.room_list_dirty = true;
         true
     }
