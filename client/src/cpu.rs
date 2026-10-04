@@ -15,13 +15,84 @@ pub enum Difficulty {
     Hard,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum Style {
+    #[default]
+    Balanced,
+    /// Fires small chains as soon as it has them.
+    Harasser,
+    /// Keeps a low, clean board for one very long chain.
+    Builder,
+    /// Keeps a chain ready and fires it back when attacked.
+    Counter,
+    /// Chases empty boards for their bonus.
+    AllClear,
+    /// Builds known shapes: stairs, sandwich, GTR, or a U.
+    Architect,
+}
+
+impl Style {
+    pub const ALL: [Self; 6] = [
+        Self::Balanced,
+        Self::Harasser,
+        Self::Builder,
+        Self::Counter,
+        Self::AllClear,
+        Self::Architect,
+    ];
+
+    pub const fn character(self) -> &'static str {
+        match self {
+            Self::Balanced => "Personnage 1",
+            Self::Harasser => "Personnage 2",
+            Self::Builder => "Personnage 3",
+            Self::Counter => "Personnage 4",
+            Self::AllClear => "Personnage 5",
+            Self::Architect => "Personnage 6",
+        }
+    }
+}
+
+/// Shapes the architect builds, as their lowest rows, top first. A letter
+/// stands for a colour: the same letter for the same colour, neighbours with
+/// different letters for different ones.
+const TEMPLATES: [&[&str]; 3] = [
+    &[".ABC..", "ABCD..", "ABCD..", "ABCD.."],
+    &["B.....", "A.....", "A.....", "AD....", "BD....", "BBDD.."],
+    &["BAC...", "BBAC..", "AACC.."],
+];
+
+type Template = Vec<(usize, usize, u8)>;
+
+fn template(rows: &[&str]) -> Template {
+    let top = H - rows.len();
+    rows.iter()
+        .enumerate()
+        .flat_map(|(r, row)| {
+            row.bytes()
+                .enumerate()
+                .filter(|&(_, b)| b != b'.')
+                .map(move |(c, b)| (top + r, c, b))
+        })
+        .collect()
+}
+
 struct Profile {
     think_ticks: u32,
     input_ticks: u32,
     hard_drop: bool,
     lookahead: bool,
+    /// The shortest chain worth firing when under attack.
     min_chain: u32,
+    /// The shortest chain worth firing otherwise.
+    calm_chain: u32,
     noise: f32,
+    potential_weight: f32,
+    height_cost: f32,
+    all_clear: bool,
+    template: Template,
+    /// Stacks the sides and keeps the middle low, in a U.
+    valley: bool,
 }
 
 impl Difficulty {
@@ -35,34 +106,67 @@ impl Difficulty {
         }
     }
 
-    const fn profile(self) -> Profile {
-        match self {
-            Self::Easy => Profile {
-                think_ticks: 30,
-                input_ticks: 18,
-                hard_drop: false,
-                lookahead: false,
-                min_chain: 1,
-                noise: 40.0,
-            },
-            Self::Normal => Profile {
-                think_ticks: 26,
-                input_ticks: 15,
-                hard_drop: false,
-                lookahead: true,
-                min_chain: 2,
-                noise: 20.0,
-            },
-            Self::Hard => Profile {
-                think_ticks: 10,
-                input_ticks: 5,
-                hard_drop: false,
-                lookahead: true,
-                min_chain: 5,
-                noise: 10.0,
-            },
+    const fn level(self) -> usize {
+        self as usize
+    }
+}
+
+fn profile(difficulty: Difficulty, style: Style, seed: u64) -> Profile {
+    let (think_ticks, input_ticks, lookahead, noise) = match difficulty {
+        Difficulty::Easy => (30, 18, false, 50.0),
+        Difficulty::Normal => (28, 16, true, 30.0),
+        Difficulty::Hard => (14, 7, true, 20.0),
+    };
+    let pick = |chains: [u32; 3]| chains[difficulty.level()];
+    let base = pick([1, 2, 5]);
+    let mut profile = Profile {
+        think_ticks,
+        input_ticks,
+        hard_drop: false,
+        lookahead,
+        min_chain: base,
+        calm_chain: base,
+        noise,
+        potential_weight: POTENTIAL_WEIGHT,
+        height_cost: HEIGHT_COST,
+        all_clear: false,
+        template: Vec::new(),
+        valley: false,
+    };
+    match style {
+        Style::Balanced => {}
+        Style::Harasser => {
+            profile.calm_chain = pick([1, 2, 2]);
+            profile.min_chain = profile.calm_chain;
+            profile.potential_weight *= 0.5;
+        }
+        Style::Builder => {
+            profile.calm_chain = pick([2, 4, 7]);
+            profile.min_chain = profile.calm_chain;
+            profile.potential_weight *= 1.5;
+            profile.height_cost *= 3.0;
+        }
+        Style::Counter => {
+            profile.min_chain = pick([1, 2, 4]);
+            profile.calm_chain = pick([3, 4, 7]);
+            profile.potential_weight *= 1.6;
+            profile.height_cost *= 3.0;
+        }
+        Style::AllClear => {
+            profile.calm_chain = pick([1, 2, 3]);
+            profile.min_chain = profile.calm_chain;
+            profile.all_clear = true;
+        }
+        Style::Architect => {
+            profile.calm_chain = pick([2, 3, 4]);
+            profile.min_chain = profile.calm_chain;
+            match TEMPLATES.get((seed % (TEMPLATES.len() as u64 + 1)) as usize) {
+                Some(rows) => profile.template = template(rows),
+                None => profile.valley = true,
+            }
         }
     }
+    profile
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -364,61 +468,152 @@ const SAFE_HEIGHT: usize = 8;
 const SAFE_SPAWN_HEIGHT: usize = 5;
 const URGENT_HEIGHT: usize = 9;
 const URGENT_THREAT: u32 = 6;
+/// The attack the counter answers: smaller ones it lets land.
+const ANSWERED_THREAT: u32 = 3;
 const WASTED_POP: f32 = 0.05;
 const POTENTIAL_WEIGHT: f32 = 0.5;
 const LATER: f32 = 0.9;
 const NO_SECOND_MOVE: f32 = -400.0;
 const HEIGHT_COST: f32 = 2.0;
+const ALL_CLEAR_VALUE: f32 = 1500.0;
+/// Below this many Puyos, the all clear chaser looks a pair further ahead
+/// and keeps each colour in one piece.
+const ALL_CLEAR_RANGE: usize = 16;
+const SPLIT_COLOUR_COST: f32 = 70.0;
+const TEMPLATE_PLACED: f32 = 8.0;
+const TEMPLATE_MATCH: f32 = 25.0;
+const TEMPLATE_CLASH: f32 = 60.0;
+/// What a cell of height is worth in each column, for the U.
+const VALLEY: [f32; W] = [6.0, 3.0, -4.0, -4.0, 3.0, 6.0];
 const UNSAFE_HEIGHT_COST: f32 = 400.0;
 const UNSAFE_SPAWN_COST: f32 = 300.0;
 const PAIR_VALUE: f32 = 12.0;
 const TRIPLET_VALUE: f32 = 30.0;
 
-fn shape(grid: &Grid, builds: bool) -> f32 {
-    if grid[TOP][SPAWN] != 0 {
-        return DEAD;
-    }
-    let mut value = 0.0;
-    for c in 0..W {
-        let h = height(grid, c);
-        let over = h.saturating_sub(SAFE_HEIGHT) as f32;
-        value -= over * over * UNSAFE_HEIGHT_COST + h as f32 * HEIGHT_COST;
-    }
-    let over = height(grid, SPAWN).saturating_sub(SAFE_SPAWN_HEIGHT) as f32;
-    value -= over * over * UNSAFE_SPAWN_COST;
+struct Judge<'a> {
+    profile: &'a Profile,
+    urgent: bool,
+    threatened: bool,
+    then: (u8, u8),
+}
 
+/// On a nearly empty board, how many groups there are beyond one per colour.
+fn split_colours(grid: &Grid) -> usize {
+    let cells = grid.iter().flatten().filter(|&&cell| cell != 0).count();
+    if cells > ALL_CLEAR_RANGE {
+        return 0;
+    }
     let mut seen = [[false; W]; H];
+    let mut groups = [0; 8];
     for r in 0..H {
         for c in 0..W {
-            if grid[r][c] == 0 || grid[r][c] == GARBAGE || seen[r][c] {
-                continue;
+            if grid[r][c] != 0 && !seen[r][c] {
+                flood(grid, r, c, &mut seen);
+                groups[grid[r][c] as usize] += 1;
             }
-            value += match flood(grid, r, c, &mut seen).len {
-                1 => 0.0,
-                2 => PAIR_VALUE,
-                _ => TRIPLET_VALUE,
-            };
         }
     }
-    if builds {
-        value += potential(grid).score as f32 * POTENTIAL_WEIGHT;
+    groups.iter().map(|&n: &usize| n.saturating_sub(1)).sum::<usize>() + groups[GARBAGE as usize]
+}
+
+fn empty(grid: &Grid) -> bool {
+    grid.iter().flatten().all(|&cell| cell == 0)
+}
+
+fn template_value(grid: &Grid, template: &Template) -> f32 {
+    let placed: Vec<_> = template
+        .iter()
+        .filter(|&&(r, c, _)| grid[r][c] != 0 && grid[r][c] != GARBAGE)
+        .collect();
+    let mut value = placed.len() as f32 * TEMPLATE_PLACED;
+    for (i, &&(r1, c1, l1)) in placed.iter().enumerate() {
+        for &&(r2, c2, l2) in &placed[i + 1..] {
+            let same = grid[r1][c1] == grid[r2][c2];
+            if l1 == l2 {
+                value += if same { TEMPLATE_MATCH } else { -TEMPLATE_CLASH };
+            } else if same && r1.abs_diff(r2) + c1.abs_diff(c2) == 1 {
+                value -= TEMPLATE_CLASH;
+            }
+        }
     }
     value
 }
 
-struct Judge<'a> {
-    profile: &'a Profile,
-    urgent: bool,
-}
-
 impl Judge<'_> {
-    fn fire(&self, chain: Chain) -> f32 {
-        let wanted = self.urgent || chain.links >= self.profile.min_chain;
-        chain.score as f32 * if wanted { 1.0 } else { WASTED_POP }
+    fn need(&self) -> u32 {
+        if self.threatened {
+            self.profile.min_chain
+        } else {
+            self.profile.calm_chain
+        }
     }
 
-    fn builds(&self) -> bool {
-        self.profile.min_chain > 1
+    /// What firing `chain` is worth, given what the board looks like after it.
+    fn fire(&self, chain: Chain, after: &Grid) -> f32 {
+        if chain.links == 0 {
+            return 0.0;
+        }
+        let cleared = self.profile.all_clear && empty(after);
+        let wanted = self.urgent || chain.links >= self.need() || cleared;
+        let bonus = if cleared { ALL_CLEAR_VALUE } else { 0.0 };
+        chain.score as f32 * if wanted { 1.0 } else { WASTED_POP } + bonus
+    }
+
+    fn shape(&self, grid: &Grid) -> f32 {
+        if grid[TOP][SPAWN] != 0 {
+            return DEAD;
+        }
+        let mut value = 0.0;
+        let safe = height(grid, SPAWN) <= SAFE_SPAWN_HEIGHT;
+        for (c, slope) in VALLEY.into_iter().enumerate() {
+            let h = height(grid, c);
+            let over = h.saturating_sub(SAFE_HEIGHT) as f32;
+            value -= over * over * UNSAFE_HEIGHT_COST + h as f32 * self.profile.height_cost;
+            if self.profile.valley {
+                value += h.min(SAFE_HEIGHT) as f32 * slope;
+            }
+        }
+        let over = height(grid, SPAWN).saturating_sub(SAFE_SPAWN_HEIGHT) as f32;
+        value -= over * over * UNSAFE_SPAWN_COST;
+
+        let mut seen = [[false; W]; H];
+        for r in 0..H {
+            for c in 0..W {
+                if grid[r][c] == 0 || grid[r][c] == GARBAGE || seen[r][c] {
+                    continue;
+                }
+                value += match flood(grid, r, c, &mut seen).len {
+                    1 => 0.0,
+                    2 => PAIR_VALUE,
+                    _ => TRIPLET_VALUE,
+                };
+            }
+        }
+        let answering = self.threatened && self.profile.min_chain < self.profile.calm_chain;
+        if self.need() > 1 && !answering && safe {
+            value += potential(grid).score as f32 * self.profile.potential_weight;
+        }
+        if self.profile.all_clear {
+            value -= split_colours(grid) as f32 * SPLIT_COLOUR_COST;
+        }
+        value + template_value(grid, &self.profile.template)
+    }
+
+    /// Whether the pair after next can empty the board, for the all clear
+    /// chaser once only a few Puyos are left.
+    fn clear_later(&self, grid: &Grid) -> f32 {
+        let cells = grid.iter().flatten().filter(|&&cell| cell != 0).count();
+        if !self.profile.all_clear || cells == 0 || cells > ALL_CLEAR_RANGE {
+            return 0.0;
+        }
+        let clears = placements()
+            .filter_map(|p| place(grid, self.then, p))
+            .any(|mut grid| resolve(&mut grid).links > 0 && empty(&grid));
+        if clears {
+            LATER * LATER * ALL_CLEAR_VALUE
+        } else {
+            0.0
+        }
     }
 
     fn after(&self, grid: &Grid, next: (u8, u8)) -> f32 {
@@ -426,16 +621,16 @@ impl Judge<'_> {
             return DEAD;
         }
         if !self.profile.lookahead {
-            return shape(grid, self.builds());
+            return self.shape(grid);
         }
         placements()
             .filter_map(|p| place(grid, next, p))
             .map(|mut grid| {
                 let chain = resolve(&mut grid);
-                LATER * self.fire(chain) + shape(&grid, self.builds())
+                LATER * self.fire(chain, &grid) + self.shape(&grid) + self.clear_later(&grid)
             })
             .fold(None, |best: Option<f32>, v| Some(best.map_or(v, |b| b.max(v))))
-            .unwrap_or_else(|| shape(grid, self.builds()) + NO_SECOND_MOVE)
+            .unwrap_or_else(|| self.shape(grid) + NO_SECOND_MOVE)
     }
 }
 
@@ -443,15 +638,17 @@ const PLACEMENTS: usize = 4 * W - 2;
 
 struct Search {
     urgent: bool,
+    threatened: bool,
     tried: usize,
     elapsed: u32,
     best: (f32, Placement),
 }
 
 impl Search {
-    const fn new(urgent: bool) -> Self {
+    const fn new(urgent: bool, threatened: bool) -> Self {
         Self {
             urgent,
+            threatened,
             tried: 0,
             elapsed: 0,
             best: (
@@ -472,6 +669,8 @@ impl Search {
         let judge = Judge {
             profile,
             urgent: self.urgent,
+            threatened: self.threatened,
+            then: (code(board.next_next_types.0), code(board.next_next_types.1)),
         };
         let next = (code(board.next_types.0), code(board.next_types.1));
         for target in placements().skip(self.tried).take(count) {
@@ -481,7 +680,7 @@ impl Search {
             };
             let mut grid = grid_of(&after);
             let chain = resolve(&mut grid);
-            let value = judge.fire(chain) + judge.after(&grid, next) + noise.next() * profile.noise;
+            let value = judge.fire(chain, &grid) + judge.after(&grid, next) + noise.next() * profile.noise;
             if value > self.best.0 {
                 self.best = (value, target);
             }
@@ -513,9 +712,9 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    pub fn new(difficulty: Difficulty, seed: u64) -> Self {
+    pub fn new(difficulty: Difficulty, style: Style, seed: u64) -> Self {
         Self {
-            profile: difficulty.profile(),
+            profile: profile(difficulty, style, seed),
             turn: None,
             soft_drop_held: false,
             noise: Noise((seed as u32) | 1),
@@ -533,7 +732,7 @@ impl Cpu {
             return None;
         }
         if !current {
-            let search = Search::new(urgent(board, threat));
+            let search = Search::new(urgent(board, threat), threat >= ANSWERED_THREAT);
             self.turn = Some((board.piece_id, Turn::Thinking(search)));
         }
         let (_, turn) = self.turn.as_mut()?;
@@ -635,7 +834,7 @@ mod tests {
 
     #[test]
     fn a_placement_ends_the_same_whenever_it_is_judged() {
-        let profile = Difficulty::Normal.profile();
+        let profile = profile(Difficulty::Normal, Style::Balanced, 0);
         let early = started(3);
         let mut late = early.clone();
         let waited = 7;
@@ -654,7 +853,7 @@ mod tests {
     fn the_pair_lands_where_the_search_saw_it_land() {
         for difficulty in Difficulty::ALL {
             let mut board = started(11);
-            let mut cpu = Cpu::new(difficulty, 11);
+            let mut cpu = Cpu::new(difficulty, Style::Balanced, 11);
             let mut expected: Option<(u32, Grid)> = None;
             let mut checked = 0;
             for _ in 0..30 * 60 {
@@ -689,7 +888,7 @@ mod tests {
     #[test]
     fn soft_drop_is_released_before_the_next_pair_falls() {
         let mut board = started(5);
-        let mut cpu = Cpu::new(Difficulty::Normal, 5);
+        let mut cpu = Cpu::new(Difficulty::Normal, Style::Balanced, 5);
         let (mut pressed, mut pairs) = (false, 0);
         let mut id = board.piece_id;
         for _ in 0..20 * 60 {
@@ -703,6 +902,90 @@ mod tests {
             }
         }
         assert!(pressed && pairs > 3, "{pairs} pairs, soft drop used: {pressed}");
+    }
+
+    fn fires_two_chain(style: Style, threat: u32) -> bool {
+        let mut grid = [[0; W]; H];
+        for (r, row) in [".B....", "BR....", "BR....", "BR...."].iter().enumerate() {
+            for (c, b) in row.bytes().enumerate() {
+                grid[H - 4 + r][c] = match b {
+                    b'R' => 1,
+                    b'B' => 2,
+                    _ => 0,
+                };
+            }
+        }
+        let mut board = board_with(&grid);
+        board.spawn_piece();
+        let piece = board.active_piece.as_mut().unwrap();
+        (piece.axis_type, piece.sat_type) = (PuyoType::Red, PuyoType::Red);
+        board.next_types = (PuyoType::Yellow, PuyoType::Green);
+        board.next_next_types = (PuyoType::Purple, PuyoType::Yellow);
+        let mut cpu = Cpu::new(Difficulty::Normal, style, 1);
+        let id = board.piece_id;
+        for _ in 0..600 {
+            board.step(cpu.input(&board, threat), 0);
+            if board.chain_count >= 2 {
+                return true;
+            }
+            if board.piece_id != id && board.state == GameState::Playing {
+                return false;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn the_counter_keeps_its_chain_until_attacked() {
+        assert!(!fires_two_chain(Style::Counter, 0), "fired with nothing coming");
+        assert!(fires_two_chain(Style::Counter, 3), "kept its chain under attack");
+        assert!(fires_two_chain(Style::Harasser, 0), "the harasser held back");
+    }
+
+    #[test]
+    fn the_harasser_fires_shorter_chains_than_the_builder() {
+        let average = |style| {
+            let chains: Vec<u32> = (0..2)
+                .flat_map(|seed| play_styled(Difficulty::Normal, style, seed, 90 * 60).chains)
+                .filter(|&links| links > 1)
+                .collect();
+            chains.iter().sum::<u32>() as f32 / chains.len().max(1) as f32
+        };
+        let (harasser, builder) = (average(Style::Harasser), average(Style::Builder));
+        assert!(harasser + 1.0 < builder, "harasser {harasser}, builder {builder}");
+    }
+
+    #[test]
+    fn the_u_keeps_the_middle_lower_than_the_sides() {
+        let dip = |style, seed| {
+            let mut board = started(seed);
+            let mut cpu = Cpu::new(Difficulty::Normal, style, seed);
+            let mut dip = 0.0;
+            for tick in 0..90 * 60 {
+                board.step(cpu.input(&board, 0), 0);
+                if tick % 60 == 0 {
+                    let grid = grid_of(&board);
+                    let h = |c| height(&grid, c) as f32;
+                    dip += h(0) + h(5) - h(2) - h(3);
+                }
+            }
+            dip / 90.0
+        };
+        let u_seed = TEMPLATES.len() as u64;
+        let (u, balanced) = (dip(Style::Architect, u_seed), dip(Style::Balanced, u_seed));
+        assert!(u > balanced + 1.0, "U {u}, balanced {balanced}");
+    }
+
+    #[test]
+    fn every_template_chains_once_filled() {
+        for (rows, links) in TEMPLATES.into_iter().zip([4, 3, 3]) {
+            let mut grid = [[0; W]; H];
+            for (r, c, label) in template(rows) {
+                grid[r][c] = label - b'A' + 1;
+            }
+            assert_eq!(resolve(&mut grid.clone()).links, 0, "{rows:?} pops before its trigger");
+            assert_eq!(potential(&grid).links, links, "{rows:?}");
+        }
     }
 
     #[test]
@@ -726,18 +1009,24 @@ mod tests {
         best_chain: u32,
         chains: Vec<u32>,
         sent: u32,
+        all_clears: u32,
         alive: bool,
     }
 
     fn play_alone(difficulty: Difficulty, seed: u64, ticks: u32) -> Run {
+        play_styled(difficulty, Style::Balanced, seed, ticks)
+    }
+
+    fn play_styled(difficulty: Difficulty, style: Style, seed: u64, ticks: u32) -> Run {
         let mut board = started(seed);
-        let mut cpu = Cpu::new(difficulty, seed);
+        let mut cpu = Cpu::new(difficulty, style, seed);
         let mut run = Run {
             ticks: 0,
             pairs: 0,
             best_chain: 0,
             chains: Vec::new(),
             sent: 0,
+            all_clears: 0,
             alive: true,
         };
         let mut last = (board.piece_id, 0);
@@ -747,7 +1036,9 @@ mod tests {
                 break;
             }
             let input = cpu.input(&board, 0);
+            let cleared = board.last_was_all_clear;
             run.sent += board.step(input, 0);
+            run.all_clears += u32::from(!cleared && board.last_was_all_clear);
             run.ticks += 1;
             if board.piece_id != last.0 {
                 if last.1 > 0 {
@@ -763,8 +1054,15 @@ mod tests {
     }
 
     fn duel(levels: [Difficulty; 2], seed: u64) -> (usize, u32) {
+        duel_styled(levels.map(|level| (level, Style::Balanced)), seed)
+    }
+
+    fn duel_styled(players: [(Difficulty, Style); 2], seed: u64) -> (usize, u32) {
         let mut boards = [started(seed), started(seed)];
-        let mut cpus = [Cpu::new(levels[0], seed), Cpu::new(levels[1], seed + 1000)];
+        let mut cpus = [
+            Cpu::new(players[0].0, players[0].1, seed),
+            Cpu::new(players[1].0, players[1].1, seed + 1000),
+        ];
         let mut in_flight: Vec<(usize, u32, u32)> = Vec::new();
         for tick in 1..=30 * 60 * 60 {
             let mut sent = [0; 2];
@@ -789,7 +1087,50 @@ mod tests {
                 return (usize::from(lost[0] && !lost[1]), tick);
             }
         }
-        panic!("{levels:?} never finished on seed {seed}");
+        panic!("{players:?} never finished on seed {seed}");
+    }
+
+    #[test]
+    #[ignore = "prints how each style plays, to tune them"]
+    fn report_styles() {
+        let difficulty = match std::env::var("LEVEL").as_deref() {
+            Ok("easy") => Difficulty::Easy,
+            Ok("normal") => Difficulty::Normal,
+            _ => Difficulty::Hard,
+        };
+        let only = std::env::var("STYLES").unwrap_or_default();
+        for style in Style::ALL
+            .into_iter()
+            .filter(|s| only.is_empty() || only.contains(&format!("{s:?}")))
+        {
+            let (mut pairs, mut sent, mut deaths, mut ticks, mut clears) = (0, 0, 0, 0, 0);
+            let mut hist = [0u32; 12];
+            let seeds = 40;
+            for seed in 0..seeds {
+                let run = play_styled(difficulty, style, seed, 3 * 60 * 60);
+                pairs += run.pairs;
+                sent += run.sent;
+                ticks += run.ticks;
+                clears += run.all_clears;
+                deaths += u32::from(!run.alive);
+                for c in run.chains {
+                    hist[(c as usize).min(11)] += 1;
+                }
+            }
+            let minutes = ticks as f32 / 3600.0;
+            let mut wins = 0;
+            let games = 30;
+            for seed in 0..games {
+                let (winner, _) = duel_styled([(difficulty, style), (difficulty, Style::Balanced)], seed);
+                wins += u32::from(winner == 0);
+            }
+            println!(
+                "{style:?}: {:.1} pairs/min, {:.0} nuisance/min, {deaths}/{seeds} deaths, {clears} all clears, chains {:?}, beats balanced {wins}/{games}",
+                pairs as f32 / minutes,
+                sent as f32 / minutes,
+                &hist[1..],
+            );
+        }
     }
 
     #[test]

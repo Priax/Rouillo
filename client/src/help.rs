@@ -48,7 +48,8 @@ pub struct HelpView {
     rules: bool,
 }
 
-const DEMO_W: f32 = game_draw::BOARD_W + 40.0;
+/// Wide enough for the match between two CPUs to stay readable.
+const DEMO_W: f32 = 440.0;
 const DEMO_H: f32 = 580.0;
 const INFO_H_UPRIGHT: f32 = 640.0;
 const TAB_H: f32 = 56.0;
@@ -61,13 +62,15 @@ fn cards(view: View) -> (Rect, Rect) {
     let top = theme::HEADER_H + 20.0;
     if view.portrait() {
         let info = Rect::at(20.0, top, view.w - 40.0, INFO_H_UPRIGHT);
-        let demo = Rect::at((view.w - DEMO_W) / 2.0, top + INFO_H_UPRIGHT + 20.0, DEMO_W, DEMO_H);
+        let w = DEMO_W.min(view.w - 40.0);
+        let demo = Rect::at((view.w - w) / 2.0, top + INFO_H_UPRIGHT + 20.0, w, DEMO_H);
         return (info, demo);
     }
     let width = 1220.0_f32.min(view.w - 40.0);
     let left = (view.w - width) / 2.0;
-    let info = Rect::at(left, top, width - DEMO_W - 25.0, DEMO_H);
-    let demo = Rect::at(info.x + info.w + 25.0, top, DEMO_W, DEMO_H);
+    let demo_w = DEMO_W.min(width * 0.36);
+    let info = Rect::at(left, top, width - demo_w - 25.0, DEMO_H);
+    let demo = Rect::at(info.x + info.w + 25.0, top, demo_w, DEMO_H);
     (info, demo)
 }
 
@@ -226,7 +229,12 @@ fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, t
         .h_align_center()
         .v_align_middle()
         .color(pal.text);
-    let board = Rect::at(card.x + 20.0, card.y + 44.0, game_draw::BOARD_W, game_draw::BOARD_H);
+    let board = if demo.rival.is_some() {
+        Rect::at(card.x + 20.0, card.y + 44.0, card.w - 40.0, game_draw::BOARD_H)
+    } else {
+        let x = card.x + (card.w - game_draw::BOARD_W) / 2.0;
+        Rect::at(x, card.y + 44.0, game_draw::BOARD_W, game_draw::BOARD_H)
+    };
     game_draw::draw_demo(draw, fonts, demo, board, time);
     if let Some((key, left)) = demo.key {
         draw.sharp_text(&fonts.display, key)

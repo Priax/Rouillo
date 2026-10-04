@@ -1,4 +1,5 @@
 use notan::draw::{Draw, DrawShapes};
+use notan::math::{vec2, Mat3};
 use notan::prelude::*;
 use shared::{Board, GameState, PuyoType, Settle};
 
@@ -833,13 +834,43 @@ fn pop_look(puyo: &mut Puyo, frame: u32) {
 /// The help's demonstration: one board in a frame, its piece turning smoothly,
 /// with the chain counter over it.
 pub fn draw_demo(draw: &mut Draw, fonts: &Fonts, demo: &crate::demo::Demo, area: Rect, time: f32) {
-    let piece = Piece {
-        offset: (fall_step(&demo.board), 0.0),
-        satellite: demo.turn.satellite(),
+    let (Some(rival), Some(names)) = (&demo.rival, demo.players()) else {
+        let piece = Piece {
+            offset: (fall_step(&demo.board), 0.0),
+            satellite: demo.turn.satellite(),
+        };
+        draw_board(draw, &demo.board, area, piece, time);
+        draw_chain_anim(draw, fonts, demo.chain, area);
+        return;
     };
-    draw_board(draw, &demo.board, area, piece, time);
-    draw_chain_anim(draw, fonts, demo.chain, area);
+    let scale = (area.w - DUEL_GAP) / (2.0 * BOARD_W);
+    let y = area.y + (area.h - BOARD_H * scale) / 2.0;
+    let players = [
+        (&demo.board, &demo.turn, demo.chain),
+        (&rival.board, &rival.turn, rival.chain),
+    ];
+    for (i, ((board, turn, chain), name)) in players.into_iter().zip(names).enumerate() {
+        let x = area.x + i as f32 * (BOARD_W * scale + DUEL_GAP);
+        draw.sharp_text(&fonts.display, name)
+            .position(x + BOARD_W * scale / 2.0, y - 20.0)
+            .size(theme::size::LABEL)
+            .h_align_center()
+            .v_align_middle()
+            .color(Color::WHITE);
+        draw.transform()
+            .push(Mat3::from_translation(vec2(x, y)) * Mat3::from_scale(vec2(scale, scale)));
+        let local = Rect::at(0.0, 0.0, BOARD_W, BOARD_H);
+        let piece = Piece {
+            offset: (fall_step(board), 0.0),
+            satellite: turn.satellite(),
+        };
+        draw_board(draw, board, local, piece, time);
+        draw_chain_anim(draw, fonts, chain, local);
+        draw.transform().pop();
+    }
 }
+
+const DUEL_GAP: f32 = 24.0;
 
 pub const BOARD_W: f32 = config::GRID_WIDTH as f32 * config::CELL_SIZE;
 pub const BOARD_H: f32 = (config::GRID_HEIGHT - config::VISIBLE_ROW_OFFSET) as f32 * config::CELL_SIZE;

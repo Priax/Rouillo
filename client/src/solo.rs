@@ -3,7 +3,7 @@ use std::sync::Arc;
 use notan::prelude::*;
 use shared::{config, Board, GameState, IncomingGarbage, RoomSettings};
 
-use crate::cpu::{Cpu, Difficulty};
+use crate::cpu::{Cpu, Difficulty, Style};
 use crate::draw::Hud;
 use crate::state::{GameSession, Screen, State};
 use crate::ui::{self, Pill, Rect, SettingsPanel, SharpText, View};
@@ -12,34 +12,45 @@ use crate::{http, logic, theme};
 #[derive(Clone, Copy, Default)]
 pub struct SoloSettings {
     opponent: Option<Difficulty>,
+    character: Style,
     room: RoomSettings,
 }
 
+fn cycle<T: Copy + PartialEq>(options: &[T], at: T, dir: i32) -> T {
+    let i = options.iter().position(|&o| o == at).unwrap_or(0) as i32;
+    options[(i + dir.signum()).rem_euclid(options.len() as i32) as usize]
+}
+
 impl SoloSettings {
-    const COUNT: usize = 3;
+    const COUNT: usize = 4;
 
     fn label(i: usize) -> &'static str {
         match i {
             0 => "Adversaire",
-            _ => RoomSettings::label(i - 1),
+            1 => "Personnage",
+            _ => RoomSettings::label(i - 2),
         }
     }
 
     fn value(&self, i: usize) -> String {
         match i {
             0 => self.opponent.map_or("Aucun", Difficulty::label).into(),
-            _ => self.room.value(i - 1),
+            1 if self.opponent.is_none() => "-".into(),
+            1 => self.character.character().into(),
+            _ => self.room.value(i - 2),
         }
     }
 
     fn adjust(&mut self, i: usize, dir: i32) {
-        if i > 0 {
-            self.room.adjust(i - 1, dir);
-            return;
+        match i {
+            0 => {
+                let options: Vec<_> = std::iter::once(None).chain(Difficulty::ALL.map(Some)).collect();
+                self.opponent = cycle(&options, self.opponent, dir);
+            }
+            1 if self.opponent.is_some() => self.character = cycle(&Style::ALL, self.character, dir),
+            1 => {}
+            _ => self.room.adjust(i - 2, dir),
         }
-        let options: Vec<_> = std::iter::once(None).chain(Difficulty::ALL.map(Some)).collect();
-        let at = options.iter().position(|&o| o == self.opponent).unwrap_or(0) as i32;
-        self.opponent = options[(at + dir.signum()).rem_euclid(options.len() as i32) as usize];
     }
 }
 
@@ -63,7 +74,9 @@ impl SoloGame {
         Self {
             session,
             settings,
-            cpu: settings.opponent.map(|difficulty| Cpu::new(difficulty, seed)),
+            cpu: settings
+                .opponent
+                .map(|difficulty| Cpu::new(difficulty, settings.character, seed)),
             new_best: false,
         }
     }
@@ -283,9 +296,15 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
     panel.draw(&mut draw, &pal, fonts, "Réglages de la partie");
     for i in 0..SoloSettings::COUNT {
         let value = state.solo_settings.value(i);
-        state
-            .ui
-            .stepper(&mut draw, fonts, panel.stepper(i), SoloSettings::label(i), &value, true);
+        let editable = i != 1 || state.solo_settings.opponent.is_some();
+        state.ui.stepper(
+            &mut draw,
+            fonts,
+            panel.stepper(i),
+            SoloSettings::label(i),
+            &value,
+            editable,
+        );
     }
 
     state.ui.menu_bar(
@@ -309,7 +328,7 @@ mod tests {
     fn game(opponent: Option<Difficulty>, seed: u64) -> SoloGame {
         let settings = SoloSettings {
             opponent,
-            room: RoomSettings::default(),
+            ..SoloSettings::default()
         };
         SoloGame::with_seed(settings, seed)
     }
@@ -415,7 +434,9 @@ mod tests {
         settings.adjust(0, 1);
         settings.adjust(0, 1);
         assert_eq!(settings.opponent, Some(Difficulty::Easy));
-        settings.adjust(1, 1);
+        settings.adjust(1, -1);
+        assert_eq!(settings.character, Style::Architect);
+        settings.adjust(2, 1);
         assert_eq!(settings.room.starting_level, 2);
     }
 }
