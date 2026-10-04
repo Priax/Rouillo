@@ -2,7 +2,7 @@ use notan::draw::DrawShapes;
 use notan::prelude::*;
 
 use crate::state::{AuthForm, Screen, Settings, State};
-use crate::ui::{Rect, SettingsPanel, SharpText, View};
+use crate::ui::{Rect, SettingsPanel, SharpText, Status, View};
 use crate::{http, theme};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -70,9 +70,15 @@ fn items(screen: Screen, logged_in: bool) -> &'static [MenuItem] {
 
 const ROW_H: f32 = 64.0;
 
+/// Where the rows start: a little below the middle, higher on a short screen
+/// so the last one stays on it.
+fn menu_top(view: View, rows: usize) -> f32 {
+    (view.h / 2.0 - 60.0).min(view.h - rows as f32 * ROW_H - 16.0)
+}
+
 /// The menu's rows, stacked with no gap under the title.
 fn menu_rows(view: View, items: &'static [MenuItem]) -> impl Iterator<Item = (MenuItem, Rect)> {
-    let top = view.h / 2.0 - 60.0;
+    let top = menu_top(view, items.len());
     items
         .iter()
         .enumerate()
@@ -101,6 +107,9 @@ pub fn update_menu(app: &App, state: &mut State) {
         Some(MenuItem::Play) => {
             state.notice.clear();
             state.screen = Screen::PlayMenu;
+        }
+        Some(MenuItem::Multiplayer | MenuItem::Ranked) if state.too_old => {
+            state.notice = Status::error("Mettez d'abord le jeu à jour, avec le bouton en haut à droite.");
         }
         Some(MenuItem::Multiplayer) => start_play(state),
         Some(MenuItem::Ranked) => crate::ranked::enter(state),
@@ -153,6 +162,8 @@ pub fn forget_session(state: &mut State) {
 pub fn clear_auth(state: &mut State) {
     crate::state::clear_stored_token();
     state.auth = None;
+    state.solo_best = crate::state::load_best_score();
+    state.solo_best_slot = None;
     state.friends = None;
     state.profile = None;
     state.other_profile = None;
@@ -164,7 +175,10 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
     let mut draw = state.ui.screen_canvas(gfx);
 
     draw.sharp_text(&state.fonts.display, "Rouillo")
-        .position(ww / 2.0, wh / 2.0 - 140.0)
+        .position(
+            ww / 2.0,
+            menu_top(state.ui.view(), items(state.screen, state.auth.is_some()).len()) - 80.0,
+        )
         .size(theme::size::HERO)
         .h_align_center()
         .v_align_middle()

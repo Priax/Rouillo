@@ -69,6 +69,7 @@ struct UserProfile {
     banner_url: Option<String>,
     elo: i32,
     created_at: DateTime<Utc>,
+    solo_best: i32,
 }
 
 #[derive(Clone)]
@@ -137,6 +138,7 @@ impl From<db::User> for UserProfile {
             banner_url: user.banner_url,
             elo: user.elo,
             created_at: user.created_at,
+            solo_best: user.solo_best,
         }
     }
 }
@@ -160,6 +162,7 @@ pub fn routes(pool: DbPool, cmd_tx: mpsc::Sender<Command>) -> Router {
         .route("/api/me", get(handle_me).patch(handle_patch_me))
         .route("/api/me/password", post(handle_change_password))
         .route("/api/me/username", post(handle_rename))
+        .route("/api/me/solo-best", post(handle_solo_best))
         .route(
             "/api/me/avatar",
             put(handle_avatar_upload)

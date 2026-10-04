@@ -190,8 +190,6 @@ pub struct FriendsData {
     pub action_pending: Option<HttpSlot>,
     pub action_status: Status,
     pub pages: [crate::ui::Pager; 3],
-    /// Rows per page, from the window's height.
-    pub rows: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -268,6 +266,10 @@ pub fn load_best_score() -> i32 {
 
 pub fn save_best_score(score: i32) {
     storage::set(BEST_SCORE_KEY, &score.to_string());
+}
+
+pub fn clear_best_score() {
+    storage::remove(BEST_SCORE_KEY);
 }
 
 #[derive(Clone, Copy)]
@@ -586,9 +588,11 @@ pub struct State {
     pub pending_join: Option<RoomId>,
     pub pending_watch: Option<String>,
     pub ranked: crate::ranked::RankedView,
-    pub demo: Option<crate::demo::Demo>,
+    pub help: Option<crate::help::HelpView>,
     pub leaderboard: Option<crate::leaderboard::Leaderboard>,
     pub outdated: bool,
+    /// The server refused this version: online play waits for an update.
+    pub too_old: bool,
     pub maintenance: bool,
     pub ui: crate::ui::Ui,
     pub keys: crate::ui::EditKeys,
@@ -598,7 +602,9 @@ pub struct State {
     pub touch: crate::touch::TouchPad,
     pub solo_settings: crate::solo::SoloSettings,
     pub solo: Option<crate::solo::SoloGame>,
+    /// A guest's best lives on the device, an account's on the server.
     pub solo_best: i32,
+    pub solo_best_slot: Option<HttpSlot>,
 }
 
 impl State {
@@ -628,9 +634,10 @@ impl State {
             pending_join: None,
             pending_watch: None,
             ranked: crate::ranked::RankedView::default(),
-            demo: None,
+            help: None,
             leaderboard: None,
             outdated: false,
+            too_old: false,
             maintenance: false,
             ui: crate::ui::Ui::default(),
             keys: crate::ui::EditKeys::default(),
@@ -641,6 +648,7 @@ impl State {
             solo_settings: crate::solo::SoloSettings::default(),
             solo: None,
             solo_best: load_best_score(),
+            solo_best_slot: None,
         }
     }
 }

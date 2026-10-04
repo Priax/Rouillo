@@ -71,10 +71,11 @@ fn poll(board: &mut Leaderboard, me: Option<&str>) {
 }
 
 fn list_card(view: View) -> Rect {
+    let w = (view.w - 40.0).min(840.0);
     Rect::at(
-        view.w / 2.0 - 420.0,
+        (view.w - w) / 2.0,
         theme::HEADER_H + 30.0,
-        840.0,
+        w,
         view.h - theme::HEADER_H - 30.0 - 110.0,
     )
 }

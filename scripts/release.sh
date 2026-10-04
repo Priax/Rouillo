@@ -1,5 +1,6 @@
 #!/bin/sh
-# Releases a version: bumps it, commits, tags, pushes, then deploys.
+# Releases a version: bumps it, commits, tags, pushes, waits for GitHub to
+# publish the signed game binaries (about 10 min), then deploys.
 #
 #   scripts/release.sh 0.8.35            everything, deploy included
 #   scripts/release.sh 0.8.35 --no-deploy
@@ -34,9 +35,32 @@ grep -q "^version = \"$version\"" Cargo.toml || die "could not set the version i
 cargo update --workspace --offline
 cargo metadata --locked --format-version 1 >/dev/null || die "Cargo.lock is still out of date"
 
+# The game updates itself from the latest GitHub release: deploying a server
+# that refuses old clients before that release is out would leave them
+# stranded, so the deploy waits for the signed binaries.
+wait_for_release() {
+    repo=$(git remote get-url origin | sed -E 's#^(git@github.com:|https://github.com/)##; s#\.git$##')
+    url="https://api.github.com/repos/$repo/releases/tags/v$version"
+    echo "Waiting for GitHub to publish the signed v$version binaries..."
+    # Once a minute: GitHub allows 60 unauthenticated API calls an hour.
+    for _ in $(seq 45); do
+        assets=$(curl -fsS "$url" 2>/dev/null || true)
+        if echo "$assets" | grep -q '"rouillo-linux-x86_64.sig"' \
+            && echo "$assets" | grep -q '"rouillo-windows-x86_64.exe.sig"'; then
+            echo "Release v$version published"
+            return 0
+        fi
+        sleep 60
+    done
+    die "release v$version not published after 45 min, see the Release workflow; deploy with scripts/deploy.sh once it is"
+}
+
 git add Cargo.toml Cargo.lock
 git commit -m "v$version"
 git tag "v$version"
 git push origin master "v$version"
 
-[ "$deploy" = yes ] && "$root/scripts/deploy.sh"
+if [ "$deploy" = yes ]; then
+    wait_for_release
+    "$root/scripts/deploy.sh"
+fi

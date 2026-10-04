@@ -21,7 +21,10 @@ pub fn handle_server_messages(state: &mut State) {
             ConnEvent::GaveUp => reset_to_menu(state, Status::error("Connexion au serveur perdue.")),
             ConnEvent::Outdated => {
                 state.outdated = true;
-                reset_to_menu(state, Status::info(crate::update::NOTICE));
+                state.too_old = true;
+                #[cfg(not(target_arch = "wasm32"))]
+                crate::updater::check();
+                reset_to_menu(state, Status::Empty);
             }
         }
     }

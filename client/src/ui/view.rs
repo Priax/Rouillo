@@ -38,6 +38,12 @@ impl View {
         Self::fit(w as f32, h as f32)
     }
 
+    /// A window taller than wide, such as a phone held upright: screens stack
+    /// what they would put side by side.
+    pub fn portrait(self) -> bool {
+        self.h > self.w
+    }
+
     pub fn size(self) -> (f32, f32) {
         (self.w, self.h)
     }

@@ -24,8 +24,11 @@ fn panels(ww: f32) -> (f32, f32, f32, f32) {
     (left_x, left_w, right_x, right_w)
 }
 
+/// The bottom buttons sit near the bottom of the window, never below it: on a
+/// short screen the cards shrink, down to what the four stats need.
 fn button_row_y(wh: f32) -> f32 {
-    (wh - 90.0).max(590.0)
+    let lowest_card_bottom = CARD_TOP + CARD_TITLE_H + 30.0 + STAT_ROWS as f32 * STAT_ROW_H + 16.0;
+    (wh - 90.0).max(lowest_card_bottom + STATUS_GAP)
 }
 
 enum ProfileLoad {
@@ -177,13 +180,62 @@ fn draw_header(draw: &mut Draw, gfx: &mut Graphics, state: &State, core: &Profil
     rating.draw(draw, fonts, (text_x, py + 30.0));
 }
 
+const BUTTON_H: f32 = 54.0;
+const BUTTON_STEP: f32 = 64.0;
+const STATS_CARD_H: f32 = 340.0;
+
+/// Where the bottom buttons start: one row in landscape, two upright.
+fn buttons_top(view: View) -> f32 {
+    if view.portrait() {
+        view.h - 90.0 - BUTTON_STEP
+    } else {
+        button_row_y(view.h)
+    }
+}
+
+/// The stats card and the match list: side by side, or stacked upright.
 fn cards(view: View) -> (Rect, Rect) {
+    let bottom = buttons_top(view) - STATUS_GAP;
+    if view.portrait() {
+        let w = view.w - 40.0;
+        let list_top = CARD_TOP + STATS_CARD_H + 20.0;
+        return (
+            Rect::at(20.0, CARD_TOP, w, STATS_CARD_H),
+            Rect::at(20.0, list_top, w, bottom - list_top),
+        );
+    }
     let (left_x, left_w, right_x, right_w) = panels(view.w);
-    let h = button_row_y(view.h) - STATUS_GAP - CARD_TOP;
+    let h = bottom - CARD_TOP;
     (
         Rect::at(left_x, CARD_TOP, left_w, h),
         Rect::at(right_x, CARD_TOP, right_w, h),
     )
+}
+
+/// The bottom buttons, one per width: in one row, or two to a row upright.
+fn bottom_buttons<const N: usize>(view: View, widths: [f32; N]) -> [Rect; N] {
+    let top = buttons_top(view);
+    let cx = view.w / 2.0;
+    if view.portrait() {
+        let w = (view.w - 60.0) / 2.0;
+        return std::array::from_fn(|i| {
+            let row = (i / 2) as f32;
+            let x = if N - i == 1 && i % 2 == 0 {
+                cx - w / 2.0
+            } else {
+                20.0 + (i % 2) as f32 * (w + 20.0)
+            };
+            Rect::at(x, top + row * BUTTON_STEP, w, BUTTON_H)
+        });
+    }
+    let gap = 30.0;
+    let total: f32 = widths.iter().sum::<f32>() + gap * (N - 1) as f32;
+    let mut x = cx - total / 2.0;
+    widths.map(|w| {
+        let r = Rect::at(x, top, w, BUTTON_H);
+        x += w + gap;
+        r
+    })
 }
 
 fn card_title(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card: Rect, title: &str) {
@@ -425,9 +477,8 @@ pub fn enter_profile(state: &mut State, prev: Screen) {
     });
 }
 
-fn own_buttons(cx: f32, wh: f32) -> [Rect; 4] {
-    let y = button_row_y(wh);
-    [-445.0, -215.0, 15.0, 245.0].map(|dx| Rect::at(cx + dx, y, 200.0, 54.0))
+fn own_buttons(view: View) -> [Rect; 4] {
+    bottom_buttons(view, [200.0; 4])
 }
 
 pub fn update_profile(app: &mut App, state: &mut State) {
@@ -436,9 +487,6 @@ pub fn update_profile(app: &mut App, state: &mut State) {
         p.core.history.poll();
     }
     profile_edit::poll(state);
-
-    let (ww, wh) = state.ui.view().size();
-    let cx = ww / 2.0;
 
     if state.profile.as_ref().is_some_and(|p| p.edit.is_some()) {
         profile_edit::update(app, state);
@@ -451,7 +499,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
             }
         }
         update_history(app, state, false);
-        let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(cx, wh);
+        let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(state.ui.view());
 
         if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
             let prev = state.profile.take().map_or(Screen::Menu, |p| p.prev_screen);
@@ -538,8 +586,7 @@ fn update_account(app: &App, state: &mut State) {
 }
 
 pub fn draw_profile(gfx: &mut Graphics, state: &State) {
-    let (ww, wh) = state.ui.view().size();
-    let cx = ww / 2.0;
+    let cx = state.ui.view().w / 2.0;
     let mut draw = state.ui.screen_canvas(gfx);
 
     let Some(profile) = &state.profile else {
@@ -558,7 +605,7 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
         draw_stats_panel(&mut draw, &state.ui, &state.fonts, &profile.core, false);
         draw_history_panel(&mut draw, &state.ui, &state.fonts, &profile.core, true);
 
-        let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(cx, wh);
+        let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(state.ui.view());
         state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
         state.ui.button(&mut draw, &state.fonts, edit_btn, "Modifier");
         state.ui.button(&mut draw, &state.fonts, account_btn, "Compte");
@@ -636,12 +683,9 @@ fn add_friend(state: &mut State) {
     }
 }
 
-fn other_buttons(cx: f32, wh: f32) -> (Rect, Rect) {
-    let y = button_row_y(wh);
-    (
-        Rect::at(cx - 110.0, y, 220.0, 54.0),
-        Rect::at(cx + 140.0, y, 200.0, 54.0),
-    )
+fn other_buttons(view: View) -> (Rect, Rect) {
+    let [add, back] = bottom_buttons(view, [220.0, 200.0]);
+    (add, back)
 }
 
 pub fn update_other_profile(app: &mut App, state: &mut State) {
@@ -668,10 +712,7 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
     }
 
     update_history(app, state, true);
-    let ww = state.ui.view().w;
-    let wh = state.ui.view().h;
-    let cx = ww / 2.0;
-    let (add_btn, back_btn) = other_buttons(cx, wh);
+    let (add_btn, back_btn) = other_buttons(state.ui.view());
 
     let sending = state.other_profile.as_ref().is_some_and(|p| p.friend_slot.is_some());
     let can_add = matches!(
@@ -691,9 +732,7 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
 
 pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
-    let ww = state.ui.view().w;
-    let wh = state.ui.view().h;
-    let cx = ww / 2.0;
+    let cx = state.ui.view().w / 2.0;
 
     let mut draw = state.ui.screen_canvas(gfx);
 
@@ -707,9 +746,9 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
     draw_stats_panel(&mut draw, &state.ui, &state.fonts, &p.core, p.load_failed);
     draw_history_panel(&mut draw, &state.ui, &state.fonts, &p.core, false);
 
-    let btn_y = button_row_y(wh);
+    let btn_y = buttons_top(state.ui.view());
     let sending = p.friend_slot.is_some();
-    let (add_btn, back_btn) = other_buttons(cx, wh);
+    let (add_btn, back_btn) = other_buttons(state.ui.view());
 
     let can_add = !p.load_failed && p.friendship == FriendshipStatus::NotFriends;
     if can_add {
@@ -731,4 +770,15 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
     draw_about_overlay(&mut draw, &state.ui, &state.fonts, &p.core);
 
     state.ui.render(gfx, &draw);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_bottom_buttons_stay_on_a_short_screen() {
+        for wh in [560.0, 600.0, 680.0, 800.0] {
+            let y = super::button_row_y(wh);
+            assert!(y + 54.0 <= wh, "{wh}: buttons end at {}", y + 54.0);
+        }
+    }
 }

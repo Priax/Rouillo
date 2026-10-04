@@ -22,6 +22,7 @@ pub const ASSET: &str = if cfg!(windows) {
 pub enum Status {
     Idle,
     Available(String),
+    Checking,
     Installing,
     Failed(String),
     Done,
@@ -47,14 +48,41 @@ fn set(status: Status) {
     }
 }
 
+const NOT_PUBLISHED: &str = "la nouvelle version est en cours de publication, réessayez dans quelques minutes";
+
+fn remember(release: &Release) {
+    set(Status::Available(release.version.clone()));
+    if let Ok(mut r) = RELEASE.lock() {
+        *r = Some(release.clone());
+    }
+}
+
 /// Looks for a newer release in the background.
 pub fn check() {
     std::thread::spawn(|| {
         if let Ok(Some(release)) = latest() {
-            set(Status::Available(release.version.clone()));
-            if let Ok(mut r) = RELEASE.lock() {
-                *r = Some(release);
-            }
+            remember(&release);
+        }
+    });
+}
+
+/// Looks for a newer release now and installs it: the one seen at start may
+/// not have been published yet. Without GitHub, opens the download page.
+pub fn update_now() {
+    set(Status::Checking);
+    std::thread::spawn(|| match latest() {
+        Ok(Some(release)) => {
+            remember(&release);
+            set(Status::Installing);
+            set(match run(&release) {
+                Ok(()) => Status::Done,
+                Err(e) => Status::Failed(e),
+            });
+        }
+        Ok(None) => set(Status::Failed(NOT_PUBLISHED.to_owned())),
+        Err(_) => {
+            set(Status::Idle);
+            crate::update::open_download_page();
         }
     });
 }

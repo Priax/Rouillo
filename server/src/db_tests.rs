@@ -43,6 +43,22 @@ async fn elo(pool: &PgPool, id: Uuid) -> i32 {
 
 #[sqlx::test]
 #[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
+async fn db_an_account_keeps_its_best_solo_score(pool: PgPool) {
+    let id = user(&pool, "alice").await;
+    assert_eq!(db::raise_solo_best(&pool, id, 0).await.unwrap(), 0, "starts at zero");
+    assert_eq!(db::raise_solo_best(&pool, id, 1200).await.unwrap(), 1200);
+    assert_eq!(
+        db::raise_solo_best(&pool, id, 800).await.unwrap(),
+        1200,
+        "a lower score changes nothing"
+    );
+    assert_eq!(db::raise_solo_best(&pool, id, -5).await.unwrap(), 1200);
+    let me = db::find_user_by_username(&pool, "alice").await.unwrap().unwrap();
+    assert_eq!(me.solo_best, 1200);
+}
+
+#[sqlx::test]
+#[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
 async fn db_a_session_finds_its_user_until_it_expires(pool: PgPool) {
     let id = user(&pool, "alice").await;
     let token = db::create_session(&pool, id).await.unwrap();

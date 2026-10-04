@@ -75,6 +75,7 @@ fn setup(gfx: &mut Graphics) -> State {
     #[cfg(target_arch = "wasm32")]
     {
         web::start_text_input();
+        web::start_back_button();
         audio::unlock_on_gesture();
     }
 
@@ -272,6 +273,13 @@ fn update(app: &mut App, state: &mut State) {
             app.keyboard.pressed.insert(KeyCode::Escape);
         }
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        web::set_at_root(matches!(state.screen, Screen::Title | Screen::Auth | Screen::Menu));
+        if web::take_back() {
+            app.keyboard.pressed.insert(KeyCode::Escape);
+        }
+    }
     state.keys.update(&app.keyboard, dt);
     if state.keys.paste {
         for c in ui::clipboard_text().unwrap_or_default().chars() {
@@ -303,6 +311,7 @@ fn update(app: &mut App, state: &mut State) {
     }
 
     login::poll_startup_check(state);
+    solo::poll_best(state);
 
     update_invitation(state);
     network::handle_server_messages(state);
@@ -442,13 +451,16 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
     }
     draw_invitation_banner(gfx, state);
     draw_maintenance_banner(gfx, state);
+    draw_too_old_banner(gfx, state);
     draw_reconnect_banner(gfx, state);
     let view = state.ui.view();
-    let fits_upright = matches!(
+    // A game, and the screens that lead straight into one, need the phone
+    // turned: the boards are laid out side by side.
+    let needs_landscape = matches!(
         state.screen,
-        Screen::Title | Screen::Auth | Screen::Menu | Screen::PlayMenu | Screen::CreateRoom | Screen::JoinById
+        Screen::RoomLobby | Screen::Game | Screen::Ranked | Screen::Solo
     );
-    if state.touch.active && view.w < view.h && !fits_upright {
+    if state.touch.active && view.portrait() && needs_landscape {
         let mut d = state.ui.canvas(gfx);
         touch::draw_turn_hint(&mut d, &state.fonts, view);
         state.ui.render(gfx, &d);
@@ -481,6 +493,29 @@ fn draw_maintenance_banner(gfx: &mut Graphics, state: &State) {
     .h_align_center()
     .v_align_middle()
     .color(theme::WARNING_TEXT);
+    state.ui.render(gfx, &d);
+}
+
+/// Says why online play is closed while the server refuses this version.
+fn draw_too_old_banner(gfx: &mut Graphics, state: &State) {
+    if !state.too_old || !matches!(state.screen, Screen::Menu | Screen::PlayMenu) {
+        return;
+    }
+    let ww = state.ui.view().w;
+    let mut d = state.ui.canvas(gfx);
+    ui::banner(
+        &mut d,
+        Rect::at(0.0, 0.0, ww, MAINTENANCE_H),
+        theme::WARNING_BANNER,
+        theme::WARNING,
+        ui::Edge::Bottom,
+    );
+    d.sharp_text(&state.fonts.text, crate::update::TOO_OLD)
+        .position(ww / 2.0, MAINTENANCE_H / 2.0)
+        .size(theme::size::SMALL)
+        .h_align_center()
+        .v_align_middle()
+        .color(theme::WARNING_TEXT);
     state.ui.render(gfx, &d);
 }
 

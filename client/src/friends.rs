@@ -7,7 +7,7 @@ use notan::prelude::*;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
 use crate::ui::{
     self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Pager, Pill, Rect, SharpText,
-    Status, TextInput, Ui,
+    Status, TextInput, Ui, View,
 };
 use crate::{http, theme};
 
@@ -18,39 +18,57 @@ const MAX_SEARCH_RESULTS: usize = 4;
 const ADD_STATUS_Y: f32 = 330.0;
 const COLUMNS_TOP: f32 = 344.0;
 const CARD_TITLE_H: f32 = 50.0;
-const LIST_Y: f32 = COLUMNS_TOP + CARD_TITLE_H + 6.0;
 const ROW_H: f32 = 48.0;
 const MAX_ROWS: usize = 5;
 const COL_W: f32 = 360.0;
 const COL_GAP: f32 = 30.0;
 const SMALL_BTN_H: f32 = 32.0;
 
-fn col_x(ww: f32, col: usize) -> f32 {
-    let total = 3.0 * COL_W + 2.0 * COL_GAP;
-    let margin = (ww - total) / 2.0;
-    margin + col as f32 * (COL_W + COL_GAP)
-}
+const COL_GAP_UPRIGHT: f32 = 16.0;
 
 /// How many friends a column lists per page: as many as fit above the
-/// bottom buttons, with a row left for the pager.
-pub fn rows_for(wh: f32) -> usize {
-    let room = back_btn(wh).y - 8.0 - 10.0 - LIST_Y;
-    ((room / ROW_H) as usize).saturating_sub(1).clamp(1, MAX_ROWS)
+/// bottom buttons, with a row left for the pager. Upright, the three
+/// columns are stacked and share that height.
+pub fn rows_for(view: View) -> usize {
+    let room = back_btn(view.h).y - 8.0 - COLUMNS_TOP;
+    let card_h = if view.portrait() {
+        (room - 2.0 * COL_GAP_UPRIGHT) / 3.0
+    } else {
+        room
+    };
+    let list_h = card_h - CARD_TITLE_H - 6.0 - 10.0;
+    ((list_h / ROW_H) as usize).saturating_sub(1).clamp(1, MAX_ROWS)
 }
 
-fn column_card(ww: f32, col: usize, rows: usize) -> Rect {
-    let bottom = LIST_Y + (rows + 1) as f32 * ROW_H + 10.0;
-    Rect::at(col_x(ww, col), COLUMNS_TOP, COL_W, bottom - COLUMNS_TOP)
+/// A column's card: three side by side, or stacked when upright.
+fn column_card(view: View, col: usize) -> Rect {
+    let h = CARD_TITLE_H + 6.0 + (rows_for(view) + 1) as f32 * ROW_H + 10.0;
+    if view.portrait() {
+        let y = COLUMNS_TOP + col as f32 * (h + COL_GAP_UPRIGHT);
+        return Rect::at(20.0, y, view.w - 40.0, h);
+    }
+    let total = 3.0 * COL_W + 2.0 * COL_GAP;
+    let x = (view.w - total) / 2.0 + col as f32 * (COL_W + COL_GAP);
+    Rect::at(x, COLUMNS_TOP, COL_W, h)
 }
 
-fn list_row_rect(ww: f32, col: usize, row: usize) -> Rect {
-    let card = column_card(ww, col, MAX_ROWS);
-    Rect::at(card.x + 8.0, LIST_Y + row as f32 * ROW_H, card.w - 16.0, ROW_H - 4.0)
+fn list_top(card: Rect) -> f32 {
+    card.y + CARD_TITLE_H + 6.0
 }
 
-fn pager_area(ww: f32, col: usize, rows: usize) -> Rect {
-    let card = column_card(ww, col, rows);
-    Rect::at(card.x, LIST_Y + rows as f32 * ROW_H, card.w, ROW_H)
+fn list_row_rect(view: View, col: usize, row: usize) -> Rect {
+    let card = column_card(view, col);
+    Rect::at(
+        card.x + 8.0,
+        list_top(card) + row as f32 * ROW_H,
+        card.w - 16.0,
+        ROW_H - 4.0,
+    )
+}
+
+fn pager_area(view: View, col: usize) -> Rect {
+    let card = column_card(view, col);
+    Rect::at(card.x, list_top(card) + rows_for(view) as f32 * ROW_H, card.w, ROW_H)
 }
 
 fn lists(f: &FriendsData) -> [&[FriendEntry]; 3] {
@@ -66,31 +84,33 @@ fn row_button(row: Rect, from_right: f32, w: f32) -> Rect {
     )
 }
 
-fn search_submit_btn(ww: f32) -> Rect {
+fn search_submit_btn(view: View) -> Rect {
     Rect::at(
-        ww - 60.0 - 160.0,
+        view.w - 60.0 - 160.0,
         (theme::HEADER_H - FIELD_H) / 2.0 + 12.0,
         160.0,
         FIELD_H,
     )
 }
 
-fn search_box(ww: f32) -> Rect {
-    let submit = search_submit_btn(ww);
-    Rect::at(submit.x - 12.0 - 430.0, submit.y, 430.0, FIELD_H)
+fn search_box(view: View) -> Rect {
+    let submit = search_submit_btn(view);
+    let w = (submit.x - 12.0 - 200.0).min(430.0);
+    Rect::at(submit.x - 12.0 - w, submit.y, w, FIELD_H)
 }
 
-fn results_card(ww: f32) -> Rect {
+fn results_card(view: View) -> Rect {
+    let w = (view.w - 40.0).min(840.0);
     Rect::at(
-        ww / 2.0 - 420.0,
+        (view.w - w) / 2.0,
         RESULTS_TOP,
-        840.0,
+        w,
         16.0 + MAX_SEARCH_RESULTS as f32 * RESULT_ROW_H,
     )
 }
 
-fn result_row(ww: f32, row: usize) -> Rect {
-    let card = results_card(ww);
+fn result_row(view: View, row: usize) -> Rect {
+    let card = results_card(view);
     Rect::at(
         card.x + 8.0,
         card.y + 8.0 + row as f32 * RESULT_ROW_H,
@@ -99,20 +119,20 @@ fn result_row(ww: f32, row: usize) -> Rect {
     )
 }
 
-fn result_add_btn(ww: f32, row: usize) -> Rect {
-    row_button(result_row(ww, row), 128.0, 120.0)
+fn result_add_btn(view: View, row: usize) -> Rect {
+    row_button(result_row(view, row), 128.0, 120.0)
 }
 
-fn result_view_btn(ww: f32, row: usize) -> Rect {
-    row_button(result_row(ww, row), 4.0, 116.0)
+fn result_view_btn(view: View, row: usize) -> Rect {
+    row_button(result_row(view, row), 4.0, 116.0)
 }
 
-fn remove_btn(ww: f32, col: usize, row: usize) -> Rect {
-    row_button(list_row_rect(ww, col, row), 6.0, 110.0)
+fn remove_btn(view: View, col: usize, row: usize) -> Rect {
+    row_button(list_row_rect(view, col, row), 6.0, 110.0)
 }
 
-fn watch_btn(ww: f32, row: usize) -> Rect {
-    row_button(list_row_rect(ww, 0, row), 122.0, 110.0)
+fn watch_btn(view: View, row: usize) -> Rect {
+    row_button(list_row_rect(view, 0, row), 122.0, 110.0)
 }
 
 type Pictures = HashMap<String, Texture>;
@@ -143,26 +163,26 @@ fn avatar(
 const AVATAR_R: f32 = 15.0;
 const AVATAR_ROOM: f32 = 2.0 * AVATAR_R + 10.0;
 
-fn name_zone(ww: f32, col: usize, row: usize) -> Rect {
-    let rect = list_row_rect(ww, col, row);
-    let first_button = [watch_btn(ww, row), accept_btn(ww, row), remove_btn(ww, 2, row)][col];
+fn name_zone(view: View, col: usize, row: usize) -> Rect {
+    let rect = list_row_rect(view, col, row);
+    let first_button = [watch_btn(view, row), accept_btn(view, row), remove_btn(view, 2, row)][col];
     Rect::at(rect.x, rect.y, first_button.x - rect.x - 8.0, rect.h)
 }
 
-fn accept_btn(ww: f32, row: usize) -> Rect {
-    row_button(list_row_rect(ww, 1, row), 122.0, 116.0)
+fn accept_btn(view: View, row: usize) -> Rect {
+    row_button(list_row_rect(view, 1, row), 122.0, 116.0)
 }
 
-fn reject_btn(ww: f32, row: usize) -> Rect {
-    row_button(list_row_rect(ww, 1, row), 6.0, 110.0)
+fn reject_btn(view: View, row: usize) -> Rect {
+    row_button(list_row_rect(view, 1, row), 6.0, 110.0)
 }
 
-fn confirm_yes_btn(ww: f32, row: usize) -> Rect {
-    row_button(list_row_rect(ww, 0, row), 62.0, 52.0)
+fn confirm_yes_btn(view: View, row: usize) -> Rect {
+    row_button(list_row_rect(view, 0, row), 62.0, 52.0)
 }
 
-fn confirm_no_btn(ww: f32, row: usize) -> Rect {
-    row_button(list_row_rect(ww, 0, row), 6.0, 52.0)
+fn confirm_no_btn(view: View, row: usize) -> Rect {
+    row_button(list_row_rect(view, 0, row), 6.0, 52.0)
 }
 
 fn back_btn(wh: f32) -> Rect {
@@ -203,7 +223,6 @@ pub fn enter_friends(state: &mut State) {
         action_pending: None,
         action_status: Status::Empty,
         pages: Default::default(),
-        rows: rows_for(state.ui.view().h),
     });
 }
 
@@ -342,11 +361,8 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     poll_add(state);
     poll_action(state);
 
-    let ww = state.ui.view().w;
-    let wh = state.ui.view().h;
-    if let Some(f) = state.friends.as_mut() {
-        f.rows = rows_for(wh);
-    }
+    let view = state.ui.view();
+    let wh = view.h;
 
     let paging = state
         .friends
@@ -356,22 +372,15 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         if !paging {
             f.search_input.edit(&state.keys);
         }
-        field_clicked(&state.ui, &state.fonts, search_box(ww), &mut f.search_input);
+        field_clicked(&state.ui, &state.fonts, search_box(view), &mut f.search_input);
         for col in 0..3 {
-            let pages = page_count(lists(f)[col].len(), f.rows);
+            let pages = page_count(lists(f)[col].len(), rows_for(view));
             f.pages[col].clamp(pages);
-            f.pages[col].update(
-                app,
-                &state.ui,
-                &state.fonts,
-                &state.keys,
-                pager_area(ww, col, f.rows),
-                pages,
-            );
+            f.pages[col].update(app, &state.ui, &state.fonts, &state.keys, pager_area(view, col), pages);
         }
     }
 
-    if state.ui.clicked(search_submit_btn(ww)) || (!paging && app.keyboard.was_pressed(KeyCode::Enter)) {
+    if state.ui.clicked(search_submit_btn(view)) || (!paging && app.keyboard.was_pressed(KeyCode::Enter)) {
         let q = state
             .friends
             .as_ref()
@@ -398,13 +407,13 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     let Some(f) = &state.friends else {
         return;
     };
-    if let Some((uid, uname)) = clicked_profile(f, &state.ui, ww).or_else(|| clicked_listed(f, &state.ui, ww)) {
+    if let Some((uid, uname)) = clicked_profile(f, &state.ui, view).or_else(|| clicked_listed(f, &state.ui, view)) {
         crate::profile::enter_other_profile(state, uid, uname, Screen::Friends);
         state.screen = Screen::OtherProfile;
         return;
     }
-    let add = clicked_add(f, &state.ui, ww);
-    let action = clicked_action(f, &state.ui, ww);
+    let add = clicked_add(f, &state.ui, view);
+    let action = clicked_action(f, &state.ui, view);
     if let Some(uid) = add {
         send_add_request(state, &uid);
     }
@@ -419,29 +428,29 @@ fn can_refresh(f: &FriendsData) -> bool {
     f.list_slot.is_none() && f.action_pending.is_none()
 }
 
-fn clicked_profile(f: &FriendsData, ui: &Ui, ww: f32) -> Option<(String, String)> {
+fn clicked_profile(f: &FriendsData, ui: &Ui, view: View) -> Option<(String, String)> {
     let (_, e) = f
         .search_results
         .iter()
         .take(MAX_SEARCH_RESULTS)
         .enumerate()
-        .find(|&(i, _)| ui.clicked(result_view_btn(ww, i)))?;
+        .find(|&(i, _)| ui.clicked(result_view_btn(view, i)))?;
     Some((e.user_id.clone(), e.username.clone()))
 }
 
-fn clicked_listed(f: &FriendsData, ui: &Ui, ww: f32) -> Option<(String, String)> {
+fn clicked_listed(f: &FriendsData, ui: &Ui, view: View) -> Option<(String, String)> {
     if f.list_slot.is_some() {
         return None;
     }
     lists(f).into_iter().enumerate().find_map(|(col, list)| {
         f.pages[col]
-            .shown(list, f.rows)
-            .find(|&(i, _)| ui.clicked(name_zone(ww, col, i)))
+            .shown(list, rows_for(view))
+            .find(|&(i, _)| ui.clicked(name_zone(view, col, i)))
             .map(|(_, e)| (e.user_id.clone(), e.username.clone()))
     })
 }
 
-fn clicked_add(f: &FriendsData, ui: &Ui, ww: f32) -> Option<String> {
+fn clicked_add(f: &FriendsData, ui: &Ui, view: View) -> Option<String> {
     if f.add_pending.is_some() {
         return None;
     }
@@ -449,45 +458,45 @@ fn clicked_add(f: &FriendsData, ui: &Ui, ww: f32) -> Option<String> {
         .iter()
         .take(MAX_SEARCH_RESULTS)
         .enumerate()
-        .find(|&(i, e)| ui.clicked(result_add_btn(ww, i)) && !f.friends.iter().any(|fr| fr.user_id == e.user_id))
+        .find(|&(i, e)| ui.clicked(result_add_btn(view, i)) && !f.friends.iter().any(|fr| fr.user_id == e.user_id))
         .map(|(_, e)| e.user_id.clone())
 }
 
-fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
+fn clicked_action(f: &FriendsData, ui: &Ui, view: View) -> Option<FriendAction> {
     // While the lists reload they are not drawn, so neither are their buttons.
     if f.action_pending.is_some() || f.list_slot.is_some() {
         return None;
     }
     if let Some(confirm_id) = &f.confirm_remove {
         let (row, _) = f.pages[0]
-            .shown(&f.friends, f.rows)
+            .shown(&f.friends, rows_for(view))
             .find(|(_, e)| &e.user_id == confirm_id)?;
-        if ui.clicked(confirm_yes_btn(ww, row)) {
+        if ui.clicked(confirm_yes_btn(view, row)) {
             return Some(FriendAction::ConfirmRemove(confirm_id.clone()));
         }
-        if ui.clicked(confirm_no_btn(ww, row)) {
+        if ui.clicked(confirm_no_btn(view, row)) {
             return Some(FriendAction::CancelRemove);
         }
         return None;
     }
-    for (i, e) in f.pages[0].shown(&f.friends, f.rows) {
-        if ui.clicked(remove_btn(ww, 0, i)) {
+    for (i, e) in f.pages[0].shown(&f.friends, rows_for(view)) {
+        if ui.clicked(remove_btn(view, 0, i)) {
             return Some(FriendAction::StartRemove(e.user_id.clone()));
         }
-        if e.playing && ui.clicked(watch_btn(ww, i)) {
+        if e.playing && ui.clicked(watch_btn(view, i)) {
             return Some(FriendAction::Watch(e.user_id.clone()));
         }
     }
-    for (i, e) in f.pages[1].shown(&f.received, f.rows) {
-        if ui.clicked(accept_btn(ww, i)) {
+    for (i, e) in f.pages[1].shown(&f.received, rows_for(view)) {
+        if ui.clicked(accept_btn(view, i)) {
             return Some(FriendAction::Accept(e.user_id.clone()));
         }
-        if ui.clicked(reject_btn(ww, i)) {
+        if ui.clicked(reject_btn(view, i)) {
             return Some(FriendAction::Reject(e.user_id.clone()));
         }
     }
-    for (i, e) in f.pages[2].shown(&f.sent, f.rows) {
-        if ui.clicked(remove_btn(ww, 2, i)) {
+    for (i, e) in f.pages[2].shown(&f.sent, rows_for(view)) {
+        if ui.clicked(remove_btn(view, 2, i)) {
             return Some(FriendAction::Cancel(e.user_id.clone()));
         }
     }
@@ -534,10 +543,13 @@ fn apply_action(state: &mut State, action: FriendAction) {
 
 pub fn draw_friends(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
-    let (ww, wh) = state.ui.view().size();
+    let view = state.ui.view();
+    let wh = view.h;
 
     let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, ww, theme::HEADER_H));
+    state
+        .ui
+        .header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     draw.sharp_text(&state.fonts.display, "Amis")
         .position(60.0, theme::HEADER_H / 2.0)
         .size(theme::size::TITLE)
@@ -547,8 +559,8 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
     if let Some(f) = &state.friends {
         let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
         let pics = pictures(gfx, state, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
-        draw_search(&mut draw, &state.ui, &state.fonts, f, (ww, &pics));
-        draw_lists(&mut draw, &state.ui, &state.fonts, f, (ww, &pics));
+        draw_search(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
+        draw_lists(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
 
         state.ui.button(&mut draw, &state.fonts, back_btn(wh), "Retour");
         let label = if f.list_slot.is_some() { "..." } else { "Rafraîchir" };
@@ -559,9 +571,9 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &draw);
 }
 
-fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pics): (f32, &Pictures)) {
+fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
     let pal = ui.palette();
-    let field = search_box(ww);
+    let field = search_box(view);
     draw.sharp_text(&fonts.text, "Rechercher un ami")
         .position(field.x, field.y - 14.0)
         .size(theme::size::SMALL)
@@ -578,7 +590,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pi
     ui.button_enabled(
         draw,
         fonts,
-        search_submit_btn(ww),
+        search_submit_btn(view),
         if searching { "..." } else { "Rechercher" },
         !searching,
     );
@@ -587,7 +599,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pi
     if f.search_results.is_empty() && status.is_none() {
         return;
     }
-    let card = results_card(ww);
+    let card = results_card(view);
     ui::card(draw, &pal, card);
     if let (true, Some((msg, color))) = (f.search_results.is_empty(), status) {
         draw.sharp_text(&fonts.text, msg)
@@ -599,7 +611,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pi
     }
     let adding = f.add_pending.is_some();
     for (i, e) in f.search_results.iter().take(MAX_SEARCH_RESULTS).enumerate() {
-        let row = result_row(ww, i);
+        let row = result_row(view, i);
         let mid = row.y + row.h / 2.0;
         list_row(draw, &pal, row, i);
         avatar(
@@ -624,14 +636,14 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pi
         };
         rating.draw(draw, fonts, (row.x + 260.0, mid));
         if !f.friends.iter().any(|fr| fr.user_id == e.user_id) {
-            ui.button_enabled(draw, fonts, result_add_btn(ww, i), "Ajouter", !adding);
+            ui.button_enabled(draw, fonts, result_add_btn(view, i), "Ajouter", !adding);
         }
-        ui.button(draw, fonts, result_view_btn(ww, i), "Profil");
+        ui.button(draw, fonts, result_view_btn(view, i), "Profil");
     }
 
     if let Some((msg, color)) = f.add_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
-            .position(ww / 2.0, ADD_STATUS_Y)
+            .position(view.w / 2.0, ADD_STATUS_Y)
             .size(theme::size::BODY)
             .h_align_center()
             .v_align_middle()
@@ -639,7 +651,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pi
     }
 }
 
-fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pics): (f32, &Pictures)) {
+fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
     let pal = ui.palette();
     let columns = [
         ("Amis", &f.friends, "Aucun ami pour l'instant"),
@@ -647,7 +659,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pic
         ("Envoyées", &f.sent, "Aucune demande envoyée"),
     ];
     for (col, (title, list, _)) in columns.iter().enumerate() {
-        let card = column_card(ww, col, f.rows);
+        let card = column_card(view, col);
         ui::card(draw, &pal, card);
         let mid = card.y + CARD_TITLE_H / 2.0;
         draw.sharp_text(&fonts.display, title)
@@ -667,7 +679,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pic
 
     if f.list_slot.is_some() {
         draw.sharp_text(&fonts.text, "Chargement...")
-            .position(ww / 2.0, LIST_Y + 24.0)
+            .position(view.w / 2.0, list_top(column_card(view, 0)) + 24.0)
             .size(theme::size::LABEL)
             .h_align_center()
             .v_align_middle()
@@ -679,19 +691,19 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pic
             draw,
             ui,
             fonts,
-            (ww, 0, f.rows),
+            (view, 0),
             (columns[0].1, &f.pages[0], pics),
             columns[0].2,
             |draw, fonts, entry, i| {
                 if confirm == Some(entry.user_id.as_str()) {
-                    ui.button_enabled(draw, fonts, confirm_yes_btn(ww, i), "Oui", !busy);
-                    ui.button(draw, fonts, confirm_no_btn(ww, i), "Non");
+                    ui.button_enabled(draw, fonts, confirm_yes_btn(view, i), "Oui", !busy);
+                    ui.button(draw, fonts, confirm_no_btn(view, i), "Non");
                 } else {
                     let active = !busy && confirm.is_none();
                     if entry.playing {
-                        ui.button_enabled(draw, fonts, watch_btn(ww, i), "Regarder", confirm.is_none());
+                        ui.button_enabled(draw, fonts, watch_btn(view, i), "Regarder", confirm.is_none());
                     }
-                    ui.button_enabled(draw, fonts, remove_btn(ww, 0, i), "Retirer", active);
+                    ui.button_enabled(draw, fonts, remove_btn(view, 0, i), "Retirer", active);
                 }
             },
         );
@@ -699,37 +711,37 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pic
             draw,
             ui,
             fonts,
-            (ww, 1, f.rows),
+            (view, 1),
             (columns[1].1, &f.pages[1], pics),
             columns[1].2,
             |draw, fonts, _, i| {
-                ui.button_enabled(draw, fonts, accept_btn(ww, i), "Accepter", !busy);
-                ui.button_enabled(draw, fonts, reject_btn(ww, i), "Refuser", !busy);
+                ui.button_enabled(draw, fonts, accept_btn(view, i), "Accepter", !busy);
+                ui.button_enabled(draw, fonts, reject_btn(view, i), "Refuser", !busy);
             },
         );
         draw_col(
             draw,
             ui,
             fonts,
-            (ww, 2, f.rows),
+            (view, 2),
             (columns[2].1, &f.pages[2], pics),
             columns[2].2,
             |draw, fonts, _, i| {
-                ui.button_enabled(draw, fonts, remove_btn(ww, 2, i), "Annuler", !busy);
+                ui.button_enabled(draw, fonts, remove_btn(view, 2, i), "Annuler", !busy);
             },
         );
     }
 
     for (col, list) in lists(f).into_iter().enumerate() {
-        let pages = page_count(list.len(), f.rows);
+        let pages = page_count(list.len(), rows_for(view));
         if pages > 1 && f.list_slot.is_none() {
-            f.pages[col].draw(draw, ui, fonts, pager_area(ww, col, f.rows), pages);
+            f.pages[col].draw(draw, ui, fonts, pager_area(view, col), pages);
         }
     }
 
     if let Some((msg, color)) = f.action_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
-            .position(ww / 2.0, column_card(ww, 0, f.rows).bottom() + 10.0)
+            .position(view.w / 2.0, column_card(view, 2).bottom() + 10.0)
             .size(theme::size::SMALL)
             .h_align_center()
             .v_align_middle()
@@ -741,7 +753,7 @@ fn draw_col<F>(
     draw: &mut Draw,
     ui: &Ui,
     fonts: &Fonts,
-    (ww, col, rows): (f32, usize, usize),
+    (view, col): (View, usize),
     (list, pager, pics): (&[FriendEntry], &Pager, &Pictures),
     empty_msg: &str,
     draw_buttons: F,
@@ -750,20 +762,20 @@ fn draw_col<F>(
 {
     let pal = &ui.palette();
     if list.is_empty() {
-        let card = column_card(ww, col, rows);
+        let card = column_card(view, col);
         draw.sharp_text(&fonts.text, empty_msg)
-            .position(card.x + card.w / 2.0, LIST_Y + 24.0)
+            .position(card.x + card.w / 2.0, list_top(card) + 24.0)
             .size(theme::size::SMALL)
             .h_align_center()
             .v_align_middle()
             .color(pal.text_muted);
         return;
     }
-    let room = name_zone(ww, col, 0).w - 12.0 - AVATAR_ROOM;
-    for (i, e) in pager.shown(list, rows) {
-        let row = list_row_rect(ww, col, i);
+    let room = name_zone(view, col, 0).w - 12.0 - AVATAR_ROOM;
+    for (i, e) in pager.shown(list, rows_for(view)) {
+        let row = list_row_rect(view, col, i);
         list_row(draw, pal, row, i);
-        ui.row(draw, name_zone(ww, col, i), i, &format!("friend:{col}:{}", e.user_id));
+        ui.row(draw, name_zone(view, col, i), i, &format!("friend:{col}:{}", e.user_id));
         let mid = row.y + row.h / 2.0;
         avatar(
             draw,
@@ -798,12 +810,26 @@ mod tests {
 
     #[test]
     fn the_columns_stay_above_the_bottom_buttons() {
-        assert_eq!(rows_for(800.0), MAX_ROWS, "a desktop window keeps every row");
-        for wh in [600.0, 680.0, 786.0, 800.0, 1100.0] {
-            let rows = rows_for(wh);
-            let card = column_card(1280.0, 0, rows);
-            assert!(rows >= 1);
-            assert!(card.bottom() < back_btn(wh).y, "{wh}: {rows} rows reach the buttons");
+        assert_eq!(
+            rows_for(View::fit(1280.0, 800.0)),
+            MAX_ROWS,
+            "a desktop window keeps every row"
+        );
+        for (w, h) in [
+            (852.0, 300.0),
+            (852.0, 340.0),
+            (1280.0, 800.0),
+            (393.0, 740.0),
+            (393.0, 600.0),
+        ] {
+            let view = View::fit(w, h);
+            let last = column_card(view, 2);
+            assert!(rows_for(view) >= 1);
+            assert!(
+                last.bottom() < back_btn(view.h).y,
+                "{w}x{h}: the columns reach the buttons"
+            );
+            assert!(last.x + last.w <= view.w, "{w}x{h}: a column is cut on the right");
         }
     }
 }

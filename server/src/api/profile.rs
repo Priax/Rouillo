@@ -229,6 +229,23 @@ pub(super) async fn handle_match_history(
     Ok(Json(entries))
 }
 
+#[derive(Deserialize)]
+pub(super) struct SoloBestBody {
+    score: i32,
+}
+
+/// Records a solo score: the account keeps its best, which it returns.
+pub(super) async fn handle_solo_best(
+    State(Api { pool, .. }): State<Api>,
+    Authed(user): Authed,
+    JsonBody(body): JsonBody<SoloBestBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let best = db::raise_solo_best(&pool, user.id, body.score)
+        .await
+        .map_err(internal)?;
+    Ok(Json(serde_json::json!({ "solo_best": best })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

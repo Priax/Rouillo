@@ -1,4 +1,9 @@
-pub const NOTICE: &str = "Une nouvelle version est disponible.";
+/// Why online play stopped: the server refused this version.
+#[cfg(not(target_arch = "wasm32"))]
+pub const TOO_OLD: &str =
+    "Cette version n'est plus compatible avec le serveur: mettez le jeu à jour pour jouer en ligne.";
+#[cfg(target_arch = "wasm32")]
+pub const TOO_OLD: &str = "Une nouvelle version du jeu est en ligne: rechargez la page pour jouer en ligne.";
 
 #[cfg(target_arch = "wasm32")]
 pub fn apply() {
@@ -7,14 +12,21 @@ pub fn apply() {
     }
 }
 
-/// A native build installs the signed release it found; without one (GitHub
-/// unreachable, or a release still building) it opens the download page.
+/// A native build installs the newest signed release, looked up again on
+/// the click: the one checked at start may not have been published yet.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn apply() {
-    if matches!(crate::updater::status(), crate::updater::Status::Available(_)) {
-        crate::updater::install();
-        return;
+    use crate::updater::{self, Status};
+    match updater::status() {
+        Status::Available(_) => updater::install(),
+        Status::Checking | Status::Installing | Status::Done => {}
+        Status::Idle | Status::Failed(_) => updater::update_now(),
     }
+}
+
+/// The releases page, for when GitHub cannot be asked for the binary.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_download_page() {
     use std::process::Command;
     const RELEASES: &str = "https://github.com/Priax/Rouillo/releases/latest";
     let opened = if cfg!(target_os = "windows") {
@@ -33,6 +45,7 @@ pub fn apply() {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn progress() -> Option<String> {
     match crate::updater::status() {
+        crate::updater::Status::Checking => Some("Recherche de la mise à jour...".to_owned()),
         crate::updater::Status::Installing => Some("Téléchargement de la mise à jour...".to_owned()),
         crate::updater::Status::Failed(e) => Some(format!("Mise à jour impossible: {e}")),
         crate::updater::Status::Done => Some("Redémarrage...".to_owned()),

@@ -18,10 +18,11 @@ fn send(state: &mut State, msg: &ClientMessage) {
 const ROOM_ROW_H: f32 = 56.0;
 
 fn room_list_card(view: View) -> Rect {
+    let w = (view.w - 40.0).min(840.0);
     Rect::at(
-        view.w / 2.0 - 420.0,
+        (view.w - w) / 2.0,
         theme::HEADER_H + 30.0,
-        840.0,
+        w,
         view.h - theme::HEADER_H - 30.0 - 110.0,
     )
 }
@@ -64,8 +65,10 @@ struct BrowserButtons {
 }
 
 fn browser_buttons(view: View) -> BrowserButtons {
-    let (bw, gap, y) = (190.0, 12.0, (theme::HEADER_H - 44.0) / 2.0);
+    let (gap, y) = (12.0, (theme::HEADER_H - 44.0) / 2.0);
     let right = view.w - 60.0;
+    // Narrower when upright, so the title keeps its place on the left.
+    let bw = ((right - 200.0 - 2.0 * gap) / 3.0).min(190.0);
     let at = |i: f32| Rect::at(right - (3.0 - i) * bw - (2.0 - i) * gap, y, bw, 44.0);
     BrowserButtons {
         create: at(0.0),
@@ -434,6 +437,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         return;
     }
 
+    let chatting = room.chat.focused;
     if let Some(text) = room.chat.update_lobby(&app.keyboard, keys) {
         conn.send(&ClientMessage::Chat { text });
     }
@@ -465,7 +469,8 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         return;
     }
 
-    if ui.bar_clicked(lobby_leave(view)) {
+    let escape = !chatting && app.keyboard.was_pressed(KeyCode::Escape);
+    if ui.bar_clicked(lobby_leave(view)) || escape {
         conn.send(&ClientMessage::LeaveRoom);
         room.invite = Invite::default();
         return;

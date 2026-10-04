@@ -85,6 +85,7 @@ fn poll_auth(state: &mut State) {
             });
             state.auth_form = AuthForm::default();
             state.screen = Screen::Menu;
+            crate::solo::signed_in(state);
         }
         Err(msg) => state.auth_form.status = Status::error(msg),
     }
@@ -123,6 +124,7 @@ pub fn poll_startup_check(state: &mut State) {
                 });
                 state.auth_form.status.clear();
                 state.screen = Screen::Menu;
+                crate::solo::signed_in(state);
             }
         }
         Ok(resp) if resp.status == 401 => {

@@ -11,6 +11,8 @@ use crate::ui::Shortcuts;
 thread_local! {
     static TYPED: RefCell<String> = const { RefCell::new(String::new()) };
     static ERASES: Cell<u32> = const { Cell::new(0) };
+    static BACK: Cell<bool> = const { Cell::new(false) };
+    static AT_ROOT: Cell<bool> = const { Cell::new(true) };
     /// A Backspace key already counted, whose removal of input text must not
     /// count again.
     static BACKSPACE_DOWN: Cell<bool> = const { Cell::new(false) };
@@ -109,6 +111,31 @@ pub fn want_text(on: bool) {
 
 fn wanted() -> bool {
     WANT_TEXT.with(Cell::get)
+}
+
+/// Makes a phone's back button (and the browser's) go back one screen: a spare
+/// history entry catches it. On the main menu it leaves the site as usual.
+pub fn start_back_button() {
+    let Some(window) = web_sys::window() else { return };
+    let Ok(history) = window.history() else { return };
+    let _ = history.push_state(&JsValue::NULL, "");
+    listen(&window, "popstate", move |_: Event| {
+        if AT_ROOT.with(Cell::get) {
+            let _ = history.back();
+        } else {
+            BACK.with(|b| b.set(true));
+            let _ = history.push_state(&JsValue::NULL, "");
+        }
+    });
+}
+
+/// Whether the current screen is the one a back press leaves the site from.
+pub fn set_at_root(at_root: bool) {
+    AT_ROOT.with(|r| r.set(at_root));
+}
+
+pub fn take_back() -> bool {
+    BACK.with(Cell::take)
 }
 
 pub fn take_erases() -> u32 {

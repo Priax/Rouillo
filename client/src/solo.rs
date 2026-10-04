@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use notan::prelude::*;
 use shared::{config, Board, GameState, IncomingGarbage, RoomSettings};
 
@@ -5,7 +7,7 @@ use crate::cpu::{Cpu, Difficulty};
 use crate::draw::Hud;
 use crate::state::{GameSession, Screen, State};
 use crate::ui::{self, Pill, Rect, SettingsPanel, SharpText, View};
-use crate::{logic, theme};
+use crate::{http, logic, theme};
 
 #[derive(Clone, Copy, Default)]
 pub struct SoloSettings {
@@ -132,7 +134,49 @@ impl SoloGame {
     }
 }
 
+/// Sends a score to the account, which keeps its best. At sign-in this is the
+/// device's best, so a guest's record follows them into their account.
+pub fn send_best(state: &mut State, score: i32) {
+    let Some(auth) = &state.auth else { return };
+    let slot = http::new_slot();
+    let body = serde_json::json!({ "score": score }).to_string();
+    http::post_json(
+        http::api_url("me/solo-best"),
+        body,
+        Some(auth.token.clone()),
+        Arc::clone(&slot),
+    );
+    state.solo_best_slot = Some(slot);
+}
+
+pub fn signed_in(state: &mut State) {
+    send_best(state, crate::state::load_best_score());
+}
+
+pub fn poll_best(state: &mut State) {
+    #[derive(serde::Deserialize)]
+    struct Best {
+        solo_best: i32,
+    }
+    let Some(result) = http::take_json::<Best>(&mut state.solo_best_slot) else {
+        return;
+    };
+    if state.auth.is_none() {
+        return;
+    }
+    match result {
+        Ok(best) => {
+            state.solo_best = state.solo_best.max(best.solo_best);
+            crate::state::clear_best_score();
+        }
+        // Kept on the device until the next sign-in sends it again.
+        Err(_) => crate::state::save_best_score(state.solo_best),
+    }
+}
+
 pub fn update_game(app: &mut App, state: &mut State) {
+    let signed_in = state.auth.is_some();
+    let mut record = None;
     let State {
         solo,
         settings,
@@ -175,10 +219,17 @@ pub fn update_game(app: &mut App, state: &mut State) {
         if game.over() && game.cpu.is_none() && score > *solo_best {
             *solo_best = score;
             game.new_best = true;
-            crate::state::save_best_score(score);
+            if signed_in {
+                record = Some(score);
+            } else {
+                crate::state::save_best_score(score);
+            }
         }
     }
     logic::animate(&mut game.session, dt);
+    if let Some(score) = record {
+        send_best(state, score);
+    }
 }
 
 fn setup_panel(view: View) -> SettingsPanel {

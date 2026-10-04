@@ -58,6 +58,7 @@ pub struct User {
     pub banner_url: Option<String>,
     pub elo: i32,
     pub created_at: DateTime<Utc>,
+    pub solo_best: i32,
 }
 
 impl User {
@@ -347,6 +348,17 @@ pub fn compute_elo(elo0: i32, elo1: i32, winner: usize) -> [i32; 2] {
     let actual0 = if winner == 0 { 1.0 } else { 0.0 };
     let delta = (K * (actual0 - expected0)).round() as i32;
     [(elo0 + delta).max(0), (elo1 - delta).max(0)]
+}
+
+/// Keeps the higher of the stored best solo score and `score`, and returns it.
+pub async fn raise_solo_best(pool: &DbPool, user_id: Uuid, score: i32) -> Result<i32, sqlx::Error> {
+    sqlx::query_scalar::<_, i32>(
+        "UPDATE users SET solo_best = GREATEST(solo_best, $2) WHERE id = $1 RETURNING solo_best",
+    )
+    .bind(user_id)
+    .bind(score.max(0))
+    .fetch_one(pool)
+    .await
 }
 
 pub async fn update_profile(
