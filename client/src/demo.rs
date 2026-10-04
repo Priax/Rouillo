@@ -13,7 +13,7 @@ const PAUSE_SECS: f32 = 2.8;
 const OUTRO_SECS: f32 = 4.0;
 
 /// A game the hard CPU plays alone, chosen because its first pop is a 5-chain.
-const CPU_SEED: u64 = 86;
+const CPU_SEED: u64 = 6;
 /// The pairs of the match between two CPUs, chosen because the GTR wins it
 /// with a 6-chain after a long fight.
 const VERSUS_SEED: u64 = 38;
