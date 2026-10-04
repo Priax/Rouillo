@@ -6,7 +6,7 @@ use crate::controls::{Action, Frame};
 use crate::state::{GameSession, Settings};
 use crate::ui::Ui;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Online {
     pub is_host: bool,
     pub ranked: bool,

@@ -10,6 +10,10 @@ use crate::ui::Shortcuts;
 
 thread_local! {
     static TYPED: RefCell<String> = const { RefCell::new(String::new()) };
+    static ERASES: Cell<u32> = const { Cell::new(0) };
+    /// A Backspace key already counted, whose removal of input text must not
+    /// count again.
+    static BACKSPACE_DOWN: Cell<bool> = const { Cell::new(false) };
     static WANT_TEXT: Cell<bool> = const { Cell::new(true) };
     static INPUT: RefCell<Option<HtmlInputElement>> = const { RefCell::new(None) };
     static SHORTCUTS: Cell<Shortcuts> = Cell::new(Shortcuts::default());
@@ -107,6 +111,32 @@ fn wanted() -> bool {
     WANT_TEXT.with(Cell::get)
 }
 
+pub fn take_erases() -> u32 {
+    ERASES.with(Cell::take)
+}
+
+fn erased(n: u32) {
+    ERASES.with(|e| e.set(e.get() + n));
+}
+
+/// What the hidden input holds between keys: a phone's keyboard sends no key
+/// for Backspace, only removes text, so there must be text to remove.
+const SENTINEL: &str = "~~~~";
+
+fn reset(input: &HtmlInputElement) {
+    input.set_value(SENTINEL);
+    let end = SENTINEL.len() as u32;
+    let _ = input.set_selection_range(end, end);
+}
+
+/// Splits what the hidden input holds into backspaces (sentinel characters
+/// gone) and the text typed after it.
+fn read_input(value: &str) -> (u32, &str) {
+    let kept = value.chars().zip(SENTINEL.chars()).take_while(|(a, b)| a == b).count();
+    let erased = SENTINEL.chars().count() - kept;
+    (erased as u32, &value[kept..])
+}
+
 pub fn take_typed() -> String {
     TYPED.with(|typed| std::mem::take(&mut *typed.borrow_mut()))
 }
@@ -164,6 +194,7 @@ pub fn start_text_input() {
     let (Some(window), Some(input)) = (web_sys::window(), hidden_input()) else {
         return;
     };
+    reset(&input);
     let _ = input.focus();
     INPUT.with(|slot| *slot.borrow_mut() = Some(input.clone()));
 
@@ -177,15 +208,19 @@ pub fn start_text_input() {
         listen(&input.clone(), "compositionend", move |e: CompositionEvent| {
             composing.set(false);
             typed(&e.data().unwrap_or_default());
-            input.set_value("");
+            reset(&input);
         });
     }
     {
         let input = input.clone();
         listen(&input.clone(), "input", move |_: Event| {
             if !composing.get() {
-                typed(&input.value());
-                input.set_value("");
+                let value = input.value();
+                let (gone, text) = read_input(&value);
+                let counted = BACKSPACE_DOWN.with(Cell::take);
+                erased(gone.saturating_sub(u32::from(counted)));
+                typed(text);
+                reset(&input);
             }
         });
     }
@@ -207,6 +242,15 @@ pub fn start_text_input() {
                 .is_some_and(|e| e == *input.as_ref())
         }
     };
+    listen(&window, "paste", |e: ClipboardEvent| {
+        if let Some(text) = e.clipboard_data().and_then(|d| d.get_data("text/plain").ok()) {
+            e.prevent_default();
+            typed(&text);
+        }
+    });
+    listen(&window, "keyup", |_: KeyboardEvent| {
+        BACKSPACE_DOWN.with(|b| b.set(false))
+    });
     listen(&window, "copy", |e: ClipboardEvent| {
         give_selection(&e);
     });
@@ -219,20 +263,34 @@ pub fn start_text_input() {
         if e.key() == "Tab" {
             e.prevent_default();
         }
-        if (e.ctrl_key() || e.meta_key()) && e.key().eq_ignore_ascii_case("a") {
-            e.prevent_default();
-            SHORTCUTS.with(|s| {
-                s.set(Shortcuts {
-                    select_all: true,
-                    ..s.get()
-                })
-            });
+        let key = e.key();
+        match key.as_str() {
+            "Backspace" => {
+                e.prevent_default();
+                BACKSPACE_DOWN.with(|b| b.set(true));
+                erased(1);
+            }
+            "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" | "Home" | "End" => e.prevent_default(),
+            _ => {}
+        }
+        if e.ctrl_key() || e.meta_key() {
+            let mut shortcuts = SHORTCUTS.with(Cell::get);
+            let flag = match (key.to_ascii_lowercase().as_str(), e.shift_key()) {
+                ("a", _) => Some(&mut shortcuts.select_all),
+                ("z", true) | ("y", _) => Some(&mut shortcuts.redo),
+                ("z", false) => Some(&mut shortcuts.undo),
+                _ => None,
+            };
+            if let Some(flag) = flag {
+                *flag = true;
+                e.prevent_default();
+                SHORTCUTS.with(|s| s.set(shortcuts));
+            }
         }
         if !focused() {
             if wanted() {
                 let _ = input.focus();
             }
-            let key = e.key();
             if key.chars().count() == 1 && !e.ctrl_key() && !e.meta_key() {
                 typed(&key);
                 e.prevent_default();

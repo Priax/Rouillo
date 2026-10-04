@@ -141,8 +141,8 @@ fn icon(draw: &mut Draw, action: Action, cx: f32, cy: f32, r: f32, color: Color)
     }
 }
 
-/// Every screen is laid out for a landscape window; a phone held upright
-/// gets a request to turn instead.
+/// Most screens are laid out for a landscape window; on those, a phone held
+/// upright gets a request to turn instead.
 pub fn draw_turn_hint(draw: &mut Draw, fonts: &Fonts, view: View) {
     let (w, h) = view.size();
     draw.rect((0.0, 0.0), (w, h)).color(Color::from_rgb(0.07, 0.07, 0.09));

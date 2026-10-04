@@ -16,6 +16,10 @@ impl Rect {
         [(self.x, self.y), (right, self.y), (right, bottom), (self.x, bottom)]
     }
 
+    pub fn bottom(&self) -> f32 {
+        self.y + self.h
+    }
+
     pub fn center(&self) -> (f32, f32) {
         (self.x + self.w / 2.0, self.y + self.h / 2.0)
     }

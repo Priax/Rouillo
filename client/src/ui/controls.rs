@@ -39,7 +39,7 @@ impl Ui {
     /// A round avatar showing the player's initial.
     pub fn avatar(&self, draw: &mut Draw, fonts: &Fonts, rect: Rect, name: &str, picture: Option<&Texture>) {
         let pal = self.palette();
-        let r = self.interact(name, rect, true);
+        let r = self.interact_in(name, rect, super::Area::Pointer, true);
         if r.entered {
             crate::audio::play_ui_hover();
         }

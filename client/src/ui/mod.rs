@@ -26,9 +26,12 @@ use std::hash::{Hash, Hasher};
 pub use button::Icon;
 pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge, Persona, Pill};
 mod clipboard;
+pub use clipboard::get as clipboard_text;
 pub use field::{area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field};
 pub use fonts::{Face, Fonts};
 pub use input::TextInput;
+#[cfg(not(target_arch = "wasm32"))]
+pub use keys::ctrl_letter;
 pub use keys::EditKeys;
 #[cfg(target_arch = "wasm32")]
 pub use keys::Shortcuts;
@@ -36,7 +39,7 @@ pub use modal::Modal;
 use notan::draw::{CreateDraw, Draw, DrawImages};
 use notan::math::{vec2, Mat3};
 use notan::prelude::{App, BlendMode, Color, Graphics, RenderTexture, TextureFilter};
-pub use pager::{page_count, Pager};
+pub use pager::{page_count, Pager, PAGER_H};
 pub use panel::SettingsPanel;
 pub use rect::Rect;
 pub use status::Status;
@@ -118,6 +121,8 @@ impl Default for Inner {
 enum Area {
     Whole,
     Bar,
+    /// A whole rect the gamepad skips: it has its own button.
+    Pointer,
 }
 
 struct Widget {
@@ -134,7 +139,7 @@ struct Widget {
 impl Widget {
     fn contains(&self, x: f32, y: f32) -> bool {
         match self.area {
-            Area::Whole => self.rect.contains(x, y),
+            Area::Whole | Area::Pointer => self.rect.contains(x, y),
             Area::Bar => bar::contains(self.rect, x, y),
         }
     }
@@ -353,7 +358,7 @@ impl Ui {
         let live: Vec<((u64, u32), (f32, f32))> = inner
             .widgets
             .iter()
-            .filter(|(_, w)| w.live)
+            .filter(|(_, w)| w.live && w.area != Area::Pointer)
             .map(|(k, w)| (*k, w.rect.center()))
             .collect();
         let current = inner.focus.and_then(|f| live.iter().find(|(k, _)| *k == f).copied());
@@ -380,6 +385,10 @@ impl Ui {
         };
         inner.focus = next;
         inner.pad = next.is_some();
+    }
+
+    pub fn pad_active(&self) -> bool {
+        self.inner.borrow().pad
     }
 
     pub fn mouse(&self) -> Mouse {
@@ -562,6 +571,27 @@ mod tests {
         );
         ui.note_pointer(ON_A);
         assert!(ui.pad_click().is_none(), "moving the mouse hands control back");
+    }
+
+    #[test]
+    fn the_gamepad_skips_widgets_that_have_their_own_button() {
+        let mut ui = Ui::default();
+        let avatar = Rect::at(10.0, 10.0, 60.0, 60.0);
+        let play = Rect::at(300.0, 300.0, 200.0, 50.0);
+        let draw = |ui: &mut Ui| {
+            ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
+            ui.interact_in("avatar", avatar, Area::Pointer, true);
+            ui.interact("play", play, true);
+        };
+        draw(&mut ui);
+        ui.note_pointer(AWAY);
+        draw(&mut ui);
+        ui.move_focus((0.0, -1.0));
+        let click = ui.pad_click().expect("a button gets the focus");
+        assert!(play.contains(click.x, click.y), "the avatar, top left, is skipped");
+        ui.move_focus((-1.0, -1.0));
+        let click = ui.pad_click().unwrap();
+        assert!(play.contains(click.x, click.y), "and never reached");
     }
 
     #[test]

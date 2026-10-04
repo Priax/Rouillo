@@ -1285,6 +1285,7 @@ fn server_samples() -> Vec<ServerMessage> {
                 ranked: Some(RankedInfo {
                     opponent: "o".into(),
                     opponent_elo: 1010,
+                    opponent_avatar: Some("/a".into()),
                     wins: [2, 1],
                 }),
                 names: vec!["a".into(), "b".into()],
@@ -1303,6 +1304,7 @@ fn server_samples() -> Vec<ServerMessage> {
         ServerMessage::MatchFound {
             opponent: "o".into(),
             opponent_elo: 990,
+            opponent_avatar: None,
             secs: 10,
         },
         ServerMessage::MatchCancelled { requeued: true },
@@ -1377,7 +1379,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (7, 2_608_409_267_914_912_748);
+const PROTOCOL_DIGEST: (u32, u64) = (8, 14_768_979_645_083_081_079);
 
 #[test]
 fn protocol_changes_bump_the_version() {

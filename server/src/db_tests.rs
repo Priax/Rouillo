@@ -220,8 +220,13 @@ async fn db_only_casual_games_count_towards_ranked(pool: PgPool) {
     db::record_match_result(&pool, game(false, Some(bob), Some(carol), 1))
         .await
         .unwrap();
-    assert_eq!(db::ranked_profile(&pool, alice).await.unwrap(), Some((1000, 3)));
-    assert_eq!(db::ranked_profile(&pool, carol).await.unwrap(), Some((1000, 1)));
+    let profile = |elo, casual| db::RankedProfile {
+        elo,
+        casual,
+        avatar_url: None,
+    };
+    assert_eq!(db::ranked_profile(&pool, alice).await.unwrap(), Some(profile(1000, 3)));
+    assert_eq!(db::ranked_profile(&pool, carol).await.unwrap(), Some(profile(1000, 1)));
     assert_eq!(db::ranked_profile(&pool, Uuid::from_u128(42)).await.unwrap(), None);
 }
 
@@ -291,7 +296,7 @@ async fn db_a_profile_counts_wins_from_either_slot(pool: PgPool) {
 }
 
 fn login_api(pool: PgPool) -> axum::Router {
-    crate::auth::routes(pool, tokio::sync::mpsc::channel(8).0)
+    crate::api::routes(pool, tokio::sync::mpsc::channel(8).0)
 }
 
 async fn wrong_logins(api: &axum::Router, ip: &str, count: usize) -> Vec<u16> {
@@ -303,7 +308,7 @@ async fn wrong_logins_as(api: &axum::Router, ip: &str, username: &str, count: us
     let body = serde_json::json!({ "username": username, "password": "wrong-password" }).to_string();
     let peer = format!("{ip}:5000");
     let tries = (0..count).map(|_| {
-        let req = crate::auth::tests::post_json("/api/login", Some(&peer), None, body.clone());
+        let req = crate::api::tests::post_json("/api/login", Some(&peer), None, body.clone());
         api.clone().oneshot(req)
     });
     futures_util::future::join_all(tries)
@@ -366,7 +371,7 @@ async fn db_a_player_can_rename_with_their_password(pool: PgPool) {
     let api = login_api(pool.clone());
     let rename = |name: &str, password: &str| {
         let body = serde_json::json!({ "username": name, "password": password }).to_string();
-        let mut req = crate::auth::tests::post_json("/api/me/username", None, None, body);
+        let mut req = crate::api::tests::post_json("/api/me/username", None, None, body);
         req.headers_mut()
             .insert("authorization", format!("Bearer {token}").parse().unwrap());
         api.clone().oneshot(req)

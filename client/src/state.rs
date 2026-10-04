@@ -78,15 +78,26 @@ pub struct AuthForm {
     pub pending: Option<HttpSlot>,
 }
 
+pub const MAX_PASSWORD_CHARS: usize = 64;
+
 impl Default for AuthForm {
     fn default() -> Self {
         Self {
-            username: TextInput::default(),
-            password: TextInput::masked(),
+            username: TextInput::default().max_chars(shared::MAX_USERNAME_CHARS),
+            password: TextInput::masked().max_chars(MAX_PASSWORD_CHARS),
             focused: AuthField::Username,
             mode: AuthMode::Login,
             status: Status::Empty,
             pending: None,
+        }
+    }
+}
+
+impl AuthForm {
+    pub const fn focused_input(&mut self) -> &mut TextInput {
+        match self.focused {
+            AuthField::Username => &mut self.username,
+            AuthField::Password => &mut self.password,
         }
     }
 }
@@ -179,6 +190,8 @@ pub struct FriendsData {
     pub action_pending: Option<HttpSlot>,
     pub action_status: Status,
     pub pages: [crate::ui::Pager; 3],
+    /// Rows per page, from the window's height.
+    pub rows: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -336,6 +349,47 @@ impl Settings {
             storage::set(key, &self.value(i).to_string());
         }
     }
+}
+
+impl State {
+    /// The online game being played or watched.
+    pub fn session(&self) -> Option<&GameSession> {
+        self.room.as_ref()?.session.as_ref()
+    }
+
+    pub fn session_mut(&mut self) -> Option<&mut GameSession> {
+        self.room.as_mut()?.session.as_mut()
+    }
+}
+
+/// Everything that lasts as long as a stay in one room.
+pub struct Room {
+    pub info: LobbyInfo,
+    pub session: Option<GameSession>,
+    pub chat: crate::chat::Chat,
+    pub series_over: Option<(Option<u8>, i32)>,
+    pub invite: Invite,
+}
+
+impl Room {
+    pub fn new(info: LobbyInfo) -> Self {
+        Self {
+            info,
+            session: None,
+            chat: crate::chat::Chat::default(),
+            series_over: None,
+            invite: Invite::default(),
+        }
+    }
+}
+
+/// The lobby's list of friends to invite.
+#[derive(Default)]
+pub struct Invite {
+    pub open: bool,
+    pub slot: Option<HttpSlot>,
+    pub friends: Vec<FriendEntry>,
+    pub pager: crate::ui::Pager,
 }
 
 pub struct GameSession {
@@ -513,11 +567,11 @@ pub struct State {
     pub player_id: String,
     pub conn: Connection,
     pub rooms: Vec<RoomInfo>,
+    /// The room this player is in: dropped as a whole on leaving it.
+    pub room: Option<Room>,
     pub room_pager: crate::ui::Pager,
-    pub lobby: Option<LobbyInfo>,
     pub text_input: TextInput,
     pub notice: Status,
-    pub session: Option<GameSession>,
     pub fonts: crate::ui::Fonts,
     pub images: crate::images::Images,
     pub auth: Option<AuthInfo>,
@@ -532,14 +586,8 @@ pub struct State {
     pub pending_join: Option<RoomId>,
     pub pending_watch: Option<String>,
     pub ranked: crate::ranked::RankedView,
-    pub chat: crate::chat::Chat,
     pub demo: Option<crate::demo::Demo>,
     pub leaderboard: Option<crate::leaderboard::Leaderboard>,
-    pub series_over: Option<(Option<u8>, i32)>,
-    pub invite_overlay: bool,
-    pub invite_slot: Option<HttpSlot>,
-    pub invite_friends: Vec<FriendEntry>,
-    pub invite_pager: crate::ui::Pager,
     pub outdated: bool,
     pub maintenance: bool,
     pub ui: crate::ui::Ui,
@@ -562,11 +610,10 @@ impl State {
             player_id: player_id.clone(),
             conn: Connection::new(&player_id),
             rooms: Vec::new(),
+            room: None,
             room_pager: crate::ui::Pager::default(),
-            lobby: None,
             text_input: TextInput::default(),
             notice: Status::Empty,
-            session: None,
             fonts,
             images: crate::images::Images::default(),
             auth: None,
@@ -581,14 +628,8 @@ impl State {
             pending_join: None,
             pending_watch: None,
             ranked: crate::ranked::RankedView::default(),
-            chat: crate::chat::Chat::default(),
             demo: None,
             leaderboard: None,
-            series_over: None,
-            invite_overlay: false,
-            invite_slot: None,
-            invite_friends: Vec::new(),
-            invite_pager: crate::ui::Pager::default(),
             outdated: false,
             maintenance: false,
             ui: crate::ui::Ui::default(),

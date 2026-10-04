@@ -21,7 +21,6 @@ struct Line {
     at: f64,
 }
 
-#[derive(Default)]
 pub struct Chat {
     lines: VecDeque<Line>,
     pub input: TextInput,
@@ -29,6 +28,17 @@ pub struct Chat {
     pub open: bool,
     /// Whether the field was touched: only then does a phone show its keyboard.
     pub focused: bool,
+}
+
+impl Default for Chat {
+    fn default() -> Self {
+        Self {
+            lines: VecDeque::new(),
+            input: TextInput::default().max_chars(MAX_CHAT_CHARS),
+            open: false,
+            focused: false,
+        }
+    }
 }
 
 impl Chat {
@@ -43,17 +53,9 @@ impl Chat {
         });
     }
 
-    pub fn clear(&mut self) {
-        self.lines.clear();
-        self.input.clear();
-        self.open = false;
-        self.focused = false;
-    }
-
-    pub fn type_char(&mut self, c: char) {
-        if self.input.chars().count() < MAX_CHAT_CHARS {
-            self.input.insert(c);
-        }
+    /// The lobby's field, once focused.
+    pub fn typing(&mut self) -> Option<&mut TextInput> {
+        self.focused.then_some(&mut self.input)
     }
 
     /// Applies editing keys; returns the message to send when Enter was pressed.
@@ -69,10 +71,27 @@ impl Chat {
 
     pub fn click(&mut self, ui: &Ui, fonts: &Fonts, area: Rect) -> bool {
         let clicked = field_clicked(ui, fonts, input_rect(area), &mut self.input);
+        let mouse = ui.mouse();
         if clicked {
             self.focused = true;
+        } else if mouse.pressed && !area.contains(mouse.x, mouse.y) {
+            self.focused = false;
         }
         clicked || ui.clicked(area)
+    }
+
+    /// The lobby's chat: typing goes to it once its field was clicked, or
+    /// after Enter; Escape lets go of it.
+    pub fn update_lobby(&mut self, keyboard: &Keyboard, keys: &EditKeys) -> Option<String> {
+        if !self.focused {
+            self.focused = keyboard.was_pressed(KeyCode::Enter) || keyboard.was_pressed(KeyCode::NumpadEnter);
+            return None;
+        }
+        if keyboard.was_pressed(KeyCode::Escape) {
+            self.focused = false;
+            return None;
+        }
+        self.edit(keyboard, keys)
     }
 
     fn draw_lines(&self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect, fade: bool) {
@@ -113,7 +132,7 @@ impl Chat {
         let field = Field {
             placeholder: "Écrire un message...",
             input: &self.input,
-            focused: true,
+            focused: self.focused,
         };
         text_field(draw, ui, fonts, input_rect(area), &field);
     }
@@ -171,7 +190,7 @@ mod tests {
     fn typing_stops_at_the_limit() {
         let mut chat = Chat::default();
         for _ in 0..MAX_CHAT_CHARS + 10 {
-            chat.type_char('x');
+            chat.input.type_char('x');
         }
         assert_eq!(chat.input.chars().count(), MAX_CHAT_CHARS);
     }

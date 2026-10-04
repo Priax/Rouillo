@@ -253,10 +253,11 @@ pub struct LobbyInfo {
 pub struct RankedInfo {
     pub opponent: String,
     pub opponent_elo: i32,
+    pub opponent_avatar: Option<String>,
     pub wins: [u8; 2],
 }
 
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 pub const MAX_CHAT_CHARS: usize = 200;
 pub const MAX_SPECTATORS: usize = 20;
@@ -351,6 +352,7 @@ pub enum ServerMessage {
     MatchFound {
         opponent: String,
         opponent_elo: i32,
+        opponent_avatar: Option<String>,
         secs: u32,
     },
     MatchCancelled {

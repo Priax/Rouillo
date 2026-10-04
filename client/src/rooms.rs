@@ -4,9 +4,10 @@ use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 use shared::{ClientMessage, LobbyInfo, RoomInfo, RoomSettings};
 
-use crate::state::{ApiFriendsResponse, Screen, State};
+use crate::state::{ApiFriendsResponse, Invite, Screen, State};
 use crate::ui::{
-    self, field_clicked, list_row, text_field, Face, Field, Modal, Pill, Rect, SettingsPanel, SharpText, View,
+    self, field_clicked, list_row, text_field, Face, Field, Modal, Pill, Rect, SettingsPanel, SharpText, TextInput,
+    View, PAGER_H,
 };
 use crate::{http, theme};
 
@@ -15,7 +16,6 @@ fn send(state: &mut State, msg: &ClientMessage) {
 }
 
 const ROOM_ROW_H: f32 = 56.0;
-const PAGER_H: f32 = 52.0;
 
 fn room_list_card(view: View) -> Rect {
     Rect::at(
@@ -100,11 +100,11 @@ pub fn update_browser(app: &App, state: &mut State) {
     }
 
     if state.ui.clicked(b.create) {
-        state.text_input.clear();
+        state.text_input = TextInput::default().max_chars(24);
         state.notice.clear();
         state.screen = Screen::CreateRoom;
     } else if state.ui.clicked(b.join_id) {
-        state.text_input.clear();
+        state.text_input = TextInput::default().max_chars(9).only(|c| c.is_ascii_digit());
         state.notice.clear();
         state.screen = Screen::JoinById;
     } else if state.ui.clicked(b.refresh) {
@@ -392,110 +392,106 @@ fn invite_button(view: View, i: usize) -> Rect {
 }
 
 pub fn update_lobby(app: &mut App, state: &mut State) {
-    if let Some(Ok(resp)) = http::take(&mut state.invite_slot) {
-        if let Some(data) = http::json::<ApiFriendsResponse>(&resp) {
-            state.invite_friends = data.friends;
-        }
-    }
-
-    let info = match &state.lobby {
-        Some(l) => l.clone(),
-        None => return,
-    };
     let view = state.ui.view();
+    let State {
+        room,
+        ui,
+        fonts,
+        keys,
+        conn,
+        auth,
+        maintenance,
+        ..
+    } = state;
+    let Some(room) = room.as_mut() else { return };
+    if let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut room.invite.slot) {
+        room.invite.friends = data.friends;
+    }
+    let info = &room.info;
 
-    if state.invite_overlay {
-        if invite_modal(view).dismissed(&state.ui) || app.keyboard.was_pressed(KeyCode::Escape) {
-            state.invite_overlay = false;
+    if room.invite.open {
+        let invite = &mut room.invite;
+        if invite_modal(view).dismissed(ui) || app.keyboard.was_pressed(KeyCode::Escape) {
+            invite.open = false;
             return;
         }
         let per_page = visible_invites(view);
-        let pages = ui::page_count(state.invite_friends.len(), per_page);
-        state.invite_pager.clamp(pages);
-        state.invite_pager.update(
-            app,
-            &state.ui,
-            &state.fonts,
-            &state.keys,
-            invite_pager_area(view),
-            pages,
-        );
-        let loaded = state.invite_slot.is_none();
-        let invited = state
-            .invite_pager
-            .shown(&state.invite_friends, per_page)
-            .find(|&(i, _)| loaded && state.ui.clicked(invite_button(view, i)))
+        let pages = ui::page_count(invite.friends.len(), per_page);
+        invite.pager.clamp(pages);
+        invite
+            .pager
+            .update(app, ui, fonts, keys, invite_pager_area(view), pages);
+        let loaded = invite.slot.is_none();
+        let invited = invite
+            .pager
+            .shown(&invite.friends, per_page)
+            .find(|&(i, _)| loaded && ui.clicked(invite_button(view, i)))
             .map(|(_, friend)| friend.user_id.clone());
         if let Some(user_id) = invited {
-            send(state, &ClientMessage::InviteFriend { user_id });
-            state.invite_overlay = false;
+            conn.send(&ClientMessage::InviteFriend { user_id });
+            invite.open = false;
         }
         return;
     }
 
-    if let Some(text) = state.chat.edit(&app.keyboard, &state.keys) {
-        send(state, &ClientMessage::Chat { text });
+    if let Some(text) = room.chat.update_lobby(&app.keyboard, keys) {
+        conn.send(&ClientMessage::Chat { text });
     }
-    state.chat.click(&state.ui, &state.fonts, lobby_chat(view));
+    room.chat.click(ui, fonts, lobby_chat(view));
 
     if info.is_host && info.countdown.is_none() {
         for i in 0..RoomSettings::COUNT {
-            if state.ui.clicked(lobby_panel(view).stepper(i).minus) {
-                send(
-                    state,
-                    &ClientMessage::SetRoomSetting {
-                        index: i as u8,
-                        dir: -1,
-                    },
-                );
-                return;
-            }
-            if state.ui.clicked(lobby_panel(view).stepper(i).plus) {
-                send(state, &ClientMessage::SetRoomSetting { index: i as u8, dir: 1 });
-                return;
-            }
+            let stepper = lobby_panel(view).stepper(i);
+            let dir = if ui.clicked(stepper.minus) {
+                -1
+            } else if ui.clicked(stepper.plus) {
+                1
+            } else {
+                continue;
+            };
+            conn.send(&ClientMessage::SetRoomSetting { index: i as u8, dir });
+            return;
         }
     }
 
-    let (_, _, launch_enabled) = launch_bar(&info, state.maintenance);
-    if launch_enabled && state.ui.bar_clicked(lobby_launch(view)) {
+    let (_, _, launch_enabled) = launch_bar(info, *maintenance);
+    if launch_enabled && ui.bar_clicked(lobby_launch(view)) {
         let msg = if info.your_slot == 0 {
             ClientMessage::JoinRoom { id: info.id }
         } else {
             ClientMessage::ToggleCountdown
         };
-        send(state, &msg);
+        conn.send(&msg);
         return;
     }
 
-    if state.ui.bar_clicked(lobby_leave(view)) {
-        send(state, &ClientMessage::LeaveRoom);
-        state.invite_friends.clear();
-        state.invite_slot = None;
-        state.invite_overlay = false;
+    if ui.bar_clicked(lobby_leave(view)) {
+        conn.send(&ClientMessage::LeaveRoom);
+        room.invite = Invite::default();
         return;
     }
 
-    if info.your_slot != 0 && state.auth.is_some() && state.ui.bar_clicked(lobby_invite(view)) {
-        state.invite_overlay = true;
-        if state.invite_friends.is_empty() && state.invite_slot.is_none() {
-            let token = state.auth.as_ref().map(|a| a.token.clone());
+    if info.your_slot != 0 && auth.is_some() && ui.bar_clicked(lobby_invite(view)) {
+        room.invite.open = true;
+        if room.invite.friends.is_empty() && room.invite.slot.is_none() {
+            let token = auth.as_ref().map(|a| a.token.clone());
             let slot = http::new_slot();
             http::get(http::api_url("friends"), token, Arc::clone(&slot));
-            state.invite_slot = Some(slot);
+            room.invite.slot = Some(slot);
         }
     }
 }
 
 pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
-    let Some(info) = &state.lobby else {
+    let Some(room) = &state.room else {
         return;
     };
+    let info = &room.info;
     let view = state.ui.view();
     let fonts = &state.fonts;
     let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.set_input(!state.invite_overlay);
+    state.ui.set_input(!room.invite.open);
 
     draw_lobby_header(&mut draw, state, info);
 
@@ -523,7 +519,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
             .ui
             .menu_bar(&mut draw, fonts, lobby_invite(view), "Inviter un ami", theme::bar::BLUE);
     }
-    state.chat.draw_card(&mut draw, &state.ui, fonts, lobby_chat(view));
+    room.chat.draw_card(&mut draw, &state.ui, fonts, lobby_chat(view));
     state
         .ui
         .menu_bar(&mut draw, fonts, lobby_leave(view), "Quitter la room", theme::bar::RED);
@@ -538,8 +534,8 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
             .color(theme::GOLD);
     }
 
-    if state.invite_overlay {
-        draw_invite_overlay(&mut draw, state);
+    if room.invite.open {
+        draw_invite_overlay(&mut draw, state, &room.invite);
     }
 
     state.ui.render(gfx, &draw);
@@ -615,7 +611,7 @@ fn draw_lobby_header(draw: &mut Draw, state: &State, info: &LobbyInfo) {
         .color(pal.text);
 }
 
-fn draw_invite_overlay(draw: &mut Draw, state: &State) {
+fn draw_invite_overlay(draw: &mut Draw, state: &State, invite: &Invite) {
     let pal = state.ui.palette();
     let view = state.ui.view();
     let fonts = &state.fonts;
@@ -623,9 +619,9 @@ fn draw_invite_overlay(draw: &mut Draw, state: &State) {
     let card = modal.card;
     modal.draw(draw, &state.ui, fonts, "Inviter un ami");
 
-    let message = if state.invite_slot.is_some() {
+    let message = if invite.slot.is_some() {
         Some("Chargement...")
-    } else if state.invite_friends.is_empty() {
+    } else if invite.friends.is_empty() {
         Some("Aucun ami pour l'instant.")
     } else {
         None
@@ -640,13 +636,13 @@ fn draw_invite_overlay(draw: &mut Draw, state: &State) {
         return;
     }
     let per_page = visible_invites(view);
-    let pages = ui::page_count(state.invite_friends.len(), per_page);
+    let pages = ui::page_count(invite.friends.len(), per_page);
     if pages > 1 {
-        state
-            .invite_pager
+        invite
+            .pager
             .draw(draw, &state.ui, fonts, invite_pager_area(view), pages);
     }
-    for (i, friend) in state.invite_pager.shown(&state.invite_friends, per_page) {
+    for (i, friend) in invite.pager.shown(&invite.friends, per_page) {
         let row = invite_row(view, i);
         list_row(draw, &pal, row, i);
         draw.sharp_text(&fonts.text, &friend.username)

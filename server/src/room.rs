@@ -42,6 +42,7 @@ pub struct Series {
     pub users: [Uuid; 2],
     pub names: [String; 2],
     pub elos: [i32; 2],
+    pub avatars: [Option<String>; 2],
     pub wins: [u8; 2],
     pub next_game_at: Option<Instant>,
     pub result: Option<SeriesResult>,
@@ -215,6 +216,7 @@ impl Room {
             ranked: self.series.as_ref().map(|s| RankedInfo {
                 opponent: s.names[1 - idx].clone(),
                 opponent_elo: s.elos[1 - idx],
+                opponent_avatar: s.avatars[1 - idx].clone(),
                 wins: s.wins,
             }),
             names: self.members.iter().map(|m| m.name.clone()).collect(),

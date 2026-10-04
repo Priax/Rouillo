@@ -1,12 +1,7 @@
 use super::*;
 
-fn clean_name(name: &str) -> String {
-    let n = name.trim();
-    if n.is_empty() {
-        "Room".to_string()
-    } else {
-        n.chars().take(24).collect()
-    }
+pub(crate) fn clean_name(name: &str) -> String {
+    super::social::one_line(name, 24).unwrap_or_else(|| "Room".to_string())
 }
 
 impl Manager {

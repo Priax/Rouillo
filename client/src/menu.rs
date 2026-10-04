@@ -1,3 +1,4 @@
+use notan::draw::DrawShapes;
 use notan::prelude::*;
 
 use crate::state::{AuthForm, Screen, Settings, State};
@@ -127,7 +128,8 @@ pub fn update_menu(app: &App, state: &mut State) {
         crate::update::apply();
     }
 
-    if logged_in && state.ui.clicked(avatar_rect(ww)) {
+    let profile_pad = state.pads.pressed(crate::pads::Pad::North);
+    if logged_in && (state.ui.clicked(avatar_rect(ww)) || profile_pad) {
         crate::profile::enter_profile(state, Screen::Menu);
         state.screen = Screen::Profile;
     }
@@ -142,8 +144,7 @@ pub fn do_logout(state: &mut State) {
 
 pub fn forget_session(state: &mut State) {
     state.conn.disconnect();
-    state.lobby = None;
-    state.session = None;
+    state.room = None;
     clear_auth(state);
     state.auth_form = AuthForm::default();
     state.screen = Screen::Auth;
@@ -193,6 +194,16 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
         state
             .ui
             .avatar(&mut draw, &state.fonts, avatar, &auth.username, picture.as_ref());
+        if state.ui.pad_active() {
+            let (x, y) = (avatar.x + 6.0, avatar.y + avatar.h - 6.0);
+            draw.circle(14.0).position(x, y).color(theme::GOLD);
+            draw.sharp_text(&state.fonts.display, crate::pads::Pad::North.label())
+                .position(x, y)
+                .size(theme::size::LABEL)
+                .h_align_center()
+                .v_align_middle()
+                .color(Color::BLACK);
+        }
         draw.sharp_text(&state.fonts.text, &auth.username)
             .position(avatar.x + avatar.w / 2.0, avatar.y + avatar.h + 16.0)
             .size(theme::size::BODY)

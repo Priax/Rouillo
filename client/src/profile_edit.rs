@@ -69,7 +69,6 @@ impl Picture {
     }
 }
 
-#[derive(Default)]
 pub struct EditForm {
     pub bio: TextInput,
     pub music: TextInput,
@@ -80,12 +79,24 @@ pub struct EditForm {
     uploading: Option<HttpSlot>,
 }
 
+impl Default for EditForm {
+    fn default() -> Self {
+        Self::open(&ApiUserProfile::default())
+    }
+}
+
 impl EditForm {
     pub fn open(info: &ApiUserProfile) -> Self {
         Self {
-            bio: info.bio.clone().unwrap_or_default().into(),
-            music: info.favorite_music.clone().unwrap_or_default().into(),
-            ..Self::default()
+            bio: TextInput::from(info.bio.clone().unwrap_or_default())
+                .max_chars(EditField::Bio.max())
+                .multiline(),
+            music: TextInput::from(info.favorite_music.clone().unwrap_or_default()).max_chars(EditField::Music.max()),
+            focused: EditField::default(),
+            pending: None,
+            status: Status::default(),
+            picking: None,
+            uploading: None,
         }
     }
 
@@ -107,12 +118,8 @@ impl EditForm {
         field.max().saturating_sub(self.value(field).chars().count())
     }
 
-    pub fn type_char(&mut self, c: char) {
-        let field = self.focused;
-        if self.left(field) == 0 || (self.value(field).is_empty() && c.is_whitespace()) {
-            return;
-        }
-        self.value_mut(field).insert(c);
+    pub const fn typing(&mut self) -> &mut TextInput {
+        self.value_mut(self.focused)
     }
 
     fn focus_next(&mut self) {
@@ -130,7 +137,7 @@ impl EditForm {
         let around =
             before.len() - before.trim_end_matches('\n').len() + after.len() - after.trim_start_matches('\n').len();
         if around < 2 {
-            self.type_char('\n');
+            self.bio.type_char('\n');
         }
         false
     }
@@ -192,27 +199,24 @@ fn poll_pictures(state: &mut State) {
             None => {}
         }
     }
-    let Some(result) = http::take(&mut form.uploading) else {
+    #[derive(serde::Deserialize)]
+    struct Pictures {
+        avatar_url: Option<String>,
+        banner_url: Option<String>,
+    }
+    let Some(result) = http::take_json::<Pictures>(&mut form.uploading) else {
         return;
     };
     match result {
-        Ok(resp) if resp.status == 200 => {
-            #[derive(serde::Deserialize)]
-            struct Pictures {
-                avatar_url: Option<String>,
-                banner_url: Option<String>,
+        Ok(urls) => {
+            p.core.info.avatar_url.clone_from(&urls.avatar_url);
+            p.core.info.banner_url = urls.banner_url;
+            if let Some(auth) = state.auth.as_mut() {
+                auth.avatar_url = urls.avatar_url;
             }
-            if let Some(urls) = http::json::<Pictures>(&resp) {
-                p.core.info.avatar_url.clone_from(&urls.avatar_url);
-                p.core.info.banner_url = urls.banner_url;
-                if let Some(auth) = state.auth.as_mut() {
-                    auth.avatar_url = urls.avatar_url;
-                }
-                form.status = Status::success("Image mise à jour.");
-            }
+            form.status = Status::success("Image mise à jour.");
         }
-        Ok(resp) => form.status = Status::error(http::error_message(&resp)),
-        Err(e) => form.status = Status::error(http::network_error(&e)),
+        Err(msg) => form.status = Status::error(msg),
     }
 }
 
@@ -220,24 +224,21 @@ pub fn poll(state: &mut State) {
     poll_pictures(state);
     let Some(p) = state.profile.as_mut() else { return };
     let Some(form) = p.edit.as_mut() else { return };
-    let Some(result) = http::take(&mut form.pending) else {
+    #[derive(serde::Deserialize)]
+    struct PatchResp {
+        bio: Option<String>,
+        favorite_music: Option<String>,
+    }
+    let Some(result) = http::take_json::<PatchResp>(&mut form.pending) else {
         return;
     };
     match result {
-        Ok(resp) if resp.status == 200 => {
-            #[derive(serde::Deserialize)]
-            struct PatchResp {
-                bio: Option<String>,
-                favorite_music: Option<String>,
-            }
-            if let Some(data) = http::json::<PatchResp>(&resp) {
-                p.core.info.bio = data.bio;
-                p.core.info.favorite_music = data.favorite_music;
-                p.edit = None;
-            }
+        Ok(data) => {
+            p.core.info.bio = data.bio;
+            p.core.info.favorite_music = data.favorite_music;
+            p.edit = None;
         }
-        Ok(resp) => form.status = Status::error(http::error_message(&resp)),
-        Err(e) => form.status = Status::error(http::network_error(&e)),
+        Err(msg) => form.status = Status::error(msg),
     }
 }
 
@@ -376,7 +377,7 @@ mod tests {
 
     fn typed(form: &mut EditForm, text: &str) {
         for c in text.chars() {
-            form.type_char(c);
+            form.typing().type_char(c);
         }
     }
 

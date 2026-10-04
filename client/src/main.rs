@@ -100,80 +100,42 @@ fn event(state: &mut State, evt: Event) {
 }
 
 fn type_char(state: &mut State, c: char) {
-    if c.is_control() {
-        return;
-    }
     #[cfg(not(target_arch = "wasm32"))]
     if state.keys.ctrl {
-        state.keys.shortcut(c);
-        return;
+        if let Some(letter) = ui::ctrl_letter(c) {
+            state.keys.shortcut(letter);
+            return;
+        }
     }
-    match state.screen {
-        Screen::Auth => match state.auth_form.focused {
-            state::AuthField::Username if state.auth_form.username.chars().count() < shared::MAX_USERNAME_CHARS => {
-                state.auth_form.username.insert(c);
-            }
-            state::AuthField::Password if state.auth_form.password.len() < 64 => {
-                state.auth_form.password.insert(c);
-            }
-            _ => {}
-        },
-        Screen::CreateRoom if state.text_input.chars().count() < 24 => {
-            state.text_input.insert(c);
-        }
-        Screen::JoinById if c.is_ascii_digit() && state.text_input.len() < 9 => {
-            state.text_input.insert(c);
-        }
-        Screen::Friends => {
-            if let Some(pager) = state
-                .friends
-                .as_mut()
-                .and_then(|f| f.pages.iter_mut().find(|p| p.focused()))
-            {
-                pager.type_char(c);
-            } else if let Some(f) = state.friends.as_mut() {
-                let allowed = c.is_alphanumeric() || c == '_' || c == '-' || c == ' ';
-                if allowed && f.search_input.len() < 36 {
-                    f.search_input.insert(c);
-                }
-            }
-        }
-        Screen::Profile => {
-            if let Some(p) = state.profile.as_mut() {
-                if let Some(form) = p.edit.as_mut() {
-                    form.type_char(c);
-                } else if let Some(form) = p.account.as_mut() {
-                    form.type_char(c);
-                } else {
-                    p.core.history.type_char(c);
-                }
-            }
-        }
-        Screen::OtherProfile => {
-            if let Some(p) = state.other_profile.as_mut() {
-                p.core.history.type_char(c);
-            }
-        }
-        Screen::RoomBrowser => state.room_pager.type_char(c),
-        Screen::Settings => state.bindings_panel.type_char(c),
-        Screen::RoomLobby if state.invite_overlay => state.invite_pager.type_char(c),
-        Screen::RoomLobby => state.chat.type_char(c),
-        Screen::Game if state.chat.open => state.chat.type_char(c),
-        _ => {}
+    if state.screen == Screen::Settings {
+        state.bindings_panel.type_char(c);
+    } else if let Some(input) = typing(state) {
+        input.type_char(c);
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn wants_text(state: &State) -> bool {
+/// The field the keyboard types into on this screen, if any. Each field
+/// carries its own limits.
+fn typing(state: &mut State) -> Option<&mut ui::TextInput> {
     match state.screen {
-        Screen::Auth | Screen::CreateRoom | Screen::JoinById | Screen::Friends => true,
-        Screen::RoomLobby => state.chat.focused,
-        Screen::Game => state.chat.open,
-        Screen::Profile => state
-            .profile
-            .as_ref()
-            .is_some_and(|p| p.edit.is_some() || p.account.is_some()),
-        _ => false,
+        Screen::Auth => Some(state.auth_form.focused_input()),
+        Screen::CreateRoom | Screen::JoinById => Some(&mut state.text_input),
+        Screen::RoomBrowser => state.room_pager.typing(),
+        Screen::RoomLobby => {
+            let room = state.room.as_mut()?;
+            if room.invite.open {
+                room.invite.pager.typing()
+            } else {
+                room.chat.typing()
+            }
+        }
+        Screen::Game => {
+            let chat = &mut state.room.as_mut()?.chat;
+            chat.open.then_some(&mut chat.input)
+        }
+        Screen::Friends => friends::typing(state),
+        Screen::Profile | Screen::OtherProfile => profile::typing(state),
+        _ => None,
     }
 }
 
@@ -187,7 +149,7 @@ fn game_chat_area(state: &State) -> Rect {
 /// Whether the player may type in a game: a spectator always, a player only
 /// when the board does not need the keys.
 fn can_chat(state: &State) -> bool {
-    state.session.as_ref().is_some_and(|s| {
+    state.session().is_some_and(|s| {
         s.spectating() || s.decided() || s.opponent_disconnected || s.board.state == shared::GameState::Paused
     })
 }
@@ -196,22 +158,34 @@ fn can_chat(state: &State) -> bool {
 /// the keys the chat took.
 fn game_chat(app: &App, state: &mut State) -> controls::Frame {
     let mut input = state.controls.frame;
-    if !can_chat(state) {
-        state.chat.open = false;
+    let allowed = can_chat(state);
+    let area = game_chat_area(state);
+    let State {
+        room,
+        keys,
+        conn,
+        ui,
+        fonts,
+        ..
+    } = state;
+    let Some(chat) = room.as_mut().map(|r| &mut r.chat) else {
+        return input;
+    };
+    if !allowed {
+        chat.open = false;
         return input;
     }
-    let area = game_chat_area(state);
-    if state.chat.open {
+    if chat.open {
         input.pause = false;
         input.restart = false;
         if app.keyboard.was_pressed(KeyCode::Escape) {
-            state.chat.open = false;
-        } else if let Some(text) = state.chat.edit(&app.keyboard, &state.keys) {
-            state.conn.send(&ClientMessage::Chat { text });
-            state.chat.open = false;
+            chat.open = false;
+        } else if let Some(text) = chat.edit(&app.keyboard, keys) {
+            conn.send(&ClientMessage::Chat { text });
+            chat.open = false;
         }
-    } else if app.keyboard.was_pressed(KeyCode::Enter) || state.chat.click(&state.ui, &state.fonts, area) {
-        state.chat.open = true;
+    } else if app.keyboard.was_pressed(KeyCode::Enter) || chat.click(ui, fonts, area) {
+        chat.open = true;
     }
     input
 }
@@ -222,7 +196,10 @@ fn pad_menus(state: &State) -> bool {
         return false;
     }
     match state.screen {
-        Screen::Game => can_chat(state) && !state.chat.open || state.session.as_ref().is_some_and(|s| s.quit_menu),
+        Screen::Game => {
+            let chatting = state.room.as_ref().is_some_and(|r| r.chat.open);
+            can_chat(state) && !chatting || state.session().is_some_and(|s| s.quit_menu)
+        }
         Screen::Solo => state.solo.as_ref().is_some_and(solo::SoloGame::idle),
         _ => true,
     }
@@ -296,6 +273,11 @@ fn update(app: &mut App, state: &mut State) {
         }
     }
     state.keys.update(&app.keyboard, dt);
+    if state.keys.paste {
+        for c in ui::clipboard_text().unwrap_or_default().chars() {
+            type_char(state, c);
+        }
+    }
     #[cfg(not(target_arch = "wasm32"))]
     match updater::status() {
         updater::Status::Available(_) => state.outdated = true,
@@ -308,16 +290,16 @@ fn update(app: &mut App, state: &mut State) {
         .controls
         .update(&app.keyboard, &state.pads, touch_held, touch_pause);
     #[cfg(target_arch = "wasm32")]
-    web::want_text(wants_text(state));
+    web::want_text(typing(state).is_some());
     #[cfg(target_arch = "wasm32")]
     for c in web::take_typed().chars() {
         type_char(state, c);
     }
     let was_title = state.screen == Screen::Title;
-    let State { session, conn, .. } = state;
-    if let Some(session) = session.as_mut() {
+    let rtt = state.conn.rtt_ms();
+    if let Some(session) = state.session_mut() {
         session.clock += app.timer.delta_f32() as f64;
-        session.ping_rtt_ms = conn.rtt_ms();
+        session.ping_rtt_ms = rtt;
     }
 
     login::poll_startup_check(state);
@@ -343,21 +325,25 @@ fn update(app: &mut App, state: &mut State) {
         Screen::Help => help::update(app, state),
         Screen::Solo => solo::update_game(app, state),
         Screen::Game => {
-            let online = logic::Online {
-                is_host: state.lobby.as_ref().is_some_and(|l| l.is_host),
-                ranked: state.lobby.as_ref().is_some_and(|l| l.ranked.is_some()),
-                ended: state.series_over.is_some(),
-            };
+            let online = state
+                .room
+                .as_ref()
+                .map_or_else(logic::Online::default, |r| logic::Online {
+                    is_host: r.info.is_host,
+                    ranked: r.info.ranked.is_some(),
+                    ended: r.series_over.is_some(),
+                });
             let input = game_chat(app, state);
             let State {
-                session,
+                room,
                 settings,
                 conn,
                 ui,
                 ..
             } = &mut *state;
-            let left = session
+            let left = room
                 .as_mut()
+                .and_then(|r| r.session.as_mut())
                 .is_some_and(|s| logic::update_game(app, &input, ui, s, *settings, conn, online));
             if left && online.ranked {
                 ranked::enter(state);
@@ -422,32 +408,33 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
             }
         }
         Screen::Game => {
-            let role = draw::Role {
-                is_host: state.lobby.as_ref().is_some_and(|l| l.is_host),
-                watchers: state.lobby.as_ref().map_or(0, |l| l.spectators),
-                can_pause: state.lobby.as_ref().is_some_and(|l| l.settings.pause.allows(l.is_host)),
-                series: state.lobby.as_ref().and_then(|l| {
-                    let ranked = l.ranked.as_ref()?;
-                    let me = usize::from(l.your_slot.clamp(1, 2) - 1);
-                    Some(draw::SeriesView {
-                        wins: [ranked.wins[me], ranked.wins[1 - me]],
-                        over: state
-                            .series_over
-                            .map(|(winner, elo)| (winner.map(|w| w == l.your_slot), elo)),
-                    })
-                }),
-            };
-            if let Some(session) = state.session.as_ref() {
-                draw::draw_game(app, gfx, session, &state.ui, &state.fonts, draw::Hud::Online(role));
+            if let Some(room) = &state.room {
+                let l = &room.info;
+                let role = draw::Role {
+                    is_host: l.is_host,
+                    watchers: l.spectators,
+                    can_pause: l.settings.pause.allows(l.is_host),
+                    series: l.ranked.as_ref().map(|ranked| {
+                        let me = usize::from(l.your_slot.clamp(1, 2) - 1);
+                        draw::SeriesView {
+                            wins: [ranked.wins[me], ranked.wins[1 - me]],
+                            over: room
+                                .series_over
+                                .map(|(winner, elo)| (winner.map(|w| w == l.your_slot), elo)),
+                        }
+                    }),
+                };
+                if let Some(session) = &room.session {
+                    draw::draw_game(app, gfx, session, &state.ui, &state.fonts, draw::Hud::Online(role));
+                }
             }
         }
     }
     if matches!(state.screen, Screen::Game | Screen::Solo) {
         let mut d = state.ui.canvas(gfx);
-        if state.screen == Screen::Game {
+        if let Some(room) = state.room.as_ref().filter(|_| state.screen == Screen::Game) {
             let hint = can_chat(state).then_some("Entrée pour écrire");
-            state
-                .chat
+            room.chat
                 .draw_overlay(&mut d, &state.ui, &state.fonts, game_chat_area(state), hint);
         }
         state.touch.draw(&mut d, &state.fonts, state.ui.view());
@@ -457,7 +444,11 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
     draw_maintenance_banner(gfx, state);
     draw_reconnect_banner(gfx, state);
     let view = state.ui.view();
-    if state.touch.active && view.w < view.h {
+    let fits_upright = matches!(
+        state.screen,
+        Screen::Title | Screen::Auth | Screen::Menu | Screen::PlayMenu | Screen::CreateRoom | Screen::JoinById
+    );
+    if state.touch.active && view.w < view.h && !fits_upright {
         let mut d = state.ui.canvas(gfx);
         touch::draw_turn_hint(&mut d, &state.fonts, view);
         state.ui.render(gfx, &d);
@@ -468,7 +459,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
 const MAINTENANCE_H: f32 = 30.0;
 
 fn draw_maintenance_banner(gfx: &mut Graphics, state: &State) {
-    let playing = state.screen == Screen::Game && state.session.as_ref().is_some_and(|s| !s.decided());
+    let playing = state.screen == Screen::Game && state.session().is_some_and(|s| !s.decided());
     if !state.maintenance || !state.conn.is_live() || !state.screen.needs_connection() || playing {
         return;
     }

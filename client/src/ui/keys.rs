@@ -40,6 +40,9 @@ pub struct EditKeys {
     pub right: KeyRepeat,
     pub up: KeyRepeat,
     pub down: KeyRepeat,
+    /// Backspaces this frame: a browser counts them itself, since a phone's
+    /// keyboard gives no key code for them.
+    pub erases: u32,
     pub home: bool,
     pub end: bool,
     pub shift: bool,
@@ -48,6 +51,8 @@ pub struct EditKeys {
     pub copy: bool,
     pub cut: bool,
     pub paste: bool,
+    pub undo: bool,
+    pub redo: bool,
     #[cfg(not(target_arch = "wasm32"))]
     typed: Shortcuts,
 }
@@ -58,6 +63,8 @@ pub struct Shortcuts {
     pub copy: bool,
     pub cut: bool,
     pub paste: bool,
+    pub undo: bool,
+    pub redo: bool,
 }
 
 impl EditKeys {
@@ -72,6 +79,14 @@ impl EditKeys {
         ];
         for (key, code) in keys {
             key.update(keyboard.is_down(code), dt);
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.erases = crate::web::take_erases();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.erases = u32::from(self.erase.fired());
         }
         self.home = keyboard.was_pressed(KeyCode::Home);
         self.end = keyboard.was_pressed(KeyCode::End);
@@ -91,6 +106,8 @@ impl EditKeys {
         self.copy = typed.copy;
         self.cut = typed.cut;
         self.paste = typed.paste;
+        self.undo = typed.undo;
+        self.redo = typed.redo;
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -102,8 +119,23 @@ impl EditKeys {
             'c' => self.typed.copy = true,
             'x' => self.typed.cut = true,
             'v' => self.typed.paste = true,
+            'z' if self.shift => self.typed.redo = true,
+            'z' => self.typed.undo = true,
+            'y' => self.typed.redo = true,
             _ => {}
         }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+/// The letter of a key typed with Ctrl held. Most systems send it as a
+/// control character (Ctrl+A as 1), others as the letter itself; anything
+/// else, such as AltGr characters on Windows, is typed text.
+pub fn ctrl_letter(c: char) -> Option<char> {
+    match c {
+        '\u{1}'..='\u{1a}' => char::from_u32(c as u32 - 1 + 'a' as u32),
+        c if c.is_ascii_alphabetic() => Some(c),
+        _ => None,
     }
 }
 
@@ -127,6 +159,15 @@ mod tests {
                 key.fired()
             })
             .count()
+    }
+
+    #[test]
+    fn ctrl_letters_arrive_as_control_characters_or_letters() {
+        assert_eq!(ctrl_letter('\u{1}'), Some('a'));
+        assert_eq!(ctrl_letter('\u{1a}'), Some('z'));
+        assert_eq!(ctrl_letter('V'), Some('V'));
+        assert_eq!(ctrl_letter('@'), None, "AltGr on Windows holds Ctrl too");
+        assert_eq!(ctrl_letter('\u{7f}'), None);
     }
 
     #[test]

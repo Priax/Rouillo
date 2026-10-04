@@ -6,12 +6,11 @@ use notan::prelude::*;
 use crate::http::{self, HttpSlot};
 use crate::state::{Screen, State};
 use crate::theme;
-use crate::ui::{self, Face, Pager, Pill, Rect, SharpText, Status, View};
+use crate::ui::{self, Face, Pager, Pill, Rect, SharpText, Status, View, PAGER_H};
 
 const SIZE: i64 = 100;
 const ROW_H: f32 = 56.0;
 const AVATAR_R: f32 = 17.0;
-const PAGER_H: f32 = 52.0;
 
 const SILVER: Color = Color::from_rgb(0.78, 0.8, 0.84);
 const BRONZE: Color = Color::from_rgb(0.85, 0.55, 0.3);
@@ -59,20 +58,15 @@ fn refresh(state: &mut State) {
 }
 
 fn poll(board: &mut Leaderboard, me: Option<&str>) {
-    let Some(result) = http::take(&mut board.slot) else {
+    let Some(result) = http::take_json::<Vec<Entry>>(&mut board.slot) else {
         return;
     };
     match result {
-        Ok(resp) if resp.status == 200 => {
-            let Some(rows) = http::json::<Vec<Entry>>(&resp) else {
-                board.status = Status::error("Réponse serveur invalide.");
-                return;
-            };
+        Ok(rows) => {
             board.me = rows.iter().find(|e| Some(e.user_id.as_str()) == me).cloned();
             board.top = rows.into_iter().filter(|e| e.rank <= SIZE).collect();
         }
-        Ok(resp) => board.status = Status::error(http::error_message(&resp)),
-        Err(e) => board.status = Status::error(http::network_error(&e)),
+        Err(msg) => board.status = Status::error(msg),
     }
 }
 

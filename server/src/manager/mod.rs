@@ -13,7 +13,7 @@ pub mod friends;
 mod identity;
 mod presence;
 pub mod ranked;
-mod rooms;
+pub(crate) mod rooms;
 pub mod social;
 
 use friends::FriendCheck;
@@ -147,7 +147,7 @@ pub enum Command {
     },
     RankedCheckDone {
         check: RankedCheck,
-        profile: Option<(i32, i64)>,
+        profile: Option<db::RankedProfile>,
     },
     Revoke {
         user_id: Uuid,

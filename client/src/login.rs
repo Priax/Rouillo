@@ -18,10 +18,20 @@ struct AuthLayout {
     guest: Rect,
 }
 
-fn auth_layout(view: View) -> AuthLayout {
+/// The title and form are 520 high. When the window is lower, as when a
+/// phone's keyboard takes half of it, the focused field is kept in the middle.
+fn auth_layout(view: View, focused: AuthField) -> AuthLayout {
     let (ww, wh) = view.size();
     let cx = ww / 2.0;
-    let base_y = wh / 2.0 - 160.0;
+    let field_y = match focused {
+        AuthField::Username => 60.0,
+        AuthField::Password => 140.0,
+    };
+    let base_y = if wh >= 560.0 {
+        wh / 2.0 - 160.0
+    } else {
+        wh / 2.0 - field_y - 25.0
+    };
     let field = |y: f32| Rect::at(cx - 210.0, y, 420.0, 50.0);
     AuthLayout {
         cx,
@@ -60,36 +70,23 @@ fn submit(form: &mut AuthForm) {
 }
 
 fn poll_auth(state: &mut State) {
-    let Some(result) = http::take(&mut state.auth_form.pending) else {
+    let Some(result) = http::take_json::<ApiAuthResponse>(&mut state.auth_form.pending) else {
         return;
     };
     match result {
-        Err(e) => {
-            state.auth_form.status = Status::error(http::network_error(&e));
+        Ok(r) => {
+            crate::state::save_token(&r.token);
+            state.auth = Some(AuthInfo {
+                token: r.token,
+                user_id: r.user_id,
+                username: r.username,
+                elo: r.elo,
+                avatar_url: r.avatar_url,
+            });
+            state.auth_form = AuthForm::default();
+            state.screen = Screen::Menu;
         }
-        Ok(resp) => {
-            if resp.status == 200 || resp.status == 201 {
-                match http::json::<ApiAuthResponse>(&resp) {
-                    Some(r) => {
-                        crate::state::save_token(&r.token);
-                        state.auth = Some(AuthInfo {
-                            token: r.token,
-                            user_id: r.user_id,
-                            username: r.username,
-                            elo: r.elo,
-                            avatar_url: r.avatar_url,
-                        });
-                        state.auth_form = AuthForm::default();
-                        state.screen = Screen::Menu;
-                    }
-                    None => {
-                        state.auth_form.status = Status::error("Réponse serveur invalide.");
-                    }
-                }
-            } else {
-                state.auth_form.status = Status::error(http::error_message(&resp));
-            }
-        }
+        Err(msg) => state.auth_form.status = Status::error(msg),
     }
 }
 
@@ -144,7 +141,7 @@ pub fn poll_startup_check(state: &mut State) {
 pub fn update_auth(app: &mut App, state: &mut State) {
     poll_auth(state);
 
-    let layout = auth_layout(state.ui.view());
+    let layout = auth_layout(state.ui.view(), state.auth_form.focused);
 
     match state.auth_form.focused {
         AuthField::Username => state.auth_form.username.edit(&state.keys),
@@ -187,7 +184,7 @@ pub fn update_auth(app: &mut App, state: &mut State) {
 
 pub fn draw_auth(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
-    let layout = auth_layout(state.ui.view());
+    let layout = auth_layout(state.ui.view(), state.auth_form.focused);
     let AuthLayout { cx, base_y, .. } = layout;
 
     let mut draw = state.ui.screen_canvas(gfx);

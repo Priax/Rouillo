@@ -28,6 +28,29 @@ pub fn json<T: serde::de::DeserializeOwned>(resp: &ehttp::Response) -> Option<T>
     serde_json::from_str(resp.text()?).ok()
 }
 
+const INVALID_REPLY: &str = "Réponse serveur invalide.";
+
+/// What a finished request gave: the body of a successful answer, decoded,
+/// or the message to show the player.
+fn answer<T: serde::de::DeserializeOwned>(result: ehttp::Result<ehttp::Response>) -> Result<T, String> {
+    match result {
+        Ok(resp) if resp.ok => json(&resp).ok_or_else(|| INVALID_REPLY.to_owned()),
+        Ok(resp) => Err(error_message(&resp)),
+        Err(e) => Err(network_error(&e)),
+    }
+}
+
+/// The request in `slot` once it has finished, its body decoded.
+pub fn take_json<T: serde::de::DeserializeOwned>(slot: &mut Option<HttpSlot>) -> Option<Result<T, String>> {
+    take(slot).map(answer)
+}
+
+/// The request in `slot` once it has finished, for an answer whose body is
+/// not needed.
+pub fn take_done(slot: &mut Option<HttpSlot>) -> Option<Result<(), String>> {
+    take(slot).map(|result| answer::<serde::de::IgnoredAny>(result).map(|_| ()))
+}
+
 pub fn network_error(e: &str) -> String {
     format!("Erreur réseau: {e}")
 }
@@ -199,6 +222,27 @@ mod tests {
             headers: ehttp::Headers::default(),
             bytes: body.as_bytes().to_vec(),
         }
+    }
+
+    fn ok(status: u16, body: &str) -> ehttp::Response {
+        ehttp::Response {
+            ok: (200..300).contains(&status),
+            ..response(status, body)
+        }
+    }
+
+    #[test]
+    fn an_answer_is_its_body_or_the_message_to_show() {
+        assert_eq!(answer::<Vec<u8>>(Ok(ok(200, "[1,2]"))), Ok(vec![1, 2]));
+        assert_eq!(answer::<Vec<u8>>(Ok(ok(201, "[]"))), Ok(vec![]));
+        assert_eq!(answer::<Vec<u8>>(Ok(ok(200, "{"))), Err(INVALID_REPLY.to_owned()));
+        let refused = ok(409, r#"{"error":"Username already taken","code":"username_taken"}"#);
+        assert_eq!(
+            answer::<Vec<u8>>(Ok(refused)),
+            Err("Ce pseudo est déjà pris.".to_owned())
+        );
+        assert_eq!(answer::<Vec<u8>>(Err("down".into())), Err(network_error("down")));
+        assert_eq!(answer::<serde::de::IgnoredAny>(Ok(ok(200, "{}"))).map(|_| ()), Ok(()));
     }
 
     #[test]

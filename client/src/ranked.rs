@@ -6,7 +6,7 @@ use crate::connection::now_secs;
 use crate::http::{self, HttpSlot};
 use crate::state::{ApiUserProfile, Screen, State};
 use crate::theme;
-use crate::ui::{Rect, SharpText, View};
+use crate::ui::{self, Fonts, Persona, Pill, Rect, SharpText, Ui, View};
 
 #[derive(Default)]
 pub enum Search {
@@ -19,6 +19,7 @@ pub enum Search {
         since: f64,
         opponent: String,
         opponent_elo: i32,
+        opponent_avatar: Option<String>,
         deadline: f64,
         accepted: bool,
     },
@@ -50,7 +51,13 @@ impl RankedView {
         }
     }
 
-    pub fn match_found(&mut self, opponent: String, opponent_elo: i32, secs: u32) -> bool {
+    pub fn match_found(
+        &mut self,
+        opponent: String,
+        opponent_elo: i32,
+        opponent_avatar: Option<String>,
+        secs: u32,
+    ) -> bool {
         let Some(since) = self.since() else {
             return false;
         };
@@ -58,6 +65,7 @@ impl RankedView {
             since,
             opponent,
             opponent_elo,
+            opponent_avatar,
             deadline: now_secs() + f64::from(secs),
             accepted: false,
         };
@@ -108,9 +116,7 @@ fn single_button(view: View) -> Rect {
 
 pub fn enter(state: &mut State) {
     state.notice.clear();
-    state.lobby = None;
-    state.series_over = None;
-    state.session = None;
+    state.room = None;
     let ranked = &mut state.ranked;
     ranked.search = Search::Idle;
     ranked.stats_slot = state
@@ -141,14 +147,11 @@ fn stop_search(state: &mut State) {
 }
 
 fn matched(state: &State) -> bool {
-    state.lobby.as_ref().is_some_and(|l| l.ranked.is_some())
+    state.room.as_ref().is_some_and(|r| r.info.ranked.is_some())
 }
 
 fn poll_stats(state: &mut State) {
-    let Some(resp) = http::take(&mut state.ranked.stats_slot) else {
-        return;
-    };
-    if let Some(stats) = resp.ok().filter(|r| r.status == 200).and_then(|r| http::json(&r)) {
+    if let Some(Ok(stats)) = http::take_json(&mut state.ranked.stats_slot) {
         state.ranked.stats = Some(stats);
     }
 }
@@ -190,6 +193,50 @@ pub fn update(app: &App, state: &mut State) {
     }
 }
 
+const PORTRAIT_R: f32 = 56.0;
+
+/// Who the series is against: their portrait, name and ELO, centred on `cx`
+/// around `cy`.
+fn draw_opponent(
+    draw: &mut Draw,
+    ui: &Ui,
+    fonts: &Fonts,
+    (cx, cy): (f32, f32),
+    name: &str,
+    elo: i32,
+    picture: Option<&Texture>,
+) {
+    let pal = ui.palette();
+    let who = Persona {
+        name,
+        glow: 0.0,
+        picture,
+    };
+    ui::portrait(draw, &pal, fonts, (cx, cy - 105.0), PORTRAIT_R, &who);
+    draw.sharp_text(&fonts.display, name)
+        .position(cx, cy - 25.0)
+        .size(theme::size::TITLE)
+        .h_align_center()
+        .v_align_middle()
+        .color(pal.text);
+    let elo = format!("ELO {elo}");
+    let pill = Pill {
+        text: &elo,
+        color: theme::GOLD,
+        size: theme::size::LABEL,
+    };
+    pill.draw(draw, fonts, (cx - pill.width(fonts) / 2.0, cy + 15.0));
+}
+
+fn opponent_avatar(state: &State) -> Option<&str> {
+    let in_series = state.room.as_ref().and_then(|r| r.info.ranked.as_ref());
+    match (in_series, &state.ranked.search) {
+        (Some(ranked), _) => ranked.opponent_avatar.as_deref(),
+        (None, Search::Found { opponent_avatar, .. }) => opponent_avatar.as_deref(),
+        _ => None,
+    }
+}
+
 fn clock(secs: u64) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
@@ -199,6 +246,7 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
     let view = state.ui.view();
     let (cx, cy) = (view.w / 2.0, view.h / 2.0);
     let fonts = &state.fonts;
+    let picture = state.images.get_opt(gfx, opponent_avatar(state));
     let mut draw = state.ui.screen_canvas(gfx);
 
     state
@@ -220,20 +268,32 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
     };
     let first_to = format!("Premier à {} manches", config::RANKED_WINS);
 
-    if let Some((lobby, ranked)) = state.lobby.as_ref().and_then(|l| Some((l, l.ranked.as_ref()?))) {
+    if let Some((lobby, ranked)) = state
+        .room
+        .as_ref()
+        .and_then(|r| Some((&r.info, r.info.ranked.as_ref()?)))
+    {
         line(
             &mut draw,
             "Adversaire trouvé",
-            cy - 80.0,
+            cy - 200.0,
             theme::size::HEADING,
             pal.text_dim,
         );
-        let opponent = format!("{} ({} ELO)", ranked.opponent, ranked.opponent_elo);
-        line(&mut draw, &opponent, cy - 30.0, theme::size::TITLE, pal.text);
-        line(&mut draw, &first_to, cy + 20.0, theme::size::LABEL, pal.text_muted);
+        let at = (cx, cy);
+        draw_opponent(
+            &mut draw,
+            &state.ui,
+            fonts,
+            at,
+            &ranked.opponent,
+            ranked.opponent_elo,
+            picture.as_ref(),
+        );
+        line(&mut draw, &first_to, cy + 55.0, theme::size::LABEL, pal.text_muted);
         if let Some(n) = lobby.countdown {
             draw.sharp_text(&fonts.display, &n.to_string())
-                .position(cx, cy + 110.0)
+                .position(cx, cy + 135.0)
                 .size(theme::size::HERO)
                 .h_align_center()
                 .v_align_middle()
@@ -263,7 +323,7 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
             }
             line(&mut draw, &first_to, cy, theme::size::LABEL, pal.text_dim);
             let rule = format!(
-                "Quand une partie sera trouvée, vous aurez {} pour l'accepter.",
+                "Quand une partie sera trouvée, vous aurez {} secondes pour l'accepter.",
                 config::MATCH_ACCEPT_SECS,
             );
             line(&mut draw, &rule, cy + 35.0, theme::size::BODY, pal.text_muted);
@@ -301,15 +361,23 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
             line(
                 &mut draw,
                 "Adversaire trouvé",
-                cy - 110.0,
+                cy - 200.0,
                 theme::size::HEADING,
                 pal.text_dim,
             );
-            let who = format!("{opponent} ({opponent_elo} ELO)");
-            line(&mut draw, &who, cy - 55.0, theme::size::TITLE, pal.text);
+            let at = (cx, cy);
+            draw_opponent(
+                &mut draw,
+                &state.ui,
+                fonts,
+                at,
+                opponent,
+                *opponent_elo,
+                picture.as_ref(),
+            );
             let total = f64::from(config::MATCH_ACCEPT_SECS);
             let left = (deadline - now_secs()).clamp(0.0, total);
-            let bar = Rect::at(cx - 200.0, cy + 10.0, 400.0, 10.0);
+            let bar = Rect::at(cx - 200.0, cy + 48.0, 400.0, 10.0);
             draw.rect((bar.x, bar.y), (bar.w, bar.h))
                 .corner_radius(5.0)
                 .color(pal.surface);
@@ -319,7 +387,7 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
             line(
                 &mut draw,
                 &format!("{} s", left.ceil() as u64),
-                cy + 50.0,
+                cy + 80.0,
                 theme::size::EMPHASIS,
                 pal.text_dim,
             );
@@ -327,7 +395,7 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
                 line(
                     &mut draw,
                     "En attente de l'adversaire...",
-                    cy + 85.0,
+                    cy + 104.0,
                     theme::size::LABEL,
                     pal.text_muted,
                 );
@@ -360,7 +428,7 @@ mod tests {
     #[test]
     fn a_requeue_keeps_the_time_already_waited() {
         let mut view = searching(5.0);
-        view.match_found("o".into(), 1000, 10);
+        view.match_found("o".into(), 1000, None, 10);
         assert!(matches!(
             view.search,
             Search::Found {
@@ -376,7 +444,7 @@ mod tests {
     #[test]
     fn a_missed_match_stops_the_search_and_waits_out_the_cooldown() {
         let mut view = searching(5.0);
-        view.match_found("o".into(), 1000, 10);
+        view.match_found("o".into(), 1000, None, 10);
         view.match_cancelled(false);
         view.cooldown(60);
         assert!(matches!(view.search, Search::Idle));
@@ -386,7 +454,7 @@ mod tests {
     #[test]
     fn a_match_found_after_cancelling_is_ignored() {
         let mut view = RankedView::default();
-        assert!(!view.match_found("o".into(), 1000, 10));
+        assert!(!view.match_found("o".into(), 1000, None, 10));
         assert!(matches!(view.search, Search::Idle));
     }
 
@@ -395,7 +463,7 @@ mod tests {
         let mut view = RankedView::default();
         assert!(!view.resume_search());
         let mut view = searching(5.0);
-        view.match_found("o".into(), 1000, 10);
+        view.match_found("o".into(), 1000, None, 10);
         assert!(view.resume_search());
         assert!(matches!(view.search, Search::Searching { since: 5.0 }));
     }

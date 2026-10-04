@@ -18,7 +18,7 @@ use tokio::time::{Duration, Instant};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::auth::ClientAddr;
+use crate::api::ClientAddr;
 use crate::manager::Command;
 use crate::{db, ConnId};
 

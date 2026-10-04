@@ -1,4 +1,4 @@
-mod auth;
+mod api;
 mod db;
 mod images;
 mod manager;
@@ -292,9 +292,9 @@ async fn main() {
     });
 
     let app = ws_route(cmd_tx.clone(), pool.clone())
-        .merge(auth::routes(pool, cmd_tx))
-        .fallback(auth::not_found)
-        .method_not_allowed_fallback(auth::not_found)
+        .merge(api::routes(pool, cmd_tx))
+        .fallback(api::not_found)
+        .method_not_allowed_fallback(api::not_found)
         .layer(middleware::from_fn(log_request));
 
     let listener = bind_listener((bind, port).into());

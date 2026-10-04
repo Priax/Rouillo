@@ -4,14 +4,16 @@ use notan::draw::{Draw, DrawImages, DrawShapes};
 use notan::prelude::*;
 
 use crate::account::{self, AccountForm, Outcome};
-use crate::history::{History, PAGE_SIZE};
+use crate::history::History;
 use crate::profile_edit::{self, EditForm};
 use crate::state::{
     ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, OtherProfileData, ProfileCore,
     ProfileData, Screen, State,
 };
 use crate::theme::{self, Palette};
-use crate::ui::{self, divider, list_row, portrait, Face, Fonts, Pill, Rect, SharpText, Status, Ui, View};
+use crate::ui::{
+    self, divider, list_row, portrait, Face, Fonts, Pill, Rect, SharpText, Status, TextInput, Ui, View, PAGER_H,
+};
 use crate::{http, profile_about};
 
 fn panels(ww: f32) -> (f32, f32, f32, f32) {
@@ -42,6 +44,22 @@ fn poll_core_profile(core: &mut ProfileCore) -> Option<ProfileLoad> {
         }
         Ok(_) => Some(ProfileLoad::HttpError),
         Err(_) => Some(ProfileLoad::NetworkError),
+    }
+}
+
+/// The field the keyboard types into: an open form's, or the match list's
+/// page field.
+pub fn typing(state: &mut State) -> Option<&mut TextInput> {
+    if state.screen == Screen::OtherProfile {
+        return state.other_profile.as_mut()?.core.history.typing();
+    }
+    let p = state.profile.as_mut()?;
+    if let Some(form) = p.edit.as_mut() {
+        Some(form.typing())
+    } else if let Some(form) = p.account.as_mut() {
+        form.typing()
+    } else {
+        p.core.history.typing()
     }
 }
 
@@ -77,7 +95,8 @@ fn update_history(app: &App, state: &mut State, other: bool) {
     };
     if let Some(core) = core {
         let total = core.info.total_matches;
-        core.history.update(app, ui, fonts, keys, area, total);
+        core.history
+            .update(app, ui, fonts, keys, area, total, history_rows(ui.view()));
     }
 }
 
@@ -105,7 +124,6 @@ const CARD_TITLE_H: f32 = 56.0;
 const HISTORY_ROW_H: f32 = 48.0;
 const STATUS_GAP: f32 = 56.0;
 const STAT_ROWS: usize = 4;
-const PAGER_H: f32 = 52.0;
 const STAT_ROW_H: f32 = 32.0;
 
 /// Draws `picture` over the whole of `r`, cropped to keep its proportions.
@@ -288,14 +306,21 @@ fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCor
     } else if core.history.entries.is_empty() {
         card_message(draw, fonts, card, "Aucun match pour l'instant.", pal.text_muted);
     } else {
-        for (i, m) in core.history.entries.iter().enumerate().take(PAGE_SIZE) {
+        for (i, m) in core.history.entries.iter().enumerate().take(core.history.per_page) {
             draw_match_row(draw, ui, fonts, (history_row(card, i), i), m, &core.user_id, clickable);
         }
     }
-    if core.info.total_matches > PAGE_SIZE as i64 {
+    if core.info.total_matches > core.history.per_page as i64 {
         core.history
             .draw_pager(draw, ui, fonts, pager_area(ui.view()), core.info.total_matches);
     }
+}
+
+/// How many match rows fit above the pager.
+fn history_rows(view: View) -> usize {
+    let (_, card) = cards(view);
+    let room = card.h - CARD_TITLE_H - 12.0 - PAGER_H;
+    (room / HISTORY_ROW_H).max(1.0) as usize
 }
 
 fn pager_area(view: View) -> Rect {
@@ -453,7 +478,14 @@ pub fn update_profile(app: &mut App, state: &mut State) {
                 break 'find None;
             };
             let my_id = profile.core.user_id.as_str();
-            for (i, m) in profile.core.history.entries.iter().enumerate().take(PAGE_SIZE) {
+            for (i, m) in profile
+                .core
+                .history
+                .entries
+                .iter()
+                .enumerate()
+                .take(profile.core.history.per_page)
+            {
                 let i_am_p1 = m.player1.user_id.as_deref() == Some(my_id);
                 let opp = if i_am_p1 { &m.player2 } else { &m.player1 };
                 if let (Some(opp_id), Some(opp_name)) = (&opp.user_id, &opp.username) {
@@ -564,30 +596,22 @@ pub fn enter_other_profile(state: &mut State, user_id: String, username: String,
 
 fn poll_friendship_check(state: &mut State) {
     let Some(p) = state.other_profile.as_mut() else { return };
-    let Some(Ok(resp)) = http::take(&mut p.friendship_check_slot) else {
-        return;
-    };
-    if let Some(data) = http::json::<ApiFriendsResponse>(&resp) {
+    if let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut p.friendship_check_slot) {
         p.friendship = friendship_with(&data.friends, &data.sent, &data.received, &p.core.user_id);
     }
 }
 
 fn poll_friend(state: &mut State) {
     let Some(p) = state.other_profile.as_mut() else { return };
-    let Some(result) = http::take(&mut p.friend_slot) else {
+    let Some(result) = http::take_done(&mut p.friend_slot) else {
         return;
     };
     match result {
-        Ok(resp) if resp.status == 201 => {
+        Ok(()) => {
             p.friend_status = Status::success("Demande envoyée !");
             p.friendship = FriendshipStatus::RequestSent;
         }
-        Ok(resp) => {
-            p.friend_status = Status::error(http::error_message(&resp));
-        }
-        Err(e) => {
-            p.friend_status = Status::error(http::network_error(&e));
-        }
+        Err(msg) => p.friend_status = Status::error(msg),
     }
 }
 

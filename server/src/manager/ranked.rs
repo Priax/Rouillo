@@ -16,6 +16,7 @@ pub struct QueueEntry {
     pub conn: ConnId,
     pub user_id: Uuid,
     pub elo: i32,
+    pub avatar: Option<String>,
     pub since: Instant,
 }
 
@@ -114,13 +115,18 @@ impl Manager {
         self.ranked_checks.push(RankedCheck { conn, user_id });
     }
 
-    pub(super) fn ranked_check_done(&mut self, check: RankedCheck, profile: Option<(i32, i64)>) {
+    pub(super) fn ranked_check_done(&mut self, check: RankedCheck, profile: Option<db::RankedProfile>) {
         let RankedCheck { conn, user_id } = check;
         self.ranked_checking.remove(&conn);
         if self.conn_user_id.get(&conn) != Some(&user_id) {
             return;
         }
-        let Some((elo, casual)) = profile else {
+        let Some(db::RankedProfile {
+            elo,
+            casual,
+            avatar_url: avatar,
+        }) = profile
+        else {
             self.refuse_queue(conn, QUEUE_UNKNOWN);
             return;
         };
@@ -146,6 +152,7 @@ impl Manager {
             conn,
             user_id,
             elo,
+            avatar,
             since: Instant::now(),
         });
     }
@@ -189,6 +196,7 @@ impl Manager {
             let found = ServerMessage::MatchFound {
                 opponent: self.display_name(other.conn),
                 opponent_elo: other.elo,
+                opponent_avatar: other.avatar.clone(),
                 secs: config::MATCH_ACCEPT_SECS,
             };
             self.deliver_msg(entry.conn, &found);
@@ -298,6 +306,7 @@ impl Manager {
             users: [a.user_id, b.user_id],
             names,
             elos: [a.elo, b.elo],
+            avatars: [a.avatar.clone(), b.avatar.clone()],
             wins: [0, 0],
             next_game_at: None,
             result: None,

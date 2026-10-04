@@ -321,11 +321,19 @@ pub async fn record_series(pool: &DbPool, rec: SeriesRecord) -> Result<(), sqlx:
     tx.commit().await
 }
 
-pub async fn ranked_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<(i32, i64)>, sqlx::Error> {
-    sqlx::query_as::<_, (i32, i64)>(
-        "SELECT u.elo, \
+/// What the ranked queue needs to know about a player.
+#[derive(sqlx::FromRow, Debug, Clone, PartialEq, Eq)]
+pub struct RankedProfile {
+    pub elo: i32,
+    pub casual: i64,
+    pub avatar_url: Option<String>,
+}
+
+pub async fn ranked_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<RankedProfile>, sqlx::Error> {
+    sqlx::query_as::<_, RankedProfile>(
+        "SELECT u.elo, u.avatar_url, \
                 (SELECT COUNT(*) FROM matches m \
-                 WHERE NOT m.ranked AND (m.player1_id = u.id OR m.player2_id = u.id)) \
+                 WHERE NOT m.ranked AND (m.player1_id = u.id OR m.player2_id = u.id)) AS casual \
          FROM users u WHERE u.id = $1",
     )
     .bind(user_id)

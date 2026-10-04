@@ -9,6 +9,8 @@ const BTN_W: f32 = 44.0;
 const BTN_H: f32 = 36.0;
 const FIELD_W: f32 = 70.0;
 const GAP: f32 = 8.0;
+/// The height of the pager row under a list.
+pub const PAGER_H: f32 = 52.0;
 const OF_W: f32 = 60.0;
 
 /// Page arrows, first and last page, and a field to jump to a page number.
@@ -46,6 +48,12 @@ impl Layout {
     }
 }
 
+fn page_input(page: usize) -> TextInput {
+    TextInput::from(page.to_string())
+        .max_chars(PAGE_DIGITS)
+        .only(|c| c.is_ascii_digit())
+}
+
 pub fn page_count(items: usize, per_page: usize) -> usize {
     items.div_ceil(per_page.max(1)).max(1)
 }
@@ -54,7 +62,7 @@ impl Default for Pager {
     fn default() -> Self {
         Self {
             page: 0,
-            input: "1".to_string().into(),
+            input: page_input(1),
             focused: false,
         }
     }
@@ -74,15 +82,13 @@ impl Pager {
         items.iter().skip(self.page * per_page).take(per_page).enumerate()
     }
 
-    pub fn type_char(&mut self, c: char) {
-        if self.focused && c.is_ascii_digit() && self.input.len() < PAGE_DIGITS {
-            self.input.insert(c);
-        }
+    pub fn typing(&mut self) -> Option<&mut TextInput> {
+        self.focused.then_some(&mut self.input)
     }
 
     fn set(&mut self, page: usize) {
         self.page = page;
-        self.input = (page + 1).to_string().into();
+        self.input = page_input(page + 1);
     }
 
     /// Keeps the page within `pages`, for a list that shrank.

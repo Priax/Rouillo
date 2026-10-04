@@ -21,10 +21,8 @@ const CARD_TITLE_H: f32 = 50.0;
 const LIST_Y: f32 = COLUMNS_TOP + CARD_TITLE_H + 6.0;
 const ROW_H: f32 = 48.0;
 const MAX_ROWS: usize = 5;
-const CARD_ROWS: usize = MAX_ROWS + 1;
 const COL_W: f32 = 360.0;
 const COL_GAP: f32 = 30.0;
-const ACTION_STATUS_Y: f32 = 708.0;
 const SMALL_BTN_H: f32 = 32.0;
 
 fn col_x(ww: f32, col: usize) -> f32 {
@@ -33,19 +31,26 @@ fn col_x(ww: f32, col: usize) -> f32 {
     margin + col as f32 * (COL_W + COL_GAP)
 }
 
-fn column_card(ww: f32, col: usize) -> Rect {
-    let bottom = LIST_Y + CARD_ROWS as f32 * ROW_H + 10.0;
+/// How many friends a column lists per page: as many as fit above the
+/// bottom buttons, with a row left for the pager.
+pub fn rows_for(wh: f32) -> usize {
+    let room = back_btn(wh).y - 8.0 - 10.0 - LIST_Y;
+    ((room / ROW_H) as usize).saturating_sub(1).clamp(1, MAX_ROWS)
+}
+
+fn column_card(ww: f32, col: usize, rows: usize) -> Rect {
+    let bottom = LIST_Y + (rows + 1) as f32 * ROW_H + 10.0;
     Rect::at(col_x(ww, col), COLUMNS_TOP, COL_W, bottom - COLUMNS_TOP)
 }
 
 fn list_row_rect(ww: f32, col: usize, row: usize) -> Rect {
-    let card = column_card(ww, col);
+    let card = column_card(ww, col, MAX_ROWS);
     Rect::at(card.x + 8.0, LIST_Y + row as f32 * ROW_H, card.w - 16.0, ROW_H - 4.0)
 }
 
-fn pager_area(ww: f32, col: usize) -> Rect {
-    let card = column_card(ww, col);
-    Rect::at(card.x, LIST_Y + MAX_ROWS as f32 * ROW_H, card.w, ROW_H)
+fn pager_area(ww: f32, col: usize, rows: usize) -> Rect {
+    let card = column_card(ww, col, rows);
+    Rect::at(card.x, LIST_Y + rows as f32 * ROW_H, card.w, ROW_H)
 }
 
 fn lists(f: &FriendsData) -> [&[FriendEntry]; 3] {
@@ -168,6 +173,15 @@ fn refresh_btn(wh: f32) -> Rect {
     Rect::at(254.0, wh - 80.0, 160.0, 54.0)
 }
 
+/// The focused page field, or else the search field.
+pub fn typing(state: &mut State) -> Option<&mut TextInput> {
+    let f = state.friends.as_mut()?;
+    if let Some(pager) = f.pages.iter_mut().find(|p| p.focused()) {
+        return pager.typing();
+    }
+    Some(&mut f.search_input)
+}
+
 pub fn enter_friends(state: &mut State) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let slot = http::new_slot();
@@ -177,7 +191,9 @@ pub fn enter_friends(state: &mut State) {
         sent: Vec::new(),
         received: Vec::new(),
         list_slot: Some(slot),
-        search_input: TextInput::default(),
+        search_input: TextInput::default()
+            .max_chars(36)
+            .only(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | ' ')),
         search_results: Vec::new(),
         search_slot: None,
         search_status: Status::Empty,
@@ -187,6 +203,7 @@ pub fn enter_friends(state: &mut State) {
         action_pending: None,
         action_status: Status::Empty,
         pages: Default::default(),
+        rows: rows_for(state.ui.view().h),
     });
 }
 
@@ -259,10 +276,7 @@ fn send_add_request(state: &mut State, user_id: &str) {
 
 fn poll_list(state: &mut State) {
     let Some(f) = state.friends.as_mut() else { return };
-    let Some(Ok(resp)) = http::take(&mut f.list_slot) else {
-        return;
-    };
-    let Some(data) = http::json::<ApiFriendsResponse>(&resp) else {
+    let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut f.list_slot) else {
         return;
     };
     f.friends = data.friends;
@@ -272,69 +286,44 @@ fn poll_list(state: &mut State) {
 
 fn poll_search(state: &mut State) {
     let Some(f) = state.friends.as_mut() else { return };
-    let Some(result) = http::take(&mut f.search_slot) else {
+    let Some(result) = http::take_json::<Vec<UserSearchEntry>>(&mut f.search_slot) else {
         return;
     };
     match result {
-        Ok(resp) if resp.status == 200 => {
-            if let Some(entries) = http::json::<Vec<UserSearchEntry>>(&resp) {
-                if entries.is_empty() {
-                    f.search_status = Status::info("Aucun résultat.");
-                }
-                f.search_results = entries;
+        Ok(entries) => {
+            if entries.is_empty() {
+                f.search_status = Status::info("Aucun résultat.");
             }
+            f.search_results = entries;
         }
-        Ok(resp) => f.search_status = Status::error(http::error_message(&resp)),
-        Err(e) => f.search_status = Status::error(http::network_error(&e)),
+        Err(msg) => f.search_status = Status::error(msg),
     }
 }
 
 fn poll_add(state: &mut State) {
     let Some(f) = state.friends.as_mut() else { return };
-    let Some(result) = http::take(&mut f.add_pending) else {
+    let Some(result) = http::take_done(&mut f.add_pending) else {
         return;
     };
-    let refresh = match result {
-        Ok(resp) if resp.status == 201 => {
+    match result {
+        Ok(()) => {
             f.add_status = Status::success("Demande envoyée !");
-            true
+            refresh_list(state);
         }
-        Ok(resp) => {
-            f.add_status = Status::error(http::error_message(&resp));
-            false
-        }
-        Err(e) => {
-            f.add_status = Status::error(http::network_error(&e));
-            false
-        }
-    };
-    if refresh {
-        refresh_list(state);
+        Err(msg) => f.add_status = Status::error(msg),
     }
 }
 
 fn poll_action(state: &mut State) {
     let Some(f) = state.friends.as_mut() else { return };
-    let Some(result) = http::take(&mut f.action_pending) else {
+    let Some(result) = http::take_done(&mut f.action_pending) else {
         return;
     };
-    let refresh = match result {
-        Ok(resp) if resp.status < 300 => {
-            f.action_status.clear();
-            true
-        }
-        Ok(resp) => {
-            f.action_status = Status::error(http::error_message(&resp));
-            true
-        }
-        Err(e) => {
-            f.action_status = Status::error(http::network_error(&e));
-            false
-        }
-    };
-    if refresh {
-        refresh_list(state);
+    match result {
+        Ok(()) => f.action_status.clear(),
+        Err(msg) => f.action_status = Status::error(msg),
     }
+    refresh_list(state);
 }
 
 enum FriendAction {
@@ -355,6 +344,9 @@ pub fn update_friends(app: &mut App, state: &mut State) {
 
     let ww = state.ui.view().w;
     let wh = state.ui.view().h;
+    if let Some(f) = state.friends.as_mut() {
+        f.rows = rows_for(wh);
+    }
 
     let paging = state
         .friends
@@ -366,9 +358,16 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         }
         field_clicked(&state.ui, &state.fonts, search_box(ww), &mut f.search_input);
         for col in 0..3 {
-            let pages = page_count(lists(f)[col].len(), MAX_ROWS);
+            let pages = page_count(lists(f)[col].len(), f.rows);
             f.pages[col].clamp(pages);
-            f.pages[col].update(app, &state.ui, &state.fonts, &state.keys, pager_area(ww, col), pages);
+            f.pages[col].update(
+                app,
+                &state.ui,
+                &state.fonts,
+                &state.keys,
+                pager_area(ww, col, f.rows),
+                pages,
+            );
         }
     }
 
@@ -436,7 +435,7 @@ fn clicked_listed(f: &FriendsData, ui: &Ui, ww: f32) -> Option<(String, String)>
     }
     lists(f).into_iter().enumerate().find_map(|(col, list)| {
         f.pages[col]
-            .shown(list, MAX_ROWS)
+            .shown(list, f.rows)
             .find(|&(i, _)| ui.clicked(name_zone(ww, col, i)))
             .map(|(_, e)| (e.user_id.clone(), e.username.clone()))
     })
@@ -461,7 +460,7 @@ fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
     }
     if let Some(confirm_id) = &f.confirm_remove {
         let (row, _) = f.pages[0]
-            .shown(&f.friends, MAX_ROWS)
+            .shown(&f.friends, f.rows)
             .find(|(_, e)| &e.user_id == confirm_id)?;
         if ui.clicked(confirm_yes_btn(ww, row)) {
             return Some(FriendAction::ConfirmRemove(confirm_id.clone()));
@@ -471,7 +470,7 @@ fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
         }
         return None;
     }
-    for (i, e) in f.pages[0].shown(&f.friends, MAX_ROWS) {
+    for (i, e) in f.pages[0].shown(&f.friends, f.rows) {
         if ui.clicked(remove_btn(ww, 0, i)) {
             return Some(FriendAction::StartRemove(e.user_id.clone()));
         }
@@ -479,7 +478,7 @@ fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
             return Some(FriendAction::Watch(e.user_id.clone()));
         }
     }
-    for (i, e) in f.pages[1].shown(&f.received, MAX_ROWS) {
+    for (i, e) in f.pages[1].shown(&f.received, f.rows) {
         if ui.clicked(accept_btn(ww, i)) {
             return Some(FriendAction::Accept(e.user_id.clone()));
         }
@@ -487,7 +486,7 @@ fn clicked_action(f: &FriendsData, ui: &Ui, ww: f32) -> Option<FriendAction> {
             return Some(FriendAction::Reject(e.user_id.clone()));
         }
     }
-    for (i, e) in f.pages[2].shown(&f.sent, MAX_ROWS) {
+    for (i, e) in f.pages[2].shown(&f.sent, f.rows) {
         if ui.clicked(remove_btn(ww, 2, i)) {
             return Some(FriendAction::Cancel(e.user_id.clone()));
         }
@@ -648,7 +647,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pic
         ("Envoyées", &f.sent, "Aucune demande envoyée"),
     ];
     for (col, (title, list, _)) in columns.iter().enumerate() {
-        let card = column_card(ww, col);
+        let card = column_card(ww, col, f.rows);
         ui::card(draw, &pal, card);
         let mid = card.y + CARD_TITLE_H / 2.0;
         draw.sharp_text(&fonts.display, title)
@@ -680,7 +679,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pic
             draw,
             ui,
             fonts,
-            (ww, 0),
+            (ww, 0, f.rows),
             (columns[0].1, &f.pages[0], pics),
             columns[0].2,
             |draw, fonts, entry, i| {
@@ -700,7 +699,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pic
             draw,
             ui,
             fonts,
-            (ww, 1),
+            (ww, 1, f.rows),
             (columns[1].1, &f.pages[1], pics),
             columns[1].2,
             |draw, fonts, _, i| {
@@ -712,7 +711,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pic
             draw,
             ui,
             fonts,
-            (ww, 2),
+            (ww, 2, f.rows),
             (columns[2].1, &f.pages[2], pics),
             columns[2].2,
             |draw, fonts, _, i| {
@@ -722,15 +721,15 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (ww, pic
     }
 
     for (col, list) in lists(f).into_iter().enumerate() {
-        let pages = page_count(list.len(), MAX_ROWS);
+        let pages = page_count(list.len(), f.rows);
         if pages > 1 && f.list_slot.is_none() {
-            f.pages[col].draw(draw, ui, fonts, pager_area(ww, col), pages);
+            f.pages[col].draw(draw, ui, fonts, pager_area(ww, col, f.rows), pages);
         }
     }
 
     if let Some((msg, color)) = f.action_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
-            .position(ww / 2.0, ACTION_STATUS_Y)
+            .position(ww / 2.0, column_card(ww, 0, f.rows).bottom() + 10.0)
             .size(theme::size::SMALL)
             .h_align_center()
             .v_align_middle()
@@ -742,7 +741,7 @@ fn draw_col<F>(
     draw: &mut Draw,
     ui: &Ui,
     fonts: &Fonts,
-    (ww, col): (f32, usize),
+    (ww, col, rows): (f32, usize, usize),
     (list, pager, pics): (&[FriendEntry], &Pager, &Pictures),
     empty_msg: &str,
     draw_buttons: F,
@@ -751,7 +750,7 @@ fn draw_col<F>(
 {
     let pal = &ui.palette();
     if list.is_empty() {
-        let card = column_card(ww, col);
+        let card = column_card(ww, col, rows);
         draw.sharp_text(&fonts.text, empty_msg)
             .position(card.x + card.w / 2.0, LIST_Y + 24.0)
             .size(theme::size::SMALL)
@@ -761,7 +760,7 @@ fn draw_col<F>(
         return;
     }
     let room = name_zone(ww, col, 0).w - 12.0 - AVATAR_ROOM;
-    for (i, e) in pager.shown(list, MAX_ROWS) {
+    for (i, e) in pager.shown(list, rows) {
         let row = list_row_rect(ww, col, i);
         list_row(draw, pal, row, i);
         ui.row(draw, name_zone(ww, col, i), i, &format!("friend:{col}:{}", e.user_id));
@@ -790,5 +789,21 @@ fn draw_col<F>(
             .v_align_middle()
             .color(theme::GOLD);
         draw_buttons(draw, fonts, e, i);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_columns_stay_above_the_bottom_buttons() {
+        assert_eq!(rows_for(800.0), MAX_ROWS, "a desktop window keeps every row");
+        for wh in [600.0, 680.0, 786.0, 800.0, 1100.0] {
+            let rows = rows_for(wh);
+            let card = column_card(1280.0, 0, rows);
+            assert!(rows >= 1);
+            assert!(card.bottom() < back_btn(wh).y, "{wh}: {rows} rows reach the buttons");
+        }
     }
 }

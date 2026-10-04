@@ -1,7 +1,7 @@
 use shared::{config, Board, ClientMessage, IncomingGarbage, ServerMessage, StampedInput};
 
 use crate::connection::ConnEvent;
-use crate::state::{GameSession, Screen, State};
+use crate::state::{GameSession, Room, Screen, State};
 use crate::ui::Status;
 
 pub fn handle_server_messages(state: &mut State) {
@@ -50,8 +50,7 @@ fn on_opened(state: &mut State, recovered: bool) {
 }
 
 fn reset_to_menu(state: &mut State, notice: Status) {
-    state.session = None;
-    state.lobby = None;
+    state.room = None;
     state.rooms.clear();
     state.screen = Screen::Menu;
     state.notice = notice;
@@ -186,34 +185,35 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             state.rooms = rooms;
             if matches!(state.screen, Screen::RoomLobby | Screen::Game) {
                 state.screen = Screen::RoomBrowser;
-                state.session = None;
-                state.lobby = None;
+                state.room = None;
             }
         }
         ServerMessage::Lobby { info } => {
-            if state.lobby.as_ref().map(|l| l.id) != Some(info.id) {
-                state.series_over = None;
-                state.chat.clear();
-            }
             state.screen = if info.ranked.is_some() {
                 state.ranked.stop();
                 Screen::Ranked
             } else {
                 Screen::RoomLobby
             };
-            state.lobby = Some(info);
-            state.session = None;
+            match state.room.as_mut().filter(|r| r.info.id == info.id) {
+                Some(room) => {
+                    room.info = info;
+                    room.session = None;
+                }
+                None => state.room = Some(Room::new(info)),
+            }
         }
         ServerMessage::JoinFailed { reason } => {
             state.notice = Status::error(reason);
         }
         ServerMessage::GameStart => {
-            let slot = state.lobby.as_ref().map_or(1, |l| l.your_slot);
-            let mut session = GameSession::new(slot);
-            session.labels = state.lobby.as_ref().and_then(board_labels);
-            session.last_server_msg = "GameStart".to_string();
-            state.session = Some(session);
-            state.screen = Screen::Game;
+            if let Some(room) = state.room.as_mut() {
+                let mut session = GameSession::new(room.info.your_slot);
+                session.labels = board_labels(&room.info);
+                session.last_server_msg = "GameStart".to_string();
+                room.session = Some(session);
+                state.screen = Screen::Game;
+            }
         }
         ServerMessage::StateUpdate {
             p1_board,
@@ -226,7 +226,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             p1_incoming,
             p2_incoming,
         } => {
-            if let Some(session) = state.session.as_mut() {
+            if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
                 let (mut board, mut other_board, ack, my_rng, opp_rng, incoming, opp_incoming) = match session.my_slot {
                     0 | 1 => (*p1_board, *p2_board, p1_ack, p1_rng, p2_rng, p1_incoming, p2_incoming),
                     2 => (*p2_board, *p1_board, p2_ack, p2_rng, p1_rng, p2_incoming, p1_incoming),
@@ -261,7 +261,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             }
         }
         ServerMessage::Restart => {
-            if let Some(session) = state.session.as_mut() {
+            if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
                 let mut fresh = GameSession::new(session.my_slot);
                 fresh.ping_rtt_ms = session.ping_rtt_ms;
                 fresh.labels = session.labels.take();
@@ -270,7 +270,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             }
         }
         ServerMessage::OpponentDisconnected => {
-            if let Some(session) = state.session.as_mut() {
+            if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
                 session.opponent_disconnected = true;
                 session.last_server_msg = "OpponentDisconnected".to_string();
             }
@@ -282,9 +282,10 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         ServerMessage::MatchFound {
             opponent,
             opponent_elo,
+            opponent_avatar,
             secs,
         } => {
-            if state.ranked.match_found(opponent, opponent_elo, secs) {
+            if state.ranked.match_found(opponent, opponent_elo, opponent_avatar, secs) {
                 crate::audio::play_all_clear();
             }
         }
@@ -298,7 +299,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         }
         ServerMessage::QueueCooldown { secs } => state.ranked.cooldown(secs),
         ServerMessage::SeriesScore { wins } => {
-            if let Some(ranked) = state.lobby.as_mut().and_then(|l| l.ranked.as_mut()) {
+            if let Some(ranked) = state.room.as_mut().and_then(|r| r.info.ranked.as_mut()) {
                 ranked.wins = wins;
             }
         }
@@ -306,17 +307,23 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             winner_slot,
             elo_change,
         } => {
-            if state.series_over.is_none() {
-                if let Some(auth) = state.auth.as_mut() {
-                    auth.elo += elo_change;
+            if let Some(room) = state.room.as_mut() {
+                if room.series_over.is_none() {
+                    if let Some(auth) = state.auth.as_mut() {
+                        auth.elo += elo_change;
+                    }
                 }
+                room.series_over = Some((winner_slot, elo_change));
             }
-            state.series_over = Some((winner_slot, elo_change));
         }
-        ServerMessage::Chat { from, text, spectator } => state.chat.push(&from, &text, spectator),
+        ServerMessage::Chat { from, text, spectator } => {
+            if let Some(room) = state.room.as_mut() {
+                room.chat.push(&from, &text, spectator);
+            }
+        }
         ServerMessage::Spectators { count } => {
-            if let Some(lobby) = state.lobby.as_mut() {
-                lobby.spectators = count;
+            if let Some(room) = state.room.as_mut() {
+                room.info.spectators = count;
             }
         }
         ServerMessage::SessionRevoked => {

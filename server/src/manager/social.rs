@@ -3,15 +3,19 @@ use super::*;
 const CHAT_BURST: f32 = 5.0;
 const CHAT_REFILL_SECS: f32 = 1.5;
 
-/// The message as shown to others: one line of printable text, bounded.
-pub fn clean_chat(text: &str) -> Option<String> {
+/// Text as shown to others: one line of printable characters, at most `max`.
+pub fn one_line(text: &str, max: usize) -> Option<String> {
     let line: String = text
         .chars()
         .map(|c| if c.is_whitespace() { ' ' } else { c })
         .filter(|c| !c.is_control())
         .collect();
-    let line: String = line.trim().chars().take(shared::MAX_CHAT_CHARS).collect();
+    let line: String = line.trim().chars().take(max).collect();
     (!line.is_empty()).then_some(line)
+}
+
+pub fn clean_chat(text: &str) -> Option<String> {
+    one_line(text, shared::MAX_CHAT_CHARS)
 }
 
 impl Manager {

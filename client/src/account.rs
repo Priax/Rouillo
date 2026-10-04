@@ -4,11 +4,11 @@ use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::http::{self, HttpSlot};
+use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
 use crate::ui::{field_clicked, text_field, EditKeys, Field, Fonts, Rect, SharpText, Status, TextInput, Ui};
 
 const MIN_PASSWORD: usize = 8;
-const MAX_PASSWORD: usize = 64;
 const FIELD_W: f32 = 460.0;
 const FIELD_H: f32 = 46.0;
 const FIELD_STEP: f32 = 88.0;
@@ -76,11 +76,6 @@ pub enum Outcome {
     Renamed(String),
 }
 
-#[derive(serde::Deserialize)]
-struct Renamed {
-    username: String,
-}
-
 impl AccountForm {
     pub fn open() -> Self {
         let mut form = Self::default();
@@ -91,13 +86,13 @@ impl AccountForm {
     fn show(&mut self, page: Page) {
         *self = Self {
             page,
-            current: TextInput::masked(),
+            current: TextInput::masked().max_chars(MAX_PASSWORD_CHARS),
             new: if page == Page::Username {
-                TextInput::default()
+                TextInput::default().max_chars(shared::MAX_USERNAME_CHARS)
             } else {
-                TextInput::masked()
+                TextInput::masked().max_chars(MAX_PASSWORD_CHARS)
             },
-            confirm: TextInput::masked(),
+            confirm: TextInput::masked().max_chars(MAX_PASSWORD_CHARS),
             ..Self::default()
         };
     }
@@ -127,19 +122,8 @@ impl AccountForm {
         }
     }
 
-    pub fn type_char(&mut self, c: char) {
-        let i = self.focused;
-        if i >= self.labels().len() {
-            return;
-        }
-        let full = if self.page == Page::Username && i == 1 {
-            self.new.chars().count() >= shared::MAX_USERNAME_CHARS
-        } else {
-            self.input(i).len() >= MAX_PASSWORD
-        };
-        if !full {
-            self.input_mut(i).insert(c);
-        }
+    pub fn typing(&mut self) -> Option<&mut TextInput> {
+        (self.focused < self.labels().len()).then(|| self.input_mut(self.focused))
     }
 
     fn check(&self) -> Result<(), &'static str> {
@@ -195,13 +179,15 @@ impl AccountForm {
     }
 
     fn poll(&mut self) -> Outcome {
-        let Some(result) = http::take(&mut self.pending) else {
+        let Some(result) = http::take_json::<serde_json::Value>(&mut self.pending) else {
             return Outcome::Stay;
         };
         match result {
-            Ok(resp) if resp.status == 200 => match self.page {
+            Ok(reply) => match self.page {
                 Page::Username => {
-                    let name = http::json::<Renamed>(&resp).map_or_else(|| self.new.trim().to_owned(), |r| r.username);
+                    let name = reply["username"]
+                        .as_str()
+                        .map_or_else(|| self.new.trim().to_owned(), str::to_owned);
                     self.show(Page::Choose);
                     self.status = Status::success("Pseudo changé.");
                     Outcome::Renamed(name)
@@ -215,12 +201,8 @@ impl AccountForm {
                 Page::Delete => Outcome::LoggedOut("Votre compte a été supprimé."),
                 Page::Choose => Outcome::Stay,
             },
-            Ok(resp) => {
-                self.status = Status::error(http::error_message(&resp));
-                Outcome::Stay
-            }
-            Err(e) => {
-                self.status = Status::error(http::network_error(&e));
+            Err(msg) => {
+                self.status = Status::error(msg);
                 Outcome::Stay
             }
         }
@@ -381,7 +363,9 @@ mod tests {
     fn typed(form: &mut AccountForm, field: usize, text: &str) {
         form.focused = field;
         for c in text.chars() {
-            form.type_char(c);
+            if let Some(input) = form.typing() {
+                input.type_char(c);
+            }
         }
     }
 
@@ -446,6 +430,6 @@ mod tests {
         let mut form = AccountForm::open();
         form.show(Page::Delete);
         typed(&mut form, 0, &"a".repeat(100));
-        assert_eq!(form.current.len(), MAX_PASSWORD);
+        assert_eq!(form.current.len(), MAX_PASSWORD_CHARS);
     }
 }
