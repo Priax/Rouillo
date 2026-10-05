@@ -27,6 +27,7 @@ rfd = "0.17"
 ed25519-dalek = "2"
 sha2 = "0.10"
 self-replace = "1"
+display-info = "0.5"
 
 [target.'wasm32-unknown-unknown'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
