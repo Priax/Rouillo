@@ -24,7 +24,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 shared = { path = "../shared" }
 
 [dev-dependencies]
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 tower = { version = "0.5", features = ["util"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 
