@@ -72,7 +72,7 @@ jobs:
           tar -czf "$dir.tar.gz" -C pkg "$dir"
 
       - name: Keep the files for the release
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: |
@@ -89,7 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
