@@ -159,7 +159,8 @@ fn newer(candidate: &str, current: &str) -> bool {
 /// What a release signature covers: which file, for which version, with
 /// which content. Signing all three keeps an old binary from passing as new.
 pub fn manifest(asset: &str, version: &str, bytes: &[u8]) -> String {
-    format!("{asset} {version} {:x}", Sha256::digest(bytes))
+    let hash: String = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
+    format!("{asset} {version} {hash}")
 }
 
 fn verify(key: &[u8; 32], manifest: &str, signature_hex: &str) -> bool {
