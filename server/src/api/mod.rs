@@ -188,8 +188,15 @@ pub fn routes(pool: DbPool, cmd_tx: mpsc::Sender<Command>) -> Router {
         )
         .route("/api/friends/{id}", delete(handle_remove_friend))
         .route("/api/friends/{id}/accept", post(handle_accept_friend))
+        .route("/api/version", get(handle_version))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .with_state(api)
+}
+
+/// The game version clients should run. The deploy waits for its signed
+/// binaries, so a client told about it can always download them.
+async fn handle_version() -> impl IntoResponse {
+    Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }))
 }
 
 #[cfg(test)]
@@ -252,6 +259,21 @@ pub(crate) mod tests {
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "bad_username");
         assert!(body["error"].is_string(), "old clients still read 'error'");
+    }
+
+    #[tokio::test]
+    async fn the_version_is_the_servers_own() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap();
+        let res = routes(pool, mpsc::channel(8).0)
+            .oneshot(Request::get("/api/version").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
     }
 
     async fn post(path: &str, body: String) -> (u16, String) {

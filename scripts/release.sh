@@ -40,17 +40,17 @@ cargo metadata --locked --format-version 1 >/dev/null || die "Cargo.lock is stil
 # stranded, so the deploy waits for the signed binaries.
 wait_for_release() {
     repo=$(git remote get-url origin | sed -E 's#^(git@github.com:|https://github.com/)##; s#\.git$##')
-    url="https://api.github.com/repos/$repo/releases/tags/v$version"
+    base="https://github.com/$repo/releases/download/v$version"
     echo "Waiting for GitHub to publish the signed v$version binaries..."
-    # Once a minute: GitHub allows 60 unauthenticated API calls an hour.
-    for _ in $(seq 45); do
-        assets=$(curl -fsS "$url" 2>/dev/null || true)
-        if echo "$assets" | grep -q '"rouillo-linux-x86_64.sig"' \
-            && echo "$assets" | grep -q '"rouillo-windows-x86_64.exe.sig"'; then
+    # Plain downloads, not the API: its 60 calls an hour are per IP, and a
+    # shared network can use them all up.
+    for _ in $(seq 90); do
+        if curl -fsIo /dev/null "$base/rouillo-linux-x86_64.sig" \
+            && curl -fsIo /dev/null "$base/rouillo-windows-x86_64.exe.sig"; then
             echo "Release v$version published"
             return 0
         fi
-        sleep 75
+        sleep 30
     done
     die "release v$version not published after 45 min, see the Release workflow; deploy with scripts/deploy.sh once it is"
 }

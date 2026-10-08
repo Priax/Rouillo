@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
-const LATEST: &str = "https://api.github.com/repos/Priax/Rouillo/releases/latest";
+const DOWNLOADS: &str = "https://github.com/Priax/Rouillo/releases/download";
 
 /// Releases are signed in CI with the matching private key (a repository
 /// secret); a binary whose signature does not check is never run.
@@ -66,8 +66,8 @@ pub fn check() {
     });
 }
 
-/// Looks for a newer release now and installs it: the one seen at start may
-/// not have been published yet. Without GitHub, opens the download page.
+/// Looks for a newer release now and installs it: the server may not have
+/// announced it at start. Without the server, opens the download page.
 pub fn update_now() {
     set(Status::Checking);
     std::thread::spawn(|| match latest() {
@@ -114,35 +114,19 @@ fn get(url: &str, accept: &str) -> Result<Vec<u8>, String> {
 
 fn latest() -> Result<Option<Release>, String> {
     #[derive(serde::Deserialize)]
-    struct Asset {
-        name: String,
-        browser_download_url: String,
-    }
-    #[derive(serde::Deserialize)]
     struct Latest {
-        tag_name: String,
-        assets: Vec<Asset>,
+        version: String,
     }
-    let body = get(LATEST, "application/vnd.github+json")?;
-    let latest: Latest = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
-    let version = latest.tag_name.trim_start_matches('v').to_owned();
+    let body = get(&crate::http::api_url("version"), "application/json")?;
+    let Latest { version } = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
     if !newer(&version, env!("CARGO_PKG_VERSION")) {
         return Ok(None);
     }
-    let url = |name: &str| {
-        latest
-            .assets
-            .iter()
-            .find(|a| a.name == name)
-            .map(|a| a.browser_download_url.clone())
-    };
-    let (Some(binary), Some(signature)) = (url(ASSET), url(&format!("{ASSET}.sig"))) else {
-        return Ok(None);
-    };
+    let binary = format!("{DOWNLOADS}/v{version}/{ASSET}");
     Ok(Some(Release {
-        version,
+        signature: format!("{binary}.sig"),
         binary,
-        signature,
+        version,
     }))
 }
 
