@@ -13,6 +13,8 @@ pub struct View {
     pub w: f32,
     pub h: f32,
     pub scale: f32,
+    /// Device pixels per window pixel: 2 or 3 on a phone, 1.25 on a scaled desktop.
+    pub dpi: f32,
 }
 
 impl Default for View {
@@ -30,12 +32,17 @@ impl View {
             w: window_w / scale,
             h: window_h / scale,
             scale,
+            dpi: 1.0,
         }
     }
 
     pub fn of(app: &mut App) -> Self {
         let (w, h) = app.window().size();
-        Self::fit(w as f32, h as f32)
+        let dpi = (app.window().dpi() as f32).max(1.0);
+        Self {
+            dpi,
+            ..Self::fit(w as f32, h as f32)
+        }
     }
 
     /// A window taller than wide, such as a phone held upright: screens stack

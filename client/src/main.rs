@@ -584,6 +584,7 @@ fn main() -> Result<(), String> {
         .set_title("Rouillo")
         .set_size(1280, 800)
         .set_resizable(true)
+        .set_high_dpi(true)
         .set_app_id("org.priax.Rouillo")
         .set_window_icon_data(icon)
         .set_taskbar_icon_data(icon);

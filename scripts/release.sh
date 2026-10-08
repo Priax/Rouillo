@@ -50,7 +50,7 @@ wait_for_release() {
             echo "Release v$version published"
             return 0
         fi
-        sleep 60
+        sleep 75
     done
     die "release v$version not published after 45 min, see the Release workflow; deploy with scripts/deploy.sh once it is"
 }

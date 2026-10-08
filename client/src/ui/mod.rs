@@ -491,7 +491,7 @@ fn hash_of<T: Hash + ?Sized>(value: &T) -> u64 {
 
 fn supersample(view: View) -> f32 {
     let largest = (view.w * view.scale).max(view.h * view.scale).max(1.0);
-    SUPERSAMPLE.min(MAX_TARGET / largest)
+    SUPERSAMPLE.max(view.dpi).min(MAX_TARGET / largest)
 }
 
 fn transition_progress(time: f64, entered_at: f64, fade: f32) -> f32 {
@@ -599,6 +599,20 @@ mod tests {
         assert!((supersample(View::fit(1280.0, 800.0)) - 2.0).abs() < f32::EPSILON);
         let big = View::fit(3840.0, 2160.0);
         assert!(3840.0 * supersample(big) <= MAX_TARGET + 0.5);
+    }
+
+    #[test]
+    fn a_dense_screen_is_drawn_at_its_own_resolution() {
+        let phone = View {
+            dpi: 3.0,
+            ..View::fit(393.0, 852.0)
+        };
+        assert!((supersample(phone) - 3.0).abs() < f32::EPSILON);
+        let scaled = View {
+            dpi: 1.25,
+            ..View::fit(1536.0, 864.0)
+        };
+        assert!((supersample(scaled) - 2.0).abs() < f32::EPSILON);
     }
 
     #[test]
