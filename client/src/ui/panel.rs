@@ -5,27 +5,32 @@ use crate::theme::{self, Palette};
 
 const TITLE_H: f32 = 56.0;
 const ROW_H: f32 = 64.0;
+/// Past four rows the panel tightens, so the actions under it stay on screen.
+const TIGHT_ROW_H: f32 = 56.0;
 const ACTION_ROW_H: f32 = 60.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SettingsPanel {
     pub card: Rect,
     view_w: f32,
+    row_h: f32,
 }
 
 impl SettingsPanel {
     pub fn new(view: View, rows: usize) -> Self {
-        let h = TITLE_H + rows as f32 * ROW_H + 16.0;
+        let row_h = if rows > 4 { TIGHT_ROW_H } else { ROW_H };
+        let h = TITLE_H + rows as f32 * row_h + 16.0;
         Self {
             card: Rect::at(view.w / 2.0 - 320.0, theme::HEADER_H + 30.0, 640.0, h),
             view_w: view.w,
+            row_h,
         }
     }
 
     pub fn stepper(self, i: usize) -> Stepper {
         Stepper::at(
             self.card.x + self.card.w / 2.0 + 20.0,
-            self.card.y + TITLE_H + 8.0 + i as f32 * ROW_H,
+            self.card.y + TITLE_H + 8.0 + i as f32 * self.row_h,
         )
     }
 
@@ -61,5 +66,20 @@ mod tests {
         assert!(last.minus.y + last.minus.h <= panel.card.y + panel.card.h);
         assert!(panel.action_row(0).y > panel.card.y + panel.card.h);
         assert_eq!(panel.action_row(1).y, panel.action_row(0).y + ACTION_ROW_H);
+    }
+
+    #[test]
+    fn six_rows_and_three_actions_fit_the_reference_view() {
+        let view = View::default();
+        let panel = SettingsPanel::new(view, 6);
+        let last = panel.stepper(5);
+        assert!(last.minus.y + last.minus.h <= panel.card.y + panel.card.h);
+        let actions = panel.action_row(2);
+        assert!(
+            actions.y + actions.h <= view.h,
+            "{} > {}",
+            actions.y + actions.h,
+            view.h
+        );
     }
 }

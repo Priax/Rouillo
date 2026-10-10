@@ -129,6 +129,16 @@ fn run_side_effects(mgr: &mut Manager, pool: &db::DbPool, cmd_tx: &mpsc::Sender<
             let _ = cmd_tx.send(Command::RankedCheckDone { check, profile }).await;
         });
     }
+    for user in mgr.take_friend_loads() {
+        let (pool, cmd_tx) = (pool.clone(), cmd_tx.clone());
+        tokio::spawn(async move {
+            let friends = db::friend_ids(&pool, user).await.unwrap_or_else(|e| {
+                error!("Friend list: {e}");
+                Vec::new()
+            });
+            let _ = cmd_tx.send(Command::FriendsLoaded { user, friends }).await;
+        });
+    }
     for check in mgr.take_friend_checks() {
         let (pool, cmd_tx) = (pool.clone(), cmd_tx.clone());
         tokio::spawn(async move {

@@ -270,7 +270,7 @@ fn an_oversized_player_id_is_ignored() {
     let mut mgr = new_mgr();
     let mut rx = reg(&mut mgr, 1);
     hello(&mut mgr, 1, &"x".repeat(65));
-    assert!(mgr.conn_token.is_empty());
+    assert!(mgr.clients[&1].token.is_none());
     assert!(drain(&mut rx).is_empty());
 }
 

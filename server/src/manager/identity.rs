@@ -8,9 +8,9 @@ impl Manager {
     }
 
     pub(super) fn display_name(&self, conn: ConnId) -> String {
-        self.conn_username
+        self.clients
             .get(&conn)
-            .cloned()
+            .and_then(|c| c.username.clone())
             .unwrap_or_else(|| GUEST_NAME.to_string())
     }
 
@@ -22,36 +22,42 @@ impl Manager {
         session: Option<Uuid>,
     ) {
         self.forget_identity(conn);
+        let Some(client) = self.clients.get_mut(&conn) else {
+            return;
+        };
+        client.user = user;
+        client.username = name;
+        client.session = session;
         if let Some(uid) = user {
-            self.conn_user_id.insert(conn, uid);
             self.user_conns.entry(uid).or_default().insert(conn);
-        }
-        if let Some(name) = name {
-            self.conn_username.insert(conn, name);
-        }
-        if let Some(session) = session {
-            self.conn_session.insert(conn, session);
+            self.load_friends(uid);
         }
     }
 
     pub(super) fn forget_identity(&mut self, conn: ConnId) {
-        if let Some(uid) = self.conn_user_id.remove(&conn) {
+        let user = self.clients.get_mut(&conn).and_then(|c| {
+            c.username = None;
+            c.session = None;
+            c.user.take()
+        });
+        if let Some(uid) = user {
             if let Some(conns) = self.user_conns.get_mut(&uid) {
                 conns.remove(&conn);
                 if conns.is_empty() {
                     self.user_conns.remove(&uid);
+                    self.forget_friends(uid);
                 }
             }
         }
-        self.conn_username.remove(&conn);
-        self.conn_session.remove(&conn);
         self.leave_queue(conn);
     }
 
     pub(super) fn rename(&mut self, user: Uuid, name: &str) {
         let conns: Vec<ConnId> = self.user_conns.get(&user).into_iter().flatten().copied().collect();
         for conn in conns {
-            self.conn_username.insert(conn, name.to_owned());
+            if let Some(client) = self.clients.get_mut(&conn) {
+                client.username = Some(name.to_owned());
+            }
         }
         let mut renamed = Vec::new();
         for room in self.rooms.values_mut() {
@@ -93,7 +99,7 @@ impl Manager {
             .map(|c| c.iter().copied().collect())
             .unwrap_or_default();
         for conn in conns {
-            if keep.is_some() && self.conn_session.get(&conn).copied() == keep {
+            if keep.is_some() && self.clients.get(&conn).and_then(|c| c.session) == keep {
                 continue;
             }
             self.forget_identity(conn);

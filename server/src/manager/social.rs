@@ -23,7 +23,10 @@ impl Manager {
         let Some(id) = self.room_of(conn) else { return };
         let Some(text) = clean_chat(text) else { return };
         let now = Instant::now();
-        let (tokens, last) = self.chat_budget.entry(conn).or_insert((CHAT_BURST, now));
+        let Some(client) = self.clients.get_mut(&conn) else {
+            return;
+        };
+        let (tokens, last) = client.chat_budget.get_or_insert((CHAT_BURST, now));
         *tokens = (*tokens + now.duration_since(*last).as_secs_f32() / CHAT_REFILL_SECS).min(CHAT_BURST);
         *last = now;
         if *tokens < 1.0 {
@@ -40,7 +43,7 @@ impl Manager {
     }
 
     pub(super) fn spectate(&mut self, conn: ConnId, id: RoomId) {
-        if !self.conn_token.contains_key(&conn) || self.room_of(conn) == Some(id) {
+        if self.token_of(conn).is_none() || self.room_of(conn) == Some(id) {
             return;
         }
         let Some(room) = self.rooms.get(&id) else {
@@ -52,8 +55,8 @@ impl Manager {
             return;
         }
         let host = room.host.clone();
-        let host_user = room.members.iter().find(|m| m.token == host).and_then(|m| m.user_id);
-        let watcher = self.conn_user_id.get(&conn).copied();
+        let host_user = room.host_user();
+        let watcher = self.user_of(conn);
         match (watcher, host_user) {
             (Some(watcher), Some(other)) if watcher == other => self.enter_audience(conn, id),
             (Some(watcher), Some(other)) => self.check_watch(conn, id, host, watcher, other),
@@ -75,7 +78,7 @@ impl Manager {
 
     /// Watches the game a friend is in, wherever it is.
     pub(super) fn watch_friend(&mut self, conn: ConnId, friend: &str) {
-        let (Some(watcher), Ok(friend)) = (self.conn_user_id.get(&conn).copied(), Uuid::parse_str(friend)) else {
+        let (Some(watcher), Ok(friend)) = (self.user_of(conn), Uuid::parse_str(friend)) else {
             return;
         };
         let found = self
@@ -90,7 +93,7 @@ impl Manager {
     }
 
     fn check_watch(&mut self, conn: ConnId, room: RoomId, host: Token, watcher: Uuid, other: Uuid) {
-        if !self.checks_in_flight.insert(conn) {
+        if !self.begin_friend_check(conn) {
             return;
         }
         let from = self.room_of(conn);
@@ -107,7 +110,7 @@ impl Manager {
     /// The answer to a `FriendCheck::Watch` about `other`. A friends-only
     /// room also needs the friendship of its current host, asked next.
     pub(super) fn finish_watch_check(&mut self, conn: ConnId, id: RoomId, host: &str, other: Uuid, friends: bool) {
-        if !self.senders.contains_key(&conn) {
+        if !self.clients.contains_key(&conn) {
             return;
         }
         let Some(room) = self.rooms.get(&id) else {
@@ -145,7 +148,7 @@ impl Manager {
         self.leave_current(conn);
         let spectator = Spectator {
             conn,
-            user_id: self.conn_user_id.get(&conn).copied(),
+            user_id: self.user_of(conn),
             name: self.display_name(conn),
         };
         let Some(room) = self.rooms.get_mut(&id) else { return };
@@ -154,7 +157,7 @@ impl Manager {
         let playing = matches!(room.phase, Phase::Playing);
         let snapshot = playing.then(|| room.sim.state_update(true));
         let lobby = room.spectator_info();
-        self.clients.insert(conn, Some(id));
+        self.set_room(conn, Some(id));
         self.refresh_lobby(id);
         if playing {
             self.deliver_msg(conn, &ServerMessage::Lobby { info: lobby });
@@ -178,7 +181,7 @@ impl Manager {
         };
         room.spectators.remove(i);
         let count = room.spectators.len() as u8;
-        self.clients.insert(conn, None);
+        self.set_room(conn, None);
         self.refresh_lobby(id);
         self.send_room_msg(id, &ServerMessage::Spectators { count });
         self.room_list_dirty = true;
@@ -197,7 +200,7 @@ impl Manager {
     pub(super) fn close_room(&mut self, id: RoomId) {
         let Some(room) = self.rooms.remove(&id) else { return };
         for s in room.spectators {
-            self.clients.insert(s.conn, None);
+            self.set_room(s.conn, None);
             self.send_room_list_to(s.conn);
         }
     }

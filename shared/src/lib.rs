@@ -13,7 +13,7 @@ use crate::config::{
     BOUNCE_FRAMES, CELL_PX, CELL_UNITS, CHAIN_POWERS, COLOR_BONUS, FALL_FRAMES_PER_CELL, FREE_FALL_ACCEL,
     FREE_FALL_MAX, FREE_FALL_START, GRACE_FRAMES, GROUP_BONUS, HALF_CELL_UNITS, LEVELS_PER_SPEEDUP, LEVEL_FRAMES,
     MARGIN_LEVELS, MARGIN_STEPS, MAX_PUSH_BACKS, MIN_FALL_FRAMES_PER_CELL, OJAMA_ACCEL, POP_FRAMES, PX_UNITS,
-    SOFT_DROP_UNITS, SPAWN_COL, SPLIT_DELAY_AXIS, SPLIT_DELAY_SATELLITE, TARGET_POINTS, VISIBLE_ROW_OFFSET,
+    SOFT_DROP_UNITS, SPLIT_DELAY_AXIS, SPLIT_DELAY_SATELLITE, TARGET_POINTS, VISIBLE_ROW_OFFSET,
 };
 
 pub fn encode<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, bitcode::Error> {
@@ -165,6 +165,8 @@ impl PausePolicy {
 pub struct RoomSettings {
     pub starting_level: u32,
     pub colors: u32,
+    pub columns: u8,
+    pub rows: u8,
     pub friends_only: bool,
     pub pause: PausePolicy,
 }
@@ -174,6 +176,8 @@ impl Default for RoomSettings {
         Self {
             starting_level: 1,
             colors: 5,
+            columns: small(config::GRID_WIDTH),
+            rows: small(config::GRID_HEIGHT - config::VISIBLE_ROW_OFFSET),
             friends_only: false,
             pause: PausePolicy::Everyone,
         }
@@ -181,13 +185,15 @@ impl Default for RoomSettings {
 }
 
 impl RoomSettings {
-    pub const COUNT: usize = 4;
+    pub const COUNT: usize = 6;
 
     pub fn label(i: usize) -> &'static str {
         match i {
             0 => "Niveau de départ",
             1 => "Couleurs",
-            2 => "Amis seulement",
+            2 => "Largeur",
+            3 => "Hauteur",
+            4 => "Amis seulement",
             _ => "Pause",
         }
     }
@@ -200,7 +206,9 @@ impl RoomSettings {
                 rows => format!("{} (+{rows} lignes)", self.starting_level),
             },
             1 => self.colors.to_string(),
-            2 => {
+            2 => self.columns.to_string(),
+            3 => self.rows.to_string(),
+            4 => {
                 if self.friends_only {
                     "Oui".into()
                 } else {
@@ -215,11 +223,22 @@ impl RoomSettings {
         match i {
             0 => self.starting_level = self.starting_level.saturating_add_signed(dir).clamp(1, 15),
             1 => self.colors = self.colors.saturating_add_signed(dir).clamp(4, 5),
-            2 => self.friends_only = !self.friends_only,
-            3 => self.pause = self.pause.step(dir),
+            2 => self.columns = step_clamped(self.columns, dir, 4, 10),
+            3 => self.rows = step_clamped(self.rows, dir, 8, 16),
+            4 => self.friends_only = !self.friends_only,
+            5 => self.pause = self.pause.step(dir),
             _ => {}
         }
     }
+}
+
+fn step_clamped(value: u8, dir: i32, min: u8, max: u8) -> u8 {
+    match dir.signum() {
+        1 => value.saturating_add(1),
+        -1 => value.saturating_sub(1),
+        _ => value,
+    }
+    .clamp(min, max)
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -257,7 +276,7 @@ pub struct RankedInfo {
     pub wins: [u8; 2],
 }
 
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 pub const MAX_CHAT_CHARS: usize = 200;
 pub const MAX_SPECTATORS: usize = 20;
@@ -377,6 +396,9 @@ pub enum ServerMessage {
     Spectators {
         count: u8,
     },
+    /// Another connection with the same player id took this one's seat:
+    /// the game was opened in another tab or window.
+    OpenedElsewhere,
 }
 
 pub const MAX_USERNAME_CHARS: usize = 24;
@@ -617,8 +639,8 @@ impl Board {
 
     pub fn for_match(seed: u64, settings: &RoomSettings) -> Self {
         let mut board = Self::new(
-            config::GRID_WIDTH,
-            config::GRID_HEIGHT,
+            usize::from(settings.columns),
+            usize::from(settings.rows) + VISIBLE_ROW_OFFSET,
             seed,
             settings.starting_level,
             settings.colors,
@@ -627,8 +649,13 @@ impl Board {
         board
     }
 
+    /// The third column on the standard six.
+    pub const fn spawn_col(&self) -> usize {
+        self.width.saturating_sub(1) / 2
+    }
+
     pub fn spawn_piece(&mut self) {
-        if self.cells[VISIBLE_ROW_OFFSET][SPAWN_COL].is_some() {
+        if self.cells[VISIBLE_ROW_OFFSET][self.spawn_col()].is_some() {
             self.state = GameState::GameOver;
             return;
         }
@@ -637,7 +664,7 @@ impl Board {
         self.next_next_types = PuyoType::random_pair(&mut self.rng.pieces, self.colors);
         let new_piece = ActivePuyo {
             row: 1,
-            col: small(SPAWN_COL),
+            col: small(self.spawn_col()),
             rotation: 0,
             axis_type: c1,
             sat_type: c2,
@@ -666,8 +693,8 @@ impl Board {
     pub fn check_collision(&self, piece: &ActivePuyo) -> bool {
         for &(r, c) in &piece.get_positions() {
             let in_columns = usize::try_from(c).is_ok_and(|c| c < self.width);
-            let below_floor = usize::try_from(r).is_ok_and(|r| r >= self.height);
-            if !in_columns || below_floor {
+            let inside = usize::try_from(r).is_ok_and(|r| r < self.height);
+            if !in_columns || !inside {
                 return true;
             }
             if self.index(r, c).is_some_and(|(r, c)| self.cells[r][c].is_some()) {

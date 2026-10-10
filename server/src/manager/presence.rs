@@ -6,7 +6,7 @@ impl Manager {
             warn!("WS {conn}: player_id invalide, ignoré");
             return;
         }
-        let user = self.conn_user_id.get(&conn).copied();
+        let user = self.user_of(conn);
         let room = match self.room_of_token(&token) {
             Some(id) => {
                 let seat = self.rooms[&id].members.iter().position(|m| m.token == token);
@@ -27,7 +27,9 @@ impl Manager {
             }
             None => None,
         };
-        self.conn_token.insert(conn, token);
+        if let Some(client) = self.clients.get_mut(&conn) {
+            client.token = Some(token);
+        }
         if let Some(id) = room {
             self.rejoin(conn, id);
         } else {
@@ -39,9 +41,8 @@ impl Manager {
     }
 
     pub(super) fn rejoin(&mut self, conn: ConnId, id: RoomId) {
-        let token = match self.conn_token.get(&conn) {
-            Some(t) => t.clone(),
-            None => return,
+        let Some(token) = self.token_of(conn).cloned() else {
+            return;
         };
         let mut replaced: Option<ConnId> = None;
         if let Some(room) = self.rooms.get_mut(&id) {
@@ -51,9 +52,10 @@ impl Manager {
                 room.members[slot].disconnect_at = None;
             }
         }
-        self.clients.insert(conn, Some(id));
+        self.set_room(conn, Some(id));
         if let Some(old) = replaced {
-            self.forget_conn(old);
+            self.set_room(old, None);
+            self.deliver_msg(old, &ServerMessage::OpenedElsewhere);
         }
         self.sync_after_attach(id, conn);
         info!("Reconnexion room #{id} (conn {conn})");
@@ -134,14 +136,8 @@ impl Manager {
     }
 
     fn forget_conn(&mut self, conn: ConnId) {
-        self.clients.remove(&conn);
-        self.conn_token.remove(&conn);
         self.forget_identity(conn);
-        self.senders.remove(&conn);
-        self.checks_in_flight.remove(&conn);
-        self.ranked_checking.remove(&conn);
-        self.last_invite.remove(&conn);
-        self.chat_budget.remove(&conn);
+        self.clients.remove(&conn);
     }
 
     pub(super) fn leave_current(&mut self, conn: ConnId) {
@@ -149,7 +145,7 @@ impl Manager {
         let Some(id) = self.room_of(conn) else {
             return;
         };
-        self.clients.insert(conn, None);
+        self.set_room(conn, None);
         if self.leave_audience(conn, id) {
             return;
         }

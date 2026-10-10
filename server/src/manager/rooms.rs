@@ -13,7 +13,7 @@ impl Manager {
     }
 
     pub(super) fn request_join(&mut self, conn: ConnId, id: RoomId) {
-        if !self.conn_token.contains_key(&conn) {
+        if self.token_of(conn).is_none() {
             return;
         }
         if self.rooms.get(&id).is_some_and(|r| r.slot_of_conn(conn).is_some()) {
@@ -36,12 +36,11 @@ impl Manager {
             return;
         }
         let host = room.host.clone();
-        let host_user = room.members.iter().find(|m| m.token == host).and_then(|m| m.user_id);
-        let (Some(host_user), Some(joiner)) = (host_user, self.conn_user_id.get(&conn).copied()) else {
+        let (Some(host_user), Some(joiner)) = (room.host_user(), self.user_of(conn)) else {
             self.join_failed(conn, JOIN_FRIENDS_ONLY);
             return;
         };
-        if !self.checks_in_flight.insert(conn) {
+        if !self.begin_friend_check(conn) {
             return;
         }
         let from = self.room_of(conn);
@@ -56,7 +55,7 @@ impl Manager {
     }
 
     pub(super) fn complete_join(&mut self, conn: ConnId, id: RoomId) {
-        let Some(token) = self.conn_token.get(&conn).cloned() else {
+        let Some(token) = self.token_of(conn).cloned() else {
             return;
         };
         if self.closing {
@@ -71,7 +70,7 @@ impl Manager {
             self.join_failed(conn, JOIN_UNAVAILABLE);
             return;
         }
-        let user_id = self.conn_user_id.get(&conn).copied();
+        let user_id = self.user_of(conn);
         if user_id.is_some() && self.rooms[&id].members.iter().any(|m| m.user_id == user_id) {
             self.join_failed(conn, JOIN_SAME_ACCOUNT);
             return;
@@ -81,7 +80,7 @@ impl Manager {
         if let Some(room) = self.rooms.get_mut(&id) {
             room.members.push(Member::present(token, conn, user_id, name));
         }
-        self.clients.insert(conn, Some(id));
+        self.set_room(conn, Some(id));
         self.sync_after_attach(id, conn);
     }
 
@@ -93,7 +92,7 @@ impl Manager {
         from: Option<RoomId>,
         friends: bool,
     ) {
-        if !self.senders.contains_key(&conn) || self.room_of(conn) != from {
+        if !self.clients.contains_key(&conn) || self.room_of(conn) != from {
             return;
         }
         let Some(r) = self.rooms.get(&room) else {
@@ -114,9 +113,8 @@ impl Manager {
     }
 
     pub(super) fn create_room(&mut self, conn: ConnId, name: &str) {
-        let token = match self.conn_token.get(&conn) {
-            Some(t) => t.clone(),
-            None => return,
+        let Some(token) = self.token_of(conn).cloned() else {
+            return;
         };
         if self.closing {
             self.join_failed(conn, JOIN_MAINTENANCE);
@@ -125,11 +123,11 @@ impl Manager {
         self.leave_current(conn);
         let id = self.next_id;
         self.next_id += 1;
-        let user_id = self.conn_user_id.get(&conn).copied();
+        let user_id = self.user_of(conn);
         let member = Member::present(token, conn, user_id, self.display_name(conn));
         let room = Room::new(id, clean_name(name), vec![member], RoomSettings::default(), None);
         self.rooms.insert(id, room);
-        self.clients.insert(conn, Some(id));
+        self.set_room(conn, Some(id));
         self.send_lobby(id);
         self.room_list_dirty = true;
         info!("Room #{id} créée (conn {conn})");

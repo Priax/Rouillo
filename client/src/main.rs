@@ -510,35 +510,23 @@ const MAINTENANCE_H: f32 = 30.0;
 
 fn draw_maintenance_banner(gfx: &mut Graphics, state: &State) {
     let playing = state.screen == Screen::Game && state.session().is_some_and(|s| !s.decided());
-    if !state.maintenance || !state.conn.is_live() || !state.screen.needs_connection() || playing {
-        return;
+    if state.maintenance && state.conn.is_live() && state.screen.needs_connection() && !playing {
+        draw_warning_banner(
+            gfx,
+            state,
+            "Le serveur redémarre: les parties en cours se terminent, aucune autre ne démarre.",
+        );
     }
-    let ww = state.ui.view().w;
-    let mut d = state.ui.canvas(gfx);
-    ui::banner(
-        &mut d,
-        Rect::at(0.0, 0.0, ww, MAINTENANCE_H),
-        theme::WARNING_BANNER,
-        theme::WARNING,
-        ui::Edge::Bottom,
-    );
-    d.sharp_text(
-        &state.fonts.text,
-        "Le serveur redémarre: les parties en cours se terminent, aucune autre ne démarre.",
-    )
-    .position(ww / 2.0, MAINTENANCE_H / 2.0)
-    .size(theme::size::SMALL)
-    .h_align_center()
-    .v_align_middle()
-    .color(theme::WARNING_TEXT);
-    state.ui.render(gfx, &d);
 }
 
 /// Says why online play is closed while the server refuses this version.
 fn draw_too_old_banner(gfx: &mut Graphics, state: &State) {
-    if !state.too_old || !matches!(state.screen, Screen::Menu | Screen::PlayMenu) {
-        return;
+    if state.too_old && matches!(state.screen, Screen::Menu | Screen::PlayMenu) {
+        draw_warning_banner(gfx, state, crate::update::TOO_OLD);
     }
+}
+
+fn draw_warning_banner(gfx: &mut Graphics, state: &State, text: &str) {
     let ww = state.ui.view().w;
     let mut d = state.ui.canvas(gfx);
     ui::banner(
@@ -548,7 +536,7 @@ fn draw_too_old_banner(gfx: &mut Graphics, state: &State) {
         theme::WARNING,
         ui::Edge::Bottom,
     );
-    d.sharp_text(&state.fonts.text, crate::update::TOO_OLD)
+    d.sharp_text(&state.fonts.text, text)
         .position(ww / 2.0, MAINTENANCE_H / 2.0)
         .size(theme::size::SMALL)
         .h_align_center()

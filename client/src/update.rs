@@ -19,7 +19,7 @@ pub fn apply() {
     use crate::updater::{self, Status};
     match updater::status() {
         Status::Available(_) => updater::install(),
-        Status::Checking | Status::Installing | Status::Done => {}
+        Status::Checking | Status::Downloading { .. } | Status::Verifying | Status::Installing | Status::Done => {}
         Status::Idle | Status::Failed(_) => updater::update_now(),
     }
 }
@@ -41,19 +41,36 @@ pub fn open_download_page() {
     }
 }
 
-/// What the update is doing, to show next to its button.
+/// What the update is doing, to show next to its button, and how much of
+/// the download is done when that is known.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn progress() -> Option<String> {
-    match crate::updater::status() {
-        crate::updater::Status::Checking => Some("Recherche de la mise à jour...".to_owned()),
-        crate::updater::Status::Installing => Some("Téléchargement de la mise à jour...".to_owned()),
-        crate::updater::Status::Failed(e) => Some(format!("Mise à jour impossible: {e}")),
-        crate::updater::Status::Done => Some("Redémarrage...".to_owned()),
-        _ => None,
-    }
+pub fn progress() -> Option<(String, Option<f32>)> {
+    use crate::updater::Status;
+    let text = match crate::updater::status() {
+        Status::Checking => "Recherche de la mise à jour...".to_owned(),
+        Status::Downloading {
+            done,
+            total: Some(total),
+        } if total > 0 => {
+            let text = format!("Téléchargement: {} / {} Mo", megabytes(done), megabytes(total));
+            return Some((text, Some((done as f32 / total as f32).min(1.0))));
+        }
+        Status::Downloading { done, .. } => format!("Téléchargement: {} Mo", megabytes(done)),
+        Status::Verifying => "Vérification de la signature...".to_owned(),
+        Status::Installing => "Installation...".to_owned(),
+        Status::Failed(e) => format!("Mise à jour impossible: {e}"),
+        Status::Done => "Redémarrage...".to_owned(),
+        Status::Idle | Status::Available(_) => return None,
+    };
+    Some((text, None))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1}", bytes as f64 / 1_000_000.0).replace('.', ",")
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn progress() -> Option<String> {
+pub fn progress() -> Option<(String, Option<f32>)> {
     None
 }

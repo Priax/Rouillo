@@ -158,8 +158,6 @@ pub mod game {
     pub const PANEL: Color = Color::from_rgb(0.1, 0.11, 0.2);
     pub const DEATH_CROSS: Color = Color::from_rgb(1.0, 0.3, 0.5);
     pub const GARBAGE_INK: Color = Color::from_rgb(0.3, 0.32, 0.42);
-    pub const ROCK: Color = Color::from_rgb(0.55, 0.52, 0.58);
-    pub const ROCK_SHADE: Color = Color::from_rgb(0.3, 0.28, 0.34);
     pub const STAR: Color = Color::from_rgb(1.0, 0.78, 0.2);
     pub const MOON: Color = Color::from_rgb(0.95, 0.9, 0.6);
     pub const TEXT_SHADOW: Color = Color::from_rgba(0.0, 0.0, 0.05, 0.75);

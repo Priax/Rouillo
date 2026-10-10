@@ -19,6 +19,9 @@ const LABEL_H: f32 = 42.0;
 const STAT_GAP: f32 = 18.0;
 const VALUE_SIZE: f32 = 40.0;
 const RADIUS: f32 = config::CELL_SIZE * 0.5;
+const HEADER_H: f32 = config::CELL_SIZE + TRAY_H + 86.0;
+const FOOTER_H: f32 = 20.0;
+const HIDDEN_ALPHA: f32 = 0.55;
 
 struct GameLayout {
     win_w: f32,
@@ -26,21 +29,24 @@ struct GameLayout {
     mine: Rect,
     theirs: Rect,
     sidebar_x: f32,
+    /// Boards are drawn at their natural size times this, to fit the window.
+    scale: f32,
 }
 
 impl GameLayout {
-    fn new(view: View, two_boards: bool) -> Self {
+    fn new(view: View, two_boards: bool, board: &Board) -> Self {
         let (win_w, win_h) = view.size();
-        let board_w = config::GRID_WIDTH as f32 * config::CELL_SIZE;
-        let board_h = (config::GRID_HEIGHT - config::VISIBLE_ROW_OFFSET) as f32 * config::CELL_SIZE;
+        let natural_w = board.width as f32 * config::CELL_SIZE;
+        let natural_h = (board.height - config::VISIBLE_ROW_OFFSET) as f32 * config::CELL_SIZE;
         let column = COLUMN_W + SIDE_GAP;
-        let boards = if two_boards {
-            board_w * 2.0 + VERSUS_GAP
-        } else {
-            board_w
-        };
+        let (count, gaps) = if two_boards { (2.0, VERSUS_GAP) } else { (1.0, 0.0) };
+        let scale = ((win_w - 2.0 * column - gaps) / (count * natural_w))
+            .min((win_h - HEADER_H - FOOTER_H) / natural_h)
+            .min(1.0);
+        let (board_w, board_h) = (natural_w * scale, natural_h * scale);
+        let boards = board_w * count + gaps;
         let start_x = (win_w - boards - 2.0 * column) / 2.0 + column;
-        let offset_y = (win_h - board_h) / 2.0 - 10.0;
+        let offset_y = (win_h - board_h - (HEADER_H + FOOTER_H) * scale) / 2.0 + HEADER_H * scale;
         let sidebar_x = if two_boards {
             start_x + board_w + (VERSUS_GAP - COLUMN_W) / 2.0
         } else {
@@ -52,6 +58,7 @@ impl GameLayout {
             mine: Rect::at(start_x, offset_y, board_w, board_h),
             theirs: Rect::at(start_x + board_w + VERSUS_GAP, offset_y, board_w, board_h),
             sidebar_x,
+            scale,
         }
     }
 
@@ -156,7 +163,7 @@ impl Overlay {
 }
 
 pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &Ui, fonts: &Fonts, hud: Hud) {
-    let layout = GameLayout::new(ui.view(), hud.opponent().is_some());
+    let layout = GameLayout::new(ui.view(), hud.opponent().is_some(), &session.predicted_board);
     let pal = ui.palette();
     let time = app.timer.elapsed_f32();
     let mut draw = ui.canvas(gfx);
@@ -244,11 +251,14 @@ fn draw_boards(
         offset: (row_off + fall_step(me), col_off),
         satellite: session.my_turn.satellite(),
     };
-    draw_board(draw, me, layout.mine, piece, time);
-    draw_lock_meter(draw, me, layout.mine);
     let labels = session.labels.as_ref();
     let mine = labels.map_or("YOU", |l| l[0].as_str());
-    draw_header(draw, fonts, mine, pal.text, session.my_nuisance(), layout.mine);
+    let header = Header {
+        name: mine,
+        color: pal.text,
+        nuisance: session.my_nuisance(),
+    };
+    draw_player(draw, fonts, me, (layout.mine, layout.scale), piece, header, time);
     let mut stats = vec![("SCORE", me.score.to_string())];
     if let Hud::Solo {
         versus: false, best, ..
@@ -270,15 +280,19 @@ fn draw_boards(
         offset: opp_offset,
         satellite: session.opp_turn.satellite(),
     };
-    draw_board(draw, opp_board, layout.theirs, piece, time);
-    let opponent = labels.map_or(opponent, |l| l[1].as_str());
-    draw_header(
+    let header = Header {
+        name: labels.map_or(opponent, |l| l[1].as_str()),
+        color: pal.text_muted,
+        nuisance: session.opp_nuisance(),
+    };
+    draw_player(
         draw,
         fonts,
-        opponent,
-        pal.text_muted,
-        session.opp_nuisance(),
-        layout.theirs,
+        opp_board,
+        (layout.theirs, layout.scale),
+        piece,
+        header,
+        time,
     );
     let column_x = layout.theirs.x + layout.theirs.w + SIDE_GAP;
     draw_stats(
@@ -334,9 +348,38 @@ fn draw_stats(draw: &mut Draw, pal: &Palette, fonts: &Fonts, (x, mut y): (f32, f
     }
 }
 
-fn draw_header(draw: &mut Draw, fonts: &Fonts, name: &str, color: Color, nuisance: u32, area: Rect) {
+#[derive(Clone, Copy)]
+struct Header<'a> {
+    name: &'a str,
+    color: Color,
+    nuisance: u32,
+}
+
+/// One player's board with its header, drawn at its natural size and scaled
+/// into `screen`.
+fn draw_player(
+    draw: &mut Draw,
+    fonts: &Fonts,
+    board: &Board,
+    (screen, scale): (Rect, f32),
+    piece: Piece,
+    header: Header,
+    time: f32,
+) {
+    draw.transform()
+        .push(Mat3::from_translation(vec2(screen.x, screen.y)) * Mat3::from_scale(vec2(scale, scale)));
+    let area = Rect::at(0.0, 0.0, screen.w / scale, screen.h / scale);
+    draw_board(draw, board, area, piece, true, time);
+    draw_lock_meter(draw, board, area);
+    draw_header(draw, fonts, header, board, area, time);
+    draw.transform().pop();
+}
+
+/// Nuisance that has landed falls on the next lock, so the tray blinks.
+fn draw_header(draw: &mut Draw, fonts: &Fonts, header: Header, board: &Board, area: Rect, time: f32) {
+    let Header { name, color, nuisance } = header;
     let frame = framed(area);
-    let tray = Rect::at(frame.x, frame.y - TRAY_H - 8.0, frame.w, TRAY_H);
+    let tray = Rect::at(frame.x, area.y - config::CELL_SIZE - TRAY_H - 6.0, frame.w, TRAY_H);
     let name = fonts.fit(Face::Display, name, theme::size::HEADING, frame.w - 8.0);
     draw.sharp_text(&fonts.display, &name)
         .position(frame.x + 4.0, tray.y - 40.0)
@@ -349,11 +392,17 @@ fn draw_header(draw: &mut Draw, fonts: &Fonts, name: &str, color: Color, nuisanc
         .corner_radius(tray.h / 2.0)
         .stroke(2.0)
         .color(game::FRAME_INNER);
-    let icons = Nuisance::tray(nuisance, config::GRID_WIDTH);
+    let icons = Nuisance::tray(nuisance, board.width);
     let cy = tray.y + tray.h / 2.0;
+    let tint = game::nuisance(nuisance);
+    let flash = if board.pending_garbage > 0 {
+        0.55 * (0.5 + 0.5 * (time * 12.0).sin())
+    } else {
+        0.0
+    };
     for (i, icon) in icons.into_iter().enumerate() {
         let cx = area.x + (i as f32 + 0.5) * config::CELL_SIZE;
-        sprites::nuisance_icon(draw, icon, (cx, cy), 12.0, game::PANEL);
+        sprites::nuisance_icon(draw, icon, (cx, cy), 12.0, game::PANEL, tint, flash);
     }
     if nuisance > 0 {
         draw.sharp_text(&fonts.display, &nuisance.to_string())
@@ -627,7 +676,7 @@ fn blink(time: f32, r: usize, c: usize) -> Mood {
     }
 }
 
-fn draw_well(draw: &mut Draw, area: Rect, danger: bool, time: f32) {
+fn draw_well(draw: &mut Draw, area: Rect, board: &Board, danger: bool, time: f32) {
     let frame = framed(area);
     draw.rect((frame.x, frame.y + 5.0), (frame.w, frame.h))
         .corner_radius(18.0)
@@ -647,8 +696,8 @@ fn draw_well(draw: &mut Draw, area: Rect, danger: bool, time: f32) {
         .color(game::WELL);
 
     let cell = config::CELL_SIZE;
-    let cols = config::GRID_WIDTH;
-    let rows = config::GRID_HEIGHT - config::VISIBLE_ROW_OFFSET;
+    let cols = board.width;
+    let rows = board.height - config::VISIBLE_ROW_OFFSET;
     for c in (1..cols).step_by(2) {
         draw.rect((area.x + c as f32 * cell, area.y), (cell, area.h))
             .color(game::WELL_LANE);
@@ -661,7 +710,7 @@ fn draw_well(draw: &mut Draw, area: Rect, danger: bool, time: f32) {
         }
     }
 
-    let (cx, cy) = (area.x + (config::SPAWN_COL as f32 + 0.5) * cell, area.y + cell / 2.0);
+    let (cx, cy) = (area.x + (board.spawn_col() as f32 + 0.5) * cell, area.y + cell / 2.0);
     let arm = cell * 0.22;
     let alpha = if danger { 0.75 + 0.25 * (time * 6.0).sin() } else { 0.55 };
     for (dx, dy) in [(arm, arm), (arm, -arm)] {
@@ -681,10 +730,12 @@ struct Cell {
     settled: bool,
 }
 
-fn draw_board(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, time: f32) {
+/// `peek` shows the hidden row above the well, faded.
+fn draw_board(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, peek: bool, time: f32) {
     let hidden = config::VISIBLE_ROW_OFFSET;
-    let danger = (hidden..hidden + 3).any(|r| board.cells[r][config::SPAWN_COL].is_some());
-    draw_well(draw, area, danger, time);
+    let danger = (hidden..hidden + 3).any(|r| board.cells[r][board.spawn_col()].is_some());
+    draw_well(draw, area, board, danger, time);
+    let top = if peek { -(hidden as f32) - 0.5 } else { -0.5 };
 
     let cell = config::CELL_SIZE;
     let center = |row: f32, col: f32| (area.x + (col + 0.5) * cell, area.y + (row + 0.5) * cell);
@@ -715,10 +766,13 @@ fn draw_board(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, time: f3
                     squash = (bounce.unwrap_or(0.0) * std::f32::consts::PI).sin() * 0.22;
                 }
             }
-            if row < -0.5 {
+            if row < top {
                 continue;
             }
             let mut puyo = Puyo::new(kind, center(row, c as f32), RADIUS);
+            if row < -0.5 {
+                puyo.alpha = HIDDEN_ALPHA;
+            }
             puyo.squash = squash;
             puyo.mood = blink(time, r, c);
             if let Some(frame) = pop_frame {
@@ -780,7 +834,7 @@ fn draw_board(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, time: f3
     }
     if let Some(ghost) = board.get_ghost_piece() {
         for (i, &(r, c)) in ghost.get_positions().iter().enumerate() {
-            if r < hidden as i32 || board.cells[r as usize][c as usize].is_some() {
+            if (!peek && r < hidden as i32) || board.cells[r as usize][c as usize].is_some() {
                 continue;
             }
             let kind = if i == 0 { ghost.axis_type } else { ghost.sat_type };
@@ -799,11 +853,14 @@ fn draw_board(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, time: f3
             (axis_r, axis_c, active.axis_type, true),
         ];
         for (row, col, kind, axis) in parts {
-            if row < -0.5 {
+            if row < top {
                 continue;
             }
             let at = center(row, col);
             let mut puyo = Puyo::new(kind, at, RADIUS);
+            if row < -0.5 {
+                puyo.alpha = HIDDEN_ALPHA;
+            }
             puyo.mood = blink(time, 0, usize::from(axis));
             sprites::single(draw, &puyo);
             if axis {
@@ -839,7 +896,7 @@ pub fn draw_demo(draw: &mut Draw, fonts: &Fonts, demo: &crate::demo::Demo, area:
             offset: (fall_step(&demo.board), 0.0),
             satellite: demo.turn.satellite(),
         };
-        draw_board(draw, &demo.board, area, piece, time);
+        draw_board(draw, &demo.board, area, piece, false, time);
         draw_chain_anim(draw, fonts, demo.chain, area);
         return;
     };
@@ -864,7 +921,7 @@ pub fn draw_demo(draw: &mut Draw, fonts: &Fonts, demo: &crate::demo::Demo, area:
             offset: (fall_step(board), 0.0),
             satellite: turn.satellite(),
         };
-        draw_board(draw, board, local, piece, time);
+        draw_board(draw, board, local, piece, false, time);
         draw_chain_anim(draw, fonts, chain, local);
         draw.transform().pop();
     }

@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::room::{Member, Phase, Room, Series, SeriesResult, Spectator};
 use crate::{db, ConnId, Token};
 
+mod client;
 pub mod friends;
 mod identity;
 mod presence;
@@ -16,6 +17,7 @@ pub mod ranked;
 pub(crate) mod rooms;
 pub mod social;
 
+pub use client::Client;
 use friends::FriendCheck;
 use ranked::{PendingMatch, QueueEntry, RankedCheck};
 
@@ -33,28 +35,25 @@ const WATCH_NOT_FRIENDS: &str = "Seuls les amis peuvent regarder cette partie.";
 
 pub struct Manager {
     pub rooms: HashMap<RoomId, Room>,
-    pub clients: HashMap<ConnId, Option<RoomId>>,
-    pub conn_token: HashMap<ConnId, Token>,
-    conn_user_id: HashMap<ConnId, Uuid>,
-    conn_username: HashMap<ConnId, String>,
-    senders: HashMap<ConnId, mpsc::Sender<Vec<u8>>>,
+    pub clients: HashMap<ConnId, Client>,
     dead: Vec<ConnId>,
     next_id: RoomId,
     room_list_dirty: bool,
     last_room_list: Instant,
     friend_checks: Vec<FriendCheck>,
-    pub checks_in_flight: HashSet<ConnId>,
-    pub last_invite: HashMap<ConnId, Instant>,
+    /// The accepted friends of each signed-in user connected, for the room list.
+    friends: HashMap<Uuid, HashSet<Uuid>>,
+    friend_loads: Vec<Uuid>,
+    /// Users whose friend list is being read, and whether a friendship of
+    /// theirs changed meanwhile, which makes the answer stale.
+    friends_loading: HashMap<Uuid, bool>,
     unsaved_matches: Vec<db::MatchRecord>,
     unsaved_series: Vec<db::SeriesRecord>,
     user_conns: HashMap<Uuid, HashSet<ConnId>>,
-    conn_session: HashMap<ConnId, Uuid>,
     pub queue: Vec<QueueEntry>,
     pub pending_matches: Vec<PendingMatch>,
     queue_cooldowns: HashMap<Uuid, Instant>,
     ranked_checks: Vec<RankedCheck>,
-    ranked_checking: HashSet<ConnId>,
-    chat_budget: HashMap<ConnId, (f32, Instant)>,
     closing: bool,
 }
 
@@ -119,6 +118,14 @@ pub enum Command {
         check: FriendCheck,
         friends: bool,
     },
+    FriendsLoaded {
+        user: Uuid,
+        friends: Vec<Uuid>,
+    },
+    FriendshipChanged {
+        users: (Uuid, Uuid),
+        friends: bool,
+    },
     JoinQueue {
         conn: ConnId,
     },
@@ -165,6 +172,8 @@ impl Command {
         match self {
             Self::Register { .. }
             | Self::FriendCheckDone { .. }
+            | Self::FriendsLoaded { .. }
+            | Self::FriendshipChanged { .. }
             | Self::RankedCheckDone { .. }
             | Self::Revoke { .. }
             | Self::Rename { .. }
@@ -198,27 +207,21 @@ impl Manager {
         Self {
             rooms: HashMap::new(),
             clients: HashMap::new(),
-            conn_token: HashMap::new(),
-            conn_user_id: HashMap::new(),
-            conn_username: HashMap::new(),
-            senders: HashMap::new(),
             dead: Vec::new(),
             next_id: 1,
             room_list_dirty: false,
             last_room_list: Instant::now(),
             friend_checks: Vec::new(),
-            checks_in_flight: HashSet::new(),
-            last_invite: HashMap::new(),
+            friends: HashMap::new(),
+            friend_loads: Vec::new(),
+            friends_loading: HashMap::new(),
             unsaved_matches: Vec::new(),
             unsaved_series: Vec::new(),
             user_conns: HashMap::new(),
-            conn_session: HashMap::new(),
             queue: Vec::new(),
             pending_matches: Vec::new(),
             queue_cooldowns: HashMap::new(),
             ranked_checks: Vec::new(),
-            ranked_checking: HashSet::new(),
-            chat_budget: HashMap::new(),
             closing: false,
         }
     }
@@ -241,7 +244,7 @@ impl Manager {
             self.send_lobby(id);
             self.room_list_dirty = true;
         }
-        let conns: Vec<ConnId> = self.senders.keys().copied().collect();
+        let conns: Vec<ConnId> = self.clients.keys().copied().collect();
         for conn in conns {
             self.deliver_msg(conn, &ServerMessage::Maintenance);
         }
@@ -264,7 +267,7 @@ impl Manager {
     }
 
     pub fn room_of(&self, conn: ConnId) -> Option<RoomId> {
-        self.clients.get(&conn).copied().flatten()
+        self.clients.get(&conn)?.room
     }
 
     pub fn take_unsaved_matches(&mut self) -> Vec<db::MatchRecord> {
@@ -285,10 +288,8 @@ impl Manager {
     }
 
     fn deliver(&mut self, conn: ConnId, payload: Vec<u8>) {
-        if let Some(sender) = self.senders.get(&conn) {
-            if sender.try_send(payload).is_err() {
-                self.dead.push(conn);
-            }
+        if self.clients.get(&conn).is_some_and(|c| !c.send(payload)) {
+            self.dead.push(conn);
         }
     }
 
@@ -340,23 +341,46 @@ impl Manager {
             .collect()
     }
 
+    /// The friends-only rooms `conn` may join: its own, or a friend's.
+    fn private_rooms_for(&self, conn: ConnId) -> impl Iterator<Item = &Room> {
+        let viewer = self.user_of(conn);
+        let friends = viewer.and_then(|v| self.friends.get(&v));
+        self.rooms.values().filter(move |r| {
+            r.settings.friends_only
+                && r.host_user()
+                    .is_some_and(|host| viewer == Some(host) || friends.is_some_and(|f| f.contains(&host)))
+        })
+    }
+
+    fn room_list_for(&self, conn: ConnId) -> Vec<RoomInfo> {
+        let mut rooms = self.public_room_list();
+        rooms.extend(self.private_rooms_for(conn).map(Room::info));
+        rooms
+    }
+
+    /// The public list is encoded once; only those who also see a
+    /// friends-only room get a list of their own.
     fn broadcast_room_list(&mut self) {
-        let payload = match shared::encode(&ServerMessage::RoomList {
+        let browsing: Vec<ConnId> = self
+            .clients
+            .iter()
+            .filter_map(|(&c, client)| client.room.is_none().then_some(c))
+            .collect();
+        let public = match shared::encode(&ServerMessage::RoomList {
             rooms: self.public_room_list(),
         }) {
-            Ok(p) => p,
+            Ok(payload) => payload,
             Err(e) => {
                 error!("encode RoomList failed: {e}");
                 return;
             }
         };
-        let browsing: Vec<ConnId> = self
-            .clients
-            .iter()
-            .filter_map(|(&c, loc)| loc.is_none().then_some(c))
-            .collect();
         for c in browsing {
-            self.deliver(c, payload.clone());
+            if self.private_rooms_for(c).next().is_some() {
+                self.send_room_list_to(c);
+            } else {
+                self.deliver(c, public.clone());
+            }
         }
     }
 
@@ -364,7 +388,7 @@ impl Manager {
         self.deliver_msg(
             conn,
             &ServerMessage::RoomList {
-                rooms: self.public_room_list(),
+                rooms: self.room_list_for(conn),
             },
         );
     }
@@ -377,13 +401,12 @@ impl Manager {
     }
 
     pub fn handle(&mut self, cmd: Command) {
-        if cmd.client().is_some_and(|conn| !self.senders.contains_key(&conn)) {
+        if cmd.client().is_some_and(|conn| !self.clients.contains_key(&conn)) {
             return;
         }
         match cmd {
             Command::Register { conn, sender } => {
-                self.senders.insert(conn, sender);
-                self.clients.insert(conn, None);
+                self.clients.insert(conn, Client::new(sender));
             }
             Command::Hello {
                 conn,
@@ -415,6 +438,8 @@ impl Manager {
             Command::Restart { conn } => self.restart(conn),
             Command::InviteFriend { conn, target_user_id } => self.request_invite(conn, &target_user_id),
             Command::FriendCheckDone { check, friends } => self.friend_check_done(check, friends),
+            Command::FriendsLoaded { user, friends } => self.friends_loaded(user, friends),
+            Command::FriendshipChanged { users, friends } => self.friendship_changed(users, friends),
             Command::JoinQueue { conn } => self.join_queue(conn),
             Command::LeaveQueue { conn } => self.leave_queue(conn),
             Command::AcceptMatch { conn } => self.accept_match(conn),
@@ -434,7 +459,7 @@ impl Manager {
     pub fn reap_dead(&mut self) {
         while !self.dead.is_empty() {
             for conn in std::mem::take(&mut self.dead) {
-                if self.senders.contains_key(&conn) {
+                if self.clients.contains_key(&conn) {
                     warn!("WS {conn} trop lente, fermeture");
                     self.drop_connection(conn);
                 }

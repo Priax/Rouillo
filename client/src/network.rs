@@ -341,6 +341,10 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 state.notice = Status::info("Votre session a été fermée depuis un autre appareil.");
             }
         }
+        ServerMessage::OpenedElsewhere => {
+            state.conn.disconnect();
+            reset_to_menu(state, Status::info("Le jeu a été ouvert dans un autre onglet."));
+        }
         ServerMessage::Pong { .. } => {}
         ServerMessage::Maintenance => state.maintenance = true,
         ServerMessage::FriendInvitation {

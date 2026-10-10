@@ -192,9 +192,20 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
     if state.outdated {
         let btn = outdated_btn(ww);
         state.ui.button(&mut draw, &state.fonts, btn, "Mettre à jour");
-        if let Some(text) = crate::update::progress() {
+        if let Some((text, done)) = crate::update::progress() {
+            let mut y = btn.y + btn.h + 18.0;
+            if let Some(done) = done {
+                let bar = Rect::at(btn.x, btn.y + btn.h + 10.0, btn.w, 6.0);
+                draw.rect((bar.x, bar.y), (bar.w, bar.h))
+                    .corner_radius(3.0)
+                    .color(pal.text_dim.with_alpha(0.3));
+                draw.rect((bar.x, bar.y), (bar.w * done, bar.h))
+                    .corner_radius(3.0)
+                    .color(pal.title);
+                y += 12.0;
+            }
             draw.sharp_text(&state.fonts.text, &text)
-                .position(btn.x + btn.w, btn.y + btn.h + 18.0)
+                .position(btn.x + btn.w, y)
                 .size(theme::size::SMALL)
                 .h_align_right()
                 .v_align_middle()

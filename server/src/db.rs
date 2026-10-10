@@ -521,7 +521,9 @@ pub struct FriendList {
     pub received: Vec<FriendEntry>,
 }
 
-pub async fn send_friend_request(pool: &DbPool, requester: Uuid, target: Uuid) -> Result<(), FriendshipError> {
+/// Sends a request, or accepts the one `target` already sent: true when the
+/// two are now friends.
+pub async fn send_friend_request(pool: &DbPool, requester: Uuid, target: Uuid) -> Result<bool, FriendshipError> {
     if requester == target {
         return Err(FriendshipError::SelfRequest);
     }
@@ -529,7 +531,7 @@ pub async fn send_friend_request(pool: &DbPool, requester: Uuid, target: Uuid) -
         .await
         .map_err(FriendshipError::Db)?
     {
-        return Ok(());
+        return Ok(true);
     }
     match sqlx::query("INSERT INTO friendships (user_id, friend_id) VALUES ($1, $2)")
         .bind(requester)
@@ -537,7 +539,7 @@ pub async fn send_friend_request(pool: &DbPool, requester: Uuid, target: Uuid) -
         .execute(pool)
         .await
     {
-        Ok(_) => Ok(()),
+        Ok(_) => Ok(false),
         Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("23505") => Err(FriendshipError::AlreadyExists),
         Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("23503") => Err(FriendshipError::UserNotFound),
         Err(e) => Err(FriendshipError::Db(e)),
@@ -626,6 +628,17 @@ pub async fn list_friends(pool: &DbPool, me: Uuid) -> Result<FriendList, sqlx::E
         sent,
         received,
     })
+}
+
+pub async fn friend_ids(pool: &DbPool, me: Uuid) -> Result<Vec<Uuid>, sqlx::Error> {
+    sqlx::query_scalar::<_, Uuid>(
+        "SELECT CASE WHEN user_id = $1 THEN friend_id ELSE user_id END
+         FROM friendships
+         WHERE (user_id = $1 OR friend_id = $1) AND status = 'accepted'",
+    )
+    .bind(me)
+    .fetch_all(pool)
+    .await
 }
 
 pub async fn are_friends(pool: &DbPool, user_a: Uuid, user_b: Uuid) -> Result<bool, sqlx::Error> {

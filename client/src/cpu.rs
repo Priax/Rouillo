@@ -722,6 +722,11 @@ impl Cpu {
     }
 
     pub fn input(&mut self, board: &Board, threat: u32) -> Option<InputKind> {
+        debug_assert_eq!(
+            (board.width, board.height),
+            (W, H),
+            "the CPU plays the standard board only"
+        );
         let playing = board.state == GameState::Playing && board.active_piece.is_some();
         let current = self.turn.as_ref().is_some_and(|(id, _)| *id == board.piece_id);
         if self.soft_drop_held && !(playing && current) {

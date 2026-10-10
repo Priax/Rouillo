@@ -80,6 +80,7 @@ pub(super) async fn handle_list_friends(
 pub(super) async fn handle_send_friend_request(
     State(Api {
         pool,
+        cmd_tx,
         friend_limit: limit,
         ..
     }): State<Api>,
@@ -92,7 +93,13 @@ pub(super) async fn handle_send_friend_request(
     }
 
     match db::send_friend_request(&pool, me.id, body.user_id).await {
-        Ok(()) => Ok((StatusCode::CREATED, done())),
+        Ok(friends) => {
+            if friends {
+                let users = (me.id, body.user_id);
+                let _ = cmd_tx.send(Command::FriendshipChanged { users, friends }).await;
+            }
+            Ok((StatusCode::CREATED, done()))
+        }
         Err(db::FriendshipError::SelfRequest) => Err(ApiError::SelfFriendRequest),
         Err(db::FriendshipError::AlreadyExists) => Err(ApiError::FriendRequestExists),
         Err(db::FriendshipError::UserNotFound) => Err(ApiError::NotFound),
@@ -101,7 +108,7 @@ pub(super) async fn handle_send_friend_request(
 }
 
 pub(super) async fn handle_accept_friend(
-    State(Api { pool, .. }): State<Api>,
+    State(Api { pool, cmd_tx, .. }): State<Api>,
     PathParam(requester_id): PathParam<Uuid>,
     Authed(me): Authed,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -110,6 +117,8 @@ pub(super) async fn handle_accept_friend(
         .map_err(internal)?;
 
     if found {
+        let users = (me.id, requester_id);
+        let _ = cmd_tx.send(Command::FriendshipChanged { users, friends: true }).await;
         Ok(done())
     } else {
         Err(ApiError::NotFound)
@@ -117,13 +126,15 @@ pub(super) async fn handle_accept_friend(
 }
 
 pub(super) async fn handle_remove_friend(
-    State(Api { pool, .. }): State<Api>,
+    State(Api { pool, cmd_tx, .. }): State<Api>,
     PathParam(other_id): PathParam<Uuid>,
     Authed(me): Authed,
 ) -> Result<impl IntoResponse, ApiError> {
     let found = db::remove_friend(&pool, me.id, other_id).await.map_err(internal)?;
 
     if found {
+        let users = (me.id, other_id);
+        let _ = cmd_tx.send(Command::FriendshipChanged { users, friends: false }).await;
         Ok(done())
     } else {
         Err(ApiError::NotFound)

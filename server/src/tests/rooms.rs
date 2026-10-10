@@ -337,7 +337,7 @@ pub(super) fn set_pause_policy(mgr: &mut Manager, policy: PausePolicy) {
         }
         mgr.handle(Command::SetSetting {
             conn: 1,
-            index: 3,
+            index: 5,
             dir: 1,
         });
     }
@@ -388,7 +388,7 @@ fn pause_policy_is_host_and_lobby_only() {
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
     mgr.handle(Command::SetSetting {
         conn: 2,
-        index: 3,
+        index: 5,
         dir: 1,
     });
     assert_eq!(
@@ -401,10 +401,23 @@ fn pause_policy_is_host_and_lobby_only() {
     mgr.tick(3.5, false);
     mgr.handle(Command::SetSetting {
         conn: 1,
-        index: 3,
+        index: 5,
         dir: 1,
     });
     assert_eq!(mgr.rooms[&1].settings.pause, PausePolicy::Everyone, "not mid-game");
+}
+
+#[test]
+fn the_host_sets_the_board_size_the_match_is_played_on() {
+    let mut mgr = new_mgr();
+    let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
+    for (index, dir) in [(2, 1), (2, 1), (3, -1)] {
+        mgr.handle(Command::SetSetting { conn: 1, index, dir });
+    }
+    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.tick(3.5, false);
+    let board = &mgr.rooms[&1].sim.boards[0];
+    assert_eq!((board.width, board.height), (8, 12));
 }
 
 #[test]

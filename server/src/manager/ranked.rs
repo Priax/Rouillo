@@ -87,7 +87,7 @@ impl Manager {
     }
 
     pub(super) fn join_queue(&mut self, conn: ConnId) {
-        let Some(user_id) = self.conn_user_id.get(&conn).copied() else {
+        let Some(user_id) = self.user_of(conn) else {
             self.refuse_queue(conn, QUEUE_GUEST);
             return;
         };
@@ -97,28 +97,38 @@ impl Manager {
         {
             return;
         }
-        if self.closing {
-            self.refuse_queue(conn, JOIN_MAINTENANCE);
-            return;
-        }
-        if self.in_ranked(user_id) {
-            self.refuse_queue(conn, QUEUE_BUSY);
+        if let Some(reason) = self.queue_blocked(user_id) {
+            self.refuse_queue(conn, reason);
             return;
         }
         if let Some(left) = self.cooldown_left(user_id) {
             self.send_cooldown(conn, left);
             return;
         }
-        if !self.conn_token.contains_key(&conn) || !self.ranked_checking.insert(conn) {
-            return;
+        match self.clients.get_mut(&conn) {
+            Some(client) if client.token.is_some() && !client.checking_ranked => client.checking_ranked = true,
+            _ => return,
         }
         self.ranked_checks.push(RankedCheck { conn, user_id });
     }
 
+    /// Checked again once the database answered: either may have changed.
+    fn queue_blocked(&self, user: Uuid) -> Option<&'static str> {
+        if self.closing {
+            Some(JOIN_MAINTENANCE)
+        } else if self.in_ranked(user) {
+            Some(QUEUE_BUSY)
+        } else {
+            None
+        }
+    }
+
     pub(super) fn ranked_check_done(&mut self, check: RankedCheck, profile: Option<db::RankedProfile>) {
         let RankedCheck { conn, user_id } = check;
-        self.ranked_checking.remove(&conn);
-        if self.conn_user_id.get(&conn) != Some(&user_id) {
+        if let Some(client) = self.clients.get_mut(&conn) {
+            client.checking_ranked = false;
+        }
+        if self.user_of(conn) != Some(user_id) {
             return;
         }
         let Some(db::RankedProfile {
@@ -139,12 +149,8 @@ impl Manager {
             );
             return;
         }
-        if self.closing {
-            self.refuse_queue(conn, JOIN_MAINTENANCE);
-            return;
-        }
-        if self.in_ranked(user_id) {
-            self.refuse_queue(conn, QUEUE_BUSY);
+        if let Some(reason) = self.queue_blocked(user_id) {
+            self.refuse_queue(conn, reason);
             return;
         }
         self.leave_current(conn);
@@ -256,7 +262,7 @@ impl Manager {
                     .insert(entry.user_id, Instant::now() + QUEUE_COOLDOWN);
                 self.deliver_msg(entry.conn, &ServerMessage::MatchCancelled { requeued: false });
                 self.send_cooldown(entry.conn, QUEUE_COOLDOWN);
-            } else if self.conn_user_id.get(&entry.conn) == Some(&entry.user_id) {
+            } else if self.user_of(entry.conn) == Some(entry.user_id) {
                 self.deliver_msg(entry.conn, &ServerMessage::MatchCancelled { requeued: true });
                 self.queue.push(entry);
             }
@@ -283,10 +289,7 @@ impl Manager {
     }
 
     pub(super) fn start_series(&mut self, a: &QueueEntry, b: &QueueEntry) {
-        let (Some(token_a), Some(token_b)) = (
-            self.conn_token.get(&a.conn).cloned(),
-            self.conn_token.get(&b.conn).cloned(),
-        ) else {
+        let (Some(token_a), Some(token_b)) = (self.token_of(a.conn).cloned(), self.token_of(b.conn).cloned()) else {
             return;
         };
         let names = [self.display_name(a.conn), self.display_name(b.conn)];
@@ -314,8 +317,8 @@ impl Manager {
         let mut room = Room::new(id, "Classé".to_string(), members, settings, Some(series));
         room.phase = Phase::CountingDown(COUNTDOWN_SECS);
         self.rooms.insert(id, room);
-        self.clients.insert(a.conn, Some(id));
-        self.clients.insert(b.conn, Some(id));
+        self.set_room(a.conn, Some(id));
+        self.set_room(b.conn, Some(id));
         self.send_lobby(id);
         info!("Série classée room #{id} ({} contre {})", a.elo, b.elo);
     }

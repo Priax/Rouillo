@@ -191,10 +191,7 @@ fn late_hello_from_a_dead_connection_is_ignored() {
     assert_eq!(b.conn, None, "seat stays free for B's real reconnection");
     assert!(b.disconnect_at.is_some(), "grace keeps running");
     assert!(mgr.rooms[&1].sim.paused, "game stays paused");
-    assert!(
-        !mgr.conn_token.contains_key(&2),
-        "no state recreated for the dead socket"
-    );
+    assert!(!mgr.clients.contains_key(&2), "no state recreated for the dead socket");
 }
 
 #[test]
@@ -330,4 +327,26 @@ fn ws_connections_are_capped_per_ip_and_freed_on_drop() {
     drop(slots);
     assert!(IpSlot::take(&conns, ip()).is_ok());
     assert!(conns.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_second_tab_takes_the_seat_and_tells_the_first() {
+    let mut mgr = new_mgr();
+    let (_rx1, mut rx2) = running_game(&mut mgr);
+    let _rx3 = reg(&mut mgr, 3);
+    hello(&mut mgr, 3, "B");
+    assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::OpenedElsewhere)));
+    assert_eq!(mgr.room_of(2), None, "the first tab left the room");
+    assert_eq!(mgr.room_of(3), Some(1));
+
+    let before = mgr.rooms[&1].sim.boards[1].active_piece.clone().map(|p| p.col);
+    super::game::press(&mut mgr, 2, 1, 1);
+    mgr.tick(0.1, false);
+    let after = mgr.rooms[&1].sim.boards[1].active_piece.clone().map(|p| p.col);
+    assert_eq!(before, after, "the first tab no longer plays");
+
+    mgr.handle(Command::Unregister { conn: 2 });
+    let b = mgr.rooms[&1].members.iter().find(|m| m.token == "B").unwrap();
+    assert_eq!(b.conn, Some(3), "closing the first tab keeps the seat");
+    assert!(!mgr.rooms[&1].sim.paused);
 }

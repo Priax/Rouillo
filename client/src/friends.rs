@@ -163,9 +163,15 @@ fn avatar(
 const AVATAR_R: f32 = 15.0;
 const AVATAR_ROOM: f32 = 2.0 * AVATAR_R + 10.0;
 
-fn name_zone(view: View, col: usize, row: usize) -> Rect {
+/// Up to the row's first button: "Regarder" only shows while the friend plays.
+fn name_zone(view: View, col: usize, row: usize, playing: bool) -> Rect {
     let rect = list_row_rect(view, col, row);
-    let first_button = [watch_btn(view, row), accept_btn(view, row), remove_btn(view, 2, row)][col];
+    let friend = if playing {
+        watch_btn(view, row)
+    } else {
+        remove_btn(view, 0, row)
+    };
+    let first_button = [friend, accept_btn(view, row), remove_btn(view, 2, row)][col];
     Rect::at(rect.x, rect.y, first_button.x - rect.x - 8.0, rect.h)
 }
 
@@ -247,16 +253,20 @@ fn looks_like_uuid(s: &str) -> bool {
         })
 }
 
+fn search_query(state: &State) -> String {
+    state
+        .friends
+        .as_ref()
+        .map(|f| f.search_input.trim().to_owned())
+        .unwrap_or_default()
+}
+
 fn try_search(state: &mut State) {
     let busy = state.friends.as_ref().is_none_or(|f| f.search_slot.is_some());
     if busy {
         return;
     }
-    let q = state
-        .friends
-        .as_ref()
-        .map(|f| f.search_input.trim().to_owned())
-        .unwrap_or_default();
+    let q = search_query(state);
     if q.len() < 2 {
         if let Some(f) = state.friends.as_mut() {
             f.search_status = Status::info("Saisir au moins 2 caractères.");
@@ -381,11 +391,7 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     }
 
     if state.ui.clicked(search_submit_btn(view)) || (!paging && app.keyboard.was_pressed(KeyCode::Enter)) {
-        let q = state
-            .friends
-            .as_ref()
-            .map(|f| f.search_input.trim().to_owned())
-            .unwrap_or_default();
+        let q = search_query(state);
         if looks_like_uuid(&q) {
             crate::profile::enter_other_profile(state, q, "...".to_owned(), Screen::Friends);
             state.screen = Screen::OtherProfile;
@@ -445,7 +451,7 @@ fn clicked_listed(f: &FriendsData, ui: &Ui, view: View) -> Option<(String, Strin
     lists(f).into_iter().enumerate().find_map(|(col, list)| {
         f.pages[col]
             .shown(list, rows_for(view))
-            .find(|&(i, _)| ui.clicked(name_zone(view, col, i)))
+            .find(|&(i, e)| ui.clicked(name_zone(view, col, i, e.playing)))
             .map(|(_, e)| (e.user_id.clone(), e.username.clone()))
     })
 }
@@ -771,11 +777,12 @@ fn draw_col<F>(
             .color(pal.text_muted);
         return;
     }
-    let room = name_zone(view, col, 0).w - 12.0 - AVATAR_ROOM;
     for (i, e) in pager.shown(list, rows_for(view)) {
         let row = list_row_rect(view, col, i);
         list_row(draw, pal, row, i);
-        ui.row(draw, name_zone(view, col, i), i, &format!("friend:{col}:{}", e.user_id));
+        let zone = name_zone(view, col, i, e.playing);
+        let room = zone.w - 12.0 - AVATAR_ROOM;
+        ui.row(draw, zone, i, &format!("friend:{col}:{}", e.user_id));
         let mid = row.y + row.h / 2.0;
         avatar(
             draw,

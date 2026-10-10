@@ -202,28 +202,19 @@ impl Room {
 
     pub fn lobby_info_for(&self, idx: usize) -> LobbyInfo {
         LobbyInfo {
-            id: self.id,
-            name: self.name.clone(),
-            settings: self.settings,
-            players: self.members.len() as u8,
-            connected: self.members.iter().filter(|m| m.conn.is_some()).count() as u8,
             your_slot: (idx + 1) as u8,
             is_host: self.members[idx].token == self.host,
-            countdown: match self.phase {
-                Phase::CountingDown(t) => Some(t.ceil() as u8),
-                _ => None,
-            },
             ranked: self.series.as_ref().map(|s| RankedInfo {
                 opponent: s.names[1 - idx].clone(),
                 opponent_elo: s.elos[1 - idx],
                 opponent_avatar: s.avatars[1 - idx].clone(),
                 wins: s.wins,
             }),
-            names: self.members.iter().map(|m| m.name.clone()).collect(),
-            spectators: self.spectators.len() as u8,
+            ..self.spectator_info()
         }
     }
 
+    /// The lobby as someone without a seat sees it.
     pub fn spectator_info(&self) -> LobbyInfo {
         LobbyInfo {
             id: self.id,
@@ -272,6 +263,13 @@ impl Room {
         self.members[winner].conn?;
         self.sim.finished = true;
         Some(self.match_record(Some((winner + 1) as u8)))
+    }
+
+    pub fn host_user(&self) -> Option<Uuid> {
+        self.members
+            .iter()
+            .find(|m| m.token == self.host)
+            .and_then(|m| m.user_id)
     }
 
     pub fn info(&self) -> RoomInfo {

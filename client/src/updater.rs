@@ -1,4 +1,5 @@
-use std::sync::Mutex;
+use std::ops::ControlFlow;
+use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
@@ -23,6 +24,8 @@ pub enum Status {
     Idle,
     Available(String),
     Checking,
+    Downloading { done: u64, total: Option<u64> },
+    Verifying,
     Installing,
     Failed(String),
     Done,
@@ -73,7 +76,6 @@ pub fn update_now() {
     std::thread::spawn(|| match latest() {
         Ok(Some(release)) => {
             remember(&release);
-            set(Status::Installing);
             set(match run(&release) {
                 Ok(()) => Status::Done,
                 Err(e) => Status::Failed(e),
@@ -92,7 +94,7 @@ pub fn install() {
     let Some(release) = RELEASE.lock().ok().and_then(|r| r.clone()) else {
         return;
     };
-    set(Status::Installing);
+    set(Status::Downloading { done: 0, total: None });
     std::thread::spawn(move || {
         set(match run(&release) {
             Ok(()) => Status::Done,
@@ -110,6 +112,61 @@ fn get(url: &str, accept: &str) -> Result<Vec<u8>, String> {
         return Err(format!("{url}: {}", resp.status));
     }
     Ok(resp.bytes)
+}
+
+#[derive(Default)]
+struct Transfer {
+    bytes: Vec<u8>,
+    total: Option<u64>,
+    outcome: Option<Result<(), String>>,
+}
+
+impl Transfer {
+    fn take(&mut self, part: ehttp::Result<ehttp::streaming::Part>, url: &str) -> ControlFlow<()> {
+        use ehttp::streaming::Part;
+        match part {
+            Ok(Part::Response(resp)) if resp.ok => {
+                self.total = resp.headers.get("content-length").and_then(|n| n.parse().ok());
+                return ControlFlow::Continue(());
+            }
+            Ok(Part::Response(resp)) => self.outcome = Some(Err(format!("{url}: {}", resp.status))),
+            Ok(Part::Chunk(chunk)) if chunk.is_empty() => self.outcome = Some(Ok(())),
+            Ok(Part::Chunk(chunk)) => {
+                self.bytes.extend_from_slice(&chunk);
+                set(Status::Downloading {
+                    done: self.bytes.len() as u64,
+                    total: self.total,
+                });
+                return ControlFlow::Continue(());
+            }
+            Err(e) => self.outcome = Some(Err(e)),
+        }
+        ControlFlow::Break(())
+    }
+}
+
+/// Like `get`, telling `Status::Downloading` how far it got.
+fn download(url: &str) -> Result<Vec<u8>, String> {
+    let mut req = ehttp::Request::get(url);
+    req.headers.insert("User-Agent", "rouillo-updater");
+    req.headers.insert("Accept", "application/octet-stream");
+    set(Status::Downloading { done: 0, total: None });
+    let transfer = Arc::new(Mutex::new(Transfer::default()));
+    let sink = Arc::clone(&transfer);
+    let source = url.to_owned();
+    ehttp::streaming::fetch_streaming_blocking(
+        req,
+        Box::new(move |part| match sink.lock() {
+            Ok(mut t) => t.take(part, &source),
+            Err(_) => ControlFlow::Break(()),
+        }),
+    );
+    let mut transfer = transfer.lock().map_err(|e| e.to_string())?;
+    match transfer.outcome.take() {
+        Some(Ok(())) => Ok(std::mem::take(&mut transfer.bytes)),
+        Some(Err(e)) => Err(e),
+        None => Err(format!("{url}: téléchargement interrompu")),
+    }
 }
 
 fn latest() -> Result<Option<Release>, String> {
@@ -166,12 +223,14 @@ fn verify(key: &[u8; 32], manifest: &str, signature_hex: &str) -> bool {
 }
 
 fn run(release: &Release) -> Result<(), String> {
-    let binary = get(&release.binary, "application/octet-stream")?;
+    let binary = download(&release.binary)?;
+    set(Status::Verifying);
     let signature = get(&release.signature, "application/octet-stream")?;
     let signature = String::from_utf8_lossy(&signature);
     if !verify(&PUBLIC_KEY, &manifest(ASSET, &release.version, &binary), &signature) {
         return Err("signature invalide, fichier ignoré".to_owned());
     }
+    set(Status::Installing);
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let fresh = exe.with_extension("new");
     std::fs::write(&fresh, &binary).map_err(|e| format!("{}: {e}", fresh.display()))?;

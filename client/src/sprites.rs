@@ -34,6 +34,7 @@ pub struct Puyo {
     pub squash: f32,
     pub flash: f32,
     pub mood: Mood,
+    pub tint: Option<Color>,
 }
 
 impl Puyo {
@@ -46,6 +47,7 @@ impl Puyo {
             squash: 0.0,
             flash: 0.0,
             mood: Mood::Awake,
+            tint: None,
         }
     }
 
@@ -62,7 +64,7 @@ impl Puyo {
     }
 
     fn base(&self) -> Color {
-        mix(game::puyo(self.kind), Color::WHITE, self.flash)
+        mix(self.tint.unwrap_or(game::puyo(self.kind)), Color::WHITE, self.flash)
     }
 }
 
@@ -229,18 +231,34 @@ impl Nuisance {
     }
 }
 
-pub fn nuisance_icon(draw: &mut Draw, icon: Nuisance, (cx, cy): (f32, f32), unit: f32, backdrop: Color) {
+/// The small, big and rock icons take `tint`; `flash` whitens them all.
+pub fn nuisance_icon(
+    draw: &mut Draw,
+    icon: Nuisance,
+    (cx, cy): (f32, f32),
+    unit: f32,
+    backdrop: Color,
+    tint: Color,
+    flash: f32,
+) {
+    let lit = |color: Color| mix(color, Color::WHITE, flash);
+    let blob = |draw: &mut Draw, center: (f32, f32), radius: f32| {
+        let mut puyo = Puyo::new(PuyoType::Garbage, center, radius);
+        puyo.tint = Some(tint);
+        puyo.flash = flash;
+        single(draw, &puyo);
+    };
     match icon {
-        Nuisance::Small => single(draw, &Puyo::new(PuyoType::Garbage, (cx, cy + unit * 0.15), unit * 0.6)),
-        Nuisance::Big => single(draw, &Puyo::new(PuyoType::Garbage, (cx, cy), unit * 0.95)),
+        Nuisance::Small => blob(draw, (cx, cy + unit * 0.15), unit * 0.6),
+        Nuisance::Big => blob(draw, (cx, cy), unit * 0.95),
         Nuisance::Rock => {
             let (w, h) = (unit * 1.6, unit * 1.3);
             draw.rect((cx - w / 2.0, cy - h / 2.0 + unit * 0.1), (w, h))
                 .corner_radius(unit * 0.35)
-                .color(game::ROCK_SHADE);
+                .color(lit(shade(tint)));
             draw.rect((cx - w / 2.0, cy - h / 2.0), (w, h * 0.92))
                 .corner_radius(unit * 0.35)
-                .color(game::ROCK);
+                .color(lit(tint));
             draw.rect((cx - w * 0.3, cy - h * 0.32), (w * 0.3, h * 0.14))
                 .corner_radius(unit * 0.07)
                 .color(Color::WHITE.with_alpha(0.35));
@@ -248,11 +266,13 @@ pub fn nuisance_icon(draw: &mut Draw, icon: Nuisance, (cx, cy): (f32, f32), unit
         Nuisance::Star => {
             draw.star(5, unit * 0.95, unit * 0.45)
                 .position(cx, cy + unit * 0.06)
-                .color(shade(game::STAR));
-            draw.star(5, unit * 0.9, unit * 0.42).position(cx, cy).color(game::STAR);
+                .color(lit(shade(game::STAR)));
+            draw.star(5, unit * 0.9, unit * 0.42)
+                .position(cx, cy)
+                .color(lit(game::STAR));
         }
         Nuisance::Moon => {
-            draw.circle(unit * 0.85).position(cx, cy).color(game::MOON);
+            draw.circle(unit * 0.85).position(cx, cy).color(lit(game::MOON));
             draw.circle(unit * 0.72)
                 .position(cx + unit * 0.42, cy - unit * 0.22)
                 .color(backdrop);
@@ -270,7 +290,7 @@ pub fn nuisance_icon(draw: &mut Draw, icon: Nuisance, (cx, cy): (f32, f32), unit
                 .line_to(left + w, top + h)
                 .close()
                 .fill()
-                .color(game::STAR);
+                .color(lit(game::STAR));
         }
     }
 }

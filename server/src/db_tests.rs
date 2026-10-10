@@ -270,12 +270,19 @@ async fn db_friendship_runs_from_request_to_removal(pool: PgPool) {
     assert_eq!(db::list_friends(&pool, bob).await.unwrap().received.len(), 1);
     assert!(!db::are_friends(&pool, alice, bob).await.unwrap());
     assert!(
+        db::friend_ids(&pool, alice).await.unwrap().is_empty(),
+        "pending is not a friend"
+    );
+    assert!(
         !db::accept_friend_request(&pool, alice, bob).await.unwrap(),
         "only the target accepts"
     );
     assert!(db::accept_friend_request(&pool, bob, alice).await.unwrap());
     assert!(db::are_friends(&pool, bob, alice).await.unwrap());
+    assert_eq!(db::friend_ids(&pool, alice).await.unwrap(), [bob]);
+    assert_eq!(db::friend_ids(&pool, bob).await.unwrap(), [alice]);
     assert!(db::remove_friend(&pool, bob, alice).await.unwrap());
+    assert!(db::friend_ids(&pool, bob).await.unwrap().is_empty());
     assert!(!db::are_friends(&pool, alice, bob).await.unwrap());
 }
 
@@ -508,9 +515,9 @@ async fn db_the_leaderboard_ranks_ranked_players_by_elo(pool: PgPool) {
 async fn db_crossed_friend_requests_make_friends(pool: PgPool) {
     let alice = user(&pool, "alice").await;
     let bob = user(&pool, "bob").await;
-    assert!(db::send_friend_request(&pool, alice, bob).await.is_ok());
+    assert!(matches!(db::send_friend_request(&pool, alice, bob).await, Ok(false)));
     assert!(
-        db::send_friend_request(&pool, bob, alice).await.is_ok(),
+        matches!(db::send_friend_request(&pool, bob, alice).await, Ok(true)),
         "bob's request accepts alice's"
     );
     assert!(db::are_friends(&pool, alice, bob).await.unwrap());

@@ -10,7 +10,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::HashSet;
 
 use super::*;
-use crate::config::{GRACE_FRAMES, GRID_HEIGHT, GRID_WIDTH, VISIBLE_ROW_OFFSET};
+use crate::config::{GRACE_FRAMES, GRID_HEIGHT, GRID_WIDTH, SPAWN_COL, VISIBLE_ROW_OFFSET};
 
 struct CappedAlloc;
 
@@ -110,8 +110,33 @@ fn room_settings_survive_any_step_from_the_network() {
         );
         s.adjust(1, dir);
         assert!((4..=5).contains(&s.colors), "colors {} after {dir}", s.colors);
+        s.adjust(2, dir);
+        assert!((4..=10).contains(&s.columns), "columns {} after {dir}", s.columns);
         s.adjust(3, dir);
+        assert!((8..=16).contains(&s.rows), "rows {} after {dir}", s.rows);
+        s.adjust(5, dir);
     }
+}
+
+#[test]
+fn the_default_room_plays_on_the_standard_board() {
+    let board = Board::for_match(1, &RoomSettings::default());
+    assert_eq!(
+        (board.width, board.height, board.spawn_col()),
+        (GRID_WIDTH, GRID_HEIGHT, SPAWN_COL)
+    );
+}
+
+#[test]
+fn a_custom_room_sets_the_board_size_and_spawns_in_the_middle() {
+    let settings = RoomSettings {
+        columns: 9,
+        rows: 15,
+        ..RoomSettings::default()
+    };
+    let board = Board::for_match(1, &settings);
+    assert_eq!((board.width, board.height), (9, 16));
+    assert_eq!(board.active_piece.map(|p| p.col), Some(4));
 }
 
 #[test]
@@ -555,13 +580,13 @@ fn decode_accepts_large_legitimate_message() {
 fn pause_policy_cycles_both_ways() {
     let mut s = RoomSettings::default();
     assert_eq!(s.pause, PausePolicy::Everyone);
-    s.adjust(3, 1);
+    s.adjust(5, 1);
     assert_eq!(s.pause, PausePolicy::HostOnly);
-    s.adjust(3, 1);
+    s.adjust(5, 1);
     assert_eq!(s.pause, PausePolicy::Nobody);
-    s.adjust(3, 1);
+    s.adjust(5, 1);
     assert_eq!(s.pause, PausePolicy::Everyone, "wraps forward");
-    s.adjust(3, -1);
+    s.adjust(5, -1);
     assert_eq!(s.pause, PausePolicy::Nobody, "wraps backward");
 }
 
@@ -1321,10 +1346,11 @@ fn server_samples() -> Vec<ServerMessage> {
             spectator: true,
         },
         ServerMessage::Spectators { count: 3 },
+        ServerMessage::OpenedElsewhere,
     ]
 }
 
-const SERVER_VARIANTS: usize = 19;
+const SERVER_VARIANTS: usize = 20;
 
 fn server_variant(m: &ServerMessage) -> usize {
     match m {
@@ -1347,6 +1373,7 @@ fn server_variant(m: &ServerMessage) -> usize {
         ServerMessage::QueueCooldown { .. } => 16,
         ServerMessage::Chat { .. } => 17,
         ServerMessage::Spectators { .. } => 18,
+        ServerMessage::OpenedElsewhere => 19,
     }
 }
 
@@ -1379,7 +1406,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (8, 14_768_979_645_083_081_079);
+const PROTOCOL_DIGEST: (u32, u64) = (9, 5_189_629_802_848_321_362);
 
 #[test]
 fn protocol_changes_bump_the_version() {
@@ -1390,5 +1417,68 @@ fn protocol_changes_bump_the_version() {
         "the wire format changed: increment PROTOCOL_VERSION in shared/src/lib.rs, \
          then set PROTOCOL_DIGEST to ({}, {digest})",
         PROTOCOL_VERSION + u32::from(PROTOCOL_DIGEST.0 == PROTOCOL_VERSION),
+    );
+}
+
+fn stacked(heights: [usize; GRID_WIDTH]) -> Board {
+    let mut board = empty_board();
+    for (c, &h) in heights.iter().enumerate() {
+        for row in &mut board.cells[GRID_HEIGHT - h..] {
+            row[c] = Some(PuyoType::Garbage);
+        }
+    }
+    board.spawn_piece();
+    board
+}
+
+fn held(board: &mut Board, dir: InputKind, target: i32) -> bool {
+    let id = board.piece_id;
+    for frame in 0..120 {
+        let press = frame == 0 || (frame >= 8 && (frame - 8) % 2 == 0);
+        board.step(press.then_some(dir), 0);
+        match &board.active_piece {
+            Some(p) if board.piece_id == id && p.col == target => return true,
+            Some(_) if board.piece_id == id => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
+#[test]
+fn a_held_pair_reaches_the_sides_over_eleven_high_columns() {
+    assert!(held(&mut stacked([0, 0, 0, 11, 11, 0]), InputKind::MoveRight, 5));
+    assert!(held(&mut stacked([11, 11, 0, 0, 0, 0]), InputKind::MoveLeft, 0));
+    assert!(!held(&mut stacked([0, 0, 0, 12, 0, 0]), InputKind::MoveRight, 5));
+}
+
+#[test]
+fn a_floor_kick_climbs_over_a_full_column() {
+    let mut board = stacked([0, 0, 11, 12, 0, 0]);
+    for input in [
+        InputKind::RotateCCW,
+        InputKind::RotateCCW,
+        InputKind::RotateCCW,
+        InputKind::MoveRight,
+    ] {
+        board.step([input], 0);
+    }
+    assert_eq!(board.active_piece.map(|p| (p.row, p.col)), Some((0, 3)));
+}
+
+#[test]
+fn nothing_turns_into_the_fourteenth_row() {
+    let mut board = stacked([0, 0, 11, 12, 0, 0]);
+    for input in [InputKind::RotateCCW, InputKind::RotateCCW] {
+        board.step([input], 0);
+    }
+    assert_eq!(board.active_piece.as_ref().map(|p| (p.row, p.rotation)), Some((0, 2)));
+    board.step([InputKind::RotateCCW], 0);
+    board.step([InputKind::RotateCCW], 0);
+    let piece = board.active_piece.expect("still in play");
+    assert!(
+        piece.get_positions().iter().all(|&(r, _)| r >= 0),
+        "{:?}",
+        piece.get_positions()
     );
 }
