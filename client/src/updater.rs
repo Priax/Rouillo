@@ -183,6 +183,8 @@ fn run(release: &Release) -> Result<(), String> {
     let replaced = self_replace::self_replace(&fresh).map_err(|e| e.to_string());
     let _ = std::fs::remove_file(&fresh);
     replaced?;
+    #[cfg(windows)]
+    crate::windows::record_installed_version(&release.version);
     std::process::Command::new(&exe)
         .spawn()
         .map_err(|e| format!("relance: {e}"))?;

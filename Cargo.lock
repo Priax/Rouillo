@@ -617,6 +617,7 @@ dependencies = [
  "shared",
  "wasm-bindgen",
  "web-sys",
+ "windows-sys 0.61.2",
  "winres",
 ]
 

@@ -30,7 +30,7 @@ pub fn open_download_page() {
     use std::process::Command;
     const RELEASES: &str = "https://github.com/Priax/Rouillo/releases/latest";
     let opened = if cfg!(target_os = "windows") {
-        Command::new("cmd").args(["/C", "start", "", RELEASES]).spawn()
+        Command::new("explorer").arg(RELEASES).spawn()
     } else if cfg!(target_os = "macos") {
         Command::new("open").arg(RELEASES).spawn()
     } else {

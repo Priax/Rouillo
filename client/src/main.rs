@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use notan::app::Event;
 use notan::draw::DrawConfig;
 use notan::prelude::*;
@@ -44,6 +46,8 @@ mod update;
 mod updater;
 #[cfg(target_arch = "wasm32")]
 mod web;
+#[cfg(windows)]
+mod windows;
 
 use pads::{Pad, Pads};
 use state::{Screen, State};
@@ -579,6 +583,8 @@ fn draw_reconnect_banner(gfx: &mut Graphics, state: &State) {
 
 #[notan_main]
 fn main() -> Result<(), String> {
+    #[cfg(windows)]
+    windows::log_to_file();
     let icon = Some(include_bytes!("../../assets/puyo_puyo_icon.ico").as_ref());
     let win_config = WindowConfig::new()
         .set_title("Rouillo")

@@ -32,6 +32,9 @@ pub fn remove(key: &str) {
     file::store().remove(key);
 }
 
+#[cfg(windows)]
+pub use file::data_dir;
+
 #[cfg(not(target_arch = "wasm32"))]
 mod file {
     use std::collections::BTreeMap;
@@ -101,7 +104,11 @@ mod file {
         if cfg!(test) {
             return None;
         }
-        let dir = if cfg!(windows) {
+        Some(data_dir()?.join("storage.json"))
+    }
+
+    pub fn data_dir() -> Option<PathBuf> {
+        Some(if cfg!(windows) {
             PathBuf::from(std::env::var_os("APPDATA")?).join("Rouillo")
         } else if cfg!(target_os = "macos") {
             PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/Rouillo")
@@ -111,8 +118,7 @@ mod file {
                 .filter(|p| p.is_absolute())
                 .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?
                 .join("rouillo")
-        };
-        Some(dir.join("storage.json"))
+        })
     }
 
     pub fn store() -> MutexGuard<'static, FileStore> {
