@@ -164,12 +164,7 @@ impl Chat {
 }
 
 fn input_rect(area: Rect) -> Rect {
-    Rect::at(
-        area.x + PAD / 2.0,
-        area.y + area.h - INPUT_H - PAD / 2.0,
-        area.w - PAD,
-        INPUT_H,
-    )
+    area.pad(0.0, PAD / 2.0, PAD / 2.0, PAD / 2.0).bottom_band(INPUT_H)
 }
 
 #[cfg(test)]

@@ -51,7 +51,7 @@ mod windows;
 
 use pads::{Pad, Pads};
 use state::{Screen, State};
-use ui::{Rect, SharpText};
+use ui::{Rect, SharpText, Size};
 
 pub fn server_url() -> String {
     #[cfg(all(target_arch = "wasm32", not(debug_assertions)))]
@@ -225,11 +225,9 @@ fn pad_direction(pads: &Pads) -> Option<(f32, f32)> {
 const BANNER_H: f32 = 80.0;
 
 fn banner_buttons(ww: f32, wh: f32) -> (Rect, Rect) {
-    let y = wh - BANNER_H + 15.0;
-    (
-        Rect::at(ww - 270.0, y, 120.0, 50.0),
-        Rect::at(ww - 140.0, y, 110.0, 50.0),
-    )
+    let band = Rect::at(0.0, wh - BANNER_H, ww, BANNER_H).pad(15.0, 30.0, 15.0, 0.0);
+    let [accept, decline] = band.right(240.0).columns(10.0, [Size::Px(120.0), Size::Px(110.0)]);
+    (accept, decline)
 }
 
 fn update_invitation(state: &mut State) {

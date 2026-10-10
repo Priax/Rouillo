@@ -4,7 +4,7 @@ use notan::prelude::*;
 use crate::controls::{Action, Bindings, KeyBinding, ACTIONS, RESERVED};
 use crate::pads::Pads;
 use crate::theme;
-use crate::ui::{self, Fonts, Rect, SharpText, Ui, View};
+use crate::ui::{self, Fonts, Frame, Rect, SharpText, Size, Ui, View};
 
 const TOP: f32 = 360.0;
 const TITLE_H: f32 = 56.0;
@@ -27,26 +27,22 @@ pub struct BindingsPanel {
 }
 
 fn card(view: View) -> Rect {
-    Rect::at(
-        view.w / 2.0 - 380.0,
-        TOP,
-        760.0,
-        TITLE_H + ACTIONS as f32 * ROW_H + 12.0,
-    )
+    Rect::centered_on(view.w / 2.0, TOP, 760.0, TITLE_H + ACTIONS as f32 * ROW_H + 12.0)
 }
 
 fn cell(view: View, row: usize, slot: Slot) -> Rect {
-    let c = card(view);
     let col = match slot {
-        Slot::Key(i) => i as f32,
-        Slot::Pad => 2.0,
+        Slot::Key(i) => i,
+        Slot::Pad => 2,
     };
-    let y = c.y + TITLE_H + 6.0 + row as f32 * ROW_H + (ROW_H - CELL_H) / 2.0;
-    Rect::at(c.x + 300.0 + col * (CELL_W + 10.0), y, CELL_W, CELL_H)
+    let line = card(view).below(TITLE_H + 6.0).nth_row(row, ROW_H, 0.0);
+    let cells = line.pad(0.0, 0.0, 0.0, 300.0).left(3.0 * CELL_W + 20.0);
+    cells.columns(10.0, [Size::Px(CELL_W); 3])[col].middle(CELL_H)
 }
 
 pub fn reset_btn(view: View) -> Rect {
-    Rect::at(260.0, view.h - 80.0, 260.0, 54.0)
+    let back = Frame::of(view).back;
+    Rect::at(back.x + back.w + 20.0, back.y, 260.0, back.h)
 }
 
 const SLOTS: [Slot; 3] = [Slot::Key(0), Slot::Key(1), Slot::Pad];

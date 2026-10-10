@@ -6,6 +6,7 @@ mod field;
 mod fonts;
 mod input;
 mod keys;
+mod layout;
 mod modal;
 mod pager;
 mod panel;
@@ -35,6 +36,7 @@ pub use keys::ctrl_letter;
 pub use keys::EditKeys;
 #[cfg(target_arch = "wasm32")]
 pub use keys::Shortcuts;
+pub use layout::{Frame, ListCard, Size, FILL};
 pub use modal::Modal;
 use notan::draw::{CreateDraw, Draw, DrawImages};
 use notan::math::{vec2, Mat3};

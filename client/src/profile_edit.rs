@@ -9,7 +9,7 @@ use crate::state::{ApiUserProfile, State};
 use crate::theme;
 use crate::ui::{
     area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field, Fonts, Rect, SharpText, Status,
-    TextInput, Ui,
+    TextInput, Ui, FILL,
 };
 
 const BIO_LINES: usize = 6;
@@ -46,7 +46,7 @@ impl EditField {
     }
 
     fn rect(self, cx: f32) -> Rect {
-        let bio = Rect::at(cx - 300.0, 215.0, 600.0, area_height(BIO_LINES));
+        let bio = Rect::centered_on(cx, 215.0, 600.0, area_height(BIO_LINES));
         match self {
             Self::Bio => bio,
             Self::Music => Rect::at(bio.x, bio.y + bio.h + 44.0, bio.w, 46.0),
@@ -154,20 +154,18 @@ impl EditForm {
 fn buttons(cx: f32) -> (Rect, Rect) {
     let music = EditField::Music.rect(cx);
     let y = music.y + music.h + 39.0;
-    (
-        Rect::at(cx - 220.0, y, 200.0, 54.0),
-        Rect::at(cx + 20.0, y, 200.0, 54.0),
-    )
+    let [save, back] = Rect::centered_on(cx, y, 440.0, 54.0).columns(40.0, [FILL, FILL]);
+    (save, back)
 }
 
 fn picture_buttons(cx: f32) -> [(Picture, bool, Rect); 4] {
     let y = buttons(cx).0.y + 54.0 + 50.0;
-    let at = |i: f32| Rect::at(cx - 315.0 + i * 160.0, y, 150.0, 46.0);
+    let [a, b, c, d] = Rect::centered_on(cx, y, 630.0, 46.0).columns(10.0, [FILL; 4]);
     [
-        (Picture::Avatar, true, at(0.0)),
-        (Picture::Avatar, false, at(1.0)),
-        (Picture::Banner, true, at(2.0)),
-        (Picture::Banner, false, at(3.0)),
+        (Picture::Avatar, true, a),
+        (Picture::Avatar, false, b),
+        (Picture::Banner, true, c),
+        (Picture::Banner, false, d),
     ]
 }
 

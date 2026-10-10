@@ -4,7 +4,7 @@ use notan::prelude::*;
 
 use crate::connection::now_secs;
 use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, State};
-use crate::ui::{self, field_clicked, text_field, Field, Rect, SharpText, Status, View};
+use crate::ui::{self, field_clicked, text_field, Field, Rect, SharpText, Status, View, FILL};
 use crate::{http, theme};
 
 struct AuthLayout {
@@ -32,19 +32,16 @@ fn auth_layout(view: View, focused: AuthField) -> AuthLayout {
     } else {
         wh / 2.0 - field_y - 25.0
     };
-    let field = |y: f32| Rect::at(cx - 210.0, y, 420.0, 50.0);
+    let field = |y: f32| Rect::centered_on(cx, y, 420.0, 50.0);
     AuthLayout {
         cx,
         base_y,
-        card: Rect::at(cx - 260.0, base_y - 40.0, 520.0, 440.0),
-        tabs: [
-            Rect::at(cx - 230.0, base_y - 10.0, 220.0, 50.0),
-            Rect::at(cx + 10.0, base_y - 10.0, 220.0, 50.0),
-        ],
+        card: Rect::centered_on(cx, base_y - 40.0, 520.0, 440.0),
+        tabs: Rect::centered_on(cx, base_y - 10.0, 460.0, 50.0).columns(20.0, [FILL, FILL]),
         username: field(base_y + 60.0),
         password: field(base_y + 140.0),
-        submit: Rect::at(cx - 180.0, base_y + 220.0, 360.0, 56.0),
-        guest: Rect::at(cx - 180.0, base_y + 296.0, 360.0, 50.0),
+        submit: Rect::centered_on(cx, base_y + 220.0, 360.0, 56.0),
+        guest: Rect::centered_on(cx, base_y + 296.0, 360.0, 50.0),
     }
 }
 

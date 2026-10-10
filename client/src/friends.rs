@@ -6,8 +6,8 @@ use notan::prelude::*;
 
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
 use crate::ui::{
-    self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Pager, Pill, Rect, SharpText,
-    Status, TextInput, Ui, View,
+    self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Pager, Pill, Rect,
+    SharpText, Size, Status, TextInput, Ui, View,
 };
 use crate::{http, theme};
 
@@ -30,7 +30,7 @@ const COL_GAP_UPRIGHT: f32 = 16.0;
 /// bottom buttons, with a row left for the pager. Upright, the three
 /// columns are stacked and share that height.
 pub fn rows_for(view: View) -> usize {
-    let room = back_btn(view.h).y - 8.0 - COLUMNS_TOP;
+    let room = back_btn(view).y - 8.0 - COLUMNS_TOP;
     let card_h = if view.portrait() {
         (room - 2.0 * COL_GAP_UPRIGHT) / 3.0
     } else {
@@ -43,32 +43,30 @@ pub fn rows_for(view: View) -> usize {
 /// A column's card: three side by side, or stacked when upright.
 fn column_card(view: View, col: usize) -> Rect {
     let h = CARD_TITLE_H + 6.0 + (rows_for(view) + 1) as f32 * ROW_H + 10.0;
+    let band = Rect::at(0.0, COLUMNS_TOP, view.w, h);
     if view.portrait() {
-        let y = COLUMNS_TOP + col as f32 * (h + COL_GAP_UPRIGHT);
-        return Rect::at(20.0, y, view.w - 40.0, h);
+        return band.pad(0.0, 20.0, 0.0, 20.0).nth_row(col, h, COL_GAP_UPRIGHT);
     }
-    let total = 3.0 * COL_W + 2.0 * COL_GAP;
-    let x = (view.w - total) / 2.0 + col as f32 * (COL_W + COL_GAP);
-    Rect::at(x, COLUMNS_TOP, COL_W, h)
+    let cards = band.centered(3.0 * COL_W + 2.0 * COL_GAP, h);
+    cards.columns(COL_GAP, [Size::Px(COL_W); 3])[col]
+}
+
+/// The card under its title: the rows, then the pager.
+fn card_list(card: Rect) -> Rect {
+    card.below(CARD_TITLE_H + 6.0)
 }
 
 fn list_top(card: Rect) -> f32 {
-    card.y + CARD_TITLE_H + 6.0
+    card_list(card).y
 }
 
 fn list_row_rect(view: View, col: usize, row: usize) -> Rect {
-    let card = column_card(view, col);
-    Rect::at(
-        card.x + 8.0,
-        list_top(card) + row as f32 * ROW_H,
-        card.w - 16.0,
-        ROW_H - 4.0,
-    )
+    let list = card_list(column_card(view, col)).pad(0.0, 8.0, 0.0, 8.0);
+    list.nth_row(row, ROW_H - 4.0, 4.0)
 }
 
 fn pager_area(view: View, col: usize) -> Rect {
-    let card = column_card(view, col);
-    Rect::at(card.x, list_top(card) + rows_for(view) as f32 * ROW_H, card.w, ROW_H)
+    card_list(column_card(view, col)).nth_row(rows_for(view), ROW_H, 0.0)
 }
 
 fn lists(f: &FriendsData) -> [&[FriendEntry]; 3] {
@@ -76,47 +74,32 @@ fn lists(f: &FriendsData) -> [&[FriendEntry]; 3] {
 }
 
 fn row_button(row: Rect, from_right: f32, w: f32) -> Rect {
-    Rect::at(
-        row.x + row.w - from_right - w,
-        row.y + (row.h - SMALL_BTN_H) / 2.0,
-        w,
-        SMALL_BTN_H,
-    )
+    row.pad(0.0, from_right, 0.0, 0.0).right(w).middle(SMALL_BTN_H)
+}
+
+/// The header under the search label.
+fn search_band(view: View) -> Rect {
+    Frame::of(view).header_tools(200.0).pad(24.0, 0.0, 0.0, 0.0)
 }
 
 fn search_submit_btn(view: View) -> Rect {
-    Rect::at(
-        view.w - 60.0 - 160.0,
-        (theme::HEADER_H - FIELD_H) / 2.0 + 12.0,
-        160.0,
-        FIELD_H,
-    )
+    search_band(view).right(160.0).middle(FIELD_H)
 }
 
 fn search_box(view: View) -> Rect {
-    let submit = search_submit_btn(view);
-    let w = (submit.x - 12.0 - 200.0).min(430.0);
-    Rect::at(submit.x - 12.0 - w, submit.y, w, FIELD_H)
+    let room = search_band(view).pad(0.0, 160.0 + 12.0, 0.0, 0.0).middle(FIELD_H);
+    room.right(room.w.min(430.0))
 }
 
 fn results_card(view: View) -> Rect {
-    let w = (view.w - 40.0).min(840.0);
-    Rect::at(
-        (view.w - w) / 2.0,
-        RESULTS_TOP,
-        w,
-        16.0 + MAX_SEARCH_RESULTS as f32 * RESULT_ROW_H,
-    )
+    let h = 16.0 + MAX_SEARCH_RESULTS as f32 * RESULT_ROW_H;
+    Rect::at(0.0, RESULTS_TOP, view.w, h)
+        .pad(0.0, 20.0, 0.0, 20.0)
+        .max_width(840.0)
 }
 
 fn result_row(view: View, row: usize) -> Rect {
-    let card = results_card(view);
-    Rect::at(
-        card.x + 8.0,
-        card.y + 8.0 + row as f32 * RESULT_ROW_H,
-        card.w - 16.0,
-        RESULT_ROW_H - 4.0,
-    )
+    results_card(view).inset(8.0).nth_row(row, RESULT_ROW_H - 4.0, 4.0)
 }
 
 fn result_add_btn(view: View, row: usize) -> Rect {
@@ -172,7 +155,7 @@ fn name_zone(view: View, col: usize, row: usize, playing: bool) -> Rect {
         remove_btn(view, 0, row)
     };
     let first_button = [friend, accept_btn(view, row), remove_btn(view, 2, row)][col];
-    Rect::at(rect.x, rect.y, first_button.x - rect.x - 8.0, rect.h)
+    rect.left(first_button.x - rect.x - 8.0)
 }
 
 fn accept_btn(view: View, row: usize) -> Rect {
@@ -191,21 +174,22 @@ fn confirm_no_btn(view: View, row: usize) -> Rect {
     row_button(list_row_rect(view, 0, row), 6.0, 52.0)
 }
 
-fn back_btn(wh: f32) -> Rect {
-    Rect::at(40.0, wh - 80.0, 200.0, 54.0)
+fn back_btn(view: View) -> Rect {
+    Frame::of(view).back
 }
 
-fn refresh_btn(wh: f32) -> Rect {
-    Rect::at(254.0, wh - 80.0, 160.0, 54.0)
+fn refresh_btn(view: View) -> Rect {
+    let back = back_btn(view);
+    Rect::at(back.x + back.w + 14.0, back.y, 160.0, back.h)
 }
 
-/// The focused page field, or else the search field.
+/// The focused page field, or else the search field when it has the focus.
 pub fn typing(state: &mut State) -> Option<&mut TextInput> {
     let f = state.friends.as_mut()?;
     if let Some(pager) = f.pages.iter_mut().find(|p| p.focused()) {
         return pager.typing();
     }
-    Some(&mut f.search_input)
+    f.search_focused.then_some(&mut f.search_input)
 }
 
 pub fn enter_friends(state: &mut State) {
@@ -217,6 +201,7 @@ pub fn enter_friends(state: &mut State) {
         sent: Vec::new(),
         received: Vec::new(),
         list_slot: Some(slot),
+        search_focused: false,
         search_input: TextInput::default()
             .max_chars(36)
             .only(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | ' ')),
@@ -372,17 +357,22 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     poll_action(state);
 
     let view = state.ui.view();
-    let wh = view.h;
 
     let paging = state
         .friends
         .as_ref()
         .is_some_and(|f| f.pages.iter().any(Pager::focused));
+    let mut searching = false;
     if let Some(f) = state.friends.as_mut() {
-        if !paging {
+        if field_clicked(&state.ui, &state.fonts, search_box(view), &mut f.search_input) {
+            f.search_focused = true;
+        } else if state.ui.clicked(Rect::at(0.0, 0.0, view.w, view.h)) {
+            f.search_focused = false;
+        }
+        searching = f.search_focused && !paging;
+        if searching {
             f.search_input.edit(&state.keys);
         }
-        field_clicked(&state.ui, &state.fonts, search_box(view), &mut f.search_input);
         for col in 0..3 {
             let pages = page_count(lists(f)[col].len(), rows_for(view));
             f.pages[col].clamp(pages);
@@ -390,7 +380,7 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         }
     }
 
-    if state.ui.clicked(search_submit_btn(view)) || (!paging && app.keyboard.was_pressed(KeyCode::Enter)) {
+    if state.ui.clicked(search_submit_btn(view)) || (searching && app.keyboard.was_pressed(KeyCode::Enter)) {
         let q = search_query(state);
         if looks_like_uuid(&q) {
             crate::profile::enter_other_profile(state, q, "...".to_owned(), Screen::Friends);
@@ -400,13 +390,13 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         try_search(state);
     }
 
-    if state.ui.clicked(back_btn(wh)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.friends = None;
         state.screen = Screen::Menu;
         return;
     }
 
-    if state.friends.as_ref().is_some_and(can_refresh) && state.ui.clicked(refresh_btn(wh)) {
+    if state.friends.as_ref().is_some_and(can_refresh) && state.ui.clicked(refresh_btn(view)) {
         refresh_list(state);
     }
 
@@ -550,7 +540,6 @@ fn apply_action(state: &mut State, action: FriendAction) {
 pub fn draw_friends(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
     let view = state.ui.view();
-    let wh = view.h;
 
     let mut draw = state.ui.screen_canvas(gfx);
     state
@@ -568,11 +557,11 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
         draw_search(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
         draw_lists(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
 
-        state.ui.button(&mut draw, &state.fonts, back_btn(wh), "Retour");
+        state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
         let label = if f.list_slot.is_some() { "..." } else { "Rafraîchir" };
         state
             .ui
-            .button_enabled(&mut draw, &state.fonts, refresh_btn(wh), label, can_refresh(f));
+            .button_enabled(&mut draw, &state.fonts, refresh_btn(view), label, can_refresh(f));
     }
     state.ui.render(gfx, &draw);
 }
@@ -590,7 +579,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, 
     let search = Field {
         placeholder: "Pseudo ou UUID",
         input: &f.search_input,
-        focused: true,
+        focused: f.search_focused,
     };
     text_field(draw, ui, fonts, field, &search);
     ui.button_enabled(
@@ -833,7 +822,7 @@ mod tests {
             let last = column_card(view, 2);
             assert!(rows_for(view) >= 1);
             assert!(
-                last.bottom() < back_btn(view.h).y,
+                last.bottom() < back_btn(view).y,
                 "{w}x{h}: the columns reach the buttons"
             );
             assert!(last.x + last.w <= view.w, "{w}x{h}: a column is cut on the right");

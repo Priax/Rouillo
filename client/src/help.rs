@@ -5,7 +5,7 @@ use crate::controls::{Action, Bindings};
 use crate::demo::Demo;
 use crate::pads::Pad;
 use crate::state::{Screen, State};
-use crate::ui::{self, Face, Fonts, Rect, SharpText, Ui, View};
+use crate::ui::{self, Face, Fonts, Frame, Rect, SharpText, Size, Ui, View, FILL};
 use crate::{draw as game_draw, theme};
 
 const RULES: [(&str, &str); 7] = [
@@ -59,27 +59,26 @@ const LINE_H: f32 = 25.0;
 
 /// The tabbed card and the demo card: side by side, or the demo below.
 fn cards(view: View) -> (Rect, Rect) {
-    let top = theme::HEADER_H + 20.0;
+    let area = Rect::at(0.0, theme::HEADER_H + 20.0, view.w, view.h).pad(0.0, 20.0, 0.0, 20.0);
     if view.portrait() {
-        let info = Rect::at(20.0, top, view.w - 40.0, INFO_H_UPRIGHT);
-        let w = DEMO_W.min(view.w - 40.0);
-        let demo = Rect::at((view.w - w) / 2.0, top + INFO_H_UPRIGHT + 20.0, w, DEMO_H);
-        return (info, demo);
+        let [info, demo] = area.rows(20.0, [Size::Px(INFO_H_UPRIGHT), Size::Px(DEMO_H)]);
+        return (info, demo.max_width(DEMO_W));
     }
-    let width = 1220.0_f32.min(view.w - 40.0);
-    let left = (view.w - width) / 2.0;
-    let demo_w = DEMO_W.min(width * 0.36);
-    let info = Rect::at(left, top, width - demo_w - 25.0, DEMO_H);
-    let demo = Rect::at(info.x + info.w + 25.0, top, demo_w, DEMO_H);
+    let row = area.top(DEMO_H).max_width(1220.0);
+    let demo_w = DEMO_W.min(row.w * 0.36);
+    let [info, demo] = row.columns(25.0, [FILL, Size::Px(demo_w)]);
     (info, demo)
 }
 
 fn tabs(info: Rect) -> [Rect; 2] {
-    [0.0, 1.0].map(|i| Rect::at(info.x + 20.0 + i * 220.0, info.y + 8.0, 200.0, TAB_H - 8.0))
+    info.pad(8.0, 0.0, 0.0, 20.0)
+        .top(TAB_H - 8.0)
+        .left(420.0)
+        .columns(20.0, [FILL, FILL])
 }
 
 fn back_btn(view: View) -> Rect {
-    Rect::at(40.0, view.h - 80.0, 200.0, 54.0)
+    Frame::of(view).back
 }
 
 pub fn enter(state: &mut State) {

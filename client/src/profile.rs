@@ -12,17 +12,10 @@ use crate::state::{
 };
 use crate::theme::{self, Palette};
 use crate::ui::{
-    self, divider, list_row, portrait, Face, Fonts, Pill, Rect, SharpText, Status, TextInput, Ui, View, PAGER_H,
+    self, divider, list_row, portrait, Face, Fonts, Pill, Rect, SharpText, Size, Status, TextInput, Ui, View, FILL,
+    PAGER_H,
 };
 use crate::{http, profile_about};
-
-fn panels(ww: f32) -> (f32, f32, f32, f32) {
-    let left_x = 40.0;
-    let left_w = (ww * 0.36).max(280.0);
-    let right_x = left_x + left_w + 30.0;
-    let right_w = (ww - right_x - 20.0).max(200.0);
-    (left_x, left_w, right_x, right_w)
-}
 
 /// The bottom buttons sit near the bottom of the window, never below it: on a
 /// short screen the cards shrink, down to what the four stats need.
@@ -195,21 +188,16 @@ fn buttons_top(view: View) -> f32 {
 
 /// The stats card and the match list: side by side, or stacked upright.
 fn cards(view: View) -> (Rect, Rect) {
-    let bottom = buttons_top(view) - STATUS_GAP;
+    let area = Rect::at(0.0, CARD_TOP, view.w, buttons_top(view) - STATUS_GAP - CARD_TOP);
     if view.portrait() {
-        let w = view.w - 40.0;
-        let list_top = CARD_TOP + STATS_CARD_H + 20.0;
-        return (
-            Rect::at(20.0, CARD_TOP, w, STATS_CARD_H),
-            Rect::at(20.0, list_top, w, bottom - list_top),
-        );
+        let [stats, list] = area
+            .pad(0.0, 20.0, 0.0, 20.0)
+            .rows(20.0, [Size::Px(STATS_CARD_H), FILL]);
+        return (stats, list);
     }
-    let (left_x, left_w, right_x, right_w) = panels(view.w);
-    let h = bottom - CARD_TOP;
-    (
-        Rect::at(left_x, CARD_TOP, left_w, h),
-        Rect::at(right_x, CARD_TOP, right_w, h),
-    )
+    let stats_w = (view.w * 0.36).max(280.0);
+    let [stats, list] = area.pad(0.0, 20.0, 0.0, 40.0).columns(30.0, [Size::Px(stats_w), FILL]);
+    (stats, list)
 }
 
 /// The bottom buttons, one per width: in one row, or two to a row upright.
@@ -230,12 +218,7 @@ fn bottom_buttons<const N: usize>(view: View, widths: [f32; N]) -> [Rect; N] {
     }
     let gap = 30.0;
     let total: f32 = widths.iter().sum::<f32>() + gap * (N - 1) as f32;
-    let mut x = cx - total / 2.0;
-    widths.map(|w| {
-        let r = Rect::at(x, top, w, BUTTON_H);
-        x += w + gap;
-        r
-    })
+    Rect::centered_on(cx, top, total, BUTTON_H).columns(gap, widths.map(Size::Px))
 }
 
 fn card_title(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card: Rect, title: &str) {

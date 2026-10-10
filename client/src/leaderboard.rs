@@ -6,7 +6,7 @@ use notan::prelude::*;
 use crate::http::{self, HttpSlot};
 use crate::state::{Screen, State};
 use crate::theme;
-use crate::ui::{self, Face, Pager, Pill, Rect, SharpText, Status, View, PAGER_H};
+use crate::ui::{self, Face, Frame, ListCard, Pager, Pill, Rect, SharpText, Status, View};
 
 const SIZE: i64 = 100;
 const ROW_H: f32 = 56.0;
@@ -70,41 +70,32 @@ fn poll(board: &mut Leaderboard, me: Option<&str>) {
     }
 }
 
+fn list(view: View) -> ListCard {
+    ListCard::new(view, ROW_H)
+}
+
 fn list_card(view: View) -> Rect {
-    let w = (view.w - 40.0).min(840.0);
-    Rect::at(
-        (view.w - w) / 2.0,
-        theme::HEADER_H + 30.0,
-        w,
-        view.h - theme::HEADER_H - 30.0 - 110.0,
-    )
+    list(view).card
 }
 
 fn per_page(view: View) -> usize {
-    ((list_card(view).h - 24.0 - PAGER_H) / ROW_H).floor().max(1.0) as usize
+    list(view).per_page()
 }
 
 fn row_rect(view: View, i: usize) -> Rect {
-    let card = list_card(view);
-    Rect::at(
-        card.x + 12.0,
-        card.y + 12.0 + i as f32 * ROW_H,
-        card.w - 24.0,
-        ROW_H - 6.0,
-    )
+    list(view).row(i)
 }
 
 fn pager_area(view: View) -> Rect {
-    let card = list_card(view);
-    Rect::at(card.x, card.y + card.h - PAGER_H, card.w, PAGER_H)
+    list(view).pager()
 }
 
 fn back_btn(view: View) -> Rect {
-    Rect::at(40.0, view.h - 80.0, 200.0, 54.0)
+    Frame::of(view).back
 }
 
 fn refresh_btn(view: View) -> Rect {
-    Rect::at(view.w - 60.0 - 190.0, (theme::HEADER_H - 44.0) / 2.0, 190.0, 44.0)
+    Frame::of(view).header_tools(0.0).right(190.0).middle(44.0)
 }
 
 pub fn update(app: &App, state: &mut State) {

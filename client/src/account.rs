@@ -6,7 +6,7 @@ use notan::prelude::*;
 use crate::http::{self, HttpSlot};
 use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
-use crate::ui::{field_clicked, text_field, EditKeys, Field, Fonts, Rect, SharpText, Status, TextInput, Ui};
+use crate::ui::{field_clicked, text_field, EditKeys, Field, Fonts, Rect, SharpText, Status, TextInput, Ui, FILL};
 
 const MIN_PASSWORD: usize = 8;
 const FIELD_W: f32 = 460.0;
@@ -54,7 +54,7 @@ impl Choice {
 
     fn rect(self, cx: f32) -> Rect {
         let i = Self::ALL.iter().position(|&c| c == self).unwrap_or(0);
-        Rect::at(cx - 180.0, TOP + i as f32 * 74.0, 360.0, 54.0)
+        Rect::centered_on(cx, TOP, 360.0, 0.0).nth_row(i, 54.0, 20.0)
     }
 }
 
@@ -211,7 +211,7 @@ impl AccountForm {
 
 fn field_rect(cx: f32, page: Page, i: usize) -> Rect {
     let top = if page == Page::Delete { TOP + 70.0 } else { TOP + 30.0 };
-    Rect::at(cx - FIELD_W / 2.0, top + i as f32 * FIELD_STEP, FIELD_W, FIELD_H)
+    Rect::centered_on(cx, top, FIELD_W, 0.0).nth_row(i, FIELD_H, FIELD_STEP - FIELD_H)
 }
 
 fn buttons(cx: f32, form: &AccountForm) -> (Rect, Rect) {
@@ -219,10 +219,8 @@ fn buttons(cx: f32, form: &AccountForm) -> (Rect, Rect) {
         Page::LogoutAll => TOP + 90.0,
         _ => field_rect(cx, form.page, form.labels().len()).y,
     };
-    (
-        Rect::at(cx - 240.0, y, 230.0, 54.0),
-        Rect::at(cx + 10.0, y, 230.0, 54.0),
-    )
+    let [confirm, back] = Rect::centered_on(cx, y, 480.0, 54.0).columns(20.0, [FILL, FILL]);
+    (confirm, back)
 }
 
 const fn confirm_label(page: Page) -> &'static str {

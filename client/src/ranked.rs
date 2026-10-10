@@ -6,7 +6,7 @@ use crate::connection::now_secs;
 use crate::http::{self, HttpSlot};
 use crate::state::{ApiUserProfile, Screen, State};
 use crate::theme;
-use crate::ui::{self, Fonts, Persona, Pill, Rect, SharpText, Ui, View};
+use crate::ui::{self, Fonts, Persona, Pill, Rect, SharpText, Ui, View, FILL};
 
 #[derive(Default)]
 pub enum Search {
@@ -103,15 +103,13 @@ struct Buttons {
 }
 
 fn buttons(view: View) -> Buttons {
-    let y = view.h / 2.0 + 120.0;
-    Buttons {
-        main: Rect::at(view.w / 2.0 - 230.0, y, 220.0, 54.0),
-        second: Rect::at(view.w / 2.0 + 10.0, y, 220.0, 54.0),
-    }
+    let row = Rect::centered_on(view.w / 2.0, view.h / 2.0 + 120.0, 460.0, 54.0);
+    let [main, second] = row.columns(20.0, [FILL, FILL]);
+    Buttons { main, second }
 }
 
 fn single_button(view: View) -> Rect {
-    Rect::at(view.w / 2.0 - 140.0, view.h / 2.0 + 120.0, 280.0, 54.0)
+    Rect::centered_on(view.w / 2.0, view.h / 2.0 + 120.0, 280.0, 54.0)
 }
 
 pub fn enter(state: &mut State) {

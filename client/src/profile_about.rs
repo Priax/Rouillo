@@ -117,7 +117,7 @@ pub fn draw_overlay(draw: &mut Draw, ui: &Ui, fonts: &Fonts, info: &ApiUserProfi
     );
     modal.draw(draw, ui, fonts, &title);
     let body = modal.body();
-    let area = Rect::at(body.x, body.y + LABEL_H, body.w, body.h - LABEL_H);
+    let area = body.below(LABEL_H);
     draw_summary(draw, ui, fonts, &summary(fonts, info, area, OVERLAY_MUSIC_LINES), area);
 }
 

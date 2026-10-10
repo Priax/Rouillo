@@ -6,8 +6,8 @@ use shared::{ClientMessage, LobbyInfo, RoomInfo, RoomSettings};
 
 use crate::state::{ApiFriendsResponse, Invite, Screen, State};
 use crate::ui::{
-    self, field_clicked, list_row, text_field, Face, Field, Modal, Pill, Rect, SettingsPanel, SharpText, TextInput,
-    View, PAGER_H,
+    self, field_clicked, list_row, text_field, Face, Field, Frame, ListCard, Modal, Pill, Rect, SettingsPanel,
+    SharpText, Size, TextInput, View, FILL, PAGER_H,
 };
 use crate::{http, theme};
 
@@ -17,25 +17,20 @@ fn send(state: &mut State, msg: &ClientMessage) {
 
 const ROOM_ROW_H: f32 = 56.0;
 
+fn room_list(view: View) -> ListCard {
+    ListCard::new(view, ROOM_ROW_H)
+}
+
 fn room_list_card(view: View) -> Rect {
-    let w = (view.w - 40.0).min(840.0);
-    Rect::at(
-        (view.w - w) / 2.0,
-        theme::HEADER_H + 30.0,
-        w,
-        view.h - theme::HEADER_H - 30.0 - 110.0,
-    )
+    room_list(view).card
 }
 
 fn visible_rooms(view: View) -> usize {
-    ((room_list_card(view).h - 24.0 - PAGER_H) / ROOM_ROW_H)
-        .floor()
-        .max(1.0) as usize
+    room_list(view).per_page()
 }
 
 fn pager_area(view: View) -> Rect {
-    let card = room_list_card(view);
-    Rect::at(card.x, card.y + card.h - PAGER_H, card.w, PAGER_H)
+    room_list(view).pager()
 }
 
 fn room_pages(state: &State) -> usize {
@@ -48,13 +43,7 @@ fn shown_rooms(state: &State) -> impl Iterator<Item = (usize, &RoomInfo)> {
 }
 
 fn room_row(view: View, i: usize) -> Rect {
-    let card = room_list_card(view);
-    Rect::at(
-        card.x + 12.0,
-        card.y + 12.0 + i as f32 * ROOM_ROW_H,
-        card.w - 24.0,
-        ROOM_ROW_H - 6.0,
-    )
+    room_list(view).row(i)
 }
 
 struct BrowserButtons {
@@ -65,16 +54,17 @@ struct BrowserButtons {
 }
 
 fn browser_buttons(view: View) -> BrowserButtons {
-    let (gap, y) = (12.0, (theme::HEADER_H - 44.0) / 2.0);
-    let right = view.w - 60.0;
+    let frame = Frame::of(view);
+    let gap = 12.0;
+    let tools = frame.header_tools(200.0).middle(44.0);
     // Narrower when upright, so the title keeps its place on the left.
-    let bw = ((right - 200.0 - 2.0 * gap) / 3.0).min(190.0);
-    let at = |i: f32| Rect::at(right - (3.0 - i) * bw - (2.0 - i) * gap, y, bw, 44.0);
+    let bw = ((tools.w - 2.0 * gap) / 3.0).min(190.0);
+    let [create, join_id, refresh] = tools.right(3.0 * bw + 2.0 * gap).columns(gap, [Size::Px(bw); 3]);
     BrowserButtons {
-        create: at(0.0),
-        join_id: at(1.0),
-        refresh: at(2.0),
-        back: Rect::at(40.0, view.h - 80.0, 200.0, 54.0),
+        create,
+        join_id,
+        refresh,
+        back: frame.back,
     }
 }
 
@@ -248,21 +238,17 @@ fn draw_room_row(draw: &mut Draw, state: &State, row: Rect, index: usize, room: 
 }
 
 fn entry_card(w: f32, h: f32) -> Rect {
-    Rect::at(w / 2.0 - 280.0, h / 2.0 - 160.0, 560.0, 300.0)
+    Rect::at(0.0, 0.0, w, h).centered(560.0, 300.0)
 }
 
 fn entry_box(w: f32, h: f32) -> Rect {
-    let card = entry_card(w, h);
-    Rect::at(card.x + 40.0, card.y + 110.0, card.w - 80.0, 50.0)
+    entry_card(w, h).pad(110.0, 40.0, 0.0, 40.0).top(50.0)
 }
 
 fn entry_buttons(w: f32, h: f32) -> (Rect, Rect) {
-    let card = entry_card(w, h);
-    let (bw, y) = ((card.w - 80.0 - 20.0) / 2.0, card.y + card.h - 40.0 - 56.0);
-    (
-        Rect::at(card.x + 40.0, y, bw, 56.0),
-        Rect::at(card.x + 40.0 + bw + 20.0, y, bw, 56.0),
-    )
+    let band = entry_card(w, h).pad(0.0, 40.0, 40.0, 40.0).bottom_band(56.0);
+    let [confirm, back] = band.columns(20.0, [FILL, FILL]);
+    (confirm, back)
 }
 
 fn update_entry(app: &mut App, state: &mut State) -> Option<String> {
@@ -360,38 +346,32 @@ fn lobby_leave(view: View) -> Rect {
 
 fn lobby_chat(view: View) -> Rect {
     let card = lobby_panel(view).card;
-    let x = card.x + card.w + 24.0;
-    Rect::at(x, card.y, (view.w - 24.0 - x).min(460.0), card.h)
+    let beside = Rect::at(0.0, card.y, view.w, card.h).pad(0.0, 24.0, 0.0, card.x + card.w + 24.0);
+    beside.left(beside.w.min(460.0))
 }
 
 fn invite_modal(view: View) -> Modal {
     Modal::new(view, 600.0)
 }
 
+fn invite_list(view: View) -> Rect {
+    invite_modal(view).card.pad(70.0, 16.0, PAGER_H + 22.0, 16.0)
+}
+
 fn visible_invites(view: View) -> usize {
-    ((invite_modal(view).card.h - 86.0 - PAGER_H) / INVITE_ROW_H)
-        .floor()
-        .max(1.0) as usize
+    invite_list(view).rows_fitting(INVITE_ROW_H - 6.0, 6.0).max(1)
 }
 
 fn invite_pager_area(view: View) -> Rect {
-    let card = invite_modal(view).card;
-    Rect::at(card.x, card.y + card.h - PAGER_H - 8.0, card.w, PAGER_H)
+    invite_modal(view).card.above(8.0).bottom_band(PAGER_H)
 }
 
 fn invite_row(view: View, i: usize) -> Rect {
-    let card = invite_modal(view).card;
-    Rect::at(
-        card.x + 16.0,
-        card.y + 70.0 + i as f32 * INVITE_ROW_H,
-        card.w - 32.0,
-        INVITE_ROW_H - 6.0,
-    )
+    invite_list(view).nth_row(i, INVITE_ROW_H - 6.0, 6.0)
 }
 
 fn invite_button(view: View, i: usize) -> Rect {
-    let row = invite_row(view, i);
-    Rect::at(row.x + row.w - 128.0, row.y + (row.h - 32.0) / 2.0, 120.0, 32.0)
+    invite_row(view, i).pad(0.0, 8.0, 0.0, 0.0).right(120.0).middle(32.0)
 }
 
 pub fn update_lobby(app: &mut App, state: &mut State) {

@@ -2,7 +2,7 @@ use notan::draw::DrawShapes;
 use notan::prelude::*;
 
 use crate::state::{AuthForm, Screen, Settings, State};
-use crate::ui::{Rect, SettingsPanel, SharpText, Status, View};
+use crate::ui::{Frame, Rect, SettingsPanel, SharpText, Status, View};
 use crate::{http, theme};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -82,7 +82,7 @@ fn menu_rows(view: View, items: &'static [MenuItem]) -> impl Iterator<Item = (Me
     items
         .iter()
         .enumerate()
-        .map(move |(i, &item)| (item, Rect::at(0.0, top + i as f32 * ROW_H, view.w, ROW_H)))
+        .map(move |(i, &item)| (item, Rect::at(0.0, top, view.w, 0.0).nth_row(i, ROW_H, 0.0)))
 }
 
 const AVATAR: f32 = 76.0;
@@ -93,8 +93,9 @@ fn avatar_rect(ww: f32) -> Rect {
 
 fn outdated_btn(ww: f32) -> Rect {
     let avatar = avatar_rect(ww);
-    let (w, h) = (190.0, 50.0);
-    Rect::at(avatar.x - 20.0 - w, avatar.y + (avatar.h - h) / 2.0, w, h)
+    Rect::at(0.0, avatar.y, avatar.x - 20.0, avatar.h)
+        .right(190.0)
+        .middle(50.0)
 }
 
 pub fn update_menu(app: &App, state: &mut State) {
@@ -256,7 +257,7 @@ fn settings_panel(view: View) -> SettingsPanel {
 }
 
 fn settings_back(view: View) -> Rect {
-    Rect::at(40.0, view.h - 80.0, 200.0, 54.0)
+    Frame::of(view).back
 }
 
 pub fn update_settings(app: &mut App, state: &mut State) {

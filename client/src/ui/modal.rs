@@ -15,21 +15,18 @@ pub struct Modal {
 impl Modal {
     pub fn new(view: View, width: f32) -> Self {
         Self {
-            card: Rect::at((view.w - width) / 2.0, MARGIN, width, view.h - 2.0 * MARGIN),
+            card: Rect::at(0.0, 0.0, view.w, view.h)
+                .pad(MARGIN, 0.0, MARGIN, 0.0)
+                .max_width(width),
         }
     }
 
     fn close(self) -> Rect {
-        Rect::at(self.card.x + self.card.w - 64.0, self.card.y + 14.0, 48.0, 40.0)
+        self.card.pad(14.0, 16.0, 0.0, 0.0).right(48.0).top(40.0)
     }
 
     pub fn body(self) -> Rect {
-        Rect::at(
-            self.card.x + PADDING,
-            self.card.y + TITLE_H,
-            self.card.w - 2.0 * PADDING,
-            self.card.h - TITLE_H - PADDING,
-        )
+        self.card.pad(TITLE_H, PADDING, PADDING, PADDING)
     }
 
     pub fn dismissed(self, ui: &Ui) -> bool {

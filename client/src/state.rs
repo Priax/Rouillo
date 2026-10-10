@@ -181,6 +181,8 @@ pub struct FriendsData {
     pub received: Vec<FriendEntry>,
     pub list_slot: Option<HttpSlot>,
     pub search_input: TextInput,
+    /// Off on arrival: a phone would otherwise open its keyboard at once.
+    pub search_focused: bool,
     pub search_results: Vec<UserSearchEntry>,
     pub search_slot: Option<HttpSlot>,
     pub search_status: Status,

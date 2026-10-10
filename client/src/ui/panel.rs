@@ -1,6 +1,6 @@
 use notan::draw::Draw;
 
-use super::{card, divider, Fonts, Rect, SharpText, Stepper, View};
+use super::{card, divider, Fonts, Frame, Rect, SharpText, Stepper, View};
 use crate::theme::{self, Palette};
 
 const TITLE_H: f32 = 56.0;
@@ -21,7 +21,7 @@ impl SettingsPanel {
         let row_h = if rows > 4 { TIGHT_ROW_H } else { ROW_H };
         let h = TITLE_H + rows as f32 * row_h + 16.0;
         Self {
-            card: Rect::at(view.w / 2.0 - 320.0, theme::HEADER_H + 30.0, 640.0, h),
+            card: Frame::of(view).body.top(h).max_width(640.0),
             view_w: view.w,
             row_h,
         }
@@ -35,12 +35,7 @@ impl SettingsPanel {
     }
 
     pub fn action_row(self, k: usize) -> Rect {
-        Rect::at(
-            0.0,
-            self.card.y + self.card.h + 30.0 + k as f32 * ACTION_ROW_H,
-            self.view_w,
-            ACTION_ROW_H,
-        )
+        Rect::at(0.0, self.card.bottom() + 30.0, self.view_w, 0.0).nth_row(k, ACTION_ROW_H, 0.0)
     }
 
     pub fn draw(self, draw: &mut Draw, pal: &Palette, fonts: &Fonts, title: &str) {
