@@ -15,19 +15,23 @@ const UNINSTALL_KEY: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{89402259-6417-4E94-9C00-13FA4F6030E6}_is1";
 
 /// Without a console, error messages and panics would go nowhere: they go to
-/// rouillo.log, the previous run's kept as rouillo.old.log.
+/// rouillo.log, the previous run's kept as rouillo.old.log. The game started
+/// by an update inherits the log and carries on in it.
 pub fn log_to_file() {
     let stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
-    if !stderr.is_null() && stderr != INVALID_HANDLE_VALUE {
-        return;
+    if stderr.is_null() || stderr == INVALID_HANDLE_VALUE {
+        open_log();
     }
+    eprintln!("Rouillo {}", env!("CARGO_PKG_VERSION"));
+}
+
+fn open_log() {
     let Some(dir) = crate::storage::data_dir() else { return };
     let log = dir.join("rouillo.log");
     let _ = fs::create_dir_all(&dir);
     let _ = fs::rename(&log, dir.join("rouillo.old.log"));
     let Ok(file) = File::create(&log) else { return };
     unsafe { SetStdHandle(STD_ERROR_HANDLE, file.into_raw_handle()) };
-    eprintln!("Rouillo {}", env!("CARGO_PKG_VERSION"));
 }
 
 /// After the game replaced itself, shows the new version in the installed
