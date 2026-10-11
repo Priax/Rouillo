@@ -663,8 +663,11 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "shared",
+ "tokio",
+ "url",
  "wasm-bindgen",
  "web-sys",
+ "web-transport-quinn",
  "windows-sys 0.61.2",
  "winres",
 ]

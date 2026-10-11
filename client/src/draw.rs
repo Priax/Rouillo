@@ -915,7 +915,10 @@ fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32)
             game::DEBUG_NET,
         ),
         (
-            format!("RTT ping: {ping} | input->ack: {:.0} ms", session.last_rtt_ms),
+            format!(
+                "RTT ping: {ping} | input->ack: {:.0} ms | {}",
+                session.last_rtt_ms, session.via
+            ),
             game::DEBUG_NET,
         ),
         (board("ME ", &session.predicted_board), game::DEBUG_BOARDS),

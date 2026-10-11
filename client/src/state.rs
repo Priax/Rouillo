@@ -517,6 +517,8 @@ pub struct GameSession {
     pub last_rtt_ms: f32,
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub ping_rtt_ms: Option<f32>,
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub via: &'static str,
 }
 
 impl GameSession {
@@ -562,6 +564,7 @@ impl GameSession {
             last_server_msg: String::new(),
             last_rtt_ms: 0.0,
             ping_rtt_ms: None,
+            via: "-",
         }
     }
 }

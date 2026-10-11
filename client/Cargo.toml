@@ -32,6 +32,9 @@ ed25519-dalek = "3"
 sha2 = "0.11"
 self-replace = "1"
 display-info = "0.5"
+web-transport-quinn = { version = "0.13", default-features = false, features = ["ring"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
+url = "2"
 
 [target.'wasm32-unknown-unknown'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }

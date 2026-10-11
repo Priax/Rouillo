@@ -48,6 +48,7 @@ mod updater;
 mod web;
 #[cfg(windows)]
 mod windows;
+mod wt;
 
 use pads::{Pad, Pads};
 use state::{Screen, State};
@@ -344,10 +345,11 @@ fn update(app: &mut App, state: &mut State) {
         type_char(state, c);
     }
     let was_title = state.screen == Screen::Title;
-    let rtt = state.conn.rtt_ms();
+    let (rtt, via) = (state.conn.rtt_ms(), state.conn.via());
     if let Some(session) = state.session_mut() {
         session.clock += app.timer.delta_f32() as f64;
         session.ping_rtt_ms = rtt;
+        session.via = via;
     }
 
     login::poll_startup_check(state);

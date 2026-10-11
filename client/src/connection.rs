@@ -90,18 +90,69 @@ impl Retry {
     }
 }
 
-struct Net {
-    ws_sender: WsSender,
-    ws_receiver: WsReceiver,
+/// A link dialed over WebTransport that has not opened by then is given up
+/// for the WebSocket.
+const WT_OPEN_TIMEOUT: f64 = 3.0;
+
+/// How long a dial waits for the server to say whether it takes WebTransport.
+const OFFER_WAIT: f64 = 2.0;
+
+enum Net {
+    Ws { sender: WsSender, receiver: WsReceiver },
+    Wt(crate::wt::Link),
+}
+
+enum NetEvent {
+    Opened,
+    Bytes(Vec<u8>),
+    Outdated,
+    Closed(String),
+    Other,
 }
 
 impl Net {
     fn send(&mut self, msg: &ClientMessage) {
-        match shared::encode(msg) {
-            Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-            Err(e) => eprintln!("[ws] encode failed: {e}"),
+        let bytes = match shared::encode(msg) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("[net] encode failed: {e}");
+                return;
+            }
+        };
+        match self {
+            Self::Ws { sender, .. } => sender.send(WsMessage::Binary(bytes)),
+            Self::Wt(link) => link.send(bytes),
         }
     }
+
+    fn next(&self) -> Option<NetEvent> {
+        Some(match self {
+            Self::Ws { receiver, .. } => match receiver.try_recv()? {
+                WsEvent::Message(WsMessage::Text(t)) if t == shared::OUTDATED_FRAME => NetEvent::Outdated,
+                WsEvent::Opened => NetEvent::Opened,
+                WsEvent::Message(WsMessage::Binary(bytes)) => NetEvent::Bytes(bytes),
+                WsEvent::Closed => NetEvent::Closed("fermée par le serveur".to_owned()),
+                WsEvent::Error(e) => NetEvent::Closed(e),
+                WsEvent::Message(_) => NetEvent::Other,
+            },
+            Self::Wt(link) => match link.try_recv()? {
+                crate::wt::Event::Opened => NetEvent::Opened,
+                crate::wt::Event::Message(bytes) => NetEvent::Bytes(bytes),
+                crate::wt::Event::Closed(reason) => NetEvent::Closed(reason),
+            },
+        })
+    }
+
+    const fn is_wt(&self) -> bool {
+        matches!(self, Self::Wt(_))
+    }
+}
+
+/// Whether the server takes WebTransport, which it says once asked.
+enum Transport {
+    Unknown,
+    Asking { slot: crate::http::HttpSlot, since: f64 },
+    Known(Option<crate::wt::Offer>),
 }
 
 struct Heartbeat {
@@ -147,7 +198,7 @@ impl Heartbeat {
 
 enum Link {
     Offline,
-    Dialing { net: Net, retry: Retry },
+    Dialing { net: Net, retry: Retry, since: f64 },
     Live { net: Net },
     Waiting { retry: Retry },
 }
@@ -165,6 +216,9 @@ pub struct Connection {
     unreported_drop: Option<String>,
     jitter: u64,
     heartbeat: Heartbeat,
+    transport: Transport,
+    /// WebTransport did not open once: the WebSocket is used from then on.
+    wt_failed: bool,
 }
 
 impl Connection {
@@ -174,6 +228,17 @@ impl Connection {
             unreported_drop: None,
             jitter: seed_from(player_id),
             heartbeat: Heartbeat::new(0.0),
+            transport: Transport::Unknown,
+            wt_failed: false,
+        }
+    }
+
+    /// What carries the live link, for the debug overlay.
+    pub fn via(&self) -> &'static str {
+        match &self.link {
+            Link::Live { net } if net.is_wt() => "WebTransport",
+            Link::Live { .. } => "WebSocket",
+            _ => "-",
         }
     }
 
@@ -186,9 +251,33 @@ impl Connection {
     }
 
     pub fn connect(&mut self, now: f64) {
+        if matches!(self.transport, Transport::Unknown) {
+            let slot = crate::http::new_slot();
+            crate::http::get(crate::http::api_url("transport"), None, std::sync::Arc::clone(&slot));
+            self.transport = Transport::Asking { slot, since: now };
+        }
         self.link = Link::Waiting {
             retry: Retry::initial(now),
         };
+    }
+
+    /// The WebTransport offer to dial now, or `Err` while the server has
+    /// not answered whether it makes one.
+    fn offer(&mut self, now: f64) -> Result<Option<crate::wt::Offer>, ()> {
+        if let Transport::Asking { slot, since } = &self.transport {
+            match crate::http::poll(slot) {
+                Some(Ok(resp)) => {
+                    self.transport = Transport::Known(crate::http::json::<Option<crate::wt::Offer>>(&resp).flatten());
+                }
+                Some(Err(_)) => self.transport = Transport::Known(None),
+                None if now - since < OFFER_WAIT => return Err(()),
+                None => self.transport = Transport::Known(None),
+            }
+        }
+        Ok(match &self.transport {
+            Transport::Known(Some(offer)) if !self.wt_failed => Some(offer.clone()),
+            _ => None,
+        })
     }
 
     pub fn disconnect(&mut self) {
@@ -235,12 +324,23 @@ impl Connection {
                 if !retry.due(now) {
                     return Link::Waiting { retry };
                 }
+                let Ok(offer) = self.offer(now) else {
+                    return Link::Waiting { retry };
+                };
                 retry.record_dial(now, next_frac(&mut self.jitter));
+                if let Some(offer) = offer {
+                    return Link::Dialing {
+                        net: Net::Wt(crate::wt::Link::dial(&offer)),
+                        retry,
+                        since: now,
+                    };
+                }
                 let url = format!("{}?v={}", crate::server_url(), shared::PROTOCOL_VERSION);
                 match ewebsock::connect(url, ewebsock::Options::default()) {
-                    Ok((ws_sender, ws_receiver)) => Link::Dialing {
-                        net: Net { ws_sender, ws_receiver },
+                    Ok((sender, receiver)) => Link::Dialing {
+                        net: Net::Ws { sender, receiver },
                         retry,
+                        since: now,
                     },
                     Err(e) => {
                         eprintln!("[ws] tentative {} impossible: {e}", retry.attempts);
@@ -249,8 +349,15 @@ impl Connection {
                 }
             }
 
-            Link::Dialing { net, retry } => {
+            Link::Dialing { net, mut retry, since } => {
                 let outcome = drain(&net, now, &mut self.heartbeat, events);
+                let stuck = matches!(outcome, Drained::Quiet) && now - since >= WT_OPEN_TIMEOUT;
+                if net.is_wt() && (stuck || matches!(outcome, Drained::Dropped(_))) {
+                    eprintln!("[net] WebTransport n'a pas abouti, retour au WebSocket");
+                    self.wt_failed = true;
+                    retry.next_dial_at = now;
+                    return Link::Waiting { retry };
+                }
                 match dial_decision(&retry, outcome, now) {
                     DialOutcome::Outdated => self.outdated(events),
                     DialOutcome::Drop(reason) => self.drop_link(reason, retry, now, events),
@@ -263,7 +370,7 @@ impl Connection {
                         events.push(ConnEvent::GaveUp);
                         Link::Offline
                     }
-                    DialOutcome::KeepWaiting => Link::Dialing { net, retry },
+                    DialOutcome::KeepWaiting => Link::Dialing { net, retry, since },
                 }
             }
 
@@ -336,18 +443,17 @@ enum Drained {
 
 fn drain(net: &Net, now: f64, heartbeat: &mut Heartbeat, events: &mut Vec<ConnEvent>) -> Drained {
     let mut outcome = Drained::Quiet;
-    while let Some(event) = net.ws_receiver.try_recv() {
+    while let Some(event) = net.next() {
         match event {
-            WsEvent::Message(WsMessage::Text(t)) if t == shared::OUTDATED_FRAME => return Drained::Outdated,
-            WsEvent::Opened => outcome = Drained::Opened,
-            WsEvent::Message(WsMessage::Binary(bytes)) => match shared::decode::<ServerMessage>(&bytes) {
+            NetEvent::Outdated => return Drained::Outdated,
+            NetEvent::Opened => outcome = Drained::Opened,
+            NetEvent::Bytes(bytes) => match shared::decode::<ServerMessage>(&bytes) {
                 Some(ServerMessage::Pong { id }) => heartbeat.on_pong(id, now),
                 Some(m) => events.push(ConnEvent::Message(Box::new(m))),
                 None => {}
             },
-            WsEvent::Closed => outcome = Drained::Dropped("fermée par le serveur".to_string()),
-            WsEvent::Error(e) => outcome = Drained::Dropped(e),
-            WsEvent::Message(_) => {}
+            NetEvent::Closed(reason) => outcome = Drained::Dropped(reason),
+            NetEvent::Other => {}
         }
     }
     outcome
