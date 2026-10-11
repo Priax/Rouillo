@@ -95,7 +95,8 @@ fn garbage_placement_leaves_the_piece_sequence_alone() {
         let pb = b.active_piece.take().expect("piece b");
         assert_eq!((pa.axis_type, pa.sat_type), (pb.axis_type, pb.sat_type), "pair {i}");
     }
-    assert_ne!(a.rng_position(), b.rng_position(), "setup: the drops drew nothing");
+    let draws = |x: &Board| x.rng.garbage.get_word_pos();
+    assert_ne!(draws(&a), draws(&b), "setup: the drops drew nothing");
 }
 
 #[test]
@@ -431,12 +432,11 @@ fn spawning_into_blocked_column_is_game_over() {
     assert_eq!(b.state, GameState::GameOver);
 }
 
-fn player(slot: u8, board: &Board, rng: Option<BoardRng>, ack: u32) -> PlayerUpdate {
+fn player(slot: u8, board: &Board, ack: u32) -> PlayerUpdate {
     PlayerUpdate {
         slot,
         team: slot,
         board: Box::new(board.clone()),
-        rng: rng.map(Box::new),
         ack,
         incoming: Vec::new(),
         target: None,
@@ -457,10 +457,7 @@ fn state_update_survives_encode_decode() {
     board.spawn_piece();
     board.cells[GRID_HEIGHT - 1][0] = Some(PuyoType::Green);
     board.score = 1234;
-    let (tick, players) = round_trip(
-        vec![player(1, &board, None, 7), player(2, &empty_board(), None, 9)],
-        4_242,
-    );
+    let (tick, players) = round_trip(vec![player(1, &board, 7), player(2, &empty_board(), 9)], 4_242);
     assert_eq!(tick, 4_242);
     assert_eq!(
         players.iter().map(|p| (p.slot, p.ack)).collect::<Vec<_>>(),
@@ -473,19 +470,19 @@ fn state_update_survives_encode_decode() {
 }
 
 #[test]
-fn rng_state_survives_encode_decode() {
-    // The RNG is no longer part of a Board's wire format; it rides on StateUpdate as an
-    // explicit field. This verifies that carrying it that way still round-trips and keeps
-    // piece generation deterministic across the wire.
+fn a_sent_board_draws_what_the_original_draws() {
     let mut board = Board::new(GRID_WIDTH, GRID_HEIGHT, 42, 1, 5);
     for _ in 0..10 {
         board.spawn_piece();
         board.active_piece = None;
     }
-    let (_, mut players) = round_trip(vec![player(1, &board, Some(board.rng_state()), 0)], 0);
-    let first = players.remove(0);
-    let mut restored = *first.board;
-    restored.set_rng(*first.rng.expect("rng present"));
+    board.pending_garbage = 3;
+    board.state = GameState::DroppingGarbage;
+    board.drop_garbage();
+    board.state = GameState::Playing;
+    let (_, mut players) = round_trip(vec![player(1, &board, 0)], 0);
+    let mut restored = *players.remove(0).board;
+    assert_eq!(restored.state_hash(), board.state_hash());
 
     for _ in 0..20 {
         board.spawn_piece();
@@ -494,17 +491,13 @@ fn rng_state_survives_encode_decode() {
         let b = restored.active_piece.take().expect("piece b");
         assert_eq!((a.axis_type, a.sat_type), (b.axis_type, b.sat_type));
     }
-}
-
-#[test]
-fn state_update_omits_rng_when_none() {
-    // A routine (RNG-less) update must round-trip too: the board survives and the RNG
-    // field comes back as None so the client knows to keep the RNG it already holds.
-    let mut board = empty_board();
-    board.spawn_piece();
-    let (_, players) = round_trip(vec![player(1, &board, None, 3)], 0);
-    assert!(players[0].rng.is_none());
-    assert_eq!(players[0].board.cells, board.cells);
+    for b in [&mut board, &mut restored] {
+        b.cells.iter_mut().for_each(|row| row.fill(None));
+        b.pending_garbage = 3;
+        b.state = GameState::DroppingGarbage;
+        b.drop_garbage();
+    }
+    assert_eq!(restored.cells, board.cells, "the garbage stream drifted");
 }
 
 #[test]
@@ -1266,7 +1259,6 @@ fn server_samples() -> Vec<ServerMessage> {
                 slot: 1,
                 team: 2,
                 board: Box::new(board.clone()),
-                rng: Some(Box::new(board.rng_state())),
                 ack: 1,
                 incoming: vec![IncomingGarbage { at: 4, amount: 5 }],
                 target: Some(3),
@@ -1394,7 +1386,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (10, 2_504_796_092_044_091_527);
+const PROTOCOL_DIGEST: (u32, u64) = (10, 5_441_369_562_006_515_276);
 
 #[test]
 fn protocol_changes_bump_the_version() {

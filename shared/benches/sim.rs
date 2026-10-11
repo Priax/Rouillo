@@ -36,7 +36,6 @@ fn state_update(p1: &Board, p2: &Board) -> ServerMessage {
         slot,
         team: slot,
         board: Box::new(board.clone()),
-        rng: Some(Box::new(board.rng_state())),
         ack: 0,
         incoming: Vec::new(),
         target: Some(3 - slot),

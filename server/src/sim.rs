@@ -1,7 +1,6 @@
 use rand::RngExt;
 use shared::{
-    config, Board, GameState, IncomingGarbage, InputKind, PlayerUpdate, RngPosition, RoomSettings, ServerMessage,
-    Targeting,
+    config, Board, GameState, IncomingGarbage, InputKind, PlayerUpdate, RoomSettings, ServerMessage, Targeting,
 };
 use tokio::time::Instant;
 use tracing::warn;
@@ -58,7 +57,6 @@ pub struct Sim {
     prev_chain: Vec<u32>,
     prev_all_clear: Vec<bool>,
     prev_piece_id: Vec<u32>,
-    pub last_sent_rng: Option<Vec<RngPosition>>,
 }
 
 impl Sim {
@@ -92,7 +90,6 @@ impl Sim {
             prev_chain: vec![0; n],
             prev_all_clear: vec![false; n],
             prev_piece_id: vec![piece_id; n],
-            last_sent_rng: None,
         }
     }
 
@@ -312,36 +309,22 @@ impl Sim {
         self.teams_alive() == [self.teams[slot]]
     }
 
-    pub fn rng_positions(&self) -> Vec<RngPosition> {
-        self.boards.iter().map(Board::rng_position).collect()
+    pub fn state_update(&self) -> ServerMessage {
+        self.state_update_of(0..self.boards.len())
     }
 
-    pub fn state_update(&self, full_rng: bool) -> ServerMessage {
-        self.state_update_of(0..self.boards.len(), full_rng)
-    }
-
-    /// The state of some boards only. A board's draws are sent when they
-    /// moved since its last update.
-    pub fn state_update_of(&self, slots: impl IntoIterator<Item = usize>, full_rng: bool) -> ServerMessage {
-        let pos = self.rng_positions();
+    /// The state of some boards only.
+    pub fn state_update_of(&self, slots: impl IntoIterator<Item = usize>) -> ServerMessage {
         let players = slots
             .into_iter()
             .filter(|&i| i < self.boards.len())
-            .map(|i| {
-                let changed = full_rng
-                    || self
-                        .last_sent_rng
-                        .as_ref()
-                        .is_none_or(|sent| sent.get(i) != Some(&pos[i]));
-                PlayerUpdate {
-                    slot: slot_byte(i + 1),
-                    team: self.teams[i],
-                    board: Box::new(self.boards[i].clone()),
-                    rng: changed.then(|| Box::new(self.boards[i].rng_state())),
-                    ack: self.last_seq[i],
-                    incoming: self.incoming(i),
-                    target: self.targets[i].map(|t| slot_byte(t + 1)),
-                }
+            .map(|i| PlayerUpdate {
+                slot: slot_byte(i + 1),
+                team: self.teams[i],
+                board: Box::new(self.boards[i].clone()),
+                ack: self.last_seq[i],
+                incoming: self.incoming(i),
+                target: self.targets[i].map(|t| slot_byte(t + 1)),
             })
             .collect();
         ServerMessage::StateUpdate {
@@ -475,7 +458,7 @@ mod tests {
     fn the_wire_names_slots_from_one() {
         let mut s = sim(&[0, 1]);
         s.update_targets();
-        let ServerMessage::StateUpdate { players, .. } = s.state_update(true) else {
+        let ServerMessage::StateUpdate { players, .. } = s.state_update() else {
             unreachable!()
         };
         let seen: Vec<_> = players.iter().map(|p| (p.slot, p.target)).collect();

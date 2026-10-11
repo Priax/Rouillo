@@ -351,45 +351,30 @@ fn a_restart_clears_attacks_in_flight() {
     );
 }
 
-pub(super) fn update_rngs(rx: &mut mpsc::Receiver<Vec<u8>>) -> Option<(bool, bool)> {
+fn last_board(rx: &mut mpsc::Receiver<Vec<u8>>, slot: u8) -> Option<shared::Board> {
     drain(rx).into_iter().rev().find_map(|m| match m {
-        ServerMessage::StateUpdate { players, .. } => Some((players[0].rng.is_some(), players[1].rng.is_some())),
+        ServerMessage::StateUpdate { players, .. } => players.into_iter().find(|p| p.slot == slot).map(|p| *p.board),
         _ => None,
     })
 }
 
 #[test]
-fn the_rng_is_resent_when_a_drop_draws_from_it() {
+fn every_update_carries_the_draws_so_far() {
     let mut mgr = new_mgr();
     let (mut rx1, _rx2) = running_game(&mut mgr);
-    mgr.tick(STEP, true);
-    drain(&mut rx1);
-    mgr.tick(STEP, true);
-    assert_eq!(
-        update_rngs(&mut rx1),
-        Some((false, false)),
-        "setup: a quiet tick resends nothing"
-    );
-
-    let before = mgr.rooms[&1].sim.boards[0].rng_position();
-    {
-        let b = &mut sim_of(&mut mgr).boards[0];
+    let drop = |b: &mut shared::Board| {
         b.pending_garbage = 3; // not a multiple of 6: the leftover columns are drawn
         b.state = GameState::DroppingGarbage;
         b.drop_garbage();
-    }
-    assert_ne!(
-        mgr.rooms[&1].sim.boards[0].rng_position(),
-        before,
-        "setup: the drop drew nothing"
-    );
-    let pid = mgr.rooms[&1].sim.boards[0].piece_id;
+    };
+    drop(&mut sim_of(&mut mgr).boards[0]);
     mgr.tick(STEP, true);
-    assert_eq!(
-        mgr.rooms[&1].sim.boards[0].piece_id, pid,
-        "setup: a new pair already came"
-    );
-    assert_eq!(update_rngs(&mut rx1), Some((true, false)));
+    let mut sent = last_board(&mut rx1, 1).expect("an update");
+    let mut server = mgr.rooms[&1].sim.boards[0].clone();
+    drop(&mut sent);
+    drop(&mut server);
+    assert_eq!(sent.cells, server.cells, "the next drop lands elsewhere on the client");
+    assert_eq!(sent.state_hash(), server.state_hash());
 }
 
 #[test]

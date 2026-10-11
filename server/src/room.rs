@@ -231,13 +231,12 @@ impl Room {
             let everyone =
                 just_finished || self.sim.boards.len() < SPARSE_FROM || self.sim.tick.is_multiple_of(OTHERS_EVERY);
             if everyone {
-                if let Some(upd) = encoded(&self.sim.state_update(just_finished)) {
+                if let Some(upd) = encoded(&self.sim.state_update()) {
                     self.send_to_audience(&upd, outgoing);
                 }
             } else {
                 self.send_own_boards(outgoing);
             }
-            self.sim.last_sent_rng = Some(self.sim.rng_positions());
         }
         record
     }
@@ -254,10 +253,8 @@ impl Room {
         let watching = self.spectators.iter().map(|s| (s.conn, None));
         for (conn, slot) in seated.chain(watching) {
             let payload = match slot {
-                Some(slot) => encoded(&self.sim.state_update_of([slot], false)),
-                None => all
-                    .get_or_insert_with(|| encoded(&self.sim.state_update(false)))
-                    .clone(),
+                Some(slot) => encoded(&self.sim.state_update_of([slot])),
+                None => all.get_or_insert_with(|| encoded(&self.sim.state_update())).clone(),
             };
             if let Some(payload) = payload {
                 outgoing.push((conn, payload));

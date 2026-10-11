@@ -131,7 +131,6 @@ pub struct PlayerUpdate {
     pub slot: u8,
     pub team: u8,
     pub board: Box<Board>,
-    pub rng: Option<Box<BoardRng>>,
     pub ack: u32,
     pub incoming: Vec<IncomingGarbage>,
     /// The slot this player's nuisance goes to now.
@@ -597,14 +596,44 @@ pub struct Board {
     pub settle: Settle,
     pub falls: Vec<CellFall>,
     pub popping: Vec<(u8, u8)>,
-    #[serde(skip)]
     rng: BoardRng,
 }
 
+/// The board's two random streams, sent as their seed and how far each went:
+/// every update carries them whole, and a lost one costs nothing.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct BoardRng {
+#[serde(from = "RngWire", into = "RngWire")]
+struct BoardRng {
+    seed: u64,
     pieces: rand_chacha::ChaCha12Rng,
     garbage: rand_chacha::ChaCha12Rng,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+struct RngWire {
+    seed: u64,
+    pieces: u64,
+    garbage: u64,
+}
+
+impl From<RngWire> for BoardRng {
+    fn from(w: RngWire) -> Self {
+        let mut rng = Self::from_seed(w.seed);
+        rng.pieces.set_word_pos(u128::from(w.pieces));
+        rng.garbage.set_word_pos(u128::from(w.garbage));
+        rng
+    }
+}
+
+impl From<BoardRng> for RngWire {
+    fn from(rng: BoardRng) -> Self {
+        let pos = |r: &rand_chacha::ChaCha12Rng| u64::try_from(r.get_word_pos()).unwrap_or(u64::MAX);
+        Self {
+            seed: rng.seed,
+            pieces: pos(&rng.pieces),
+            garbage: pos(&rng.garbage),
+        }
+    }
 }
 
 impl BoardRng {
@@ -613,14 +642,7 @@ impl BoardRng {
         let pieces = rand_chacha::ChaCha12Rng::seed_from_u64(seed);
         let mut garbage = pieces.clone();
         garbage.set_stream(1);
-        Self { pieces, garbage }
-    }
-
-    fn position(&self) -> RngPosition {
-        RngPosition {
-            pieces: self.pieces.get_word_pos(),
-            garbage: self.garbage.get_word_pos(),
-        }
+        Self { seed, pieces, garbage }
     }
 }
 
@@ -628,13 +650,6 @@ impl Default for BoardRng {
     fn default() -> Self {
         Self::from_seed(0)
     }
-}
-
-/// How far each of a board's random streams has advanced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RngPosition {
-    pub pieces: u128,
-    pub garbage: u128,
 }
 
 impl Board {
@@ -1240,18 +1255,6 @@ impl Board {
             .unwrap_or(0);
         let filled = self.cells.iter().flatten().filter(|c| c.is_some()).count();
         (peak, filled)
-    }
-
-    pub fn rng_position(&self) -> RngPosition {
-        self.rng.position()
-    }
-
-    pub fn rng_state(&self) -> BoardRng {
-        self.rng.clone()
-    }
-
-    pub fn set_rng(&mut self, rng: BoardRng) {
-        self.rng = rng;
     }
 
     pub fn apply_input(&mut self, input: InputKind) {

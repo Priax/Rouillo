@@ -160,13 +160,6 @@ fn watch(session: &mut GameSession, board: Board, tick: u32, incoming: Vec<Incom
     crate::logic::announce_events(session);
 }
 
-/// The draws are sent only when they change: otherwise they go on from the
-/// last board.
-fn with_rng(mut board: Board, rng: Option<Box<shared::BoardRng>>, last: &Board) -> Board {
-    board.set_rng(rng.map_or_else(|| last.rng_state(), |r| *r));
-    board
-}
-
 /// Hands each player's part of an update to its board: the large one is
 /// reconciled with the predicted inputs, the others are smoothed.
 fn apply_update(session: &mut GameSession, tick: u32, players: Vec<PlayerUpdate>) {
@@ -193,7 +186,7 @@ fn apply_update(session: &mut GameSession, tick: u32, players: Vec<PlayerUpdate>
             }
         };
         let rival = &mut session.rivals[i];
-        let board = with_rng(*p.board, p.rng, &rival.board);
+        let board = *p.board;
         rival.view.push(tick, board.clone(), now);
         rival.board = board;
         rival.team = p.team;
@@ -203,7 +196,7 @@ fn apply_update(session: &mut GameSession, tick: u32, players: Vec<PlayerUpdate>
     let Some(me) = mine else { return };
     session.team = me.team;
     session.target = me.target;
-    let board = with_rng(*me.board, me.rng, &session.board);
+    let board = *me.board;
     if session.spectating() {
         watch(session, board, tick, me.incoming);
         return;
@@ -546,7 +539,6 @@ mod tests {
             slot,
             team,
             board: Box::new(board),
-            rng: None,
             ack: 0,
             incoming: Vec::new(),
             target: None,

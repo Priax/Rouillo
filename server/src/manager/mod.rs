@@ -349,7 +349,7 @@ impl Manager {
 
     pub fn send_snapshot(&mut self, id: RoomId) {
         let msg = match self.rooms.get(&id) {
-            Some(room) => room.sim.state_update(true),
+            Some(room) => room.sim.state_update(),
             None => return,
         };
         self.send_room_msg(id, &msg);

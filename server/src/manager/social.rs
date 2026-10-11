@@ -155,7 +155,7 @@ impl Manager {
         room.spectators.push(spectator);
         let count = room.spectators.len() as u8;
         let playing = matches!(room.phase, Phase::Playing);
-        let snapshot = playing.then(|| room.sim.state_update(true));
+        let snapshot = playing.then(|| room.sim.state_update());
         let lobby = room.spectator_info();
         self.set_room(conn, Some(id));
         self.refresh_lobby(id);

@@ -52,7 +52,7 @@ impl Manager {
             info: room.lobby_info_for(slot),
         };
         let playing = matches!(room.phase, Phase::Playing);
-        let snapshot = playing.then(|| room.sim.state_update(true));
+        let snapshot = playing.then(|| room.sim.state_update());
         let result = room.series.as_ref().and_then(|s| s.result);
         self.deliver_msg(conn, &lobby);
         if let Some(snapshot) = snapshot {
