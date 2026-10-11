@@ -218,23 +218,24 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 state.screen = Screen::Game;
             }
         }
-        ServerMessage::StateUpdate {
-            p1_board,
-            p2_board,
-            p1_rng,
-            p2_rng,
-            p1_ack,
-            p2_ack,
-            tick,
-            p1_incoming,
-            p2_incoming,
-        } => {
+        ServerMessage::StateUpdate { tick, mut players } => {
             if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
-                let (mut board, mut other_board, ack, my_rng, opp_rng, incoming, opp_incoming) = match session.my_slot {
-                    0 | 1 => (*p1_board, *p2_board, p1_ack, p1_rng, p2_rng, p1_incoming, p2_incoming),
-                    2 => (*p2_board, *p1_board, p2_ack, p2_rng, p1_rng, p2_incoming, p1_incoming),
-                    _ => return,
+                let mine = match session.my_slot {
+                    0 => 0,
+                    slot => match players.iter().position(|p| p.slot == slot) {
+                        Some(i) => i,
+                        None => return,
+                    },
                 };
+                if mine >= players.len() {
+                    return;
+                }
+                let me = players.swap_remove(mine);
+                let Some(opponent) = players.into_iter().min_by_key(|p| p.slot) else {
+                    return;
+                };
+                let (mut board, ack, my_rng, incoming) = (*me.board, me.ack, me.rng, me.incoming);
+                let (mut other_board, opp_rng, opp_incoming) = (*opponent.board, opponent.rng, opponent.incoming);
                 match my_rng {
                     Some(r) => board.set_rng(*r),
                     None => board.set_rng(session.board.rng_state()),

@@ -5,7 +5,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use shared::config::{GRID_HEIGHT, GRID_WIDTH};
-use shared::{decode, encode, Board, PuyoType, ServerMessage};
+use shared::{decode, encode, Board, PlayerUpdate, PuyoType, ServerMessage};
 
 fn empty_board() -> Board {
     let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 1, 5);
@@ -32,16 +32,18 @@ fn full_board() -> Board {
 }
 
 fn state_update(p1: &Board, p2: &Board) -> ServerMessage {
+    let player = |slot: u8, board: &Board| PlayerUpdate {
+        slot,
+        team: slot,
+        board: Box::new(board.clone()),
+        rng: Some(Box::new(board.rng_state())),
+        ack: 0,
+        incoming: Vec::new(),
+        target: Some(3 - slot),
+    };
     ServerMessage::StateUpdate {
-        p1_board: Box::new(p1.clone()),
-        p2_board: Box::new(p2.clone()),
-        p1_rng: Some(Box::new(p1.rng_state())),
-        p2_rng: Some(Box::new(p2.rng_state())),
-        p1_ack: 0,
-        p2_ack: 0,
         tick: 0,
-        p1_incoming: Vec::new(),
-        p2_incoming: Vec::new(),
+        players: vec![player(1, p1), player(2, p2)],
     }
 }
 

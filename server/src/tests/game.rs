@@ -256,11 +256,9 @@ fn the_victim_is_told_of_an_attack_in_flight() {
         .into_iter()
         .rev()
         .find_map(|m| match m {
-            ServerMessage::StateUpdate {
-                p1_incoming,
-                p2_incoming,
-                ..
-            } => Some((p1_incoming, p2_incoming)),
+            ServerMessage::StateUpdate { players, .. } => {
+                Some((players[0].incoming.clone(), players[1].incoming.clone()))
+            }
             _ => None,
         })
         .expect("no update");
@@ -346,7 +344,7 @@ fn a_restart_clears_attacks_in_flight() {
 
 pub(super) fn update_rngs(rx: &mut mpsc::Receiver<Vec<u8>>) -> Option<(bool, bool)> {
     drain(rx).into_iter().rev().find_map(|m| match m {
-        ServerMessage::StateUpdate { p1_rng, p2_rng, .. } => Some((p1_rng.is_some(), p2_rng.is_some())),
+        ServerMessage::StateUpdate { players, .. } => Some((players[0].rng.is_some(), players[1].rng.is_some())),
         _ => None,
     })
 }
@@ -383,4 +381,23 @@ fn the_rng_is_resent_when_a_drop_draws_from_it() {
         "setup: a new pair already came"
     );
     assert_eq!(update_rngs(&mut rx1), Some((true, false)));
+}
+
+#[test]
+fn a_three_player_game_goes_on_until_one_player_is_left() {
+    use crate::room::{Member, Phase, Room};
+    let members = (0..3)
+        .map(|i| Member::present(format!("P{i}"), i, None, format!("p{i}")))
+        .collect();
+    let mut room = Room::new(1, "trio".into(), members, shared::RoomSettings::default(), None);
+    room.phase = Phase::CountingDown(0.0);
+    let mut out = Vec::new();
+    room.tick_countdown(0.1, &mut out);
+    assert_eq!(room.sim.boards.len(), 3);
+    assert!(room.forfeit(0).is_none(), "two players still in");
+    assert!(room.game_running());
+    assert_eq!(room.sim.teams_alive(), [1, 2]);
+    assert!(room.forfeit(2).is_none(), "no record for three players yet");
+    assert!(!room.game_running());
+    assert_eq!(room.sim.teams_alive(), [1]);
 }

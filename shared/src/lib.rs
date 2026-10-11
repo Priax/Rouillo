@@ -111,6 +111,33 @@ pub enum InputKind {
 
 pub type RoomId = u32;
 
+/// Who a player's nuisance goes to, among the opponents still playing. The
+/// player picks it and may change it during the game.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Targeting {
+    #[default]
+    Random,
+    /// Those targeting this player, or else a random opponent.
+    Attackers,
+    /// The opponent whose board is fullest, to finish them off.
+    Danger,
+    /// A slot of the player's choosing.
+    Manual(u8),
+}
+
+/// One player's part of a state update.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PlayerUpdate {
+    pub slot: u8,
+    pub team: u8,
+    pub board: Box<Board>,
+    pub rng: Option<Box<BoardRng>>,
+    pub ack: u32,
+    pub incoming: Vec<IncomingGarbage>,
+    /// The slot this player's nuisance goes to now.
+    pub target: Option<u8>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IncomingGarbage {
     pub at: u32,
@@ -276,7 +303,7 @@ pub struct RankedInfo {
     pub wins: [u8; 2],
 }
 
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 
 pub const MAX_CHAT_CHARS: usize = 200;
 pub const MAX_SPECTATORS: usize = 20;
@@ -329,21 +356,17 @@ pub enum ClientMessage {
     WatchFriend {
         user_id: String,
     },
+    SetTargeting {
+        targeting: Targeting,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServerMessage {
     GameStart,
     StateUpdate {
-        p1_board: Box<Board>,
-        p2_board: Box<Board>,
-        p1_rng: Option<Box<BoardRng>>,
-        p2_rng: Option<Box<BoardRng>>,
-        p1_ack: u32,
-        p2_ack: u32,
         tick: u32,
-        p1_incoming: Vec<IncomingGarbage>,
-        p2_incoming: Vec<IncomingGarbage>,
+        players: Vec<PlayerUpdate>,
     },
     Restart,
     OpponentDisconnected,
@@ -1184,6 +1207,21 @@ impl Board {
 
     pub fn level(&self) -> u32 {
         self.start_level + self.match_frames / LEVEL_FRAMES
+    }
+
+    /// How close to losing: the tallest column, then how many cells are taken.
+    pub fn danger(&self) -> (usize, usize) {
+        let peak = (0..self.width)
+            .map(|c| {
+                self.height
+                    - (0..self.height)
+                        .find(|&r| self.cells[r][c].is_some())
+                        .unwrap_or(self.height)
+            })
+            .max()
+            .unwrap_or(0);
+        let filled = self.cells.iter().flatten().filter(|c| c.is_some()).count();
+        (peak, filled)
     }
 
     pub fn rng_position(&self) -> RngPosition {

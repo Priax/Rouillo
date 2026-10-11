@@ -1,4 +1,4 @@
-use shared::{GameState, LobbyInfo, RankedInfo, RoomId, RoomInfo, RoomSettings, ServerMessage};
+use shared::{LobbyInfo, RankedInfo, RoomId, RoomInfo, RoomSettings, ServerMessage};
 use tokio::time::Instant;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -68,6 +68,7 @@ pub struct Room {
 
 impl Room {
     pub fn new(id: RoomId, name: String, members: Vec<Member>, settings: RoomSettings, series: Option<Series>) -> Self {
+        let members_len = members.len().max(2);
         Self {
             id,
             name,
@@ -75,7 +76,7 @@ impl Room {
             members,
             settings,
             phase: Phase::Lobby,
-            sim: Sim::new(&settings),
+            sim: Sim::new(&settings, (0..members_len).map(team_of).collect()),
             series,
             spectators: Vec::new(),
         }
@@ -126,7 +127,7 @@ impl Room {
         *t -= dt;
         if *t <= 0.0 {
             self.phase = Phase::Playing;
-            self.sim.reset_boards(&self.settings);
+            self.sim.reset_boards(&self.settings, self.teams());
             match shared::encode(&ServerMessage::GameStart) {
                 Ok(payload) => self.send_to_audience(&payload, outgoing),
                 Err(e) => error!("encode GameStart failed: {e}"),
@@ -150,23 +151,20 @@ impl Room {
         if advanced {
             self.sim.advance();
             self.sim.record_stats();
-            if self.sim.boards.iter().any(|b| b.state == GameState::GameOver) {
+            let alive = self.sim.teams_alive();
+            if alive.len() <= 1 {
                 self.sim.finished = true;
-                let lost = self.sim.boards.each_ref().map(|b| b.state == GameState::GameOver);
-                let winner_slot = match lost {
-                    [true, true] => None,
-                    [true, false] => Some(2),
-                    _ => Some(1),
-                };
-                let rec = self.match_record(winner_slot);
+                let winner_slot = alive
+                    .first()
+                    .and_then(|&team| (0..self.sim.boards.len()).find(|&s| self.sim.teams[s] == team));
                 info!(
                     "Match terminé room #{} → {} ({:.0}s, inputs en retard {:?})",
                     self.id,
-                    winner_slot.map_or_else(|| "égalité".to_string(), |w| format!("slot {w} gagne")),
-                    rec.duration_secs,
+                    winner_slot.map_or_else(|| "égalité".to_string(), |w| format!("slot {} gagne", w + 1)),
+                    self.sim.start.elapsed().as_secs_f64(),
                     self.sim.late_inputs
                 );
-                record = Some(rec);
+                record = self.match_record(winner_slot);
             }
         }
         let just_finished = record.is_some();
@@ -238,31 +236,55 @@ impl Room {
         matches!(self.phase, Phase::Playing) && !self.sim.finished
     }
 
-    fn match_record(&self, winner_slot: Option<u8>) -> db::MatchRecord {
-        db::MatchRecord {
+    /// Only two-player games are recorded until the database knows more.
+    fn match_record(&self, winner: Option<usize>) -> Option<db::MatchRecord> {
+        if self.sim.boards.len() != 2 {
+            return None;
+        }
+        let pair = |v: &[u32]| [v[0], v[1]];
+        Some(db::MatchRecord {
             ranked: self.series.is_some(),
             duration_secs: self.sim.start.elapsed().as_secs_f64(),
-            winner_slot,
+            winner_slot: winner.and_then(|w| u8::try_from(w + 1).ok()),
             user_ids: [
                 self.members.first().and_then(|m| m.user_id),
                 self.members.get(1).and_then(|m| m.user_id),
             ],
-            max_chain: self.sim.max_chain,
-            total_chains: self.sim.total_chains,
-            nuisance_sent: self.sim.nuisance_sent,
-            all_clears: self.sim.all_clears,
-            pieces_placed: self.sim.pieces_placed,
-        }
+            max_chain: pair(&self.sim.max_chain),
+            total_chains: pair(&self.sim.total_chains),
+            nuisance_sent: pair(&self.sim.nuisance_sent),
+            all_clears: pair(&self.sim.all_clears),
+            pieces_placed: pair(&self.sim.pieces_placed),
+        })
     }
 
+    /// Takes `slot` out of a running game. The game ends when one team is
+    /// left, which must still have someone connected to be credited.
     pub fn forfeit(&mut self, slot: usize) -> Option<db::MatchRecord> {
-        if !self.game_running() || self.members.len() != 2 || slot > 1 {
+        if !self.game_running() || slot >= self.sim.boards.len() {
             return None;
         }
-        let winner = 1 - slot;
-        self.members[winner].conn?;
+        let team = self.sim.teams[slot];
+        let others_connected = (0..self.sim.boards.len())
+            .any(|s| self.sim.teams[s] != team && self.members.get(s).is_some_and(|m| m.conn.is_some()));
+        if !others_connected {
+            return None;
+        }
+        self.sim.eliminate(slot);
+        let alive = self.sim.teams_alive();
+        if alive.len() > 1 {
+            return None;
+        }
         self.sim.finished = true;
-        Some(self.match_record(Some((winner + 1) as u8)))
+        let winner = alive
+            .first()
+            .and_then(|&t| (0..self.sim.boards.len()).find(|&s| self.sim.teams[s] == t));
+        self.match_record(winner)
+    }
+
+    /// One team per player, until the lobby lets them pick.
+    pub fn teams(&self) -> Vec<u8> {
+        (0..self.members.len()).map(team_of).collect()
     }
 
     pub fn host_user(&self) -> Option<Uuid> {
@@ -284,4 +306,8 @@ impl Room {
             ranked: self.series.is_some(),
         }
     }
+}
+
+fn team_of(slot: usize) -> u8 {
+    u8::try_from(slot).unwrap_or(u8::MAX)
 }

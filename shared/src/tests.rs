@@ -425,42 +425,45 @@ fn spawning_into_blocked_column_is_game_over() {
     assert_eq!(b.state, GameState::GameOver);
 }
 
+fn player(slot: u8, board: &Board, rng: Option<BoardRng>, ack: u32) -> PlayerUpdate {
+    PlayerUpdate {
+        slot,
+        team: slot,
+        board: Box::new(board.clone()),
+        rng: rng.map(Box::new),
+        ack,
+        incoming: Vec::new(),
+        target: None,
+    }
+}
+
+fn round_trip(players: Vec<PlayerUpdate>, tick: u32) -> (u32, Vec<PlayerUpdate>) {
+    let bytes = encode(&ServerMessage::StateUpdate { tick, players }).expect("encode");
+    match decode(&bytes).expect("decode") {
+        ServerMessage::StateUpdate { tick, players } => (tick, players),
+        _ => panic!("wrong variant"),
+    }
+}
+
 #[test]
 fn state_update_survives_encode_decode() {
     let mut board = empty_board();
     board.spawn_piece();
     board.cells[GRID_HEIGHT - 1][0] = Some(PuyoType::Green);
     board.score = 1234;
-    let msg = ServerMessage::StateUpdate {
-        p1_board: Box::new(board.clone()),
-        p2_board: Box::new(empty_board()),
-        p1_rng: None,
-        p2_rng: None,
-        p1_ack: 7,
-        p2_ack: 9,
-        tick: 4_242,
-        p1_incoming: Vec::new(),
-        p2_incoming: Vec::new(),
-    };
-    let bytes = encode(&msg).expect("encode");
-    let back: ServerMessage = decode(&bytes).expect("decode");
-    match back {
-        ServerMessage::StateUpdate {
-            p1_board,
-            p1_ack,
-            p2_ack,
-            tick,
-            ..
-        } => {
-            assert_eq!(p1_ack, 7);
-            assert_eq!(p2_ack, 9);
-            assert_eq!(tick, 4_242);
-            assert_eq!(p1_board.score, 1234);
-            assert_eq!(p1_board.cells, board.cells);
-            assert!(p1_board.active_piece.is_some());
-        }
-        _ => panic!("wrong variant"),
-    }
+    let (tick, players) = round_trip(
+        vec![player(1, &board, None, 7), player(2, &empty_board(), None, 9)],
+        4_242,
+    );
+    assert_eq!(tick, 4_242);
+    assert_eq!(
+        players.iter().map(|p| (p.slot, p.ack)).collect::<Vec<_>>(),
+        [(1, 7), (2, 9)]
+    );
+    let first = &players[0].board;
+    assert_eq!(first.score, 1234);
+    assert_eq!(first.cells, board.cells);
+    assert!(first.active_piece.is_some());
 }
 
 #[test]
@@ -473,25 +476,10 @@ fn rng_state_survives_encode_decode() {
         board.spawn_piece();
         board.active_piece = None;
     }
-
-    let msg = ServerMessage::StateUpdate {
-        p1_board: Box::new(board.clone()),
-        p2_board: Box::new(empty_board()),
-        p1_rng: Some(Box::new(board.rng_state())),
-        p2_rng: None,
-        p1_ack: 0,
-        p2_ack: 0,
-        tick: 0,
-        p1_incoming: Vec::new(),
-        p2_incoming: Vec::new(),
-    };
-    let bytes = encode(&msg).expect("encode");
-    let back: ServerMessage = decode(&bytes).expect("decode");
-    let ServerMessage::StateUpdate { p1_board, p1_rng, .. } = back else {
-        panic!("wrong variant");
-    };
-    let mut restored = *p1_board;
-    restored.set_rng(*p1_rng.expect("rng present"));
+    let (_, mut players) = round_trip(vec![player(1, &board, Some(board.rng_state()), 0)], 0);
+    let first = players.remove(0);
+    let mut restored = *first.board;
+    restored.set_rng(*first.rng.expect("rng present"));
 
     for _ in 0..20 {
         board.spawn_piece();
@@ -508,24 +496,9 @@ fn state_update_omits_rng_when_none() {
     // field comes back as None so the client knows to keep the RNG it already holds.
     let mut board = empty_board();
     board.spawn_piece();
-    let msg = ServerMessage::StateUpdate {
-        p1_board: Box::new(board.clone()),
-        p2_board: Box::new(empty_board()),
-        p1_rng: None,
-        p2_rng: None,
-        p1_ack: 3,
-        p2_ack: 4,
-        tick: 0,
-        p1_incoming: Vec::new(),
-        p2_incoming: Vec::new(),
-    };
-    let bytes = encode(&msg).expect("encode");
-    let back: ServerMessage = decode(&bytes).expect("decode");
-    let ServerMessage::StateUpdate { p1_board, p1_rng, .. } = back else {
-        panic!("wrong variant");
-    };
-    assert!(p1_rng.is_none());
-    assert_eq!(p1_board.cells, board.cells);
+    let (_, players) = round_trip(vec![player(1, &board, None, 3)], 0);
+    assert!(players[0].rng.is_none());
+    assert_eq!(players[0].board.cells, board.cells);
 }
 
 #[test]
@@ -1218,10 +1191,13 @@ fn client_samples() -> Vec<ClientMessage> {
         ClientMessage::Chat { text: "c".into() },
         ClientMessage::Spectate { id: 9 },
         ClientMessage::WatchFriend { user_id: "u".into() },
+        ClientMessage::SetTargeting {
+            targeting: Targeting::Manual(2),
+        },
     ]
 }
 
-const CLIENT_VARIANTS: usize = 19;
+const CLIENT_VARIANTS: usize = 20;
 
 fn client_variant(m: &ClientMessage) -> usize {
     match m {
@@ -1244,6 +1220,7 @@ fn client_variant(m: &ClientMessage) -> usize {
         ClientMessage::Chat { .. } => 16,
         ClientMessage::Spectate { .. } => 17,
         ClientMessage::WatchFriend { .. } => 18,
+        ClientMessage::SetTargeting { .. } => 19,
     }
 }
 
@@ -1273,15 +1250,16 @@ fn server_samples() -> Vec<ServerMessage> {
     vec![
         ServerMessage::GameStart,
         ServerMessage::StateUpdate {
-            p1_board: Box::new(board.clone()),
-            p2_board: Box::new(board.clone()),
-            p1_rng: Some(Box::new(board.rng_state())),
-            p2_rng: Some(Box::new(board.rng_state())),
-            p1_ack: 1,
-            p2_ack: 2,
             tick: 3,
-            p1_incoming: vec![IncomingGarbage { at: 4, amount: 5 }],
-            p2_incoming: vec![IncomingGarbage { at: 6, amount: 7 }],
+            players: vec![PlayerUpdate {
+                slot: 1,
+                team: 2,
+                board: Box::new(board.clone()),
+                rng: Some(Box::new(board.rng_state())),
+                ack: 1,
+                incoming: vec![IncomingGarbage { at: 4, amount: 5 }],
+                target: Some(3),
+            }],
         },
         ServerMessage::Restart,
         ServerMessage::OpponentDisconnected,
@@ -1406,7 +1384,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (9, 5_189_629_802_848_321_362);
+const PROTOCOL_DIGEST: (u32, u64) = (10, 4_962_719_314_525_863_743);
 
 #[test]
 fn protocol_changes_bump_the_version() {
@@ -1481,4 +1459,18 @@ fn nothing_turns_into_the_fourteenth_row() {
         "{:?}",
         piece.get_positions()
     );
+}
+
+#[test]
+fn danger_ranks_the_tallest_column_first() {
+    let mut low = empty_board();
+    low.cells[GRID_HEIGHT - 1].fill(Some(PuyoType::Red));
+    let mut tall = empty_board();
+    for row in &mut tall.cells[GRID_HEIGHT - 4..] {
+        row[0] = Some(PuyoType::Red);
+    }
+    assert_eq!(low.danger(), (1, GRID_WIDTH));
+    assert_eq!(tall.danger(), (4, 4));
+    assert!(tall.danger() > low.danger());
+    assert_eq!(empty_board().danger(), (0, 0));
 }

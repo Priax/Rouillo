@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use shared::{config, InputKind, PausePolicy, RoomId, RoomInfo, RoomSettings, ServerMessage};
+use shared::{config, InputKind, PausePolicy, RoomId, RoomInfo, RoomSettings, ServerMessage, Targeting};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tracing::{error, info, warn};
@@ -147,6 +147,10 @@ pub enum Command {
         conn: ConnId,
         user_id: String,
     },
+    SetTargeting {
+        conn: ConnId,
+        targeting: Targeting,
+    },
     /// Which of `users` are in a room, for the friend list.
     Playing {
         users: Vec<Uuid>,
@@ -197,7 +201,8 @@ impl Command {
             | Self::AcceptMatch { conn }
             | Self::Chat { conn, .. }
             | Self::Spectate { conn, .. }
-            | Self::WatchFriend { conn, .. } => Some(*conn),
+            | Self::WatchFriend { conn, .. }
+            | Self::SetTargeting { conn, .. } => Some(*conn),
         }
     }
 }
@@ -446,6 +451,7 @@ impl Manager {
             Command::Chat { conn, text } => self.chat(conn, &text),
             Command::Spectate { conn, id } => self.spectate(conn, id),
             Command::WatchFriend { conn, user_id } => self.watch_friend(conn, &user_id),
+            Command::SetTargeting { conn, targeting } => self.set_targeting(conn, targeting),
             Command::Playing { users, reply } => {
                 let _ = reply.send(self.playing(&users));
             }

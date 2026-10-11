@@ -200,6 +200,9 @@ impl Manager {
                 let Some(idx) = room.slot_of_conn(conn) else {
                     return;
                 };
+                if idx >= room.sim.boards.len() {
+                    return;
+                }
                 if matches!(room.phase, Phase::Playing) && !room.sim.paused && !room.sim.finished {
                     room.sim.queue_input(idx, tick, seq, kind);
                 } else {
@@ -207,6 +210,15 @@ impl Manager {
                 }
             });
         }
+    }
+
+    pub(super) fn set_targeting(&mut self, conn: ConnId, targeting: Targeting) {
+        let Some(id) = self.room_of(conn) else { return };
+        self.with_room(id, |room| {
+            if let Some(slot) = room.slot_of_conn(conn).filter(|&s| s < room.sim.boards.len()) {
+                room.sim.set_targeting(slot, targeting);
+            }
+        });
     }
 
     pub(super) fn toggle_pause(&mut self, conn: ConnId) {
@@ -253,7 +265,8 @@ impl Manager {
                             false
                         } else {
                             room.sim.last_restart = Some(now);
-                            room.sim.reset_boards(&room.settings);
+                            let teams = room.teams();
+                            room.sim.reset_boards(&room.settings, teams);
                             true
                         }
                     } else {

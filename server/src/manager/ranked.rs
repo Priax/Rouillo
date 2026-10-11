@@ -363,7 +363,8 @@ impl Manager {
                 continue;
             }
             if let Some(room) = self.rooms.get_mut(&id) {
-                room.sim.reset_boards(&room.settings);
+                let teams = room.teams();
+                room.sim.reset_boards(&room.settings, teams);
                 if let Some(series) = room.series.as_mut() {
                     series.next_game_at = None;
                 }
