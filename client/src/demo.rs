@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use shared::{config, Board, GameState, InputKind, PuyoType, RoomSettings};
+use shared::{config, ActivePuyo, Board, GameState, InputKind, PuyoType, RoomSettings};
 
 use crate::cpu::{Cpu, Difficulty, Style};
 use crate::state::TurnAnim;
@@ -304,6 +304,9 @@ pub struct Demo {
     pub key: Option<(&'static str, f32)>,
     pub chain: Option<(u32, f32)>,
     text: &'static str,
+    /// The first pairs, own and the rival's, put on the boards once the
+    /// lesson's opening words are read.
+    first_pairs: [Option<ActivePuyo>; 2],
 }
 
 impl Demo {
@@ -341,10 +344,15 @@ impl Demo {
             key: None,
             chain: None,
             text: l.intro,
+            first_pairs: [None, None],
         };
         if demo.cpu.is_none() {
             demo.take_next_drop();
         }
+        demo.first_pairs = [
+            demo.board.active_piece.take(),
+            demo.rival.as_mut().and_then(|r| r.board.active_piece.take()),
+        ];
         demo
     }
 
@@ -354,11 +362,6 @@ impl Demo {
 
     pub fn previous(&mut self) {
         *self = Self::at((self.lesson + LESSONS.len() - 1) % LESSONS.len());
-    }
-
-    /// The lesson's opening words are on screen: the pair is not shown yet.
-    pub fn introducing(&self) -> bool {
-        matches!(self.phase, Phase::Intro(_))
     }
 
     /// The lesson's name and number, shown above the board.
@@ -420,7 +423,13 @@ impl Demo {
         self.key = self.key.filter(|k| k.1 > 0.0);
         self.chain = self.chain.filter(|c| c.1 > 0.0);
         match &mut self.phase {
-            Phase::Intro(left) | Phase::Paused(left) => {
+            Phase::Intro(left) => {
+                *left -= dt;
+                if *left <= 0.0 {
+                    self.begin();
+                }
+            }
+            Phase::Paused(left) => {
                 *left -= dt;
                 if *left <= 0.0 {
                     self.phase = Phase::Play;
@@ -445,6 +454,16 @@ impl Demo {
         }
         if let Some(p) = &self.board.active_piece {
             self.turn.update(self.board.piece_id, p.rotation, dt);
+        }
+    }
+
+    /// The opening words are read: the first pairs come and play starts.
+    fn begin(&mut self) {
+        self.phase = Phase::Play;
+        let [mine, theirs] = std::mem::take(&mut self.first_pairs);
+        self.board.active_piece = mine;
+        if let Some(rival) = self.rival.as_mut() {
+            rival.board.active_piece = theirs;
         }
     }
 
@@ -603,7 +622,10 @@ mod tests {
                 seen.rival_lost = demo.rival.is_some_and(|r| r.board.state == GameState::GameOver);
                 return seen;
             }
-            demo.phase = Phase::Play;
+            match demo.phase {
+                Phase::Intro(_) => demo.begin(),
+                _ => demo.phase = Phase::Play,
+            }
             demo.step();
             seen.ticks += 1;
             seen.best_chain = seen.best_chain.max(demo.board.chain_count);
@@ -707,6 +729,32 @@ mod tests {
         demo.next();
         demo.next();
         assert_eq!(demo.lesson, 1);
-        assert!(demo.introducing(), "a lesson picked starts from its words");
+        assert_eq!(
+            demo.phase,
+            Phase::Intro(INTRO_SECS),
+            "a lesson picked starts from its words"
+        );
+    }
+
+    #[test]
+    fn the_first_pair_comes_after_the_opening_words() {
+        for lesson in 0..LESSONS.len() {
+            let mut demo = Demo::at(lesson);
+            let versus = demo.rival.is_some();
+            assert!(
+                demo.board.active_piece.is_none(),
+                "lesson {lesson}: a pair under the words"
+            );
+            demo.update(INTRO_SECS - 0.1);
+            assert!(demo.board.active_piece.is_none());
+            demo.update(0.2);
+            assert!(
+                demo.board.active_piece.is_some(),
+                "lesson {lesson}: no pair after the words"
+            );
+            if versus {
+                assert!(demo.rival.as_ref().is_some_and(|r| r.board.active_piece.is_some()));
+            }
+        }
     }
 }

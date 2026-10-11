@@ -1209,24 +1209,13 @@ fn pop_look(puyo: &mut Puyo, frame: u32) {
 
 /// The help's demonstration: one board in a frame, its piece turning smoothly,
 /// with the chain counter over it.
-/// The pair only comes down once the lesson's opening words are read.
-fn without_pair(board: &Board, hide: bool) -> std::borrow::Cow<'_, Board> {
-    if !hide {
-        return std::borrow::Cow::Borrowed(board);
-    }
-    let mut board = board.clone();
-    board.active_piece = None;
-    std::borrow::Cow::Owned(board)
-}
-
 pub fn draw_demo(draw: &mut Draw, fonts: &Fonts, demo: &crate::demo::Demo, area: Rect, time: f32) {
-    let shown = |board| without_pair(board, demo.introducing());
     let (Some(rival), Some(names)) = (&demo.rival, demo.players()) else {
         let piece = Piece {
             offset: (fall_step(&demo.board), 0.0),
             satellite: demo.turn.satellite(),
         };
-        draw_board(draw, &shown(&demo.board), area, piece, false, time);
+        draw_board(draw, &demo.board, area, piece, false, time);
         draw_chain_anim(draw, fonts, demo.chain, area);
         return;
     };
@@ -1250,7 +1239,7 @@ pub fn draw_demo(draw: &mut Draw, fonts: &Fonts, demo: &crate::demo::Demo, area:
         };
         let screen = Rect::at(x, y, BOARD_W * scale, BOARD_H * scale);
         scaled(draw, screen, scale, |draw, local| {
-            draw_board(draw, &shown(board), local, piece, false, time);
+            draw_board(draw, board, local, piece, false, time);
             draw_chain_anim(draw, fonts, chain, local);
         });
     }
