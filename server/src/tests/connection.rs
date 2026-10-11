@@ -231,7 +231,7 @@ fn another_account_on_the_same_browser_frees_the_seat_instead_of_taking_it() {
     assert_eq!(mgr.rooms[&1].members.len(), 1);
     let saved = mgr.take_unsaved_matches();
     assert_eq!(saved.len(), 1, "the abandoned game is recorded");
-    assert_eq!(saved[0].winner_slot, Some(1));
+    assert_eq!(saved[0].winner_slot(), Some(1));
 }
 
 #[test]

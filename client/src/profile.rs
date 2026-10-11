@@ -392,18 +392,20 @@ fn draw_match_row(
 ) {
     let pal = ui.palette();
     let mid = row.y + row.h / 2.0;
-    let i_am_p1 = m.player1.user_id.as_deref() == Some(viewed_id);
-    let my_slot = if i_am_p1 { 1i16 } else { 2i16 };
-    let opp = if i_am_p1 { &m.player2 } else { &m.player1 };
-    let me = if i_am_p1 { &m.player1 } else { &m.player2 };
-    let opp_name = opp.username.as_deref().unwrap_or("Invité");
+    let Some(me) = m.me(viewed_id) else { return };
+    let opp = m.opponent(viewed_id);
 
     list_row(draw, &pal, row, index);
 
-    let (text, color) = match m.winner_slot {
-        None => ("ÉGALITÉ", pal.text_dim),
-        Some(w) if w == my_slot => ("VICTOIRE", theme::SUCCESS),
-        Some(_) => ("DÉFAITE", theme::DANGER),
+    let place = format!("{}e", me.place);
+    let (text, color) = if me.won {
+        ("VICTOIRE", theme::SUCCESS)
+    } else if m.drawn() {
+        ("ÉGALITÉ", pal.text_dim)
+    } else if opp.is_some() {
+        ("DÉFAITE", theme::DANGER)
+    } else {
+        (place.as_str(), theme::DANGER)
     };
     let result = Pill {
         text,
@@ -420,8 +422,12 @@ fn draw_match_row(
         ranked.draw(draw, fonts, (row.x + row.w * 0.2, mid));
     }
 
-    let linked = clickable && opp.user_id.is_some();
-    ui.link(draw, fonts, opponent_zone(row), &format!("vs {opp_name}"), linked);
+    let label = match opp {
+        Some(opp) => format!("vs {}", opp.username.as_deref().unwrap_or("Invité")),
+        None => format!("{} joueurs", m.players.len()),
+    };
+    let linked = clickable && opp.is_some_and(|o| o.user_id.is_some());
+    ui.link(draw, fonts, opponent_zone(row), &label, linked);
 
     draw.sharp_text(
         &fonts.text,
@@ -517,9 +523,8 @@ pub fn update_profile(app: &mut App, state: &mut State) {
                 .enumerate()
                 .take(profile.core.history.per_page)
             {
-                let i_am_p1 = m.player1.user_id.as_deref() == Some(my_id);
-                let opp = if i_am_p1 { &m.player2 } else { &m.player1 };
-                if let (Some(opp_id), Some(opp_name)) = (&opp.user_id, &opp.username) {
+                let opp = m.opponent(my_id);
+                if let Some((Some(opp_id), Some(opp_name))) = opp.map(|o| (&o.user_id, &o.username)) {
                     if state.ui.clicked(history_row_zone(state.ui.view(), i)) {
                         break 'find Some((opp_id.clone(), opp_name.clone()));
                     }

@@ -74,3 +74,31 @@ impl History {
         self.pager.draw(draw, ui, fonts, area, self.pages(total));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::state::ApiMatchEntry;
+
+    const ENTRY: &str = r#"{"id":"x","played_at":"t","duration_secs":12.5,"ranked":false,"players":[
+        {"user_id":"me","username":"moi","slot":1,"team":1,"place":2,"won":false,"max_chain":3,"total_chains":1,
+         "nuisance_sent":10,"nuisance_received":4,"all_clears":0,"pieces_placed":9},
+        {"user_id":null,"username":null,"slot":2,"team":2,"place":1,"won":true,"max_chain":1,"total_chains":1,
+         "nuisance_sent":4,"nuisance_received":10,"all_clears":0,"pieces_placed":8}]}"#;
+
+    #[test]
+    fn a_match_from_the_server_reads_with_its_players() {
+        let m: ApiMatchEntry = serde_json::from_str(ENTRY).expect("parses");
+        assert_eq!(m.me("me").map(|p| (p.place, p.won, p.max_chain)), Some((2, false, 3)));
+        assert_eq!(m.opponent("me").map(|p| p.won), Some(true));
+        assert!(!m.drawn());
+    }
+
+    #[test]
+    fn a_game_of_four_has_no_single_opponent() {
+        let mut m: ApiMatchEntry = serde_json::from_str(ENTRY).expect("parses");
+        let more: ApiMatchEntry = serde_json::from_str(ENTRY).expect("parses");
+        m.players.extend(more.players);
+        assert!(m.opponent("me").is_none());
+        assert!(m.me("me").is_some());
+    }
+}

@@ -488,7 +488,7 @@ impl Manager {
             list_changed |= room.tick_countdown(dt, &mut outgoing);
             if let Some(rec) = room.tick_game(do_broadcast, &mut outgoing) {
                 if room.series.is_some() {
-                    games_won.push((room.id, rec.winner_slot.map(|w| usize::from(w) - 1)));
+                    games_won.push((room.id, rec.winner_slot().map(|w| usize::from(w) - 1)));
                 }
                 self.unsaved_matches.push(rec);
             }

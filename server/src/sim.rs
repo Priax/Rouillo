@@ -50,6 +50,9 @@ pub struct Sim {
     pub max_chain: Vec<u32>,
     pub total_chains: Vec<u32>,
     pub nuisance_sent: Vec<u32>,
+    pub nuisance_received: Vec<u32>,
+    /// The tick each slot was knocked out at, for the final ranking.
+    pub out_at: Vec<Option<u32>>,
     pub all_clears: Vec<u32>,
     pub pieces_placed: Vec<u32>,
     prev_chain: Vec<u32>,
@@ -82,6 +85,8 @@ impl Sim {
             max_chain: vec![0; n],
             total_chains: vec![0; n],
             nuisance_sent: vec![0; n],
+            nuisance_received: vec![0; n],
+            out_at: vec![None; n],
             all_clears: vec![0; n],
             pieces_placed: vec![0; n],
             prev_chain: vec![0; n],
@@ -141,6 +146,7 @@ impl Sim {
     pub fn eliminate(&mut self, slot: usize) {
         if let Some(board) = self.boards.get_mut(slot) {
             board.state = GameState::GameOver;
+            self.out_at[slot].get_or_insert(self.tick);
         }
     }
 
@@ -228,6 +234,7 @@ impl Sim {
             if g.to == slot && g.at <= now {
                 landed += g.amount;
                 self.nuisance_sent[g.from] += g.amount;
+                self.nuisance_received[slot] += g.amount;
                 self.garbage_in_flight.swap_remove(i);
             } else {
                 i += 1;
@@ -270,7 +277,39 @@ impl Sim {
             .collect();
         for (slot, sent) in produced.into_iter().enumerate() {
             self.send_garbage(slot, sent, at);
+            if !self.alive(slot) {
+                self.out_at[slot].get_or_insert(self.tick);
+            }
         }
+    }
+
+    /// How long a slot's team lasted: as long as its last player.
+    fn team_lasted(&self, slot: usize) -> u32 {
+        (0..self.boards.len())
+            .filter(|&s| self.teams[s] == self.teams[slot])
+            .map(|s| self.out_at[s].unwrap_or(u32::MAX))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Each slot's final place, from 1, shared with its team: the team still
+    /// in comes first, then the later a team went out, the better.
+    pub fn places(&self) -> Vec<u8> {
+        let lasted: Vec<u32> = (0..self.boards.len()).map(|s| self.team_lasted(s)).collect();
+        lasted
+            .iter()
+            .map(|&mine| {
+                let mut better: Vec<u32> = lasted.iter().copied().filter(|&t| t > mine).collect();
+                better.sort_unstable();
+                better.dedup();
+                slot_byte(better.len() + 1)
+            })
+            .collect()
+    }
+
+    /// Whether a slot's team won: it is the one team left.
+    pub fn won(&self, slot: usize) -> bool {
+        self.teams_alive() == [self.teams[slot]]
     }
 
     pub fn rng_positions(&self) -> Vec<RngPosition> {
@@ -314,8 +353,8 @@ impl Sim {
     }
 }
 
-/// The 1-based slot players see, as sent on the wire.
-fn slot_byte(slot: usize) -> u8 {
+/// A slot, team or place as sent on the wire.
+pub fn slot_byte(slot: usize) -> u8 {
     u8::try_from(slot).unwrap_or(u8::MAX)
 }
 
@@ -410,6 +449,18 @@ mod tests {
         assert_eq!(s.teams_alive(), [0, 1], "a teammate still plays");
         s.eliminate(2);
         assert_eq!(s.teams_alive(), [0]);
+    }
+
+    #[test]
+    fn a_team_shares_its_last_players_place_and_win() {
+        let mut s = sim(&[0, 0, 1, 2]);
+        s.eliminate(0);
+        s.tick += 1;
+        s.eliminate(3);
+        s.tick += 1;
+        s.eliminate(2);
+        assert_eq!(s.places(), [1, 1, 2, 3]);
+        assert_eq!((0..4).map(|i| s.won(i)).collect::<Vec<_>>(), [true, true, false, false]);
     }
 
     #[test]

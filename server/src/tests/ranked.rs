@@ -286,7 +286,7 @@ async fn a_ranked_draw_scores_nobody_and_is_replayed() {
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
     assert_eq!(
-        (recs[0].winner_slot, recs[0].ranked),
+        (recs[0].winner_slot(), recs[0].ranked),
         (None, true),
         "recorded as a draw"
     );
@@ -318,7 +318,7 @@ fn a_casual_game_where_both_top_out_together_is_a_draw() {
     mgr.tick(STEP, false);
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
-    assert_eq!(recs[0].winner_slot, None);
+    assert_eq!(recs[0].winner_slot(), None);
 }
 
 #[test]

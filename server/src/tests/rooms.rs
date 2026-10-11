@@ -216,7 +216,7 @@ fn leaving_a_running_game_is_a_forfeit() {
     mgr.handle(Command::LeaveRoom { conn: 2 });
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
-    assert_eq!(recs[0].winner_slot, Some(1), "the player who stayed wins");
+    assert_eq!(recs[0].winner_slot(), Some(1), "the player who stayed wins");
 }
 
 #[test]
@@ -229,7 +229,7 @@ fn creating_another_room_mid_game_is_a_forfeit() {
     });
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
-    assert_eq!(recs[0].winner_slot, Some(1));
+    assert_eq!(recs[0].winner_slot(), Some(1));
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn host_returning_to_lobby_mid_game_is_a_forfeit() {
     mgr.handle(Command::ReturnToLobby { conn: 1 });
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
-    assert_eq!(recs[0].winner_slot, Some(2), "the host abandoned, the guest wins");
+    assert_eq!(recs[0].winner_slot(), Some(2), "the host abandoned, the guest wins");
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby));
 }
 
@@ -261,7 +261,7 @@ fn never_coming_back_is_a_forfeit() {
     mgr.tick(STEP, false);
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
-    assert_eq!(recs[0].winner_slot, Some(1));
+    assert_eq!(recs[0].winner_slot(), Some(1));
 }
 
 #[test]

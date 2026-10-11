@@ -217,18 +217,36 @@ pub struct OtherProfileData {
 pub struct ApiMatchPlayer {
     pub user_id: Option<String>,
     pub username: Option<String>,
+    pub place: i16,
+    pub won: bool,
     pub max_chain: i16,
     pub nuisance_sent: i32,
 }
 
 #[derive(serde::Deserialize)]
 pub struct ApiMatchEntry {
-    pub winner_slot: Option<i16>,
     #[serde(default)]
     pub ranked: bool,
     pub duration_secs: f64,
-    pub player1: ApiMatchPlayer,
-    pub player2: ApiMatchPlayer,
+    pub players: Vec<ApiMatchPlayer>,
+}
+
+impl ApiMatchEntry {
+    pub fn me(&self, user_id: &str) -> Option<&ApiMatchPlayer> {
+        self.players.iter().find(|p| p.user_id.as_deref() == Some(user_id))
+    }
+
+    /// The other player of a one against one.
+    pub fn opponent(&self, user_id: &str) -> Option<&ApiMatchPlayer> {
+        let [a, b] = self.players.as_slice() else {
+            return None;
+        };
+        Some(if a.user_id.as_deref() == Some(user_id) { b } else { a })
+    }
+
+    pub fn drawn(&self) -> bool {
+        self.players.iter().all(|p| !p.won)
+    }
 }
 
 pub struct ProfileCore {

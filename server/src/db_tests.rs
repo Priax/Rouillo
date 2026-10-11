@@ -1,7 +1,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::db::{self, FriendshipError, MatchRecord};
+use crate::db::{self, FriendshipError, MatchRecord, PlayerRecord};
 
 async fn user(pool: &PgPool, name: &str) -> Uuid {
     db::create_user(pool, name, "password123")
@@ -10,17 +10,27 @@ async fn user(pool: &PgPool, name: &str) -> Uuid {
         .id
 }
 
+fn player(user_id: Option<Uuid>, slot: u8, won: bool) -> PlayerRecord {
+    PlayerRecord {
+        user_id,
+        slot,
+        team: slot,
+        place: if won { 1 } else { 2 },
+        won,
+        max_chain: if slot == 1 { 3 } else { 1 },
+        total_chains: 2,
+        nuisance_sent: if slot == 1 { 40 } else { 5 },
+        nuisance_received: if slot == 1 { 5 } else { 40 },
+        all_clears: 0,
+        pieces_placed: 30,
+    }
+}
+
 fn game(ranked: bool, p1: Option<Uuid>, p2: Option<Uuid>, winner_slot: u8) -> MatchRecord {
     MatchRecord {
         ranked,
         duration_secs: 60.0,
-        winner_slot: Some(winner_slot),
-        user_ids: [p1, p2],
-        max_chain: [3, 1],
-        total_chains: [2, 1],
-        nuisance_sent: [40, 5],
-        all_clears: [0, 0],
-        pieces_placed: [30, 28],
+        players: vec![player(p1, 1, winner_slot == 1), player(p2, 2, winner_slot == 2)],
     }
 }
 
@@ -117,8 +127,9 @@ async fn db_a_deleted_account_leaves_its_games_to_the_opponent(pool: PgPool) {
     assert!(db::list_friends(&pool, bob).await.unwrap().received.is_empty());
     let history = db::get_match_history(&pool, bob, 10, 0).await.unwrap();
     assert_eq!(history.len(), 1, "bob keeps the game");
-    assert_eq!(history[0].player1_id, None);
-    assert_eq!(history[0].player2_username.as_deref(), Some("bob"));
+    let names: Vec<_> = history[0].players.iter().map(|p| p.username.as_deref()).collect();
+    assert_eq!(names, [None, Some("bob")]);
+    assert_eq!(history[0].players[0].user_id, None);
 }
 
 #[sqlx::test]
@@ -131,7 +142,8 @@ async fn db_a_game_with_a_vanished_player_is_still_saved(pool: PgPool) {
         .unwrap();
     let history = db::get_match_history(&pool, bob, 10, 0).await.unwrap();
     assert_eq!(history.len(), 1);
-    assert_eq!((history[0].player1_id, history[0].ranked), (None, true));
+    assert_eq!((history[0].players[0].user_id, history[0].ranked), (None, true));
+    assert!(history[0].players[1].won);
 }
 
 #[sqlx::test]
@@ -163,7 +175,7 @@ async fn db_casual_and_ranked_win_rates_are_counted_apart(pool: PgPool) {
         .await
         .unwrap();
     let draw = MatchRecord {
-        winner_slot: None,
+        players: vec![player(Some(alice), 1, false), player(Some(bob), 2, false)],
         ..game(false, Some(alice), Some(bob), 1)
     };
     db::record_match_result(&pool, draw).await.unwrap();
@@ -525,4 +537,46 @@ async fn db_crossed_friend_requests_make_friends(pool: PgPool) {
         db::send_friend_request(&pool, bob, alice).await,
         Err(FriendshipError::AlreadyExists)
     ));
+}
+
+#[sqlx::test]
+#[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
+async fn db_a_four_player_game_keeps_every_place(pool: PgPool) {
+    let ids = [
+        user(&pool, "a").await,
+        user(&pool, "b").await,
+        user(&pool, "c").await,
+        user(&pool, "d").await,
+    ];
+    let mut players: Vec<PlayerRecord> = ids.iter().zip(1..).map(|(&id, s)| player(Some(id), s, false)).collect();
+    for (p, (team, place, won)) in players
+        .iter_mut()
+        .zip([(1, 1, true), (1, 1, true), (2, 3, false), (3, 4, false)])
+    {
+        (p.team, p.place, p.won) = (team, place, won);
+    }
+    db::record_match_result(
+        &pool,
+        MatchRecord {
+            ranked: false,
+            duration_secs: 90.0,
+            players,
+        },
+    )
+    .await
+    .unwrap();
+    let history = db::get_match_history(&pool, ids[2], 10, 0).await.unwrap();
+    let seen: Vec<_> = history[0]
+        .players
+        .iter()
+        .map(|p| (p.slot, p.team, p.place, p.won))
+        .collect();
+    assert_eq!(
+        seen,
+        [(1, 1, 1, true), (2, 1, 1, true), (3, 2, 3, false), (4, 3, 4, false)]
+    );
+    let winner = db::get_user_profile(&pool, ids[1]).await.unwrap().unwrap();
+    assert_eq!((winner.total_matches, winner.wins), (1, 1));
+    let third = db::get_user_profile(&pool, ids[2]).await.unwrap().unwrap();
+    assert_eq!((third.total_matches, third.wins), (1, 0));
 }

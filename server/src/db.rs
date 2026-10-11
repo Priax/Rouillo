@@ -232,49 +232,62 @@ pub fn hash_password(password: &str) -> Result<String, password_hash::Error> {
 pub struct MatchRecord {
     pub ranked: bool,
     pub duration_secs: f64,
-    pub winner_slot: Option<u8>,
-    pub user_ids: [Option<Uuid>; 2],
-    pub max_chain: [u32; 2],
-    pub total_chains: [u32; 2],
-    pub nuisance_sent: [u32; 2],
-    pub all_clears: [u32; 2],
-    pub pieces_placed: [u32; 2],
+    pub players: Vec<PlayerRecord>,
+}
+
+pub struct PlayerRecord {
+    pub user_id: Option<Uuid>,
+    /// From 1, as players see it.
+    pub slot: u8,
+    pub team: u8,
+    /// From 1: those who lasted the same share a place.
+    pub place: u8,
+    pub won: bool,
+    pub max_chain: u32,
+    pub total_chains: u32,
+    pub nuisance_sent: u32,
+    pub nuisance_received: u32,
+    pub all_clears: u32,
+    pub pieces_placed: u32,
+}
+
+impl MatchRecord {
+    /// A winner's slot, none for a draw.
+    pub fn winner_slot(&self) -> Option<u8> {
+        self.players.iter().find(|p| p.won).map(|p| p.slot)
+    }
 }
 
 pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
-
-    let match_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO matches (duration_secs, player1_id, player2_id, winner_slot, ranked) \
-         VALUES ($1, (SELECT id FROM users WHERE id = $2), (SELECT id FROM users WHERE id = $3), $4, $5) \
-         RETURNING id",
-    )
-    .bind(rec.duration_secs)
-    .bind(rec.user_ids[0])
-    .bind(rec.user_ids[1])
-    .bind(rec.winner_slot.map(i16::from))
-    .bind(rec.ranked)
-    .fetch_one(&mut *tx)
-    .await?;
+    let match_id =
+        sqlx::query_scalar::<_, Uuid>("INSERT INTO matches (duration_secs, ranked) VALUES ($1, $2) RETURNING id")
+            .bind(rec.duration_secs)
+            .bind(rec.ranked)
+            .fetch_one(&mut *tx)
+            .await?;
 
     let small = |v: u32| i16::try_from(v).unwrap_or(i16::MAX);
     let int = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
-    for (i, slot) in [(0usize, 1i16), (1, 2)] {
+    for p in &rec.players {
         sqlx::query(
             "INSERT INTO match_stats \
-             (match_id, user_id, slot, max_chain, total_chains, \
+             (match_id, user_id, slot, team, place, won, max_chain, total_chains, \
               nuisance_sent, nuisance_received, all_clears, pieces_placed) \
-             VALUES ($1, (SELECT id FROM users WHERE id = $2), $3, $4, $5, $6, $7, $8, $9)",
+             VALUES ($1, (SELECT id FROM users WHERE id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(match_id)
-        .bind(rec.user_ids[i])
-        .bind(slot)
-        .bind(small(rec.max_chain[i]))
-        .bind(small(rec.total_chains[i]))
-        .bind(int(rec.nuisance_sent[i]))
-        .bind(int(rec.nuisance_sent[1 - i]))
-        .bind(small(rec.all_clears[i]))
-        .bind(int(rec.pieces_placed[i]))
+        .bind(p.user_id)
+        .bind(i16::from(p.slot))
+        .bind(i16::from(p.team))
+        .bind(i16::from(p.place))
+        .bind(p.won)
+        .bind(small(p.max_chain))
+        .bind(small(p.total_chains))
+        .bind(int(p.nuisance_sent))
+        .bind(int(p.nuisance_received))
+        .bind(small(p.all_clears))
+        .bind(int(p.pieces_placed))
         .execute(&mut *tx)
         .await?;
     }
@@ -333,8 +346,8 @@ pub struct RankedProfile {
 pub async fn ranked_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<RankedProfile>, sqlx::Error> {
     sqlx::query_as::<_, RankedProfile>(
         "SELECT u.elo, u.avatar_url, \
-                (SELECT COUNT(*) FROM matches m \
-                 WHERE NOT m.ranked AND (m.player1_id = u.id OR m.player2_id = u.id)) AS casual \
+                (SELECT COUNT(*) FROM match_stats ms JOIN matches m ON m.id = ms.match_id \
+                 WHERE NOT m.ranked AND ms.user_id = u.id) AS casual \
          FROM users u WHERE u.id = $1",
     )
     .bind(user_id)
@@ -411,10 +424,10 @@ pub async fn user_exists(pool: &DbPool, user_id: Uuid) -> Result<bool, sqlx::Err
 pub async fn get_user_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<UserProfileRow>, sqlx::Error> {
     sqlx::query_as::<_, UserProfileRow>(
         "SELECT u.id, u.username, u.bio, u.favorite_music, u.avatar_url, u.banner_url, u.elo, u.created_at,
-                COUNT(DISTINCT m.id)::bigint AS total_matches,
-                COUNT(DISTINCT m.id) FILTER (WHERE m.won)::bigint AS wins,
-                COUNT(DISTINCT m.id) FILTER (WHERE NOT m.ranked)::bigint AS casual_matches,
-                COUNT(DISTINCT m.id) FILTER (WHERE NOT m.ranked AND m.won)::bigint AS casual_wins,
+                COUNT(m.id)::bigint AS total_matches,
+                COUNT(m.id) FILTER (WHERE ms.won)::bigint AS wins,
+                COUNT(m.id) FILTER (WHERE NOT m.ranked)::bigint AS casual_matches,
+                COUNT(m.id) FILTER (WHERE NOT m.ranked AND ms.won)::bigint AS casual_wins,
                 (SELECT COUNT(*) FROM ranked_series s
                  WHERE s.winner_id = u.id OR s.loser_id = u.id)::bigint AS ranked_series,
                 (SELECT COUNT(*) FROM ranked_series s WHERE s.winner_id = u.id)::bigint AS ranked_series_won,
@@ -422,12 +435,8 @@ pub async fn get_user_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<Use
                 COALESCE(SUM(ms.nuisance_sent)::bigint, 0) AS total_nuisance_sent,
                 COALESCE(SUM(ms.all_clears)::bigint, 0) AS total_all_clears
          FROM users u
-         LEFT JOIN (
-             SELECT m.*, (m.winner_slot = 1 AND m.player1_id = $1) OR (m.winner_slot = 2 AND m.player2_id = $1) AS won
-             FROM matches m
-             WHERE m.player1_id = $1 OR m.player2_id = $1
-         ) m ON true
-         LEFT JOIN match_stats ms ON ms.match_id = m.id AND ms.user_id = u.id
+         LEFT JOIN match_stats ms ON ms.user_id = u.id
+         LEFT JOIN matches m ON m.id = ms.match_id
          WHERE u.id = $1
          GROUP BY u.id",
     )
@@ -472,29 +481,39 @@ pub async fn leaderboard(pool: &DbPool, me: Option<Uuid>) -> Result<Vec<Leaderbo
     .await
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(serde::Serialize)]
 pub struct MatchRow {
     pub id: Uuid,
     pub played_at: DateTime<Utc>,
     pub duration_secs: f64,
-    pub winner_slot: Option<i16>,
     pub ranked: bool,
-    pub player1_id: Option<Uuid>,
-    pub player2_id: Option<Uuid>,
-    pub player1_username: Option<String>,
-    pub player2_username: Option<String>,
-    pub p1_max_chain: Option<i16>,
-    pub p1_total_chains: Option<i16>,
-    pub p1_nuisance_sent: Option<i32>,
-    pub p1_nuisance_received: Option<i32>,
-    pub p1_all_clears: Option<i16>,
-    pub p1_pieces_placed: Option<i32>,
-    pub p2_max_chain: Option<i16>,
-    pub p2_total_chains: Option<i16>,
-    pub p2_nuisance_sent: Option<i32>,
-    pub p2_nuisance_received: Option<i32>,
-    pub p2_all_clears: Option<i16>,
-    pub p2_pieces_placed: Option<i32>,
+    pub players: Vec<MatchPlayer>,
+}
+
+#[derive(sqlx::FromRow, serde::Serialize)]
+pub struct MatchPlayer {
+    #[serde(skip)]
+    pub match_id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub username: Option<String>,
+    pub slot: i16,
+    pub team: i16,
+    pub place: i16,
+    pub won: bool,
+    pub max_chain: i16,
+    pub total_chains: i16,
+    pub nuisance_sent: i32,
+    pub nuisance_received: i32,
+    pub all_clears: i16,
+    pub pieces_placed: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct MatchHead {
+    id: Uuid,
+    played_at: DateTime<Utc>,
+    duration_secs: f64,
+    ranked: bool,
 }
 
 pub enum FriendshipError {
@@ -661,29 +680,10 @@ pub async fn get_match_history(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<MatchRow>, sqlx::Error> {
-    sqlx::query_as::<_, MatchRow>(
-        "SELECT m.id, m.played_at, m.duration_secs, m.winner_slot, m.ranked,
-                m.player1_id, m.player2_id,
-                u1.username AS player1_username,
-                u2.username AS player2_username,
-                ms1.max_chain         AS p1_max_chain,
-                ms1.total_chains      AS p1_total_chains,
-                ms1.nuisance_sent     AS p1_nuisance_sent,
-                ms1.nuisance_received AS p1_nuisance_received,
-                ms1.all_clears        AS p1_all_clears,
-                ms1.pieces_placed     AS p1_pieces_placed,
-                ms2.max_chain         AS p2_max_chain,
-                ms2.total_chains      AS p2_total_chains,
-                ms2.nuisance_sent     AS p2_nuisance_sent,
-                ms2.nuisance_received AS p2_nuisance_received,
-                ms2.all_clears        AS p2_all_clears,
-                ms2.pieces_placed     AS p2_pieces_placed
+    let heads = sqlx::query_as::<_, MatchHead>(
+        "SELECT m.id, m.played_at, m.duration_secs, m.ranked
          FROM matches m
-         LEFT JOIN users u1 ON u1.id = m.player1_id
-         LEFT JOIN users u2 ON u2.id = m.player2_id
-         LEFT JOIN match_stats ms1 ON ms1.match_id = m.id AND ms1.slot = 1
-         LEFT JOIN match_stats ms2 ON ms2.match_id = m.id AND ms2.slot = 2
-         WHERE m.player1_id = $1 OR m.player2_id = $1
+         JOIN match_stats me ON me.match_id = m.id AND me.user_id = $1
          ORDER BY m.played_at DESC, m.id
          LIMIT $2 OFFSET $3",
     )
@@ -691,7 +691,34 @@ pub async fn get_match_history(
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)
-    .await
+    .await?;
+    let ids: Vec<Uuid> = heads.iter().map(|h| h.id).collect();
+    let mut players = sqlx::query_as::<_, MatchPlayer>(
+        "SELECT ms.match_id, ms.user_id, u.username, ms.slot, ms.team, ms.place, ms.won,
+                ms.max_chain, ms.total_chains, ms.nuisance_sent, ms.nuisance_received,
+                ms.all_clears, ms.pieces_placed
+         FROM match_stats ms
+         LEFT JOIN users u ON u.id = ms.user_id
+         WHERE ms.match_id = ANY($1)
+         ORDER BY ms.slot",
+    )
+    .bind(&ids)
+    .fetch_all(pool)
+    .await?;
+    Ok(heads
+        .into_iter()
+        .map(|h| {
+            let (mine, rest) = players.drain(..).partition(|p| p.match_id == h.id);
+            players = rest;
+            MatchRow {
+                id: h.id,
+                played_at: h.played_at,
+                duration_secs: h.duration_secs,
+                ranked: h.ranked,
+                players: mine,
+            }
+        })
+        .collect())
 }
 
 #[cfg(test)]

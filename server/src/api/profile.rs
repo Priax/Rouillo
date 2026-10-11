@@ -133,29 +133,6 @@ pub(super) async fn handle_patch_me(
     Ok(Json(UserProfile::from(updated)))
 }
 
-#[derive(Serialize)]
-pub(super) struct PlayerMatchInfo {
-    user_id: Option<Uuid>,
-    username: Option<String>,
-    max_chain: i16,
-    total_chains: i16,
-    nuisance_sent: i32,
-    nuisance_received: i32,
-    all_clears: i16,
-    pieces_placed: i32,
-}
-
-#[derive(Serialize)]
-pub(super) struct MatchEntry {
-    id: Uuid,
-    played_at: DateTime<Utc>,
-    duration_secs: f64,
-    winner_slot: Option<i16>,
-    ranked: bool,
-    player1: PlayerMatchInfo,
-    player2: PlayerMatchInfo,
-}
-
 #[derive(Deserialize)]
 pub(super) struct MatchHistoryQuery {
     limit: Option<String>,
@@ -195,38 +172,7 @@ pub(super) async fn handle_match_history(
         .await
         .map_err(internal)?;
 
-    let entries: Vec<MatchEntry> = rows
-        .into_iter()
-        .map(|r| MatchEntry {
-            id: r.id,
-            played_at: r.played_at,
-            duration_secs: r.duration_secs,
-            winner_slot: r.winner_slot,
-            ranked: r.ranked,
-            player1: PlayerMatchInfo {
-                user_id: r.player1_id,
-                username: r.player1_username,
-                max_chain: r.p1_max_chain.unwrap_or(0),
-                total_chains: r.p1_total_chains.unwrap_or(0),
-                nuisance_sent: r.p1_nuisance_sent.unwrap_or(0),
-                nuisance_received: r.p1_nuisance_received.unwrap_or(0),
-                all_clears: r.p1_all_clears.unwrap_or(0),
-                pieces_placed: r.p1_pieces_placed.unwrap_or(0),
-            },
-            player2: PlayerMatchInfo {
-                user_id: r.player2_id,
-                username: r.player2_username,
-                max_chain: r.p2_max_chain.unwrap_or(0),
-                total_chains: r.p2_total_chains.unwrap_or(0),
-                nuisance_sent: r.p2_nuisance_sent.unwrap_or(0),
-                nuisance_received: r.p2_nuisance_received.unwrap_or(0),
-                all_clears: r.p2_all_clears.unwrap_or(0),
-                pieces_placed: r.p2_pieces_placed.unwrap_or(0),
-            },
-        })
-        .collect();
-
-    Ok(Json(entries))
+    Ok(Json(rows))
 }
 
 #[derive(Deserialize)]

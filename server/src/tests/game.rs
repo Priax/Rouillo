@@ -397,7 +397,10 @@ fn a_three_player_game_goes_on_until_one_player_is_left() {
     assert!(room.forfeit(0).is_none(), "two players still in");
     assert!(room.game_running());
     assert_eq!(room.sim.teams_alive(), [1, 2]);
-    assert!(room.forfeit(2).is_none(), "no record for three players yet");
+    room.sim.advance();
+    let rec = room.forfeit(2).expect("the game ended");
     assert!(!room.game_running());
-    assert_eq!(room.sim.teams_alive(), [1]);
+    let places: Vec<_> = rec.players.iter().map(|p| (p.slot, p.place, p.won)).collect();
+    assert_eq!(places, [(1, 3, false), (2, 1, true), (3, 2, false)]);
+    assert_eq!(rec.winner_slot(), Some(2));
 }
