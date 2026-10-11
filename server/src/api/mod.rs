@@ -29,8 +29,8 @@ mod social;
 
 use account::*;
 use error::*;
-pub use limits::ClientAddr;
 use limits::*;
+pub use limits::{client_key, ClientAddr};
 use profile::*;
 use social::*;
 

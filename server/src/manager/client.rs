@@ -3,6 +3,9 @@ use super::*;
 /// What the manager knows about one connection, all dropped with it.
 pub struct Client {
     sender: mpsc::Sender<Vec<u8>>,
+    /// Game states may go apart, where each one may be lost: only the
+    /// latest matters.
+    states: Option<mpsc::Sender<Vec<u8>>>,
     pub(super) room: Option<RoomId>,
     /// The player id sent in Hello: it follows a browser across reconnections.
     pub token: Option<Token>,
@@ -17,9 +20,10 @@ pub struct Client {
 }
 
 impl Client {
-    pub(super) const fn new(sender: mpsc::Sender<Vec<u8>>) -> Self {
+    pub(super) const fn new(sender: mpsc::Sender<Vec<u8>>, states: Option<mpsc::Sender<Vec<u8>>>) -> Self {
         Self {
             sender,
+            states,
             room: None,
             token: None,
             user: None,
@@ -34,6 +38,15 @@ impl Client {
 
     pub(super) fn send(&self, payload: Vec<u8>) -> bool {
         self.sender.try_send(payload).is_ok()
+    }
+
+    /// A game state: on a connection that keeps them apart, one that finds
+    /// the way full is dropped, the next one replaces it.
+    pub(super) fn send_state(&self, payload: Vec<u8>) -> bool {
+        match &self.states {
+            Some(states) => !matches!(states.try_send(payload), Err(mpsc::error::TrySendError::Closed(_))),
+            None => self.send(payload),
+        }
     }
 }
 

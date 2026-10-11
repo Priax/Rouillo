@@ -205,7 +205,14 @@ impl Room {
 
     /// Advances a running game by one step and sends its state. Returns the
     /// match record when this step ended the game.
-    pub fn tick_game(&mut self, do_broadcast: bool, outgoing: &mut Vec<(ConnId, Vec<u8>)>) -> Option<db::MatchRecord> {
+    /// The last state of a game goes with the reliable messages, since
+    /// no other comes after it.
+    pub fn tick_game(
+        &mut self,
+        do_broadcast: bool,
+        states: &mut Vec<(ConnId, Vec<u8>)>,
+        outgoing: &mut Vec<(ConnId, Vec<u8>)>,
+    ) -> Option<db::MatchRecord> {
         if !matches!(self.phase, Phase::Playing) {
             return None;
         }
@@ -233,12 +240,13 @@ impl Room {
         if (do_broadcast && advanced) || just_finished {
             let everyone =
                 just_finished || self.sim.boards.len() < SPARSE_FROM || self.sim.tick.is_multiple_of(OTHERS_EVERY);
+            let sink = if just_finished { outgoing } else { states };
             if everyone {
                 if let Some(upd) = encoded(&self.sim.state_update()) {
-                    self.send_to_audience(&upd, outgoing);
+                    self.send_to_audience(&upd, sink);
                 }
             } else {
-                self.send_own_boards(outgoing);
+                self.send_own_boards(sink);
             }
         }
         record

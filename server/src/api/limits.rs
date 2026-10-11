@@ -97,7 +97,7 @@ pub(super) type IpLimit = RateMap;
 pub(super) const MAX_REGISTRATIONS_PER_IP: u32 = 10;
 pub(super) const REGISTER_WINDOW: Duration = Duration::from_secs(3600);
 
-pub(super) fn client_key(peer: Option<SocketAddr>, forwarded_for: Option<&str>) -> Option<String> {
+pub fn client_key(peer: Option<SocketAddr>, forwarded_for: Option<&str>) -> Option<String> {
     let peer = peer?.ip();
     let ip = if peer.is_loopback() {
         forwarded_for

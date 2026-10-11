@@ -22,8 +22,15 @@ chrono = { version = "0.4", features = ["serde"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 
 shared = { path = "../shared" }
+web-transport-quinn = { version = "0.13", default-features = false, features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
+ring = "0.17"
+bytes = "1"
+time = "0.3"
 
 [dev-dependencies]
+url = "2"
 tokio-tungstenite = "0.30"
 tower = { version = "0.5", features = ["util"] }
 tokio = { version = "1", features = ["full", "test-util"] }

@@ -61,6 +61,7 @@ pub enum Command {
     Register {
         conn: ConnId,
         sender: mpsc::Sender<Vec<u8>>,
+        states: Option<mpsc::Sender<Vec<u8>>>,
     },
     Unregister {
         conn: ConnId,
@@ -303,6 +304,12 @@ impl Manager {
         }
     }
 
+    fn deliver_state(&mut self, conn: ConnId, payload: Vec<u8>) {
+        if self.clients.get(&conn).is_some_and(|c| !c.send_state(payload)) {
+            self.dead.push(conn);
+        }
+    }
+
     fn deliver_msg(&mut self, conn: ConnId, msg: &ServerMessage) {
         match shared::encode(msg) {
             Ok(payload) => self.deliver(conn, payload),
@@ -427,8 +434,8 @@ impl Manager {
             return;
         }
         match cmd {
-            Command::Register { conn, sender } => {
-                self.clients.insert(conn, Client::new(sender));
+            Command::Register { conn, sender, states } => {
+                self.clients.insert(conn, Client::new(sender, states));
             }
             Command::Hello {
                 conn,
@@ -500,11 +507,12 @@ impl Manager {
         self.expire_grace_periods();
 
         let mut outgoing: Vec<(ConnId, Vec<u8>)> = Vec::new();
+        let mut states: Vec<(ConnId, Vec<u8>)> = Vec::new();
         let mut list_changed = false;
         let mut games_won: Vec<(RoomId, Option<usize>)> = Vec::new();
         for room in self.rooms.values_mut() {
             list_changed |= room.tick_countdown(dt, &mut outgoing);
-            if let Some(rec) = room.tick_game(do_broadcast, &mut outgoing) {
+            if let Some(rec) = room.tick_game(do_broadcast, &mut states, &mut outgoing) {
                 if room.series.is_some() {
                     games_won.push((room.id, rec.winner_slot().map(|w| usize::from(w) - 1)));
                 }
@@ -514,6 +522,9 @@ impl Manager {
 
         for (conn, payload) in outgoing {
             self.deliver(conn, payload);
+        }
+        for (conn, payload) in states {
+            self.deliver_state(conn, payload);
         }
         if list_changed {
             self.room_list_dirty = true;

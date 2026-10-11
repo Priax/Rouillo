@@ -5,6 +5,7 @@ mod manager;
 mod room;
 mod sim;
 mod ws;
+mod wt;
 
 use std::future::IntoFuture;
 use std::net::SocketAddr;
@@ -301,7 +302,10 @@ async fn main() {
         }
     });
 
-    let app = ws_route(cmd_tx.clone(), pool.clone())
+    let conns = ws::Conns::new();
+    let offer = wt::Config::from_env().and_then(|c| wt::start(c, cmd_tx.clone(), pool.clone(), conns.clone()));
+    let app = ws_route(cmd_tx.clone(), pool.clone(), conns)
+        .merge(wt::offer_route(offer))
         .merge(api::routes(pool, cmd_tx))
         .fallback(api::not_found)
         .method_not_allowed_fallback(api::not_found)

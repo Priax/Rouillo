@@ -183,7 +183,14 @@ async fn the_manager_loop_outlives_a_shutdown_while_a_game_runs() {
             username: None,
             session: None,
         };
-        for cmd in [Command::Register { conn, sender }, hello] {
+        for cmd in [
+            Command::Register {
+                conn,
+                sender,
+                states: None,
+            },
+            hello,
+        ] {
             tx.send(cmd).await.expect("manager gone");
         }
     }

@@ -22,6 +22,7 @@ mod ranked;
 mod rooms;
 mod shutdown;
 mod social;
+mod wt;
 
 use friends::*;
 use game::*;
@@ -35,7 +36,11 @@ fn new_mgr() -> Manager {
 
 fn reg(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<Vec<u8>> {
     let (tx, rx) = mpsc::channel(CLIENT_CHAN_CAP);
-    mgr.handle(Command::Register { conn, sender: tx });
+    mgr.handle(Command::Register {
+        conn,
+        sender: tx,
+        states: None,
+    });
     rx
 }
 

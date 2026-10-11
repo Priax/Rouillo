@@ -163,7 +163,7 @@ fn watch(session: &mut GameSession, board: Board, tick: u32, incoming: Vec<Incom
 /// Hands each player's part of an update to its board: the large one is
 /// reconciled with the predicted inputs, the others are smoothed.
 fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<PlayerUpdate>) {
-    if game != session.game || session.applied.is_some_and(|t| tick <= t) {
+    if game != session.game || session.applied.is_some_and(|t| tick < t) {
         return;
     }
     session.applied = Some(tick);
@@ -615,7 +615,7 @@ mod tests {
         apply_update(&mut session, 4, 9, vec![update(1, 1, false)]);
         apply_update(&mut session, 3, 11, vec![update(1, 1, false)]);
         assert_eq!(session.board.score, 70, "an older update was applied");
-        apply_update(&mut session, 4, 11, vec![update(1, 1, false)]);
-        assert_eq!(session.board.score, 0);
+        apply_update(&mut session, 4, 10, vec![update(1, 1, false)]);
+        assert_eq!(session.board.score, 0, "a snapshot of the same tick, sent on a pause");
     }
 }

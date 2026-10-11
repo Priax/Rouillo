@@ -41,7 +41,8 @@ pub(super) async fn connect_to(path: &str) -> (WsClient, mpsc::Receiver<Command>
     let (tx, rx) = mpsc::channel(CMD_CHAN_CAP);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local_addr");
-    let app = ws_route(tx, lazy_pool()).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    let app = ws_route(tx, lazy_pool(), crate::ws::Conns::new())
+        .into_make_service_with_connect_info::<std::net::SocketAddr>();
     tokio::spawn(async move { axum::serve(listener, app).await });
     let (client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}{path}"))
         .await
