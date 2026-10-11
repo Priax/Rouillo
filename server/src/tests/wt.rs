@@ -84,16 +84,18 @@ async fn a_webtransport_client_plays_over_a_stream_and_datagrams() {
         ServerMessage::Maintenance
     ));
 
-    let state = ServerMessage::Spectators { count: 3 };
-    states.try_send(shared::encode(&state).unwrap()).unwrap();
-    let datagram = within(session.read_datagram())
-        .await
-        .expect("a datagram")
-        .expect("read");
-    assert!(matches!(
-        shared::decode(&datagram),
-        Some(ServerMessage::Spectators { count: 3 })
-    ));
+    let board = |count| bytes::Bytes::from(shared::encode(&ServerMessage::Spectators { count }).unwrap());
+    states.try_send(vec![board(3), board(4)]).unwrap();
+    for count in [3, 4] {
+        let datagram = within(session.read_datagram())
+            .await
+            .expect("a datagram")
+            .expect("read");
+        assert!(
+            matches!(shared::decode(&datagram), Some(ServerMessage::Spectators { count: c }) if c == count),
+            "each board in its own datagram"
+        );
+    }
 
     let big = ServerMessage::Chat {
         from: "x".into(),
@@ -109,13 +111,36 @@ async fn a_webtransport_client_plays_over_a_stream_and_datagrams() {
         bytes.len(),
         session.max_datagram_size()
     );
-    states.try_send(bytes).unwrap();
+    states.try_send(vec![bytes.into()]).unwrap();
     assert!(
         matches!(
             within(read_frame(&mut recv)).await.expect("on the stream"),
             ServerMessage::Chat { .. }
         ),
         "a state too big for a datagram takes the stream"
+    );
+
+    let input = |seq| shared::SentInput {
+        seq,
+        tick: 9,
+        kind: InputKind::HardDrop,
+    };
+    let datagram = |msg: &ClientMessage| bytes::Bytes::from(shared::encode(msg).unwrap());
+    session
+        .send_datagram(datagram(&ClientMessage::RequestRoomList))
+        .unwrap();
+    session
+        .send_datagram(datagram(&ClientMessage::Inputs {
+            inputs: vec![input(1), input(2)],
+        }))
+        .unwrap();
+    let cmds = commands_until(&mut rx, |c| matches!(c, Command::Input { seq: 2, .. })).await;
+    assert!(
+        matches!(
+            cmds.as_slice(),
+            [Command::Input { seq: 1, .. }, Command::Input { seq: 2, .. }]
+        ),
+        "a datagram carries inputs only"
     );
 
     drop(send);

@@ -372,7 +372,23 @@ pub enum ClientMessage {
     SetTeam {
         team: Option<u8>,
     },
+    /// The inputs not acknowledged yet, sent again in a datagram: one lost
+    /// on the stream need not wait for its retransmission.
+    Inputs {
+        inputs: Vec<SentInput>,
+    },
 }
+
+/// An input as the client numbered and stamped it.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SentInput {
+    pub seq: u32,
+    pub tick: u32,
+    pub kind: InputKind,
+}
+
+/// The most inputs one `Inputs` message carries.
+pub const MAX_RESENT_INPUTS: usize = 16;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServerMessage {

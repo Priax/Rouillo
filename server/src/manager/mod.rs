@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
+use bytes::Bytes;
 use shared::{config, InputKind, PausePolicy, RoomId, RoomInfo, RoomSettings, ServerMessage, Targeting};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::room::{Member, Phase, Room, Series, SeriesResult, Spectator};
+use crate::room::{Member, Phase, Room, Series, SeriesResult, Spectator, StateOut};
 use crate::{db, ConnId, Token};
 
 mod client;
@@ -61,7 +62,7 @@ pub enum Command {
     Register {
         conn: ConnId,
         sender: mpsc::Sender<Vec<u8>>,
-        states: Option<mpsc::Sender<Vec<u8>>>,
+        states: Option<mpsc::Sender<Vec<Bytes>>>,
     },
     Unregister {
         conn: ConnId,
@@ -304,8 +305,8 @@ impl Manager {
         }
     }
 
-    fn deliver_state(&mut self, conn: ConnId, payload: Vec<u8>) {
-        if self.clients.get(&conn).is_some_and(|c| !c.send_state(payload)) {
+    fn deliver_state(&mut self, conn: ConnId, out: StateOut) {
+        if self.clients.get(&conn).is_some_and(|c| !c.send_state(out)) {
             self.dead.push(conn);
         }
     }
@@ -334,13 +335,18 @@ impl Manager {
     }
 
     fn send_game_start(&mut self, id: RoomId) {
-        for (c, payload) in self.rooms.get(&id).map(Room::game_start_payloads).unwrap_or_default() {
+        for (c, payload) in self
+            .rooms
+            .get_mut(&id)
+            .map(Room::game_start_payloads)
+            .unwrap_or_default()
+        {
             self.deliver(c, payload);
         }
     }
 
     fn deliver_game_start(&mut self, id: RoomId, conn: ConnId) {
-        if let Some(msg) = self.rooms.get(&id).map(|r| r.game_start_for(conn)) {
+        if let Some(msg) = self.rooms.get_mut(&id).map(|r| r.game_start_for(conn)) {
             self.deliver_msg(conn, &msg);
         }
     }
@@ -507,12 +513,13 @@ impl Manager {
         self.expire_grace_periods();
 
         let mut outgoing: Vec<(ConnId, Vec<u8>)> = Vec::new();
-        let mut states: Vec<(ConnId, Vec<u8>)> = Vec::new();
+        let mut states: Vec<(ConnId, StateOut)> = Vec::new();
         let mut list_changed = false;
         let mut games_won: Vec<(RoomId, Option<usize>)> = Vec::new();
         for room in self.rooms.values_mut() {
             list_changed |= room.tick_countdown(dt, &mut outgoing);
-            if let Some(rec) = room.tick_game(do_broadcast, &mut states, &mut outgoing) {
+            let split = |c| self.clients.get(&c).is_some_and(Client::splits_states);
+            if let Some(rec) = room.tick_game(do_broadcast, split, &mut states, &mut outgoing) {
                 if room.series.is_some() {
                     games_won.push((room.id, rec.winner_slot().map(|w| usize::from(w) - 1)));
                 }

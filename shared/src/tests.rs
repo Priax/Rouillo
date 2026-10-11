@@ -1194,10 +1194,17 @@ fn client_samples() -> Vec<ClientMessage> {
             targeting: Targeting::Manual(2),
         },
         ClientMessage::SetTeam { team: Some(2) },
+        ClientMessage::Inputs {
+            inputs: vec![SentInput {
+                seq: 4,
+                tick: 90,
+                kind: InputKind::HardDrop,
+            }],
+        },
     ]
 }
 
-const CLIENT_VARIANTS: usize = 21;
+const CLIENT_VARIANTS: usize = 22;
 
 fn client_variant(m: &ClientMessage) -> usize {
     match m {
@@ -1222,6 +1229,7 @@ fn client_variant(m: &ClientMessage) -> usize {
         ClientMessage::WatchFriend { .. } => 18,
         ClientMessage::SetTargeting { .. } => 19,
         ClientMessage::SetTeam { .. } => 20,
+        ClientMessage::Inputs { .. } => 21,
     }
 }
 
@@ -1388,7 +1396,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (10, 10_078_364_355_977_762_776);
+const PROTOCOL_DIGEST: (u32, u64) = (10, 11_330_670_461_999_495_574);
 
 #[test]
 fn protocol_changes_bump_the_version() {

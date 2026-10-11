@@ -32,6 +32,12 @@ impl Link {
         self.0.send(bytes);
     }
 
+    /// Sends `bytes` as a datagram, which may be lost; not before the link
+    /// opened.
+    pub fn send_datagram(&mut self, bytes: Vec<u8>) {
+        self.0.send_datagram(bytes);
+    }
+
     pub fn try_recv(&self) -> Option<Event> {
         self.0.try_recv()
     }
@@ -103,6 +109,11 @@ export class WtLink {
     if (this.writer) this.write(bytes);
     else this.queue.push(bytes);
   }
+  sendDatagram(bytes) {
+    if (this.closed || !this.writer) return;
+    if (!this.datagrams) this.datagrams = this.wt.datagrams.writable.getWriter();
+    this.datagrams.write(bytes).catch(() => {});
+  }
   write(bytes) {
     const frame = new Uint8Array(4 + bytes.length);
     new DataView(frame.buffer).setUint32(0, bytes.length, true);
@@ -131,6 +142,9 @@ export class WtLink {
 
         #[wasm_bindgen(method)]
         fn send(this: &WtLink, bytes: Vec<u8>);
+
+        #[wasm_bindgen(method, js_name = sendDatagram)]
+        fn send_datagram(this: &WtLink, bytes: Vec<u8>);
 
         #[wasm_bindgen(method)]
         fn close(this: &WtLink);
@@ -163,6 +177,10 @@ export class WtLink {
 
         pub fn send(&mut self, bytes: Vec<u8>) {
             self.js.send(bytes);
+        }
+
+        pub fn send_datagram(&mut self, bytes: Vec<u8>) {
+            self.js.send_datagram(bytes);
         }
 
         pub fn try_recv(&self) -> Option<Event> {
@@ -198,8 +216,13 @@ mod imp {
         })
     }
 
+    enum Out {
+        Stream(Vec<u8>),
+        Datagram(Vec<u8>),
+    }
+
     pub struct Link {
-        out: async_mpsc::UnboundedSender<Vec<u8>>,
+        out: async_mpsc::UnboundedSender<Out>,
         events: mpsc::Receiver<Event>,
         task: tokio::task::JoinHandle<()>,
     }
@@ -217,7 +240,11 @@ mod imp {
         }
 
         pub fn send(&mut self, bytes: Vec<u8>) {
-            let _ = self.out.send(bytes);
+            let _ = self.out.send(Out::Stream(bytes));
+        }
+
+        pub fn send_datagram(&mut self, bytes: Vec<u8>) {
+            let _ = self.out.send(Out::Datagram(bytes));
         }
 
         pub fn try_recv(&self) -> Option<Event> {
@@ -234,7 +261,7 @@ mod imp {
     async fn run(
         url: &str,
         hash: Option<Vec<u8>>,
-        mut out: async_mpsc::UnboundedReceiver<Vec<u8>>,
+        mut out: async_mpsc::UnboundedReceiver<Out>,
         events: &mpsc::Sender<Event>,
     ) -> String {
         let client = match hash {
@@ -260,8 +287,15 @@ mod imp {
         let reader = tokio::spawn(read_frames(recv, events.clone()));
         let reason = loop {
             tokio::select! {
-                bytes = out.recv() => {
-                    let Some(bytes) = bytes else { break "fermée".to_owned() };
+                next = out.recv() => {
+                    let bytes = match next {
+                        Some(Out::Stream(bytes)) => bytes,
+                        Some(Out::Datagram(bytes)) => {
+                            let _ = session.send_datagram(bytes.into());
+                            continue;
+                        }
+                        None => break "fermée".to_owned(),
+                    };
                     let len = u32::try_from(bytes.len()).unwrap_or(u32::MAX).to_le_bytes();
                     if let Err(e) = send.write_all(&len).await {
                         break e.to_string();

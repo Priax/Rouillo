@@ -170,7 +170,7 @@ async fn serve(session: &Session, cmd_tx: mpsc::Sender<Command>, pool: db::DbPoo
         .map_err(|_| "pas de flux ouvert".to_owned())?
         .map_err(|e| e.to_string())?;
     let (to_client_tx, mut to_client_rx) = mpsc::channel::<Vec<u8>>(CLIENT_CHAN_CAP);
-    let (states_tx, mut states_rx) = mpsc::channel::<Vec<u8>>(STATE_CHAN_CAP);
+    let (states_tx, mut states_rx) = mpsc::channel::<Vec<Bytes>>(STATE_CHAN_CAP);
     let mut inbox = Inbox::new(conn, cmd_tx.clone(), pool, to_client_tx.clone());
     info!("WT {conn} ouverture");
     let _ = cmd_tx
@@ -181,58 +181,89 @@ async fn serve(session: &Session, cmd_tx: mpsc::Sender<Command>, pool: db::DbPoo
         })
         .await;
 
-    let datagrams = session.clone();
+    let outgoing = session.clone();
     let sending = async move {
         loop {
-            let payload = tokio::select! {
-                Some(p) = to_client_rx.recv() => Bytes::from(p),
-                Some(p) = states_rx.recv() => {
-                    let p = Bytes::from(p);
-                    if p.len() <= datagrams.max_datagram_size() && datagrams.send_datagram(p.clone()).is_ok() {
-                        continue;
+            let open = tokio::select! {
+                Some(p) = to_client_rx.recv() => write_frame(&mut send, &p).await,
+                Some(boards) = states_rx.recv() => {
+                    let mut open = true;
+                    for board in boards {
+                        let fits = board.len() <= outgoing.max_datagram_size();
+                        if !(fits && outgoing.send_datagram(board.clone()).is_ok()) {
+                            open &= write_frame(&mut send, &board).await;
+                        }
                     }
-                    p
+                    open
                 }
-                else => return,
+                else => false,
             };
-            let len = u32::try_from(payload.len()).unwrap_or(u32::MAX).to_le_bytes();
-            if send.write_all(&len).await.is_err() || send.write_all(&payload).await.is_err() {
+            if !open {
                 return;
             }
         }
     };
-    let receiving = async move {
-        let mut buf = Vec::new();
+    let (frames_tx, mut frames) = mpsc::channel::<Vec<u8>>(CLIENT_CHAN_CAP);
+    let reading = async move {
         loop {
-            let started = Instant::now();
             let mut len = [0; 4];
-            match timeout(CLIENT_SILENCE_TIMEOUT, recv.read_exact(&mut len)).await {
-                Ok(Ok(())) => {}
-                Ok(Err(_)) => return,
-                Err(_) => {
-                    warn!("WT {conn} muet depuis {}s, fermeture", started.elapsed().as_secs());
-                    return;
-                }
+            if recv.read_exact(&mut len).await.is_err() {
+                return;
             }
             let len = u32::from_le_bytes(len) as usize;
             if len > MAX_CLIENT_MESSAGE {
                 warn!("WT {conn} message trop long ({len} octets), fermeture");
                 return;
             }
-            buf.resize(len, 0);
-            if recv.read_exact(&mut buf).await.is_err() || !inbox.receive(Some(&buf)).await {
+            let mut buf = vec![0; len];
+            if recv.read_exact(&mut buf).await.is_err() || frames_tx.send(buf).await.is_err() {
+                return;
+            }
+        }
+    };
+    let incoming = session.clone();
+    let receiving = async move {
+        loop {
+            let open = match timeout(CLIENT_SILENCE_TIMEOUT, async {
+                tokio::select! {
+                    frame = frames.recv() => match frame {
+                        Some(frame) => inbox.receive(Some(&frame)).await,
+                        None => false,
+                    },
+                    datagram = incoming.read_datagram() => match datagram {
+                        Ok(bytes) => inbox.receive_datagram(&bytes).await,
+                        Err(_) => false,
+                    },
+                }
+            })
+            .await
+            {
+                Ok(open) => open,
+                Err(_) => {
+                    warn!("WT {conn} muet depuis {}s, fermeture", CLIENT_SILENCE_TIMEOUT.as_secs());
+                    false
+                }
+            };
+            if !open {
                 return;
             }
         }
     };
     tokio::select! {
         () = sending => {}
+        () = reading => {}
         () = receiving => {}
         _ = session.closed() => {}
     }
     let _ = cmd_tx.send(Command::Unregister { conn }).await;
     info!("WT {conn} fermeture");
     Ok(())
+}
+
+/// A message on the stream, its length first.
+async fn write_frame(send: &mut web_transport_quinn::SendStream, payload: &[u8]) -> bool {
+    let len = u32::try_from(payload.len()).unwrap_or(u32::MAX).to_le_bytes();
+    send.write_all(&len).await.is_ok() && send.write_all(payload).await.is_ok()
 }
 
 #[derive(Debug)]

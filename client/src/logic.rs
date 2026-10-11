@@ -1,5 +1,5 @@
 use notan::prelude::*;
-use shared::{config, ClientMessage, GameState, InputKind, StampedInput, Targeting};
+use shared::{config, ClientMessage, GameState, InputKind, SentInput, StampedInput, Targeting};
 
 use crate::connection::Connection;
 use crate::controls::{Action, Frame};
@@ -202,6 +202,16 @@ pub fn announce_events(session: &mut GameSession) {
     }
 }
 
+/// The oldest inputs the server has not acknowledged. The oldest, since
+/// it takes an input only if newer than all it took: one sent again must
+/// not overtake an older one still on its way.
+fn unacknowledged(session: &GameSession) -> Vec<SentInput> {
+    let pending = session.pending_inputs.iter().take(shared::MAX_RESENT_INPUTS);
+    pending
+        .map(|&(seq, StampedInput { tick, kind })| SentInput { seq, tick, kind })
+        .collect()
+}
+
 fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: InputKind) -> bool {
     let before = session.predicted_board.active_piece.clone();
     session.predicted_board.apply_input(kind);
@@ -218,6 +228,9 @@ fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: In
         session.pending_inputs.push((seq, StampedInput { tick, kind }));
         session.sent_at.push((seq, session.clock));
         conn.send(&ClientMessage::Input { kind, seq, tick });
+        conn.send_datagram(&ClientMessage::Inputs {
+            inputs: unacknowledged(session),
+        });
     }
     moved
 }
@@ -603,5 +616,28 @@ mod tests {
         assert_eq!((s.targeting, s.target), (Targeting::Manual(4), Some(4)));
         choose_target(&none, Some(crate::draw::GameClick::Strategy(2)), &mut s, &mut conn);
         assert_eq!(s.targeting, Targeting::Danger);
+    }
+
+    #[test]
+    fn inputs_sent_again_start_from_the_oldest_unacknowledged() {
+        let mut session = synced_session();
+        session.pending_inputs = (1..=20)
+            .map(|seq| {
+                (
+                    seq,
+                    StampedInput {
+                        tick: seq,
+                        kind: InputKind::RotateCW,
+                    },
+                )
+            })
+            .collect();
+        session.pending_inputs.retain(|(seq, _)| *seq > 3);
+        let seqs: Vec<u32> = unacknowledged(&session).iter().map(|i| i.seq).collect();
+        assert_eq!(
+            seqs,
+            (4..20).collect::<Vec<_>>(),
+            "a gap would get the older ones refused"
+        );
     }
 }

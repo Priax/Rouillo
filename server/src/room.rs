@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use shared::{LobbyInfo, RankedInfo, RoomId, RoomInfo, RoomSettings, ServerMessage};
 use tokio::time::Instant;
 use tracing::{error, info};
@@ -85,6 +86,14 @@ pub struct Seat {
 const SPARSE_FROM: usize = 3;
 const OTHERS_EVERY: u32 = 3;
 
+/// One tick's game state for one connection.
+pub enum StateOut {
+    /// In one message, on a link that keeps every message.
+    Whole(Vec<u8>),
+    /// A message per board, each to go alone in a datagram.
+    Boards(Vec<Bytes>),
+}
+
 fn encoded(msg: &ServerMessage) -> Option<Vec<u8>> {
     shared::encode(msg).map_err(|e| error!("encode failed: {e}")).ok()
 }
@@ -157,9 +166,14 @@ impl Room {
     }
 
     /// The start of the running game as `conn` sees it: its own slot, 0 for
-    /// one without a board, and every seat's name.
-    pub fn game_start_for(&self, conn: ConnId) -> ServerMessage {
-        let your_slot = self.game_slot_of_conn(conn).map_or(0, |s| slot_byte(s + 1));
+    /// one without a board, and every seat's name. A client numbers its
+    /// inputs from 1 in each game it is told of, so its slot does too.
+    pub fn game_start_for(&mut self, conn: ConnId) -> ServerMessage {
+        let slot = self.game_slot_of_conn(conn);
+        if let Some(slot) = slot {
+            self.sim.renumber_inputs(slot);
+        }
+        let your_slot = slot.map_or(0, |s| slot_byte(s + 1));
         ServerMessage::GameStart {
             game: self.sim.game,
             your_slot,
@@ -173,7 +187,7 @@ impl Room {
         }
     }
 
-    pub fn game_start_payloads(&self) -> Vec<(ConnId, Vec<u8>)> {
+    pub fn game_start_payloads(&mut self) -> Vec<(ConnId, Vec<u8>)> {
         self.audience()
             .into_iter()
             .filter_map(|c| Some((c, encoded(&self.game_start_for(c))?)))
@@ -205,12 +219,15 @@ impl Room {
 
     /// Advances a running game by one step and sends its state. Returns the
     /// match record when this step ended the game.
-    /// The last state of a game goes with the reliable messages, since
-    /// no other comes after it.
+    /// Advances a running game by one step and sends its state. The last
+    /// state goes with the reliable messages, since no other comes after
+    /// it. `split(conn)` tells a link that takes states board by board.
+    /// Returns the match record when this step ended the game.
     pub fn tick_game(
         &mut self,
         do_broadcast: bool,
-        states: &mut Vec<(ConnId, Vec<u8>)>,
+        split: impl Fn(ConnId) -> bool,
+        states: &mut Vec<(ConnId, StateOut)>,
         outgoing: &mut Vec<(ConnId, Vec<u8>)>,
     ) -> Option<db::MatchRecord> {
         if !matches!(self.phase, Phase::Playing) {
@@ -236,40 +253,51 @@ impl Room {
                 record = Some(rec);
             }
         }
-        let just_finished = record.is_some();
-        if (do_broadcast && advanced) || just_finished {
-            let everyone =
-                just_finished || self.sim.boards.len() < SPARSE_FROM || self.sim.tick.is_multiple_of(OTHERS_EVERY);
-            let sink = if just_finished { outgoing } else { states };
-            if everyone {
-                if let Some(upd) = encoded(&self.sim.state_update()) {
-                    self.send_to_audience(&upd, sink);
-                }
-            } else {
-                self.send_own_boards(sink);
+        if record.is_some() {
+            if let Some(upd) = encoded(&self.sim.state_update()) {
+                self.send_to_audience(&upd, outgoing);
             }
+        } else if do_broadcast && advanced {
+            self.send_states(split, states);
         }
         record
     }
 
-    /// Between full updates, a player gets their own board only; whoever
-    /// watches gets them all.
-    fn send_own_boards(&self, outgoing: &mut Vec<(ConnId, Vec<u8>)>) {
-        let mut all = None;
+    /// From `SPARSE_FROM` boards, a player gets the others' one tick in
+    /// `OTHERS_EVERY` only, their own every tick; whoever watches gets them
+    /// all. Each message is made once and shared.
+    fn send_states(&self, split: impl Fn(ConnId) -> bool, sink: &mut Vec<(ConnId, StateOut)>) {
         let boards = self.sim.boards.len();
+        let everyone = boards < SPARSE_FROM || self.sim.tick.is_multiple_of(OTHERS_EVERY);
+        let mut whole = None;
+        let mut parts: Vec<Option<Option<Bytes>>> = vec![None; boards];
         let seated = self
             .members
             .iter()
-            .filter_map(|m| Some((m.conn?, m.game_slot.filter(|&s| s < boards))));
+            .filter_map(|m| Some((m.conn?, m.game_slot.filter(|&s| s < boards && !everyone))));
         let watching = self.spectators.iter().map(|s| (s.conn, None));
-        for (conn, slot) in seated.chain(watching) {
-            let payload = match slot {
-                Some(slot) => encoded(&self.sim.state_update_of([slot])),
-                None => all.get_or_insert_with(|| encoded(&self.sim.state_update())).clone(),
+        for (conn, own) in seated.chain(watching) {
+            let out = if split(conn) {
+                let mut part = |s: usize| {
+                    parts[s]
+                        .get_or_insert_with(|| encoded(&self.sim.state_update_of([s])).map(Bytes::from))
+                        .clone()
+                };
+                StateOut::Boards(match own {
+                    Some(s) => part(s).into_iter().collect(),
+                    None => (0..boards).filter_map(&mut part).collect(),
+                })
+            } else {
+                let payload = match own {
+                    Some(s) => encoded(&self.sim.state_update_of([s])),
+                    None => whole.get_or_insert_with(|| encoded(&self.sim.state_update())).clone(),
+                };
+                match payload {
+                    Some(payload) => StateOut::Whole(payload),
+                    None => continue,
+                }
             };
-            if let Some(payload) = payload {
-                outgoing.push((conn, payload));
-            }
+            sink.push((conn, out));
         }
     }
 

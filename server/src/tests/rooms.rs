@@ -724,3 +724,52 @@ fn each_game_of_a_room_has_its_number() {
     assert_eq!(starts, [first[0] + 1]);
     assert_eq!(states, starts, "the new game's updates carry its number");
 }
+
+#[test]
+fn a_datagram_link_gets_each_board_apart() {
+    let mut mgr = new_mgr();
+    let (tx, _rx) = mpsc::channel(CLIENT_CHAN_CAP);
+    let (states_tx, mut states) = mpsc::channel(64);
+    mgr.handle(Command::Register {
+        conn: 9,
+        sender: tx,
+        states: Some(states_tx),
+    });
+    let _rxs = big_room(&mut mgr, 3, 3);
+    start(&mut mgr);
+    hello(&mut mgr, 9, "W");
+    mgr.handle(Command::Spectate { conn: 9, id: 1 });
+    let mut player = mgr.rooms[&1].members[1].conn.expect("seated");
+    let (ptx, _prx) = mpsc::channel(CLIENT_CHAN_CAP);
+    let (pstates_tx, mut pstates) = mpsc::channel(64);
+    mgr.handle(Command::Unregister { conn: player });
+    player = 10;
+    mgr.handle(Command::Register {
+        conn: player,
+        sender: ptx,
+        states: Some(pstates_tx),
+    });
+    hello(&mut mgr, player, "P2");
+    for _ in 0..3 {
+        mgr.tick(1.0 / 60.0, true);
+    }
+    let slots = |boards: Vec<bytes::Bytes>| -> Vec<Vec<u8>> {
+        boards
+            .iter()
+            .map(|b| match shared::decode(b) {
+                Some(ServerMessage::StateUpdate { players, .. }) => players.iter().map(|p| p.slot).collect(),
+                _ => panic!("not a state"),
+            })
+            .collect()
+    };
+    let watched: Vec<_> = std::iter::from_fn(|| states.try_recv().ok()).map(slots).collect();
+    assert_eq!(watched.len(), 3);
+    assert!(watched.iter().all(|t| t == &[vec![1], vec![2], vec![3]]), "{watched:?}");
+    let played: Vec<_> = std::iter::from_fn(|| pstates.try_recv().ok()).map(slots).collect();
+    assert_eq!(
+        played.iter().filter(|t| t.as_slice() == [vec![2]]).count(),
+        2,
+        "{played:?}"
+    );
+    assert_eq!(played.iter().filter(|t| t.len() == 3).count(), 1);
+}

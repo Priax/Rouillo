@@ -5,7 +5,7 @@ pub struct Client {
     sender: mpsc::Sender<Vec<u8>>,
     /// Game states may go apart, where each one may be lost: only the
     /// latest matters.
-    states: Option<mpsc::Sender<Vec<u8>>>,
+    states: Option<mpsc::Sender<Vec<Bytes>>>,
     pub(super) room: Option<RoomId>,
     /// The player id sent in Hello: it follows a browser across reconnections.
     pub token: Option<Token>,
@@ -20,7 +20,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub(super) const fn new(sender: mpsc::Sender<Vec<u8>>, states: Option<mpsc::Sender<Vec<u8>>>) -> Self {
+    pub(super) const fn new(sender: mpsc::Sender<Vec<u8>>, states: Option<mpsc::Sender<Vec<Bytes>>>) -> Self {
         Self {
             sender,
             states,
@@ -40,12 +40,20 @@ impl Client {
         self.sender.try_send(payload).is_ok()
     }
 
-    /// A game state: on a connection that keeps them apart, one that finds
-    /// the way full is dropped, the next one replaces it.
-    pub(super) fn send_state(&self, payload: Vec<u8>) -> bool {
-        match &self.states {
-            Some(states) => !matches!(states.try_send(payload), Err(mpsc::error::TrySendError::Closed(_))),
-            None => self.send(payload),
+    /// Whether game states go to it board by board, in datagrams.
+    pub(super) const fn splits_states(&self) -> bool {
+        self.states.is_some()
+    }
+
+    /// A game state. Board by board, one that finds the way full is
+    /// dropped: the next one replaces it.
+    pub(super) fn send_state(&self, out: StateOut) -> bool {
+        match (out, &self.states) {
+            (StateOut::Boards(boards), Some(states)) => {
+                !matches!(states.try_send(boards), Err(mpsc::error::TrySendError::Closed(_)))
+            }
+            (StateOut::Whole(payload), _) => self.send(payload),
+            (StateOut::Boards(_), None) => true,
         }
     }
 }

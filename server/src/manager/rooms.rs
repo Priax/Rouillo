@@ -202,6 +202,9 @@ impl Manager {
                 let Some(idx) = room.game_slot_of_conn(conn) else {
                     return;
                 };
+                if !room.sim.take_seq(idx, seq) {
+                    return;
+                }
                 if matches!(room.phase, Phase::Playing) && !room.sim.paused && !room.sim.finished {
                     room.sim.queue_input(idx, tick, seq, kind);
                 } else {

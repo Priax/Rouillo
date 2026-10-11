@@ -305,6 +305,15 @@ impl Connection {
         }
     }
 
+    /// Sends `msg` again in a datagram, on a link that has them.
+    pub fn send_datagram(&mut self, msg: &ClientMessage) {
+        if let Link::Live { net: Net::Wt(link) } = &mut self.link {
+            if let Ok(bytes) = shared::encode(msg) {
+                link.send_datagram(bytes);
+            }
+        }
+    }
+
     pub fn poll(&mut self, now: f64) -> Vec<ConnEvent> {
         let mut events = Vec::new();
         let link = std::mem::replace(&mut self.link, Link::Offline);

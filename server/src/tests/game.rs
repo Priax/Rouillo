@@ -398,3 +398,47 @@ fn a_three_player_game_goes_on_until_one_player_is_left() {
     assert_eq!(places, [(1, 3, false), (2, 1, true), (3, 2, false)]);
     assert_eq!(rec.winner_slot(), Some(2));
 }
+
+#[test]
+fn an_input_that_comes_twice_is_taken_once() {
+    let mut mgr = new_mgr();
+    let (_rx1, _rx2) = running_game(&mut mgr);
+    let col = piece_col(&mgr, 0);
+    let tick = mgr.rooms[&1].sim.tick + 1;
+    press(&mut mgr, 1, 1, tick);
+    press(&mut mgr, 1, 1, tick);
+    mgr.tick(STEP, false);
+    mgr.tick(STEP, false);
+    assert_eq!(piece_col(&mgr, 0), col - 1, "moved twice");
+}
+
+#[test]
+fn a_reconnected_player_numbers_inputs_from_one_again() {
+    let mut mgr = new_mgr();
+    let (_rx1, _rx2) = running_game(&mut mgr);
+    for seq in 1..=5 {
+        let tick = mgr.rooms[&1].sim.tick + 1;
+        mgr.handle(Command::Input {
+            conn: 2,
+            kind: InputKind::RotateCW,
+            seq,
+            tick,
+        });
+        mgr.tick(STEP, false);
+    }
+    assert_eq!(mgr.rooms[&1].sim.last_seq[1], 5);
+    mgr.handle(Command::Unregister { conn: 2 });
+    let _rx = reg(&mut mgr, 3);
+    hello(&mut mgr, 3, "B");
+    assert!(!mgr.rooms[&1].sim.paused, "setup: B is back");
+    assert_eq!(
+        mgr.rooms[&1].sim.last_seq[1], 0,
+        "the ack starts over with the new numbering"
+    );
+    let col = piece_col(&mgr, 1);
+    let tick = mgr.rooms[&1].sim.tick + 1;
+    press(&mut mgr, 3, 1, tick);
+    mgr.tick(STEP, false);
+    mgr.tick(STEP, false);
+    assert_eq!(piece_col(&mgr, 1), col - 1, "input 1 of the new connection was dropped");
+}

@@ -246,18 +246,44 @@ impl Inbox {
     /// Handles one message, `None` for one that carries no game message.
     /// Returns whether the connection stays open.
     pub(crate) async fn receive(&mut self, bytes: Option<&[u8]>) -> bool {
-        let conn = self.conn;
+        match self.admit() {
+            Some(true) => {}
+            Some(false) => return true,
+            None => return false,
+        }
+        match bytes.and_then(shared::decode::<ClientMessage>) {
+            Some(msg) => self.handle(msg).await,
+            None => true,
+        }
+    }
+
+    /// A datagram may only carry inputs sent again.
+    pub(crate) async fn receive_datagram(&mut self, bytes: &[u8]) -> bool {
+        match self.admit() {
+            Some(true) => {}
+            Some(false) => return true,
+            None => return false,
+        }
+        match shared::decode::<ClientMessage>(bytes) {
+            Some(msg @ ClientMessage::Inputs { .. }) => self.handle(msg).await,
+            _ => true,
+        }
+    }
+
+    /// Whether the limiter lets a message through, `None` to close.
+    fn admit(&mut self) -> Option<bool> {
         match self.limiter.check(Instant::now()) {
-            Verdict::Allow => {}
-            Verdict::Drop => return true,
+            Verdict::Allow => Some(true),
+            Verdict::Drop => Some(false),
             Verdict::Disconnect => {
-                warn!("Connexion {conn} flood, fermeture");
-                return false;
+                warn!("Connexion {} flood, fermeture", self.conn);
+                None
             }
         }
-        let Some(msg) = bytes.and_then(shared::decode::<ClientMessage>) else {
-            return true;
-        };
+    }
+
+    async fn handle(&mut self, msg: ClientMessage) -> bool {
+        let conn = self.conn;
         let cmd = match msg {
             ClientMessage::Hello { .. } if self.greeted => return true,
             ClientMessage::Hello {
@@ -286,6 +312,20 @@ impl Inbox {
                 }
                 return true;
             }
+            ClientMessage::Inputs { inputs } => {
+                for i in inputs.into_iter().take(shared::MAX_RESENT_INPUTS) {
+                    let cmd = Command::Input {
+                        conn,
+                        kind: i.kind,
+                        seq: i.seq,
+                        tick: i.tick,
+                    };
+                    if self.cmd_tx.send(cmd).await.is_err() {
+                        return false;
+                    }
+                }
+                return true;
+            }
             other => match command(conn, other) {
                 Some(cmd) => cmd,
                 None => return true,
@@ -299,7 +339,7 @@ impl Inbox {
 /// connection's own business.
 fn command(conn: ConnId, msg: ClientMessage) -> Option<Command> {
     Some(match msg {
-        ClientMessage::Hello { .. } | ClientMessage::Ping { .. } => return None,
+        ClientMessage::Hello { .. } | ClientMessage::Ping { .. } | ClientMessage::Inputs { .. } => return None,
         ClientMessage::Input { kind, seq, tick } => Command::Input { conn, kind, seq, tick },
         ClientMessage::TogglePause => Command::TogglePause { conn },
         ClientMessage::RequestRestart => Command::Restart { conn },

@@ -167,12 +167,6 @@ fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<Pl
         return;
     }
     session.applied = Some(tick);
-    if session.spectating() && !players.iter().any(|p| p.slot == session.focus) {
-        match players.iter().map(|p| p.slot).min() {
-            Some(first) => session.focus = first,
-            None => return,
-        }
-    }
     let focus = session.focus;
     session.rivals.retain(|r| r.slot != focus);
     let now = crate::connection::now_secs();
@@ -586,23 +580,19 @@ mod tests {
     #[test]
     fn a_spectator_follows_the_first_player_until_told_otherwise() {
         let mut session = GameSession::new(0, Vec::new());
-        apply_update(
-            &mut session,
-            0,
-            5,
-            vec![update(2, 6, false), update(3, 7, false), update(4, 8, false)],
-        );
-        assert_eq!(session.focus, 2);
-        session.follow(4);
+        apply_update(&mut session, 0, 5, vec![update(3, 7, false)]);
+        apply_update(&mut session, 0, 5, vec![update(1, 5, false), update(2, 6, false)]);
+        assert_eq!(session.focus, 1, "a board alone in its update is not followed");
+        session.follow(3);
         apply_update(
             &mut session,
             0,
             6,
-            vec![update(2, 6, false), update(3, 7, false), update(4, 8, false)],
+            vec![update(1, 5, false), update(2, 6, false), update(3, 7, false)],
         );
-        assert_eq!(session.focus, 4);
+        assert_eq!(session.focus, 3);
         let slots: Vec<u8> = session.rivals.iter().map(|r| r.slot).collect();
-        assert_eq!(slots, [2, 3]);
+        assert_eq!(slots, [1, 2]);
     }
 
     #[test]

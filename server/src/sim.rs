@@ -46,6 +46,9 @@ pub struct Sim {
     pub paused: bool,
     pub finished: bool,
     pub last_seq: Vec<u32>,
+    /// The highest input number taken from each slot: an input may come
+    /// twice, on the stream and in a datagram.
+    received_seq: Vec<u32>,
     pub last_restart: Option<Instant>,
     pub start: Instant,
     pub max_chain: Vec<u32>,
@@ -81,6 +84,7 @@ impl Sim {
             paused: false,
             finished: false,
             last_seq: vec![0; n],
+            received_seq: vec![0; n],
             last_restart: None,
             start: Instant::now(),
             max_chain: vec![0; n],
@@ -193,6 +197,27 @@ impl Sim {
     fn update_targets(&mut self) {
         for slot in 0..self.boards.len() {
             self.targets[slot] = if self.alive(slot) { self.pick_target(slot) } else { None };
+        }
+    }
+
+    /// Whether input `seq` of `slot` is new, and then takes it.
+    pub fn take_seq(&mut self, slot: usize, seq: u32) -> bool {
+        let Some(received) = self.received_seq.get_mut(slot) else {
+            return false;
+        };
+        let new = seq > *received;
+        if new {
+            *received = seq;
+        }
+        new
+    }
+
+    /// The client of `slot` numbers its inputs from 1 again.
+    pub fn renumber_inputs(&mut self, slot: usize) {
+        if slot < self.boards.len() {
+            self.queued_inputs[slot].clear();
+            self.last_seq[slot] = 0;
+            self.received_seq[slot] = 0;
         }
     }
 
