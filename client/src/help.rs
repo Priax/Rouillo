@@ -266,7 +266,8 @@ fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, t
     if let Some(text) = demo.text() {
         let lines = fonts.wrap(Face::Text, text, theme::size::BODY, board.w - 28.0);
         let h = lines.len() as f32 * LINE_H + 24.0;
-        let bubble = Rect::at(board.x + 6.0, board.y + 50.0, board.w - 12.0, h);
+        let (boards, scale) = game_draw::demo_boards(demo, board);
+        let bubble = Rect::at(boards.x + 6.0, boards.y + 50.0 * scale, boards.w - 12.0, h);
         draw.rect((bubble.x, bubble.y), (bubble.w, bubble.h))
             .corner_radius(10.0)
             .color(Color::BLACK.with_alpha(0.78));

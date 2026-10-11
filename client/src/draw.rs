@@ -1219,8 +1219,8 @@ pub fn draw_demo(draw: &mut Draw, fonts: &Fonts, demo: &crate::demo::Demo, area:
         draw_chain_anim(draw, fonts, demo.chain, area);
         return;
     };
-    let scale = (area.w - DUEL_GAP) / (2.0 * BOARD_W);
-    let y = area.y + (area.h - BOARD_H * scale) / 2.0;
+    let (boards, scale) = demo_boards(demo, area);
+    let y = boards.y;
     let players = [
         (&demo.board, &demo.turn, demo.chain),
         (&rival.board, &rival.turn, rival.chain),
@@ -1246,6 +1246,17 @@ pub fn draw_demo(draw: &mut Draw, fonts: &Fonts, demo: &crate::demo::Demo, area:
 }
 
 const DUEL_GAP: f32 = 24.0;
+
+/// Where the demo's boards are drawn in `area`, and at what scale: one at
+/// its size, or two side by side, shrunk to fit and centred.
+pub fn demo_boards(demo: &crate::demo::Demo, area: Rect) -> (Rect, f32) {
+    if demo.rival.is_none() {
+        return (area, 1.0);
+    }
+    let scale = (area.w - DUEL_GAP) / (2.0 * BOARD_W);
+    let h = BOARD_H * scale;
+    (Rect::at(area.x, area.y + (area.h - h) / 2.0, area.w, h), scale)
+}
 
 pub const BOARD_W: f32 = config::GRID_WIDTH as f32 * config::CELL_SIZE;
 pub const BOARD_H: f32 = (config::GRID_HEIGHT - config::VISIBLE_ROW_OFFSET) as f32 * config::CELL_SIZE;
