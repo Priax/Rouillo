@@ -639,3 +639,54 @@ fn a_manual_target_is_a_slot_from_one() {
     mgr.tick(0.02, true);
     assert_eq!(mgr.rooms[&1].sim.targets[0], Some(2));
 }
+
+fn update_slots(msgs: &[ServerMessage]) -> Vec<Vec<u8>> {
+    msgs.iter()
+        .filter_map(|m| match m {
+            ServerMessage::StateUpdate { players, .. } => Some(players.iter().map(|p| p.slot).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn with_three_boards_the_others_come_one_tick_in_three() {
+    let mut mgr = new_mgr();
+    let mut rxs = big_room(&mut mgr, 3, 3);
+    start(&mut mgr);
+    let mut watcher = reg(&mut mgr, 8);
+    hello(&mut mgr, 8, "W");
+    mgr.handle(Command::Spectate { conn: 8, id: 1 });
+    for rx in &mut rxs {
+        drain(rx);
+    }
+    drain(&mut watcher);
+    for _ in 0..6 {
+        mgr.tick(1.0 / 60.0, true);
+    }
+    let seen = update_slots(&drain(&mut rxs[1]));
+    assert_eq!(seen.len(), 6);
+    assert_eq!(
+        seen.iter().filter(|s| s.as_slice() == [2]).count(),
+        4,
+        "own board alone"
+    );
+    assert_eq!(seen.iter().filter(|s| s.as_slice() == [1, 2, 3]).count(), 2);
+    let watched = update_slots(&drain(&mut watcher));
+    assert!(
+        watched.len() == 6 && watched.iter().all(|s| s.len() == 3),
+        "a spectator sees every board"
+    );
+}
+
+#[test]
+fn a_duel_sends_both_boards_every_tick() {
+    let mut mgr = new_mgr();
+    let (_rx1, mut rx2) = running_game(&mut mgr);
+    drain(&mut rx2);
+    for _ in 0..4 {
+        mgr.tick(1.0 / 60.0, true);
+    }
+    let seen = update_slots(&drain(&mut rx2));
+    assert!(seen.len() == 4 && seen.iter().all(|s| s.len() == 2));
+}

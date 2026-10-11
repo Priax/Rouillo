@@ -80,6 +80,11 @@ pub struct Seat {
     pub name: String,
 }
 
+/// From this many boards, the others' are sent one tick in `OTHERS_EVERY`:
+/// they are small on screen, and smoothed between updates.
+const SPARSE_FROM: usize = 3;
+const OTHERS_EVERY: u32 = 3;
+
 fn encoded(msg: &ServerMessage) -> Option<Vec<u8>> {
     shared::encode(msg).map_err(|e| error!("encode failed: {e}")).ok()
 }
@@ -223,13 +228,41 @@ impl Room {
         }
         let just_finished = record.is_some();
         if (do_broadcast && advanced) || just_finished {
-            let msg = self.sim.state_update(just_finished);
-            self.sim.last_sent_rng = Some(self.sim.rng_positions());
-            if let Some(upd) = encoded(&msg) {
-                self.send_to_audience(&upd, outgoing);
+            let everyone =
+                just_finished || self.sim.boards.len() < SPARSE_FROM || self.sim.tick.is_multiple_of(OTHERS_EVERY);
+            if everyone {
+                if let Some(upd) = encoded(&self.sim.state_update(just_finished)) {
+                    self.send_to_audience(&upd, outgoing);
+                }
+            } else {
+                self.send_own_boards(outgoing);
             }
+            self.sim.last_sent_rng = Some(self.sim.rng_positions());
         }
         record
+    }
+
+    /// Between full updates, a player gets their own board only; whoever
+    /// watches gets them all.
+    fn send_own_boards(&self, outgoing: &mut Vec<(ConnId, Vec<u8>)>) {
+        let mut all = None;
+        let boards = self.sim.boards.len();
+        let seated = self
+            .members
+            .iter()
+            .filter_map(|m| Some((m.conn?, m.game_slot.filter(|&s| s < boards))));
+        let watching = self.spectators.iter().map(|s| (s.conn, None));
+        for (conn, slot) in seated.chain(watching) {
+            let payload = match slot {
+                Some(slot) => encoded(&self.sim.state_update_of([slot], false)),
+                None => all
+                    .get_or_insert_with(|| encoded(&self.sim.state_update(false)))
+                    .clone(),
+            };
+            if let Some(payload) = payload {
+                outgoing.push((conn, payload));
+            }
+        }
     }
 
     pub fn slot_of_conn(&self, conn: ConnId) -> Option<usize> {

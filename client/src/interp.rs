@@ -21,6 +21,8 @@ struct Snapshot {
 pub struct OpponentView {
     snapshots: VecDeque<Snapshot>,
     arrivals: VecDeque<f64>,
+    /// Ticks between successive updates: boards drawn small come less often.
+    gaps: VecDeque<u32>,
     render_tick: Option<f64>,
 }
 
@@ -44,6 +46,12 @@ impl OpponentView {
         if self.arrivals.len() > JITTER_WINDOW {
             self.arrivals.pop_front();
         }
+        if let Some(last) = self.snapshots.back() {
+            self.gaps.push_back(tick - last.tick);
+            if self.gaps.len() > JITTER_WINDOW {
+                self.gaps.pop_front();
+            }
+        }
         self.snapshots.push_back(Snapshot { tick, board });
         if self.snapshots.len() > MAX_SNAPSHOTS {
             self.snapshots.pop_front();
@@ -61,7 +69,8 @@ impl OpponentView {
                 (lo.min(a), hi.max(a))
             });
         let jitter = if min.is_finite() { max - min } else { 0.0 };
-        (jitter.ceil() + 1.0).clamp(MIN_DELAY_TICKS, MAX_DELAY_TICKS)
+        let gap = self.gaps.iter().max().map_or(1.0, |&g| f64::from(g));
+        (jitter.ceil() + gap).clamp(MIN_DELAY_TICKS, MAX_DELAY_TICKS)
     }
 
     pub fn advance(&mut self, dt: f32) {
@@ -239,6 +248,24 @@ mod tests {
         for w in tail.windows(2) {
             let step = w[1] - w[0];
             assert!(step > 0.7 && step < 1.3, "playback stuttered: {w:?}");
+        }
+    }
+
+    #[test]
+    fn updates_one_tick_in_three_still_play_smoothly() {
+        let mut view = OpponentView::default();
+        let mut rts = Vec::new();
+        for frame in 1..=600u32 {
+            if frame % 3 == 0 {
+                view.push(frame, board_at(0, 1), f64::from(frame) / TICK_HZ);
+            }
+            view.advance(DT);
+            rts.extend(view.render_tick);
+        }
+        assert!(view.delay_ticks() >= 3.0);
+        for w in rts[rts.len() - 120..].windows(2) {
+            let step = w[1] - w[0];
+            assert!(step > 0.85 && step < 1.15, "playback stalled: {w:?}");
         }
     }
 

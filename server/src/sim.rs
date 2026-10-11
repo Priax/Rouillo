@@ -317,8 +317,16 @@ impl Sim {
     }
 
     pub fn state_update(&self, full_rng: bool) -> ServerMessage {
+        self.state_update_of(0..self.boards.len(), full_rng)
+    }
+
+    /// The state of some boards only. A board's draws are sent when they
+    /// moved since its last update.
+    pub fn state_update_of(&self, slots: impl IntoIterator<Item = usize>, full_rng: bool) -> ServerMessage {
         let pos = self.rng_positions();
-        let players = (0..self.boards.len())
+        let players = slots
+            .into_iter()
+            .filter(|&i| i < self.boards.len())
             .map(|i| {
                 let changed = full_rng
                     || self
