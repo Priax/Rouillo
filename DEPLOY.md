@@ -379,6 +379,34 @@ après avoir vérifié sa signature (nom, version et SHA-256), puis se relance.
 - Vérifier la chaîne de signature en local:
   `RELEASE_KEY=~/.config/rouillo-release/signing-key.pem cargo test -p client the_release_script -- --ignored`
 
+## 14. WebTransport (UDP 443)
+
+Quand le serveur le propose, le client joue en WebTransport: les messages passent par un flux
+fiable, l'état des parties par datagrammes (un datagramme perdu est remplacé par le suivant au
+lieu de retarder les autres). Sinon, ou si WebTransport n'aboutit pas en 3 s (UDP bloqué par un
+réseau, vieux navigateur), il reste sur le WebSocket, qui marche comme avant.
+
+Le serveur écoute lui-même en UDP 443 avec le certificat de Caddy. Caddy n'y sert donc plus
+HTTP/3 (le site reste en HTTP/1.1 et HTTP/2). Une seule fois:
+
+1. **Console Oracle**: instance → Networking → `puyo-subnet` → Security → Security List →
+   **Add Ingress Rules**: Source CIDR `0.0.0.0/0`, protocole **UDP**, Destination Port Range
+   **`443`** → Add.
+2. **Depuis le PC**: `scripts/setup-webtransport.sh`. Il copie le certificat de Caddy dans
+   `/opt/puyorust/tls/` (puis chaque jour, timer `puyo-tls.timer`; le serveur relit le
+   certificat quand il change), ajoute `WT_ADDR`, `WT_URL`, `WT_CERT`, `WT_KEY` à `puyo.env`,
+   autorise l'unité à écouter le port 443 (`puyo.service.d/webtransport.conf`), coupe HTTP/3
+   dans Caddy (sauvegarde: `/etc/caddy/Caddyfile.before-webtransport`) et ouvre UDP 443 dans
+   iptables. Le relancer ne change rien.
+3. `scripts/deploy.sh`: au redémarrage, le journal dit `WebTransport sur 0.0.0.0:443`, et le
+   script affiche `WebTransport offered`.
+
+Vérifier en jeu: la surcouche de debug (build debug) indique `WebTransport` ou `WebSocket`. En
+local, `WT_ADDR=127.0.0.1:4433` suffit: sans `WT_CERT`, le serveur fabrique un certificat
+auto-signé et donne son empreinte au client.
+
+Revenir au WebSocket seul: retirer les lignes `WT_*` de `puyo.env` et redémarrer.
+
 ## Pièges rencontrés
 
 | Symptôme | Cause | Fix |

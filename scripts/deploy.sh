@@ -94,6 +94,10 @@ check_server() {
         "$SITE/ws" || true)
     [ "$status" = 101 ] || die "$SITE/ws answered $status instead of 101"
     echo "Server up, $SITE/ws answers"
+    case $(curl -s --max-time 10 "$SITE/api/transport" || true) in
+    *'"url"'*) echo "WebTransport offered" ;;
+    *) echo "WebTransport not offered, games go over the WebSocket (see DEPLOY.md §14)" ;;
+    esac
 }
 
 push_web() {
