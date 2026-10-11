@@ -212,12 +212,14 @@ impl Sim {
         new
     }
 
-    /// The client of `slot` numbers its inputs from 1 again.
-    pub fn renumber_inputs(&mut self, slot: usize) {
+    /// What the client of `slot` holds starts over: it numbers its inputs
+    /// from 1 and aims at random until it picks again.
+    pub fn restart_client(&mut self, slot: usize) {
         if slot < self.boards.len() {
             self.queued_inputs[slot].clear();
             self.last_seq[slot] = 0;
             self.received_seq[slot] = 0;
+            self.set_targeting(slot, Targeting::default());
         }
     }
 
@@ -364,11 +366,7 @@ impl Sim {
 
     pub fn reset_boards(&mut self, s: &RoomSettings, teams: Vec<u8>) {
         let last_restart = self.last_restart;
-        let targeting = std::mem::take(&mut self.targeting);
         *self = Self::new(s, teams);
-        for (slot, t) in targeting.into_iter().enumerate().take(self.boards.len()) {
-            self.targeting[slot] = t;
-        }
         self.last_restart = last_restart;
     }
 }

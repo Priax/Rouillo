@@ -387,6 +387,18 @@ pub struct SentInput {
     pub kind: InputKind,
 }
 
+/// On a WebTransport stream, each message comes after its length in these
+/// bytes, little-endian.
+pub const FRAME_HEADER: usize = 4;
+
+pub fn frame_header(len: usize) -> [u8; FRAME_HEADER] {
+    u32::try_from(len).unwrap_or(u32::MAX).to_le_bytes()
+}
+
+pub fn frame_len(header: [u8; FRAME_HEADER]) -> usize {
+    u32::from_le_bytes(header) as usize
+}
+
 /// The most inputs one `Inputs` message carries.
 pub const MAX_RESENT_INPUTS: usize = 16;
 

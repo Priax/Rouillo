@@ -351,3 +351,31 @@ fn a_second_tab_takes_the_seat_and_tells_the_first() {
     assert_eq!(b.conn, Some(3), "closing the first tab keeps the seat");
     assert!(!mgr.rooms[&1].sim.paused);
 }
+
+#[tokio::test(start_paused = true)]
+async fn inputs_sent_again_each_count_against_the_limit() {
+    let (tx, mut rx) = mpsc::channel(100_000);
+    let (pong_tx, _pong_rx) = mpsc::channel(8);
+    let mut inbox = Inbox::new(1, tx, lazy_pool(), pong_tx);
+    let inputs = (1..=shared::MAX_RESENT_INPUTS as u32)
+        .map(|seq| shared::SentInput {
+            seq,
+            tick: 1,
+            kind: InputKind::MoveLeft,
+        })
+        .collect();
+    let datagram = shared::encode(&ClientMessage::Inputs { inputs }).unwrap();
+    let sent = 100;
+    for _ in 0..sent {
+        assert!(inbox.receive_datagram(&datagram).await, "closed early");
+    }
+    let mut taken = 0;
+    while rx.try_recv().is_ok() {
+        taken += 1;
+    }
+    assert!(
+        taken <= CLIENT_MSG_BURST as usize,
+        "{taken} inputs went through a burst of {CLIENT_MSG_BURST}"
+    );
+    assert!(taken > 1000, "the burst itself was refused: {taken}");
+}

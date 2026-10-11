@@ -262,16 +262,21 @@ impl Connection {
     }
 
     /// The WebTransport offer to dial now, or `Err` while the server has
-    /// not answered whether it makes one.
+    /// not answered whether it makes one. An answer that comes too late
+    /// serves the next dial; a failed question is asked again on the next
+    /// connection.
     fn offer(&mut self, now: f64) -> Result<Option<crate::wt::Offer>, ()> {
         if let Transport::Asking { slot, since } = &self.transport {
             match crate::http::poll(slot) {
-                Some(Ok(resp)) => {
+                Some(Ok(resp)) if resp.ok => {
                     self.transport = Transport::Known(crate::http::json::<Option<crate::wt::Offer>>(&resp).flatten());
                 }
-                Some(Err(_)) => self.transport = Transport::Known(None),
+                Some(_) => {
+                    self.transport = Transport::Unknown;
+                    return Ok(None);
+                }
                 None if now - since < OFFER_WAIT => return Err(()),
-                None => self.transport = Transport::Known(None),
+                None => return Ok(None),
             }
         }
         Ok(match &self.transport {
@@ -403,7 +408,7 @@ impl Connection {
 
     fn outdated(&mut self, events: &mut Vec<ConnEvent>) -> Link {
         events.clear();
-        eprintln!("[ws] refusé: le serveur attend une autre version du protocole");
+        eprintln!("[net] refusé: le serveur attend une autre version du protocole");
         self.unreported_drop = None;
         self.heartbeat = Heartbeat::new(0.0);
         events.push(ConnEvent::Outdated);
@@ -412,7 +417,7 @@ impl Connection {
 
     fn drop_link(&mut self, reason: String, retry: Retry, now: f64, events: &mut Vec<ConnEvent>) -> Link {
         events.clear();
-        eprintln!("[ws] connexion perdue: {reason}");
+        eprintln!("[net] connexion perdue: {reason}");
         self.unreported_drop = Some(reason);
         if retry.expired(now) {
             events.push(ConnEvent::GaveUp);
@@ -735,5 +740,56 @@ mod tests {
         c.drop_link("bye".to_string(), Retry::recovering(now), now, &mut events);
 
         assert!(matches!(events.as_slice(), [ConnEvent::Retrying]));
+    }
+
+    fn asking(c: &mut Connection, since: f64) -> crate::http::HttpSlot {
+        let slot = crate::http::new_slot();
+        c.transport = Transport::Asking {
+            slot: std::sync::Arc::clone(&slot),
+            since,
+        };
+        slot
+    }
+
+    fn answered(slot: &crate::http::HttpSlot, status: u16, body: &str) {
+        *slot.lock().unwrap() = Some(Ok(ehttp::Response {
+            url: String::new(),
+            ok: (200..300).contains(&status),
+            status,
+            status_text: String::new(),
+            headers: ehttp::Headers::default(),
+            bytes: body.as_bytes().to_vec(),
+        }));
+    }
+
+    #[test]
+    fn a_dial_waits_a_little_for_the_offer_then_goes_without() {
+        let mut c = Connection::new("p");
+        let slot = asking(&mut c, 0.0);
+        assert!(c.offer(OFFER_WAIT - 0.1).is_err(), "too soon to give up on it");
+        assert!(matches!(c.offer(OFFER_WAIT), Ok(None)));
+        answered(&slot, 200, r#"{"url":"https://h/wt"}"#);
+        assert!(
+            matches!(c.offer(OFFER_WAIT + 5.0), Ok(Some(o)) if o.url == "https://h/wt"),
+            "a late answer serves the next dial"
+        );
+        c.wt_failed = true;
+        assert!(matches!(c.offer(9.0), Ok(None)), "WebTransport failed once");
+    }
+
+    #[test]
+    fn a_failed_question_is_asked_again_later() {
+        let mut c = Connection::new("p");
+        let slot = asking(&mut c, 0.0);
+        answered(&slot, 502, "Bad Gateway");
+        assert!(matches!(c.offer(0.5), Ok(None)));
+        assert!(
+            matches!(c.transport, Transport::Unknown),
+            "a server being restarted is no answer"
+        );
+        let slot = asking(&mut c, 1.0);
+        answered(&slot, 200, "null");
+        assert!(matches!(c.offer(1.5), Ok(None)));
+        assert!(matches!(c.transport, Transport::Known(None)));
     }
 }

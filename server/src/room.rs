@@ -166,12 +166,12 @@ impl Room {
     }
 
     /// The start of the running game as `conn` sees it: its own slot, 0 for
-    /// one without a board, and every seat's name. A client numbers its
-    /// inputs from 1 in each game it is told of, so its slot does too.
+    /// one without a board, and every seat's name. A client starts each
+    /// game it is told of afresh, so its slot does too.
     pub fn game_start_for(&mut self, conn: ConnId) -> ServerMessage {
         let slot = self.game_slot_of_conn(conn);
         if let Some(slot) = slot {
-            self.sim.renumber_inputs(slot);
+            self.sim.restart_client(slot);
         }
         let your_slot = slot.map_or(0, |s| slot_byte(s + 1));
         ServerMessage::GameStart {

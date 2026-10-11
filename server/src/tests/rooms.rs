@@ -773,3 +773,18 @@ fn a_datagram_link_gets_each_board_apart() {
     );
     assert_eq!(played.iter().filter(|t| t.len() == 3).count(), 1);
 }
+
+#[test]
+fn a_new_game_aims_at_random_as_the_client_shows() {
+    let mut mgr = new_mgr();
+    let _rxs = big_room(&mut mgr, 3, 3);
+    start(&mut mgr);
+    mgr.handle(Command::SetTargeting {
+        conn: 1,
+        targeting: shared::Targeting::Danger,
+    });
+    assert_eq!(mgr.rooms[&1].sim.targeting[0], shared::Targeting::Danger);
+    mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
+    mgr.handle(Command::Restart { conn: 2 });
+    assert_eq!(mgr.rooms[&1].sim.targeting[0], shared::Targeting::Random);
+}

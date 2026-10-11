@@ -296,8 +296,7 @@ mod imp {
                         }
                         None => break "fermée".to_owned(),
                     };
-                    let len = u32::try_from(bytes.len()).unwrap_or(u32::MAX).to_le_bytes();
-                    if let Err(e) = send.write_all(&len).await {
+                    if let Err(e) = send.write_all(&shared::frame_header(bytes.len())).await {
                         break e.to_string();
                     }
                     if let Err(e) = send.write_all(&bytes).await {
@@ -319,9 +318,13 @@ mod imp {
     }
 
     async fn read_frames(mut recv: RecvStream, events: mpsc::Sender<Event>) {
-        let mut len = [0; 4];
-        while recv.read_exact(&mut len).await.is_ok() {
-            let mut buf = vec![0; u32::from_le_bytes(len) as usize];
+        let mut header = [0; shared::FRAME_HEADER];
+        while recv.read_exact(&mut header).await.is_ok() {
+            let len = shared::frame_len(header);
+            if len > shared::MAX_DECODED_SIZE {
+                return;
+            }
+            let mut buf = vec![0; len];
             if recv.read_exact(&mut buf).await.is_err() || events.send(Event::Message(buf)).is_err() {
                 return;
             }

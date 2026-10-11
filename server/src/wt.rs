@@ -206,11 +206,11 @@ async fn serve(session: &Session, cmd_tx: mpsc::Sender<Command>, pool: db::DbPoo
     let (frames_tx, mut frames) = mpsc::channel::<Vec<u8>>(CLIENT_CHAN_CAP);
     let reading = async move {
         loop {
-            let mut len = [0; 4];
-            if recv.read_exact(&mut len).await.is_err() {
+            let mut header = [0; shared::FRAME_HEADER];
+            if recv.read_exact(&mut header).await.is_err() {
                 return;
             }
-            let len = u32::from_le_bytes(len) as usize;
+            let len = shared::frame_len(header);
             if len > MAX_CLIENT_MESSAGE {
                 warn!("WT {conn} message trop long ({len} octets), fermeture");
                 return;
@@ -262,8 +262,7 @@ async fn serve(session: &Session, cmd_tx: mpsc::Sender<Command>, pool: db::DbPoo
 
 /// A message on the stream, its length first.
 async fn write_frame(send: &mut web_transport_quinn::SendStream, payload: &[u8]) -> bool {
-    let len = u32::try_from(payload.len()).unwrap_or(u32::MAX).to_le_bytes();
-    send.write_all(&len).await.is_ok() && send.write_all(payload).await.is_ok()
+    send.write_all(&shared::frame_header(payload.len())).await.is_ok() && send.write_all(payload).await.is_ok()
 }
 
 #[derive(Debug)]

@@ -33,16 +33,14 @@ async fn dial(offer: &Offer, version: u32) -> Result<Session, String> {
 
 async fn write_frame(send: &mut web_transport_quinn::SendStream, msg: &ClientMessage) {
     let bytes = shared::encode(msg).expect("encode");
-    send.write_all(&u32::try_from(bytes.len()).unwrap().to_le_bytes())
-        .await
-        .expect("write");
+    send.write_all(&shared::frame_header(bytes.len())).await.expect("write");
     send.write_all(&bytes).await.expect("write");
 }
 
 async fn read_frame(recv: &mut web_transport_quinn::RecvStream) -> ServerMessage {
-    let mut len = [0; 4];
-    recv.read_exact(&mut len).await.expect("a length");
-    let mut buf = vec![0; u32::from_le_bytes(len) as usize];
+    let mut header = [0; shared::FRAME_HEADER];
+    recv.read_exact(&mut header).await.expect("a length");
+    let mut buf = vec![0; shared::frame_len(header)];
     recv.read_exact(&mut buf).await.expect("a payload");
     shared::decode(&buf).expect("a message")
 }

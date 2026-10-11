@@ -246,40 +246,32 @@ impl Inbox {
     /// Handles one message, `None` for one that carries no game message.
     /// Returns whether the connection stays open.
     pub(crate) async fn receive(&mut self, bytes: Option<&[u8]>) -> bool {
-        match self.admit() {
-            Some(true) => {}
-            Some(false) => return true,
-            None => return false,
-        }
-        match bytes.and_then(shared::decode::<ClientMessage>) {
-            Some(msg) => self.handle(msg).await,
-            None => true,
-        }
+        self.take(bytes, false).await
     }
 
     /// A datagram may only carry inputs sent again.
     pub(crate) async fn receive_datagram(&mut self, bytes: &[u8]) -> bool {
+        self.take(Some(bytes), true).await
+    }
+
+    async fn take(&mut self, bytes: Option<&[u8]>, datagram: bool) -> bool {
         match self.admit() {
-            Some(true) => {}
-            Some(false) => return true,
-            None => return false,
+            Verdict::Allow => {}
+            Verdict::Drop => return true,
+            Verdict::Disconnect => return false,
         }
-        match shared::decode::<ClientMessage>(bytes) {
-            Some(msg @ ClientMessage::Inputs { .. }) => self.handle(msg).await,
+        match bytes.and_then(shared::decode::<ClientMessage>) {
+            Some(msg) if !datagram || matches!(msg, ClientMessage::Inputs { .. }) => self.handle(msg).await,
             _ => true,
         }
     }
 
-    /// Whether the limiter lets a message through, `None` to close.
-    fn admit(&mut self) -> Option<bool> {
-        match self.limiter.check(Instant::now()) {
-            Verdict::Allow => Some(true),
-            Verdict::Drop => Some(false),
-            Verdict::Disconnect => {
-                warn!("Connexion {} flood, fermeture", self.conn);
-                None
-            }
+    fn admit(&mut self) -> Verdict {
+        let verdict = self.limiter.check(Instant::now());
+        if verdict == Verdict::Disconnect {
+            warn!("Connexion {} flood, fermeture", self.conn);
         }
+        verdict
     }
 
     async fn handle(&mut self, msg: ClientMessage) -> bool {
@@ -313,7 +305,13 @@ impl Inbox {
                 return true;
             }
             ClientMessage::Inputs { inputs } => {
-                for i in inputs.into_iter().take(shared::MAX_RESENT_INPUTS) {
+                // Each input counts as a message; the first was counted on arrival.
+                for (n, i) in inputs.into_iter().take(shared::MAX_RESENT_INPUTS).enumerate() {
+                    match if n == 0 { Verdict::Allow } else { self.admit() } {
+                        Verdict::Allow => {}
+                        Verdict::Drop => return true,
+                        Verdict::Disconnect => return false,
+                    }
                     let cmd = Command::Input {
                         conn,
                         kind: i.kind,
