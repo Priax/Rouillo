@@ -155,12 +155,17 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
     }
 }
 
+/// The names over the two boards shown: one's own (or the first player's,
+/// for a spectator) and the first other player's.
 fn board_labels(info: &shared::LobbyInfo) -> Option<[String; 2]> {
     let name = |i: usize| info.names.get(i).cloned().unwrap_or_default();
-    match info.your_slot {
-        0 => Some([name(0), name(1)]),
-        slot => Some(["YOU".to_owned(), name(2 - usize::from(slot))]),
-    }
+    let mine = usize::from(info.your_slot).checked_sub(1);
+    let other = (0..info.names.len()).find(|&i| Some(i) != mine && (mine.is_some() || i > 0));
+    let other = other.map(name).unwrap_or_default();
+    Some(match mine {
+        None => [name(0), other],
+        Some(_) => ["YOU".to_owned(), other],
+    })
 }
 
 /// A spectator draws what the server sent: there are no inputs to predict.
@@ -548,5 +553,36 @@ mod tests {
             .filter(|(_, i)| i.tick <= at)
             .map(|(seq, _)| *seq)
             .fold(session.my_ack, u32::max)
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    fn lobby(your_slot: u8) -> shared::LobbyInfo {
+        shared::LobbyInfo {
+            id: 1,
+            name: "r".into(),
+            settings: shared::RoomSettings::default(),
+            players: 3,
+            connected: 3,
+            your_slot,
+            is_host: false,
+            countdown: None,
+            ranked: None,
+            names: vec!["a".into(), "b".into(), "c".into()],
+            teams: vec![None; 3],
+            spectators: 0,
+        }
+    }
+
+    #[test]
+    fn every_seat_names_its_boards() {
+        let labels = |slot| board_labels(&lobby(slot)).expect("labels");
+        assert_eq!(labels(0), ["a", "b"], "a spectator sees the first two");
+        assert_eq!(labels(1), ["YOU", "b"]);
+        assert_eq!(labels(2), ["YOU", "a"]);
+        assert_eq!(labels(3), ["YOU", "a"], "the third seat used to underflow");
     }
 }

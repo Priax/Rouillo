@@ -26,7 +26,7 @@ impl Manager {
         let Some(room) = self
             .rooms
             .get(&id)
-            .filter(|r| r.members.len() < 2 && r.series.is_none())
+            .filter(|r| r.members.len() < usize::from(r.settings.max_players) && r.series.is_none())
         else {
             self.join_failed(conn, JOIN_UNAVAILABLE);
             return;
@@ -65,7 +65,7 @@ impl Manager {
         if self
             .rooms
             .get(&id)
-            .is_none_or(|r| r.members.len() >= 2 || r.series.is_some())
+            .is_none_or(|r| r.members.len() >= usize::from(r.settings.max_players) || r.series.is_some())
         {
             self.join_failed(conn, JOIN_UNAVAILABLE);
             return;
@@ -139,6 +139,8 @@ impl Manager {
                 .with_room(id, |room| {
                     if room.series.is_none() && room.is_host_conn(conn) && matches!(room.phase, Phase::Lobby) {
                         room.settings.adjust(index as usize, dir);
+                        let seated = u8::try_from(room.members.len()).unwrap_or(u8::MAX);
+                        room.settings.max_players = room.settings.max_players.max(seated);
                         true
                     } else {
                         false
@@ -158,7 +160,7 @@ impl Manager {
                 .with_room(id, |room| {
                     if room.series.is_none() && room.is_host_conn(conn) {
                         room.phase = match room.phase {
-                            Phase::Lobby if !closing && room.members.len() >= 2 && room.all_connected() => {
+                            Phase::Lobby if !closing && room.has_sides() && room.all_connected() => {
                                 Phase::CountingDown(COUNTDOWN_SECS)
                             }
                             Phase::Lobby => Phase::Lobby,
@@ -197,12 +199,9 @@ impl Manager {
     pub(super) fn on_input(&mut self, conn: ConnId, kind: InputKind, seq: u32, tick: u32) {
         if let Some(id) = self.room_of(conn) {
             self.with_room(id, |room| {
-                let Some(idx) = room.slot_of_conn(conn) else {
+                let Some(idx) = room.game_slot_of_conn(conn) else {
                     return;
                 };
-                if idx >= room.sim.boards.len() {
-                    return;
-                }
                 if matches!(room.phase, Phase::Playing) && !room.sim.paused && !room.sim.finished {
                     room.sim.queue_input(idx, tick, seq, kind);
                 } else {
@@ -212,10 +211,31 @@ impl Manager {
         }
     }
 
+    /// A player picks a team in the lobby, or none to play for themselves.
+    pub(super) fn set_team(&mut self, conn: ConnId, team: Option<u8>) {
+        let Some(id) = self.room_of(conn) else { return };
+        let team = team.filter(|t| (1..=shared::MAX_TEAMS).contains(t));
+        let changed = self
+            .with_room(id, |room| {
+                let lobby = matches!(room.phase, Phase::Lobby) && room.series.is_none();
+                match room.slot_of_conn(conn).filter(|_| lobby) {
+                    Some(i) if room.members[i].team != team => {
+                        room.members[i].team = team;
+                        true
+                    }
+                    _ => false,
+                }
+            })
+            .unwrap_or(false);
+        if changed {
+            self.send_lobby(id);
+        }
+    }
+
     pub(super) fn set_targeting(&mut self, conn: ConnId, targeting: Targeting) {
         let Some(id) = self.room_of(conn) else { return };
         self.with_room(id, |room| {
-            if let Some(slot) = room.slot_of_conn(conn).filter(|&s| s < room.sim.boards.len()) {
+            if let Some(slot) = room.game_slot_of_conn(conn) {
                 room.sim.set_targeting(slot, targeting);
             }
         });
@@ -265,8 +285,7 @@ impl Manager {
                             false
                         } else {
                             room.sim.last_restart = Some(now);
-                            let teams = room.teams();
-                            room.sim.reset_boards(&room.settings, teams);
+                            room.start_game();
                             true
                         }
                     } else {

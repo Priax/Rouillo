@@ -297,6 +297,7 @@ async fn handle_connection(ws: WebSocket, cmd_tx: mpsc::Sender<Command>, conn: C
                         ClientMessage::Spectate { id } => Command::Spectate { conn, id },
                         ClientMessage::WatchFriend { user_id } => Command::WatchFriend { conn, user_id },
                         ClientMessage::SetTargeting { targeting } => Command::SetTargeting { conn, targeting },
+                        ClientMessage::SetTeam { team } => Command::SetTeam { conn, team },
                     };
                     if cmd_tx_recv.send(cmd).await.is_err() {
                         break;

@@ -133,13 +133,8 @@ fn join_answer_after_the_room_filled_is_refused() {
     let (_rx1, mut rx2) = friends_only_room(&mut mgr);
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
     let check = only_join_check(&mut mgr);
-    mgr.rooms.get_mut(&1).unwrap().members.push(Member {
-        token: "K".into(),
-        conn: Some(7),
-        disconnect_at: None,
-        user_id: Some(Uuid::from_u128(7)),
-        name: "K".into(),
-    });
+    let filler = Member::present("K".into(), 7, Some(Uuid::from_u128(7)), "K".into());
+    mgr.rooms.get_mut(&1).unwrap().members.push(filler);
     mgr.handle(Command::FriendCheckDone { check, friends: true });
     assert_eq!(mgr.rooms[&1].members.len(), 2);
     assert_eq!(mgr.room_of(2), None);

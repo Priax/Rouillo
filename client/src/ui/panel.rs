@@ -7,6 +7,7 @@ const TITLE_H: f32 = 56.0;
 const ROW_H: f32 = 64.0;
 /// Past four rows the panel tightens, so the actions under it stay on screen.
 const TIGHT_ROW_H: f32 = 56.0;
+const TIGHTER_ROW_H: f32 = 52.0;
 const ACTION_ROW_H: f32 = 60.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -18,7 +19,11 @@ pub struct SettingsPanel {
 
 impl SettingsPanel {
     pub fn new(view: View, rows: usize) -> Self {
-        let row_h = if rows > 4 { TIGHT_ROW_H } else { ROW_H };
+        let row_h = match rows {
+            0..=4 => ROW_H,
+            5 | 6 => TIGHT_ROW_H,
+            _ => TIGHTER_ROW_H,
+        };
         let h = TITLE_H + rows as f32 * row_h + 16.0;
         Self {
             card: Frame::of(view).body.top(h).max_width(640.0),
@@ -64,10 +69,10 @@ mod tests {
     }
 
     #[test]
-    fn six_rows_and_three_actions_fit_the_reference_view() {
+    fn seven_rows_and_three_actions_fit_the_reference_view() {
         let view = View::default();
-        let panel = SettingsPanel::new(view, 6);
-        let last = panel.stepper(5);
+        let panel = SettingsPanel::new(view, 7);
+        let last = panel.stepper(6);
         assert!(last.minus.y + last.minus.h <= panel.card.y + panel.card.h);
         let actions = panel.action_row(2);
         assert!(

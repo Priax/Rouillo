@@ -189,7 +189,7 @@ impl Manager {
         if closed {
             self.close_room(id);
         } else {
-            self.send_lobby(id);
+            self.refresh_lobby(id);
         }
         self.room_list_dirty = true;
     }

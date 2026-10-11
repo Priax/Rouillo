@@ -457,3 +457,138 @@ fn restart_refused_while_opponent_is_disconnected() {
     assert!(!mgr.rooms[&1].game_running());
     assert!(mgr.rooms[&1].sim.last_restart.is_none());
 }
+
+/// A room for up to `max` players, with `players` of them seated (conns 1..).
+fn big_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<Vec<u8>>> {
+    let mut rxs = vec![reg(mgr, 1)];
+    hello(mgr, 1, "P1");
+    mgr.handle(Command::CreateRoom {
+        conn: 1,
+        name: "big".into(),
+    });
+    for _ in 2..max {
+        mgr.handle(Command::SetSetting {
+            conn: 1,
+            index: 6,
+            dir: 1,
+        });
+    }
+    for conn in 2..=players as ConnId {
+        rxs.push(reg(mgr, conn));
+        hello(mgr, conn, &format!("P{conn}"));
+        mgr.handle(Command::JoinRoom { conn, id: 1 });
+    }
+    rxs
+}
+
+fn start(mgr: &mut Manager) {
+    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.tick(3.5, false);
+}
+
+#[test]
+fn a_room_seats_as_many_players_as_its_setting() {
+    let mut mgr = new_mgr();
+    let _rxs = big_room(&mut mgr, 3, 3);
+    assert_eq!(mgr.rooms[&1].members.len(), 3);
+    let _rx = reg(&mut mgr, 9);
+    hello(&mut mgr, 9, "late");
+    mgr.handle(Command::JoinRoom { conn: 9, id: 1 });
+    assert_eq!(mgr.rooms[&1].members.len(), 3, "the fourth is refused");
+    start(&mut mgr);
+    assert_eq!(mgr.rooms[&1].sim.boards.len(), 3);
+}
+
+#[test]
+fn one_team_alone_cannot_start() {
+    let mut mgr = new_mgr();
+    let _rxs = big_room(&mut mgr, 3, 3);
+    for conn in 1..=3 {
+        mgr.handle(Command::SetTeam { conn, team: Some(2) });
+    }
+    start(&mut mgr);
+    assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby), "nobody to play against");
+    mgr.handle(Command::SetTeam { conn: 3, team: None });
+    start(&mut mgr);
+    assert!(mgr.rooms[&1].game_running());
+    assert_eq!(mgr.rooms[&1].sim.teams[0], mgr.rooms[&1].sim.teams[1]);
+    assert_ne!(mgr.rooms[&1].sim.teams[0], mgr.rooms[&1].sim.teams[2]);
+}
+
+#[test]
+fn a_team_is_picked_in_the_lobby_only_and_must_exist() {
+    let mut mgr = new_mgr();
+    let _rxs = big_room(&mut mgr, 3, 3);
+    mgr.handle(Command::SetTeam {
+        conn: 2,
+        team: Some(shared::MAX_TEAMS + 1),
+    });
+    assert_eq!(mgr.rooms[&1].members[1].team, None);
+    mgr.handle(Command::SetTeam { conn: 2, team: Some(1) });
+    assert_eq!(mgr.rooms[&1].members[1].team, Some(1));
+    start(&mut mgr);
+    mgr.handle(Command::SetTeam { conn: 2, team: None });
+    assert_eq!(mgr.rooms[&1].members[1].team, Some(1), "not during a game");
+}
+
+#[test]
+fn the_seats_never_drop_below_who_is_seated() {
+    let mut mgr = new_mgr();
+    let _rxs = big_room(&mut mgr, 4, 3);
+    for _ in 0..5 {
+        mgr.handle(Command::SetSetting {
+            conn: 1,
+            index: 6,
+            dir: -1,
+        });
+    }
+    assert_eq!(mgr.rooms[&1].settings.max_players, 3);
+}
+
+#[test]
+fn a_player_leaving_mid_game_is_out_and_the_others_play_on() {
+    let mut mgr = new_mgr();
+    let mut rxs = big_room(&mut mgr, 3, 3);
+    start(&mut mgr);
+    for rx in &mut rxs {
+        drain(rx);
+    }
+    mgr.handle(Command::LeaveRoom { conn: 2 });
+    assert!(mgr.rooms[&1].game_running(), "two players are still in");
+    assert!(!mgr.rooms[&1].sim.alive(1));
+    assert!(mgr.take_unsaved_matches().is_empty());
+    for i in [0, 2] {
+        assert!(
+            last_lobby(&drain(&mut rxs[i])).is_none(),
+            "nobody is sent back to the lobby"
+        );
+    }
+    mgr.handle(Command::LeaveRoom { conn: 3 });
+    let recs = mgr.take_unsaved_matches();
+    assert_eq!(recs.len(), 1);
+    assert_eq!(recs[0].winner_slot(), Some(1));
+    assert_eq!(recs[0].players.len(), 3);
+}
+
+#[test]
+fn a_late_comer_watches_then_plays_the_next_game() {
+    let mut mgr = new_mgr();
+    let _rxs = big_room(&mut mgr, 3, 2);
+    start(&mut mgr);
+    let mut late = reg(&mut mgr, 9);
+    hello(&mut mgr, 9, "late");
+    mgr.handle(Command::JoinRoom { conn: 9, id: 1 });
+    let info = last_lobby(&drain(&mut late)).expect("a lobby");
+    assert_eq!(info.your_slot, 0, "watching the running game");
+    let before = mgr.rooms[&1].sim.queued_inputs.iter().map(Vec::len).sum::<usize>();
+    let now = mgr.rooms[&1].sim.tick;
+    super::game::press(&mut mgr, 9, 1, now);
+    let after = mgr.rooms[&1].sim.queued_inputs.iter().map(Vec::len).sum::<usize>();
+    assert_eq!(before, after, "no board to play");
+
+    mgr.handle(Command::LeaveRoom { conn: 2 });
+    mgr.handle(Command::ReturnToLobby { conn: 1 });
+    start(&mut mgr);
+    assert_eq!(mgr.rooms[&1].sim.boards.len(), 2, "host and late comer");
+    assert_eq!(mgr.rooms[&1].members[1].game_slot, Some(1));
+}

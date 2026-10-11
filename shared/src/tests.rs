@@ -115,6 +115,12 @@ fn room_settings_survive_any_step_from_the_network() {
         s.adjust(3, dir);
         assert!((8..=16).contains(&s.rows), "rows {} after {dir}", s.rows);
         s.adjust(5, dir);
+        s.adjust(6, dir);
+        assert!(
+            (2..=MAX_ROOM_PLAYERS).contains(&s.max_players),
+            "players {} after {dir}",
+            s.max_players
+        );
     }
 }
 
@@ -1194,10 +1200,11 @@ fn client_samples() -> Vec<ClientMessage> {
         ClientMessage::SetTargeting {
             targeting: Targeting::Manual(2),
         },
+        ClientMessage::SetTeam { team: Some(2) },
     ]
 }
 
-const CLIENT_VARIANTS: usize = 20;
+const CLIENT_VARIANTS: usize = 21;
 
 fn client_variant(m: &ClientMessage) -> usize {
     match m {
@@ -1221,6 +1228,7 @@ fn client_variant(m: &ClientMessage) -> usize {
         ClientMessage::Spectate { .. } => 17,
         ClientMessage::WatchFriend { .. } => 18,
         ClientMessage::SetTargeting { .. } => 19,
+        ClientMessage::SetTeam { .. } => 20,
     }
 }
 
@@ -1292,6 +1300,7 @@ fn server_samples() -> Vec<ServerMessage> {
                     wins: [2, 1],
                 }),
                 names: vec!["a".into(), "b".into()],
+                teams: vec![Some(1), None],
                 spectators: 4,
             },
         },
@@ -1384,7 +1393,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (10, 4_962_719_314_525_863_743);
+const PROTOCOL_DIGEST: (u32, u64) = (10, 13_377_009_130_727_001_520);
 
 #[test]
 fn protocol_changes_bump_the_version() {

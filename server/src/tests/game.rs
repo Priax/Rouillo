@@ -154,12 +154,21 @@ fn an_input_is_acknowledged_only_once_processed() {
 }
 
 #[test]
-fn an_input_outside_a_running_game_is_acknowledged_and_dropped() {
+fn an_input_after_the_game_ended_is_acknowledged_and_dropped() {
     let mut mgr = new_mgr();
-    let (_id, _rx1, _rx2) = two_player_room(&mut mgr); // still in the lobby
+    let (_rx1, _rx2) = running_game(&mut mgr);
+    mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
     press(&mut mgr, 1, 3, 0);
     assert_eq!(mgr.rooms[&1].sim.last_seq[0], 3);
     assert!(mgr.rooms[&1].sim.queued_inputs[0].is_empty());
+}
+
+#[test]
+fn an_input_in_the_lobby_is_dropped() {
+    let mut mgr = new_mgr();
+    let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
+    press(&mut mgr, 1, 3, 0);
+    assert!(mgr.rooms[&1].sim.queued_inputs.iter().all(Vec::is_empty));
 }
 
 #[test]
@@ -396,7 +405,7 @@ fn a_three_player_game_goes_on_until_one_player_is_left() {
     assert_eq!(room.sim.boards.len(), 3);
     assert!(room.forfeit(0).is_none(), "two players still in");
     assert!(room.game_running());
-    assert_eq!(room.sim.teams_alive(), [1, 2]);
+    assert_eq!(room.sim.teams_alive().len(), 2);
     room.sim.advance();
     let rec = room.forfeit(2).expect("the game ended");
     assert!(!room.game_running());

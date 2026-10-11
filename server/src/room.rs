@@ -18,6 +18,11 @@ pub struct Member {
     pub disconnect_at: Option<Instant>,
     pub user_id: Option<Uuid>,
     pub name: String,
+    /// Picked in the lobby; with none, the player plays for themselves.
+    pub team: Option<u8>,
+    /// The board this member plays in the running game: none for one who
+    /// came in after it started.
+    pub game_slot: Option<usize>,
 }
 
 impl Member {
@@ -28,6 +33,8 @@ impl Member {
             disconnect_at: None,
             user_id,
             name,
+            team: None,
+            game_slot: None,
         }
     }
 }
@@ -64,6 +71,8 @@ pub struct Room {
     pub sim: Sim,
     pub series: Option<Series>,
     pub spectators: Vec<Spectator>,
+    /// The account of each game slot, as the game started.
+    pub seats: Vec<Option<Uuid>>,
 }
 
 impl Room {
@@ -79,7 +88,29 @@ impl Room {
             sim: Sim::new(&settings, (0..members_len).map(slot_byte).collect()),
             series,
             spectators: Vec::new(),
+            seats: Vec::new(),
         }
+    }
+
+    /// Seats every member for a new game, each on their team.
+    pub fn start_game(&mut self) {
+        for (i, m) in self.members.iter_mut().enumerate() {
+            m.game_slot = Some(i);
+        }
+        self.seats = self.members.iter().map(|m| m.user_id).collect();
+        let teams = self.teams();
+        self.sim.reset_boards(&self.settings, teams);
+    }
+
+    pub fn game_slot_of_conn(&self, conn: ConnId) -> Option<usize> {
+        let slot = self.members.iter().find(|m| m.conn == Some(conn))?.game_slot?;
+        (slot < self.sim.boards.len()).then_some(slot)
+    }
+
+    /// Whether the members make at least two sides.
+    pub fn has_sides(&self) -> bool {
+        let teams = self.teams();
+        teams.iter().any(|&t| t != teams[0])
     }
 
     pub fn back_to_lobby(&mut self) {
@@ -127,7 +158,7 @@ impl Room {
         *t -= dt;
         if *t <= 0.0 {
             self.phase = Phase::Playing;
-            self.sim.reset_boards(&self.settings, self.teams());
+            self.start_game();
             match shared::encode(&ServerMessage::GameStart) {
                 Ok(payload) => self.send_to_audience(&payload, outgoing),
                 Err(e) => error!("encode GameStart failed: {e}"),
@@ -199,7 +230,7 @@ impl Room {
 
     pub fn lobby_info_for(&self, idx: usize) -> LobbyInfo {
         LobbyInfo {
-            your_slot: (idx + 1) as u8,
+            your_slot: self.your_slot(idx),
             is_host: self.members[idx].token == self.host,
             ranked: self.series.as_ref().map(|s| RankedInfo {
                 opponent: s.names[1 - idx].clone(),
@@ -227,6 +258,7 @@ impl Room {
             },
             ranked: None,
             names: self.members.iter().map(|m| m.name.clone()).collect(),
+            teams: self.members.iter().map(|m| m.team).collect(),
             spectators: self.spectators.len() as u8,
         }
     }
@@ -240,7 +272,7 @@ impl Room {
         let n = |v: &[u32], s: usize| v.get(s).copied().unwrap_or(0);
         let players = (0..self.sim.boards.len())
             .map(|s| db::PlayerRecord {
-                user_id: self.members.get(s).and_then(|m| m.user_id),
+                user_id: self.seats.get(s).copied().flatten(),
                 slot: slot_byte(s + 1),
                 team: self.sim.teams[s],
                 place: places[s],
@@ -262,13 +294,17 @@ impl Room {
 
     /// Takes `slot` out of a running game. The game ends when one team is
     /// left, which must still have someone connected to be credited.
-    pub fn forfeit(&mut self, slot: usize) -> Option<db::MatchRecord> {
+    pub fn forfeit(&mut self, member: usize) -> Option<db::MatchRecord> {
+        let slot = self.members.get(member)?.game_slot?;
         if !self.game_running() || slot >= self.sim.boards.len() {
             return None;
         }
         let team = self.sim.teams[slot];
-        let others_connected = (0..self.sim.boards.len())
-            .any(|s| self.sim.teams[s] != team && self.members.get(s).is_some_and(|m| m.conn.is_some()));
+        let others_connected = self.members.iter().any(|m| {
+            m.conn.is_some()
+                && m.game_slot
+                    .is_some_and(|s| s < self.sim.teams.len() && self.sim.teams[s] != team)
+        });
         if !others_connected {
             return None;
         }
@@ -281,9 +317,23 @@ impl Room {
         Some(self.match_record())
     }
 
-    /// One team per player, until the lobby lets them pick.
+    /// The game's team of each member: the one picked, or one of their own.
     pub fn teams(&self) -> Vec<u8> {
-        (0..self.members.len()).map(slot_byte).collect()
+        self.members
+            .iter()
+            .enumerate()
+            .map(|(i, m)| m.team.unwrap_or(shared::MAX_TEAMS + 1 + slot_byte(i)))
+            .collect()
+    }
+
+    /// From 1 while the member plays the running game or waits in the lobby,
+    /// 0 for one watching a game they came into late.
+    fn your_slot(&self, member: usize) -> u8 {
+        match (&self.phase, self.members[member].game_slot) {
+            (Phase::Playing, Some(slot)) => slot_byte(slot + 1),
+            (Phase::Playing, None) => 0,
+            _ => slot_byte(member + 1),
+        }
     }
 
     pub fn host_user(&self) -> Option<Uuid> {
@@ -298,7 +348,7 @@ impl Room {
             id: self.id,
             name: self.name.clone(),
             players: self.members.len() as u8,
-            max: 2,
+            max: self.settings.max_players,
             in_game: !matches!(self.phase, Phase::Lobby),
             friends_only: self.settings.friends_only,
             spectators: self.spectators.len() as u8,

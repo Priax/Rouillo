@@ -344,6 +344,99 @@ fn lobby_leave(view: View) -> Rect {
     lobby_panel(view).action_row(2)
 }
 
+/// The players' card, left of the settings as the chat is right of them.
+fn lobby_players(view: View) -> Rect {
+    let card = lobby_panel(view).card;
+    let beside = Rect::at(0.0, card.y, card.x, card.h).pad(0.0, 24.0, 0.0, 24.0);
+    beside.right(beside.w.min(460.0))
+}
+
+const PLAYERS_TITLE_H: f32 = 56.0;
+const PLAYER_ROW_H: f32 = 44.0;
+
+fn lobby_player_row(view: View, i: usize, players: usize) -> Rect {
+    let list = lobby_players(view).below(PLAYERS_TITLE_H).pad(0.0, 12.0, 12.0, 12.0);
+    let h = (list.h / players.max(1) as f32).min(PLAYER_ROW_H);
+    list.nth_row(i, h - 4.0, 4.0)
+}
+
+const TEAMS: [(&str, Color); 4] = [
+    ("Rouge", theme::bar::RED),
+    ("Bleu", theme::bar::BLUE),
+    ("Vert", theme::bar::GREEN),
+    ("Jaune", theme::bar::YELLOW),
+];
+
+/// One's own row, while one may still change team on it.
+fn team_picker(info: &LobbyInfo) -> Option<usize> {
+    let open = info.ranked.is_none() && info.countdown.is_none();
+    usize::from(info.your_slot).checked_sub(1).filter(|_| open)
+}
+
+/// Solo, then each team in turn, then Solo again.
+fn next_team(team: Option<u8>) -> Option<u8> {
+    match team {
+        None => Some(1),
+        Some(t) if t < shared::MAX_TEAMS => Some(t + 1),
+        Some(_) => None,
+    }
+}
+
+fn team_look(team: Option<u8>, pal: &theme::Palette) -> (&'static str, Color) {
+    team.and_then(|t| TEAMS.get(usize::from(t).checked_sub(1)?))
+        .copied()
+        .unwrap_or(("Solo", pal.text_dim))
+}
+
+/// Whether the players make two sides at least: one without a team is a side.
+fn has_sides(info: &LobbyInfo) -> bool {
+    let mut teams = info.teams.iter();
+    let Some(first) = teams.next() else { return false };
+    first.is_none() && info.teams.len() > 1 || teams.any(|t| t.is_none() || t != first)
+}
+
+fn draw_lobby_players(draw: &mut Draw, state: &State, info: &LobbyInfo) {
+    let pal = state.ui.palette();
+    let view = state.ui.view();
+    let fonts = &state.fonts;
+    let card = lobby_players(view);
+    if card.w < 160.0 {
+        return;
+    }
+    ui::card(draw, &pal, card);
+    draw.sharp_text(&fonts.display, "Joueurs")
+        .position(card.x + 16.0, card.y + PLAYERS_TITLE_H / 2.0)
+        .size(theme::size::EMPHASIS)
+        .v_align_middle()
+        .color(pal.text_dim);
+    ui::divider(draw, &pal, card.x + 16.0, card.y + PLAYERS_TITLE_H, card.w - 32.0);
+    let own = usize::from(info.your_slot).checked_sub(1);
+    let picker = team_picker(info);
+    for (i, name) in info.names.iter().enumerate() {
+        let row = lobby_player_row(view, i, info.names.len());
+        let mine = own == Some(i);
+        if picker == Some(i) {
+            state.ui.row(draw, row, i, &format!("team:{i}"));
+        } else {
+            list_row(draw, &pal, row, i);
+        }
+        let (label, color) = team_look(info.teams.get(i).copied().flatten(), &pal);
+        let pill = Pill {
+            text: label,
+            color,
+            size: theme::size::SMALL,
+        };
+        let pill_w = pill.width(fonts);
+        let name = fonts.fit(Face::Text, name, theme::size::BODY, row.w - pill_w - 36.0);
+        draw.sharp_text(&fonts.text, &name)
+            .position(row.x + 10.0, row.y + row.h / 2.0)
+            .size(theme::size::BODY)
+            .v_align_middle()
+            .color(if mine { pal.text } else { pal.text_dim });
+        pill.draw(draw, fonts, (row.x + row.w - 10.0 - pill_w, row.y + row.h / 2.0));
+    }
+}
+
 fn lobby_chat(view: View) -> Rect {
     let card = lobby_panel(view).card;
     let beside = Rect::at(0.0, card.y, view.w, card.h).pad(0.0, 24.0, 0.0, card.x + card.w + 24.0);
@@ -417,6 +510,14 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         return;
     }
 
+    if let Some(me) = team_picker(info) {
+        if ui.clicked(lobby_player_row(view, me, info.names.len())) {
+            let team = next_team(info.teams.get(me).copied().flatten());
+            conn.send(&ClientMessage::SetTeam { team });
+            return;
+        }
+    }
+
     let chatting = room.chat.focused;
     if let Some(text) = room.chat.update_lobby(&app.keyboard, keys) {
         conn.send(&ClientMessage::Chat { text });
@@ -479,6 +580,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     state.ui.set_input(!room.invite.open);
 
     draw_lobby_header(&mut draw, state, info);
+    draw_lobby_players(&mut draw, state, info);
 
     let panel = lobby_panel(view);
     panel.draw(&mut draw, &pal, fonts, "Réglages de la room");
@@ -529,7 +631,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
 fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool) {
     if maintenance {
         ("Le serveur redémarre...", theme::bar::GREEN, false)
-    } else if info.your_slot == 0 && info.players < 2 && info.countdown.is_none() {
+    } else if info.your_slot == 0 && info.players < info.settings.max_players && info.countdown.is_none() {
         ("Prendre la place", theme::bar::GREEN, true)
     } else if info.your_slot == 0 {
         ("Vous regardez cette room", theme::bar::GREEN, false)
@@ -539,6 +641,8 @@ fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool
         ("Annuler", theme::bar::YELLOW, true)
     } else if info.players < 2 {
         ("En attente d'un 2e joueur...", theme::bar::GREEN, false)
+    } else if !has_sides(info) {
+        ("Tout le monde est dans la même équipe", theme::bar::GREEN, false)
     } else if info.connected < info.players {
         ("Adversaire déconnecté...", theme::bar::GREEN, false)
     } else {
@@ -552,7 +656,7 @@ fn draw_lobby_header(draw: &mut Draw, state: &State, info: &LobbyInfo) {
     let fonts = &state.fonts;
     state.ui.header_band(draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     let id = format!("Room #{}", info.id);
-    let players = format!("{}/2 joueurs", info.players);
+    let players = format!("{}/{} joueurs", info.players, info.settings.max_players);
     let watchers = format!(
         "{} spectateur{}",
         info.spectators,
@@ -636,5 +740,48 @@ fn draw_invite_overlay(draw: &mut Draw, state: &State, invite: &Invite) {
             .v_align_middle()
             .color(pal.text);
         state.ui.button(draw, fonts, invite_button(view, i), "Inviter");
+    }
+}
+
+#[cfg(test)]
+mod team_tests {
+    use super::*;
+
+    fn lobby(teams: Vec<Option<u8>>) -> LobbyInfo {
+        LobbyInfo {
+            id: 1,
+            name: "r".into(),
+            settings: RoomSettings::default(),
+            players: teams.len() as u8,
+            connected: teams.len() as u8,
+            your_slot: 1,
+            is_host: true,
+            countdown: None,
+            ranked: None,
+            names: teams.iter().map(|_| "p".into()).collect(),
+            teams,
+            spectators: 0,
+        }
+    }
+
+    #[test]
+    fn sides_are_teams_or_players_on_their_own() {
+        assert!(!has_sides(&lobby(vec![None])));
+        assert!(has_sides(&lobby(vec![None, None])));
+        assert!(has_sides(&lobby(vec![Some(1), None])));
+        assert!(has_sides(&lobby(vec![Some(1), Some(2)])));
+        assert!(!has_sides(&lobby(vec![Some(3), Some(3), Some(3)])));
+        assert!(has_sides(&lobby(vec![Some(3), Some(3), None])));
+    }
+
+    #[test]
+    fn the_team_button_goes_round() {
+        let mut team = None;
+        let mut seen = Vec::new();
+        for _ in 0..=shared::MAX_TEAMS {
+            team = next_team(team);
+            seen.push(team);
+        }
+        assert_eq!(seen, [Some(1), Some(2), Some(3), Some(4), None]);
     }
 }

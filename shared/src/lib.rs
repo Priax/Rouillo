@@ -196,7 +196,12 @@ pub struct RoomSettings {
     pub rows: u8,
     pub friends_only: bool,
     pub pause: PausePolicy,
+    pub max_players: u8,
 }
+
+/// The teams a lobby offers; a player in none plays for themselves.
+pub const MAX_TEAMS: u8 = 4;
+pub const MAX_ROOM_PLAYERS: u8 = 16;
 
 impl Default for RoomSettings {
     fn default() -> Self {
@@ -207,12 +212,13 @@ impl Default for RoomSettings {
             rows: small(config::GRID_HEIGHT - config::VISIBLE_ROW_OFFSET),
             friends_only: false,
             pause: PausePolicy::Everyone,
+            max_players: 2,
         }
     }
 }
 
 impl RoomSettings {
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
 
     pub fn label(i: usize) -> &'static str {
         match i {
@@ -221,7 +227,8 @@ impl RoomSettings {
             2 => "Largeur",
             3 => "Hauteur",
             4 => "Amis seulement",
-            _ => "Pause",
+            5 => "Pause",
+            _ => "Joueurs max",
         }
     }
 
@@ -242,7 +249,8 @@ impl RoomSettings {
                     "Non".into()
                 }
             }
-            _ => self.pause.label().into(),
+            5 => self.pause.label().into(),
+            _ => self.max_players.to_string(),
         }
     }
 
@@ -254,6 +262,7 @@ impl RoomSettings {
             3 => self.rows = step_clamped(self.rows, dir, 8, 16),
             4 => self.friends_only = !self.friends_only,
             5 => self.pause = self.pause.step(dir),
+            6 => self.max_players = step_clamped(self.max_players, dir, 2, MAX_ROOM_PLAYERS),
             _ => {}
         }
     }
@@ -292,6 +301,8 @@ pub struct LobbyInfo {
     pub countdown: Option<u8>,
     pub ranked: Option<RankedInfo>,
     pub names: Vec<String>,
+    /// Each player's team, in the order of `names`.
+    pub teams: Vec<Option<u8>>,
     pub spectators: u8,
 }
 
@@ -358,6 +369,9 @@ pub enum ClientMessage {
     },
     SetTargeting {
         targeting: Targeting,
+    },
+    SetTeam {
+        team: Option<u8>,
     },
 }
 
