@@ -162,7 +162,11 @@ fn watch(session: &mut GameSession, board: Board, tick: u32, incoming: Vec<Incom
 
 /// Hands each player's part of an update to its board: the large one is
 /// reconciled with the predicted inputs, the others are smoothed.
-fn apply_update(session: &mut GameSession, tick: u32, players: Vec<PlayerUpdate>) {
+fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<PlayerUpdate>) {
+    if game != session.game || session.applied.is_some_and(|t| tick <= t) {
+        return;
+    }
+    session.applied = Some(tick);
     if session.spectating() && !players.iter().any(|p| p.slot == session.focus) {
         match players.iter().map(|p| p.slot).min() {
             Some(first) => session.focus = first,
@@ -240,9 +244,10 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         ServerMessage::JoinFailed { reason } => {
             state.notice = Status::error(reason);
         }
-        ServerMessage::GameStart { your_slot, names } => {
+        ServerMessage::GameStart { game, your_slot, names } => {
             if let Some(room) = state.room.as_mut() {
                 let mut session = GameSession::new(your_slot, names);
+                session.game = game;
                 session.ping_rtt_ms = room.session.as_ref().and_then(|s| s.ping_rtt_ms);
                 session.last_server_msg = "GameStart".to_string();
                 room.info.your_slot = your_slot;
@@ -250,9 +255,9 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 state.screen = Screen::Game;
             }
         }
-        ServerMessage::StateUpdate { tick, players } => {
+        ServerMessage::StateUpdate { game, tick, players } => {
             if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
-                apply_update(session, tick, players);
+                apply_update(session, game, tick, players);
             }
         }
         ServerMessage::OpponentDisconnected => {
@@ -550,6 +555,7 @@ mod tests {
         let mut session = GameSession::new(2, Vec::new());
         apply_update(
             &mut session,
+            0,
             5,
             vec![update(3, 7, false), update(1, 5, false), update(2, 6, false)],
         );
@@ -563,12 +569,14 @@ mod tests {
         let mut session = GameSession::new(1, Vec::new());
         apply_update(
             &mut session,
+            0,
             5,
             vec![update(1, 1, true), update(2, 2, false), update(3, 3, false)],
         );
         assert!(session.eliminated());
         apply_update(
             &mut session,
+            0,
             6,
             vec![update(1, 1, true), update(2, 2, true), update(3, 3, true)],
         );
@@ -580,6 +588,7 @@ mod tests {
         let mut session = GameSession::new(0, Vec::new());
         apply_update(
             &mut session,
+            0,
             5,
             vec![update(2, 6, false), update(3, 7, false), update(4, 8, false)],
         );
@@ -587,11 +596,26 @@ mod tests {
         session.follow(4);
         apply_update(
             &mut session,
+            0,
             6,
             vec![update(2, 6, false), update(3, 7, false), update(4, 8, false)],
         );
         assert_eq!(session.focus, 4);
         let slots: Vec<u8> = session.rivals.iter().map(|r| r.slot).collect();
         assert_eq!(slots, [2, 3]);
+    }
+
+    #[test]
+    fn late_updates_and_those_of_another_game_are_dropped() {
+        let mut session = GameSession::new(1, Vec::new());
+        session.game = 4;
+        let mut scored = update(1, 1, false);
+        scored.board.score = 70;
+        apply_update(&mut session, 4, 10, vec![scored]);
+        apply_update(&mut session, 4, 9, vec![update(1, 1, false)]);
+        apply_update(&mut session, 3, 11, vec![update(1, 1, false)]);
+        assert_eq!(session.board.score, 70, "an older update was applied");
+        apply_update(&mut session, 4, 11, vec![update(1, 1, false)]);
+        assert_eq!(session.board.score, 0);
     }
 }

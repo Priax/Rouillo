@@ -38,6 +38,8 @@ pub struct Sim {
     pub targets: Vec<Option<usize>>,
     random_until: Vec<u32>,
     pub tick: u32,
+    /// Which of the room's games this is.
+    pub game: u32,
     pub queued_inputs: Vec<Vec<PendingInput>>,
     pub garbage_in_flight: Vec<GarbageDelivery>,
     pub late_inputs: Vec<u32>,
@@ -72,6 +74,7 @@ impl Sim {
             targets: vec![None; n],
             random_until: vec![0; n],
             tick: 0,
+            game: 0,
             queued_inputs: (0..n).map(|_| Vec::new()).collect(),
             garbage_in_flight: Vec::new(),
             late_inputs: vec![0; n],
@@ -328,6 +331,7 @@ impl Sim {
             })
             .collect();
         ServerMessage::StateUpdate {
+            game: self.game,
             tick: self.tick,
             players,
         }

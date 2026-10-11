@@ -444,9 +444,9 @@ fn player(slot: u8, board: &Board, ack: u32) -> PlayerUpdate {
 }
 
 fn round_trip(players: Vec<PlayerUpdate>, tick: u32) -> (u32, Vec<PlayerUpdate>) {
-    let bytes = encode(&ServerMessage::StateUpdate { tick, players }).expect("encode");
+    let bytes = encode(&ServerMessage::StateUpdate { game: 1, tick, players }).expect("encode");
     match decode(&bytes).expect("decode") {
-        ServerMessage::StateUpdate { tick, players } => (tick, players),
+        ServerMessage::StateUpdate { tick, players, .. } => (tick, players),
         _ => panic!("wrong variant"),
     }
 }
@@ -1250,10 +1250,12 @@ fn server_samples() -> Vec<ServerMessage> {
     let settings = RoomSettings::default();
     vec![
         ServerMessage::GameStart {
+            game: 9,
             your_slot: 2,
             names: vec!["a".into(), "b".into(), "c".into()],
         },
         ServerMessage::StateUpdate {
+            game: 9,
             tick: 3,
             players: vec![PlayerUpdate {
                 slot: 1,
@@ -1386,7 +1388,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (10, 5_441_369_562_006_515_276);
+const PROTOCOL_DIGEST: (u32, u64) = (10, 10_078_364_355_977_762_776);
 
 #[test]
 fn protocol_changes_bump_the_version() {

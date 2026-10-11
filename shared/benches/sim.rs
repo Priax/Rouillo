@@ -41,6 +41,7 @@ fn state_update(p1: &Board, p2: &Board) -> ServerMessage {
         target: Some(3 - slot),
     };
     ServerMessage::StateUpdate {
+        game: 1,
         tick: 0,
         players: vec![player(1, p1), player(2, p2)],
     }

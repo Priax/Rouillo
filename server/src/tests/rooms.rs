@@ -596,7 +596,7 @@ fn a_late_comer_watches_then_plays_the_next_game() {
 /// The slot and the number of names of the last game start.
 fn game_start(msgs: &[ServerMessage]) -> Option<(u8, usize)> {
     msgs.iter().rev().find_map(|m| match m {
-        ServerMessage::GameStart { your_slot, names } => Some((*your_slot, names.len())),
+        ServerMessage::GameStart { your_slot, names, .. } => Some((*your_slot, names.len())),
         _ => None,
     })
 }
@@ -689,4 +689,38 @@ fn a_duel_sends_both_boards_every_tick() {
     }
     let seen = update_slots(&drain(&mut rx2));
     assert!(seen.len() == 4 && seen.iter().all(|s| s.len() == 2));
+}
+
+fn games_seen(msgs: &[ServerMessage]) -> (Vec<u32>, Vec<u32>) {
+    let starts = msgs
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::GameStart { game, .. } => Some(*game),
+            _ => None,
+        })
+        .collect();
+    let mut states: Vec<u32> = msgs
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::StateUpdate { game, .. } => Some(*game),
+            _ => None,
+        })
+        .collect();
+    states.dedup();
+    (starts, states)
+}
+
+#[test]
+fn each_game_of_a_room_has_its_number() {
+    let mut mgr = new_mgr();
+    let (mut rx1, _rx2) = running_game(&mut mgr);
+    mgr.tick(1.0 / 60.0, true);
+    let (_, first) = games_seen(&drain(&mut rx1));
+    mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
+    mgr.handle(Command::Restart { conn: 2 });
+    mgr.tick(1.0 / 60.0, true);
+    let (starts, states) = games_seen(&drain(&mut rx1));
+    assert_eq!(first.len(), 1);
+    assert_eq!(starts, [first[0] + 1]);
+    assert_eq!(states, starts, "the new game's updates carry its number");
 }

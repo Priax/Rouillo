@@ -378,11 +378,14 @@ pub enum ClientMessage {
 pub enum ServerMessage {
     /// Also restarts a finished game. Slots may change between games.
     GameStart {
+        /// Counts the room's games: updates of another one are stale.
+        game: u32,
         your_slot: u8,
         /// Each game slot's player, from slot 1.
         names: Vec<String>,
     },
     StateUpdate {
+        game: u32,
         tick: u32,
         players: Vec<PlayerUpdate>,
     },

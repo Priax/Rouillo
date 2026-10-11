@@ -468,6 +468,10 @@ pub struct GameSession {
     pub target: Option<u8>,
     /// Each slot's player, from slot 1.
     pub names: Vec<String>,
+    /// The room's game this session plays, and the tick of its last update:
+    /// an update can come late, or from the game before.
+    pub game: u32,
+    pub applied: Option<u32>,
 
     /// Knocked out while others still played: a draw at the end is theirs.
     pub out_early: bool,
@@ -528,6 +532,8 @@ impl GameSession {
             targeting: Targeting::default(),
             target: None,
             names,
+            game: 0,
+            applied: None,
             out_early: false,
             opponent_disconnected: false,
             quit_menu: false,

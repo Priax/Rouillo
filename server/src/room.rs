@@ -120,7 +120,9 @@ impl Room {
             })
             .collect();
         let teams = self.teams();
+        let game = self.sim.game.wrapping_add(1);
         self.sim.reset_boards(&self.settings, teams);
+        self.sim.game = game;
     }
 
     pub fn game_slot_of_conn(&self, conn: ConnId) -> Option<usize> {
@@ -159,6 +161,7 @@ impl Room {
     pub fn game_start_for(&self, conn: ConnId) -> ServerMessage {
         let your_slot = self.game_slot_of_conn(conn).map_or(0, |s| slot_byte(s + 1));
         ServerMessage::GameStart {
+            game: self.sim.game,
             your_slot,
             names: self.seats.iter().map(|s| s.name.clone()).collect(),
         }
