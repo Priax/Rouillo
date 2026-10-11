@@ -1,7 +1,7 @@
-use shared::{config, Board, ClientMessage, IncomingGarbage, ServerMessage, StampedInput};
+use shared::{config, Board, ClientMessage, IncomingGarbage, PlayerUpdate, ServerMessage, StampedInput};
 
 use crate::connection::ConnEvent;
-use crate::state::{GameSession, Room, Screen, State};
+use crate::state::{GameSession, Rival, Room, Screen, State};
 use crate::ui::Status;
 
 pub fn handle_server_messages(state: &mut State) {
@@ -92,11 +92,9 @@ fn sync_clock(session: &mut GameSession, server_tick: u32) {
 
 pub struct Update {
     pub board: Board,
-    pub other_board: Board,
     pub ack: u32,
     pub tick: u32,
     pub incoming: Vec<IncomingGarbage>,
-    pub opp_incoming: Vec<IncomingGarbage>,
 }
 
 pub fn reconcile(session: &mut GameSession, update: Update) {
@@ -105,11 +103,9 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
     let nuisance_before = session.my_nuisance();
 
     session.board = update.board;
-    session.other_board = update.other_board;
     session.my_ack = update.ack;
     session.server_tick = update.tick;
     session.incoming = update.incoming;
-    session.opp_incoming = update.opp_incoming;
     session.pending_inputs.retain(|(seq, _)| *seq > update.ack);
 
     if let Some(&(_, sent)) = session
@@ -155,36 +151,73 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
     }
 }
 
-/// The names over the two boards shown: one's own (or the first player's,
-/// for a spectator) and the first other player's.
-fn board_labels(info: &shared::LobbyInfo) -> Option<[String; 2]> {
-    let name = |i: usize| info.names.get(i).cloned().unwrap_or_default();
-    let mine = usize::from(info.your_slot).checked_sub(1);
-    let other = (0..info.names.len()).find(|&i| Some(i) != mine && (mine.is_some() || i > 0));
-    let other = other.map(name).unwrap_or_default();
-    Some(match mine {
-        None => [name(0), other],
-        Some(_) => ["YOU".to_owned(), other],
-    })
-}
-
-/// A spectator draws what the server sent: there are no inputs to predict.
-fn watch(
-    session: &mut GameSession,
-    board: Board,
-    other_board: Board,
-    tick: u32,
-    incoming: Vec<IncomingGarbage>,
-    opp_incoming: Vec<IncomingGarbage>,
-) {
+fn watch(session: &mut GameSession, board: Board, tick: u32, incoming: Vec<IncomingGarbage>) {
     session.predicted_board = board.clone();
     session.board = board;
-    session.other_board = other_board;
     session.server_tick = tick;
     session.local_tick = tick;
     session.incoming = incoming;
-    session.opp_incoming = opp_incoming;
     crate::logic::announce_events(session);
+}
+
+/// The draws are sent only when they change: otherwise they go on from the
+/// last board.
+fn with_rng(mut board: Board, rng: Option<Box<shared::BoardRng>>, last: &Board) -> Board {
+    board.set_rng(rng.map_or_else(|| last.rng_state(), |r| *r));
+    board
+}
+
+/// Hands each player's part of an update to its board: the large one is
+/// reconciled with the predicted inputs, the others are smoothed.
+fn apply_update(session: &mut GameSession, tick: u32, players: Vec<PlayerUpdate>) {
+    if session.spectating() && !players.iter().any(|p| p.slot == session.focus) {
+        match players.iter().map(|p| p.slot).min() {
+            Some(first) => session.focus = first,
+            None => return,
+        }
+    }
+    let focus = session.focus;
+    session.rivals.retain(|r| r.slot != focus);
+    let now = crate::connection::now_secs();
+    let mut mine = None;
+    for p in players {
+        if p.slot == focus {
+            mine = Some(p);
+            continue;
+        }
+        let i = match session.rivals.iter().position(|r| r.slot == p.slot) {
+            Some(i) => i,
+            None => {
+                session.add_rival(Rival::new(p.slot, p.team, (*p.board).clone()));
+                session.rivals.iter().position(|r| r.slot == p.slot).unwrap_or_default()
+            }
+        };
+        let rival = &mut session.rivals[i];
+        let board = with_rng(*p.board, p.rng, &rival.board);
+        rival.view.push(tick, board.clone(), now);
+        rival.board = board;
+        rival.team = p.team;
+        rival.incoming = p.incoming;
+        rival.target = p.target;
+    }
+    let Some(me) = mine else { return };
+    session.team = me.team;
+    session.target = me.target;
+    let board = with_rng(*me.board, me.rng, &session.board);
+    if session.spectating() {
+        watch(session, board, tick, me.incoming);
+        return;
+    }
+    reconcile(
+        session,
+        Update {
+            board,
+            ack: me.ack,
+            tick,
+            incoming: me.incoming,
+        },
+    );
+    session.out_early |= session.eliminated();
 }
 
 fn process_message(state: &mut State, msg: ServerMessage) {
@@ -214,68 +247,19 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         ServerMessage::JoinFailed { reason } => {
             state.notice = Status::error(reason);
         }
-        ServerMessage::GameStart => {
+        ServerMessage::GameStart { your_slot, names } => {
             if let Some(room) = state.room.as_mut() {
-                let mut session = GameSession::new(room.info.your_slot);
-                session.labels = board_labels(&room.info);
+                let mut session = GameSession::new(your_slot, names);
+                session.ping_rtt_ms = room.session.as_ref().and_then(|s| s.ping_rtt_ms);
                 session.last_server_msg = "GameStart".to_string();
+                room.info.your_slot = your_slot;
                 room.session = Some(session);
                 state.screen = Screen::Game;
             }
         }
-        ServerMessage::StateUpdate { tick, mut players } => {
+        ServerMessage::StateUpdate { tick, players } => {
             if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
-                let mine = match session.my_slot {
-                    0 => 0,
-                    slot => match players.iter().position(|p| p.slot == slot) {
-                        Some(i) => i,
-                        None => return,
-                    },
-                };
-                if mine >= players.len() {
-                    return;
-                }
-                let me = players.swap_remove(mine);
-                let Some(opponent) = players.into_iter().min_by_key(|p| p.slot) else {
-                    return;
-                };
-                let (mut board, ack, my_rng, incoming) = (*me.board, me.ack, me.rng, me.incoming);
-                let (mut other_board, opp_rng, opp_incoming) = (*opponent.board, opponent.rng, opponent.incoming);
-                match my_rng {
-                    Some(r) => board.set_rng(*r),
-                    None => board.set_rng(session.board.rng_state()),
-                }
-                match opp_rng {
-                    Some(r) => other_board.set_rng(*r),
-                    None => other_board.set_rng(session.other_board.rng_state()),
-                }
-                session
-                    .opponent_view
-                    .push(tick, other_board.clone(), crate::connection::now_secs());
-                if session.spectating() {
-                    watch(session, board, other_board, tick, incoming, opp_incoming);
-                    return;
-                }
-                reconcile(
-                    session,
-                    Update {
-                        board,
-                        other_board,
-                        ack,
-                        tick,
-                        incoming,
-                        opp_incoming,
-                    },
-                );
-            }
-        }
-        ServerMessage::Restart => {
-            if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
-                let mut fresh = GameSession::new(session.my_slot);
-                fresh.ping_rtt_ms = session.ping_rtt_ms;
-                fresh.labels = session.labels.take();
-                fresh.last_server_msg = "Restart".to_string();
-                *session = fresh;
+                apply_update(session, tick, players);
             }
         }
         ServerMessage::OpponentDisconnected => {
@@ -396,7 +380,7 @@ mod tests {
     }
 
     fn session_with_rtt(rtt_ms: f32) -> GameSession {
-        let mut session = GameSession::new(1);
+        let mut session = GameSession::new(1, Vec::new());
         session.ping_rtt_ms = Some(rtt_ms);
         session
     }
@@ -523,11 +507,9 @@ mod tests {
                     &mut session,
                     Update {
                         board: history[at as usize].clone(),
-                        other_board: history[at as usize].clone(),
                         ack,
                         tick: at,
                         incoming: Vec::new(),
-                        opp_incoming: Vec::new(),
                     },
                 );
                 assert_eq!(session.local_tick, local, "the clock moved on a steady link");
@@ -554,35 +536,70 @@ mod tests {
             .map(|(seq, _)| *seq)
             .fold(session.my_ack, u32::max)
     }
-}
 
-#[cfg(test)]
-mod label_tests {
-    use super::*;
-
-    fn lobby(your_slot: u8) -> shared::LobbyInfo {
-        shared::LobbyInfo {
-            id: 1,
-            name: "r".into(),
-            settings: shared::RoomSettings::default(),
-            players: 3,
-            connected: 3,
-            your_slot,
-            is_host: false,
-            countdown: None,
-            ranked: None,
-            names: vec!["a".into(), "b".into(), "c".into()],
-            teams: vec![None; 3],
-            spectators: 0,
+    fn update(slot: u8, team: u8, out: bool) -> PlayerUpdate {
+        let mut board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 3, 1, 5);
+        if out {
+            board.state = GameState::GameOver;
+        }
+        PlayerUpdate {
+            slot,
+            team,
+            board: Box::new(board),
+            rng: None,
+            ack: 0,
+            incoming: Vec::new(),
+            target: None,
         }
     }
 
     #[test]
-    fn every_seat_names_its_boards() {
-        let labels = |slot| board_labels(&lobby(slot)).expect("labels");
-        assert_eq!(labels(0), ["a", "b"], "a spectator sees the first two");
-        assert_eq!(labels(1), ["YOU", "b"]);
-        assert_eq!(labels(2), ["YOU", "a"]);
-        assert_eq!(labels(3), ["YOU", "a"], "the third seat used to underflow");
+    fn every_other_board_becomes_a_rival_by_slot() {
+        let mut session = GameSession::new(2, Vec::new());
+        apply_update(
+            &mut session,
+            5,
+            vec![update(3, 7, false), update(1, 5, false), update(2, 6, false)],
+        );
+        let slots: Vec<u8> = session.rivals.iter().map(|r| r.slot).collect();
+        assert_eq!(slots, [1, 3]);
+        assert_eq!(session.team, 6);
+    }
+
+    #[test]
+    fn a_player_out_before_the_end_does_not_share_the_draw() {
+        let mut session = GameSession::new(1, Vec::new());
+        apply_update(
+            &mut session,
+            5,
+            vec![update(1, 1, true), update(2, 2, false), update(3, 3, false)],
+        );
+        assert!(session.eliminated());
+        apply_update(
+            &mut session,
+            6,
+            vec![update(1, 1, true), update(2, 2, true), update(3, 3, true)],
+        );
+        assert!(session.decided() && session.out_early);
+    }
+
+    #[test]
+    fn a_spectator_follows_the_first_player_until_told_otherwise() {
+        let mut session = GameSession::new(0, Vec::new());
+        apply_update(
+            &mut session,
+            5,
+            vec![update(2, 6, false), update(3, 7, false), update(4, 8, false)],
+        );
+        assert_eq!(session.focus, 2);
+        session.follow(4);
+        apply_update(
+            &mut session,
+            6,
+            vec![update(2, 6, false), update(3, 7, false), update(4, 8, false)],
+        );
+        assert_eq!(session.focus, 4);
+        let slots: Vec<u8> = session.rivals.iter().map(|r| r.slot).collect();
+        assert_eq!(slots, [2, 3]);
     }
 }

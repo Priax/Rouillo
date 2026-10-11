@@ -598,7 +598,7 @@ mod tests {
     fn outdated_goes_offline_without_retrying() {
         let now = 4.0;
         let mut c = Connection::new("test-player");
-        let mut events = vec![ConnEvent::Message(Box::new(ServerMessage::GameStart))];
+        let mut events = vec![ConnEvent::Message(Box::new(ServerMessage::Maintenance))];
 
         let link = c.outdated(&mut events);
 
@@ -615,7 +615,7 @@ mod tests {
     fn drop_discards_messages_read_alongside_it() {
         let now = 2.0;
         let mut c = Connection::new("test-player");
-        let mut events = vec![ConnEvent::Message(Box::new(ServerMessage::GameStart))];
+        let mut events = vec![ConnEvent::Message(Box::new(ServerMessage::Maintenance))];
 
         c.drop_link("bye".to_string(), Retry::recovering(now), now, &mut events);
 

@@ -163,7 +163,7 @@ impl Manager {
             self.deliver_msg(conn, &ServerMessage::Lobby { info: lobby });
         }
         if let Some(snapshot) = snapshot {
-            self.deliver_msg(conn, &ServerMessage::GameStart);
+            self.deliver_game_start(id, conn);
             self.deliver_msg(conn, &snapshot);
         }
         self.send_room_msg(id, &ServerMessage::Spectators { count });

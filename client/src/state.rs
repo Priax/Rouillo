@@ -1,5 +1,5 @@
 use notan::prelude::*;
-use shared::{config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, StampedInput};
+use shared::{config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, StampedInput, Targeting};
 
 use crate::connection::Connection;
 use crate::interp::OpponentView;
@@ -414,16 +414,65 @@ pub struct Invite {
     pub pager: crate::ui::Pager,
 }
 
+/// Another board of the game, as received from the server.
+pub struct Rival {
+    pub slot: u8,
+    pub team: u8,
+    pub board: Board,
+    pub view: OpponentView,
+    pub turn: TurnAnim,
+    pub incoming: Vec<IncomingGarbage>,
+    pub target: Option<u8>,
+}
+
+impl Rival {
+    pub fn new(slot: u8, team: u8, board: Board) -> Self {
+        Self {
+            slot,
+            team,
+            board,
+            view: OpponentView::default(),
+            turn: TurnAnim::default(),
+            incoming: Vec::new(),
+            target: None,
+        }
+    }
+
+    pub fn nuisance(&self) -> u32 {
+        let travelling: u32 = self.incoming.iter().map(|g| g.amount).sum();
+        self.board.pending_garbage + travelling
+    }
+
+    pub fn out(&self) -> bool {
+        self.board.state == GameState::GameOver
+    }
+
+    /// The board to draw, smoothed between updates, and its piece's offset.
+    pub fn shown(&self) -> (&Board, (f32, f32)) {
+        self.view
+            .frame()
+            .unwrap_or((&self.board, (crate::draw::fall_step(&self.board), 0.0)))
+    }
+}
+
 pub struct GameSession {
     pub board: Board,
     pub predicted_board: Board,
-    pub other_board: Board,
+    /// The other boards, by slot; the first is the one a duel shows.
+    pub rivals: Vec<Rival>,
     pub my_slot: u8,
+    /// The slot of the large board: one's own, or the one a spectator follows.
+    pub focus: u8,
+    pub team: u8,
+    pub targeting: Targeting,
+    pub target: Option<u8>,
+    /// Each slot's player, from slot 1.
+    pub names: Vec<String>,
 
+    /// Knocked out while others still played: a draw at the end is theirs.
+    pub out_early: bool,
     pub opponent_disconnected: bool,
     pub quit_menu: bool,
-    /// The names above the boards, own first; a spectator's are both players'.
-    pub labels: Option<[String; 2]>,
 
     pub input_seq: u32,
     pub my_ack: u32,
@@ -434,10 +483,8 @@ pub struct GameSession {
     pub soft_drop_held: bool,
 
     pub my_turn: TurnAnim,
-    pub opp_turn: TurnAnim,
 
     pub piece_visual_offset: (f32, f32),
-    pub opponent_view: OpponentView,
 
     pub chain_display: Option<(u32, f32)>,
     pub all_clear_timer: f32,
@@ -456,7 +503,6 @@ pub struct GameSession {
     pub drift_samples: u32,
 
     pub incoming: Vec<IncomingGarbage>,
-    pub opp_incoming: Vec<IncomingGarbage>,
 
     pub announced_chain: (u32, u32),
     pub announced_all_clear: u32,
@@ -470,16 +516,21 @@ pub struct GameSession {
 }
 
 impl GameSession {
-    pub fn new(my_slot: u8) -> Self {
+    pub fn new(my_slot: u8, names: Vec<String>) -> Self {
         let board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 0, 1, 5);
         Self {
             predicted_board: board.clone(),
-            other_board: board.clone(),
             board,
+            rivals: Vec::new(),
             my_slot,
+            focus: my_slot.max(1),
+            team: 0,
+            targeting: Targeting::default(),
+            target: None,
+            names,
+            out_early: false,
             opponent_disconnected: false,
             quit_menu: false,
-            labels: None,
             input_seq: 0,
             my_ack: 0,
             pending_inputs: Vec::new(),
@@ -487,9 +538,7 @@ impl GameSession {
             key_timer_right: 0.0,
             soft_drop_held: false,
             my_turn: TurnAnim::default(),
-            opp_turn: TurnAnim::default(),
             piece_visual_offset: (0.0, 0.0),
-            opponent_view: OpponentView::default(),
             chain_display: None,
             all_clear_timer: 0.0,
             clock: 0.0,
@@ -502,7 +551,6 @@ impl GameSession {
             drift_min: None,
             drift_samples: 0,
             incoming: Vec::new(),
-            opp_incoming: Vec::new(),
             announced_chain: (0, 0),
             announced_all_clear: 0,
             last_server_msg: String::new(),
@@ -550,8 +598,74 @@ impl GameSession {
         self.my_slot == 0
     }
 
+    /// The teams still playing, own team first when it is.
+    pub fn teams_alive(&self, me_out: bool) -> Vec<u8> {
+        let mut alive = Vec::new();
+        let me = (!me_out).then_some(self.team);
+        let others = self.rivals.iter().filter(|r| !r.out()).map(|r| r.team);
+        for team in me.into_iter().chain(others) {
+            if !alive.contains(&team) {
+                alive.push(team);
+            }
+        }
+        alive
+    }
+
+    /// Once the game is over, the teams left: one at most, none for a
+    /// draw or for a game without opponents.
+    pub fn outcome(&self, me_out: bool) -> Option<Vec<u8>> {
+        if self.rivals.is_empty() {
+            return me_out.then(Vec::new);
+        }
+        Some(self.teams_alive(me_out)).filter(|alive| alive.len() <= 1)
+    }
+
     pub fn decided(&self) -> bool {
-        self.board.state == GameState::GameOver || self.other_board.state == GameState::GameOver
+        self.outcome(self.board.state == GameState::GameOver).is_some()
+    }
+
+    /// Out of a game that goes on without this player.
+    pub fn eliminated(&self) -> bool {
+        !self.spectating() && self.board.state == GameState::GameOver && !self.decided()
+    }
+
+    pub fn name_of(&self, slot: u8) -> &str {
+        usize::from(slot)
+            .checked_sub(1)
+            .and_then(|i| self.names.get(i))
+            .map_or("", String::as_str)
+    }
+
+    /// A spectator's switch of the large board to another player.
+    pub fn follow(&mut self, slot: u8) {
+        let Some(i) = self
+            .rivals
+            .iter()
+            .position(|r| r.slot == slot)
+            .filter(|_| self.spectating())
+        else {
+            return;
+        };
+        let next = self.rivals.remove(i);
+        let mut left = Rival::new(self.focus, self.team, self.board.clone());
+        left.incoming = std::mem::take(&mut self.incoming);
+        left.target = self.target;
+        self.add_rival(left);
+        self.focus = next.slot;
+        self.team = next.team;
+        self.target = next.target;
+        self.incoming = next.incoming;
+        self.predicted_board = next.board.clone();
+        self.board = next.board;
+        self.announced_chain = (self.board.piece_id, self.board.chain_count);
+        self.announced_all_clear = self.board.piece_id;
+        self.chain_display = None;
+        self.all_clear_timer = 0.0;
+    }
+
+    pub fn add_rival(&mut self, rival: Rival) {
+        let at = self.rivals.partition_point(|r| r.slot < rival.slot);
+        self.rivals.insert(at, rival);
     }
 
     pub fn my_nuisance(&self) -> u32 {
@@ -562,11 +676,6 @@ impl GameSession {
             .map(|g| g.amount)
             .sum();
         self.predicted_board.pending_garbage + travelling
-    }
-
-    pub fn opp_nuisance(&self) -> u32 {
-        let travelling: u32 = self.opp_incoming.iter().map(|g| g.amount).sum();
-        self.other_board.pending_garbage + travelling
     }
 }
 
@@ -694,5 +803,74 @@ mod settings_tests {
         let loaded = Settings::load();
         assert_eq!(loaded.das_delay, Settings::range(0).1, "clamped to the slowest allowed");
         assert_eq!(loaded.das_speed, Settings::default().das_speed, "garbage is ignored");
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    fn session(my_team: u8, rivals: &[(u8, u8)]) -> GameSession {
+        let mut s = GameSession::new(1, vec!["me".into(), "b".into(), "c".into(), "d".into()]);
+        s.team = my_team;
+        for &(slot, team) in rivals {
+            s.add_rival(Rival::new(slot, team, s.board.clone()));
+        }
+        s
+    }
+
+    fn knock_out(s: &mut GameSession, slot: u8) {
+        if slot == s.focus {
+            s.board.state = GameState::GameOver;
+        } else if let Some(r) = s.rivals.iter_mut().find(|r| r.slot == slot) {
+            r.board.state = GameState::GameOver;
+        }
+    }
+
+    #[test]
+    fn everyone_for_themselves_ends_with_one_left() {
+        let mut s = session(10, &[(2, 11), (3, 12)]);
+        knock_out(&mut s, 1);
+        assert!(s.eliminated() && !s.decided(), "the other two play on");
+        knock_out(&mut s, 3);
+        assert_eq!(s.outcome(true), Some(vec![11]));
+        assert!(!s.eliminated());
+    }
+
+    #[test]
+    fn a_team_wins_with_a_player_down() {
+        let mut s = session(1, &[(2, 1), (3, 2), (4, 2)]);
+        knock_out(&mut s, 1);
+        knock_out(&mut s, 3);
+        assert!(!s.decided());
+        knock_out(&mut s, 4);
+        assert_eq!(s.outcome(true), Some(vec![1]), "the partner won it for both");
+    }
+
+    #[test]
+    fn a_game_alone_ends_with_the_board() {
+        let s = session(0, &[]);
+        assert_eq!(s.outcome(false), None);
+        assert_eq!(s.outcome(true), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_spectator_switches_boards() {
+        let mut s = session(5, &[(2, 6), (3, 7)]);
+        s.my_slot = 0;
+        s.board.score = 111;
+        s.follow(3);
+        assert_eq!((s.focus, s.team), (3, 7));
+        let slots: Vec<u8> = s.rivals.iter().map(|r| r.slot).collect();
+        assert_eq!(slots, [1, 2]);
+        assert_eq!(s.rivals[0].board.score, 111, "the board left keeps its state");
+    }
+
+    #[test]
+    fn a_player_cannot_switch_boards() {
+        let mut s = session(5, &[(2, 6), (3, 7)]);
+        s.follow(3);
+        assert_eq!(s.focus, 1);
+        assert_eq!(s.rivals.len(), 2);
     }
 }

@@ -7,10 +7,10 @@ use crate::theme;
 use crate::ui::{self, Fonts, Frame, Rect, SharpText, Size, Ui, View};
 
 const TOP: f32 = 360.0;
-const TITLE_H: f32 = 56.0;
-const ROW_H: f32 = 44.0;
+const TITLE_H: f32 = 48.0;
+const ROW_H: f32 = 36.0;
 const CELL_W: f32 = 140.0;
-const CELL_H: f32 = 36.0;
+const CELL_H: f32 = 31.0;
 const RELABEL_FRAMES: u8 = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -170,10 +170,10 @@ impl BindingsPanel {
             Some((_, Slot::Pad)) => "Appuyez sur un bouton de la manette (Échap: annuler, Retour arrière: effacer)",
             None => "Start met en pause, Select relance une partie terminée.",
         };
+        let reset = reset_btn(view);
         draw.sharp_text(&fonts.text, hint)
-            .position(view.w / 2.0, c.y + c.h + 14.0)
+            .position(reset.x + reset.w + 20.0, reset.y + reset.h / 2.0)
             .size(theme::size::SMALL)
-            .h_align_center()
             .v_align_middle()
             .color(if self.capturing() { pal.accent } else { pal.text_muted });
         ui.button(draw, fonts, reset_btn(view), "Touches par défaut");

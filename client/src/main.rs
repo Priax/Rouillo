@@ -155,7 +155,11 @@ fn game_chat_area(state: &State) -> Rect {
 /// when the board does not need the keys.
 fn can_chat(state: &State) -> bool {
     state.session().is_some_and(|s| {
-        s.spectating() || s.decided() || s.opponent_disconnected || s.board.state == shared::GameState::Paused
+        s.spectating()
+            || s.decided()
+            || s.eliminated()
+            || s.opponent_disconnected
+            || s.board.state == shared::GameState::Paused
     })
 }
 

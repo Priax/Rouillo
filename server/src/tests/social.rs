@@ -19,7 +19,7 @@ fn a_spectator_sees_the_game_and_cannot_touch_it() {
         &got,
         |m| matches!(m, ServerMessage::Lobby { info } if info.your_slot == 0 && !info.is_host)
     ));
-    assert!(has(&got, |m| matches!(m, ServerMessage::GameStart)));
+    assert!(has(&got, |m| matches!(m, ServerMessage::GameStart { .. })));
     assert!(has(&got, |m| matches!(m, ServerMessage::StateUpdate { .. })));
 
     mgr.handle(Command::TogglePause { conn: 3 });

@@ -53,7 +53,7 @@ fn countdown_starts_game_after_delay() {
     assert!(matches!(mgr.rooms[&1].phase, Phase::CountingDown(_)));
     mgr.tick(3.5, false);
     assert!(matches!(mgr.rooms[&1].phase, Phase::Playing));
-    assert!(has(&drain(&mut rx1), |m| matches!(m, ServerMessage::GameStart)));
+    assert!(has(&drain(&mut rx1), |m| matches!(m, ServerMessage::GameStart { .. })));
 }
 
 #[test]
@@ -591,4 +591,51 @@ fn a_late_comer_watches_then_plays_the_next_game() {
     start(&mut mgr);
     assert_eq!(mgr.rooms[&1].sim.boards.len(), 2, "host and late comer");
     assert_eq!(mgr.rooms[&1].members[1].game_slot, Some(1));
+}
+
+/// The slot and the number of names of the last game start.
+fn game_start(msgs: &[ServerMessage]) -> Option<(u8, usize)> {
+    msgs.iter().rev().find_map(|m| match m {
+        ServerMessage::GameStart { your_slot, names } => Some((*your_slot, names.len())),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_restart_after_a_leave_tells_each_player_their_new_slot() {
+    let mut mgr = new_mgr();
+    let mut rxs = big_room(&mut mgr, 3, 3);
+    start(&mut mgr);
+    for (i, rx) in rxs.iter_mut().enumerate() {
+        assert_eq!(game_start(&drain(rx)), Some((slot_byte(i + 1), 3)));
+    }
+    mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
+    mgr.handle(Command::LeaveRoom { conn: 2 });
+    mgr.handle(Command::Restart { conn: 3 });
+    assert_eq!(game_start(&drain(&mut rxs[0])), Some((1, 2)));
+    assert_eq!(game_start(&drain(&mut rxs[2])), Some((2, 2)));
+}
+
+#[test]
+fn a_late_comer_watches_with_no_slot() {
+    let mut mgr = new_mgr();
+    let _rxs = big_room(&mut mgr, 3, 2);
+    start(&mut mgr);
+    let mut late = reg(&mut mgr, 7);
+    hello(&mut mgr, 7, "late");
+    mgr.handle(Command::JoinRoom { conn: 7, id: 1 });
+    assert_eq!(game_start(&drain(&mut late)), Some((0, 2)));
+}
+
+#[test]
+fn a_manual_target_is_a_slot_from_one() {
+    let mut mgr = new_mgr();
+    let _rxs = big_room(&mut mgr, 3, 3);
+    start(&mut mgr);
+    mgr.handle(Command::SetTargeting {
+        conn: 1,
+        targeting: shared::Targeting::Manual(3),
+    });
+    mgr.tick(0.02, true);
+    assert_eq!(mgr.rooms[&1].sim.targets[0], Some(2));
 }

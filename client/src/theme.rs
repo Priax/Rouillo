@@ -133,6 +133,18 @@ pub mod bar {
     pub const ORANGE: Color = Color::from_rgb(0.9, 0.42, 0.12);
 }
 
+/// The teams a lobby offers, from team 1. Above them, a team is one player.
+const TEAMS: [(&str, Color); 4] = [
+    ("Rouge", bar::RED),
+    ("Bleu", bar::BLUE),
+    ("Vert", bar::GREEN),
+    ("Jaune", bar::YELLOW),
+];
+
+pub fn team(team: u8) -> Option<(&'static str, Color)> {
+    TEAMS.get(usize::from(team).checked_sub(1)?).copied()
+}
+
 pub mod size {
     pub const SMALL: f32 = 15.0;
     pub const BODY: f32 = 18.0;

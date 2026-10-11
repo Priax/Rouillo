@@ -161,8 +161,14 @@ fn controls_rows(bindings: &Bindings) -> Vec<(&'static str, Vec<String>, Option<
 fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, bindings: &Bindings) {
     let pal = ui.palette();
     let label_w = 300.0_f32.min(card.w * 0.42);
+    let note = "Les touches se changent dans Paramètres. Sur téléphone, des boutons apparaissent \
+                à l'écran dès que vous le touchez.";
+    let note = fonts.wrap(Face::Text, note, theme::size::BODY, card.w - 48.0);
+    let rows = controls_rows(bindings);
+    let room = card.h - TAB_H - 36.0 - note.len() as f32 * LINE_H - 16.0;
+    let row_h = ROW_H.min(room / rows.len() as f32);
     let mut y = card.y + TAB_H + 36.0;
-    for (label, keys, pad) in controls_rows(bindings) {
+    for (label, keys, pad) in rows {
         draw.sharp_text(&fonts.text, label)
             .position(card.x + 24.0, y)
             .size(theme::size::EMPHASIS)
@@ -178,12 +184,10 @@ fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, bindings: 
         if let Some(pad) = pad {
             chip(draw, ui, fonts, (x, y), pad, true);
         }
-        y += ROW_H;
+        y += row_h;
     }
-    let note = "Les touches se changent dans Paramètres. Sur téléphone, des boutons apparaissent \
-                à l'écran dès que vous le touchez.";
     y += 4.0;
-    for line in fonts.wrap(Face::Text, note, theme::size::BODY, card.w - 48.0) {
+    for line in note {
         draw.sharp_text(&fonts.text, line)
             .position(card.x + 24.0, y)
             .size(theme::size::BODY)

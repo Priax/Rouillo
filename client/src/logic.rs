@@ -1,5 +1,5 @@
 use notan::prelude::*;
-use shared::{config, ClientMessage, GameState, InputKind, StampedInput};
+use shared::{config, ClientMessage, GameState, InputKind, StampedInput, Targeting};
 
 use crate::connection::Connection;
 use crate::controls::{Action, Frame};
@@ -29,9 +29,10 @@ pub fn update_game(
     let game_over = session.decided() || online.ended;
     let paused = session.board.state == GameState::Paused;
     let is_host = online.is_host;
+    let menu = paused || game_over || session.opponent_disconnected || session.quit_menu;
 
-    if paused || game_over || session.opponent_disconnected || session.quit_menu {
-        let with_back = is_host && !online.ranked;
+    if menu || session.eliminated() {
+        let with_back = menu && is_host && !online.ranked;
         let (leave_row, back_row) = crate::draw::exit_rows(ui.view(), with_back);
         if ui.bar_clicked(leave_row) {
             conn.send(&ClientMessage::LeaveRoom);
@@ -44,7 +45,11 @@ pub fn update_game(
     }
 
     let dt = app.timer.delta_f32();
+    let click = crate::draw::game_click(ui, session);
     if session.spectating() {
+        if let Some(crate::draw::GameClick::Board(slot)) = click {
+            session.follow(slot);
+        }
         if input.pause {
             conn.send(&ClientMessage::LeaveRoom);
             return true;
@@ -58,6 +63,9 @@ pub fn update_game(
     }
 
     handle_global_input(input, session, conn, online.ranked);
+    if !menu && !session.eliminated() {
+        choose_target(input, click, session, conn);
+    }
 
     if !game_over && !paused && !session.quit_menu {
         read_controls(input, session, settings, Some(conn), dt);
@@ -71,17 +79,16 @@ pub fn update_game(
 }
 
 pub fn animate(session: &mut GameSession, dt: f32) {
-    session.opponent_view.advance(dt);
     if let Some(p) = &session.predicted_board.active_piece {
         session.my_turn.update(session.predicted_board.piece_id, p.rotation, dt);
     }
-    let shown = session
-        .opponent_view
-        .frame()
-        .map_or(&session.other_board, |(board, _)| board);
-    if let Some(p) = &shown.active_piece {
-        let (id, rotation) = (shown.piece_id, p.rotation);
-        session.opp_turn.update(id, rotation, dt);
+    for rival in &mut session.rivals {
+        rival.view.advance(dt);
+        let shown = rival.view.frame().map_or(&rival.board, |(board, _)| board);
+        if let Some(p) = &shown.active_piece {
+            let (id, rotation) = (shown.piece_id, p.rotation);
+            rival.turn.update(id, rotation, dt);
+        }
     }
 
     let off = &mut session.piece_visual_offset;
@@ -229,6 +236,53 @@ fn handle_global_input(input: &Frame, session: &mut GameSession, conn: &mut Conn
     }
 }
 
+/// The opponents one may aim at, by slot.
+fn opponents(session: &GameSession) -> Vec<u8> {
+    let foes = session.rivals.iter().filter(|r| !r.out() && r.team != session.team);
+    foes.map(|r| r.slot).collect()
+}
+
+fn choose_target(
+    input: &Frame,
+    click: Option<crate::draw::GameClick>,
+    session: &mut GameSession,
+    conn: &mut Connection,
+) {
+    if session.rivals.len() < 2 {
+        return;
+    }
+    let foes = opponents(session);
+    let current = match session.targeting {
+        Targeting::Manual(slot) => Some(slot),
+        _ => session.target,
+    };
+    let after = |slot: Option<u8>| {
+        let i = slot
+            .and_then(|s| foes.iter().position(|&f| f == s))
+            .map_or(0, |i| i + 1);
+        foes.get(i % foes.len().max(1)).copied()
+    };
+    let manual = |slot: Option<u8>| slot.filter(|s| foes.contains(s)).or_else(|| foes.first().copied());
+    let strategy = |i: usize| crate::draw::strategy_at(i, manual(current));
+    let chosen = match click {
+        Some(crate::draw::GameClick::Strategy(i)) => strategy(i),
+        Some(crate::draw::GameClick::Board(slot)) => foes.contains(&slot).then_some(Targeting::Manual(slot)),
+        None if input.pressed(Action::Strategy) => {
+            let next = (crate::draw::strategy_index(session.targeting) + 1) % crate::draw::STRATEGIES.len();
+            strategy(next).or(Some(Targeting::Random))
+        }
+        None if input.pressed(Action::NextTarget) => after(current).map(Targeting::Manual),
+        None => None,
+    };
+    if let Some(targeting) = chosen.filter(|&t| t != session.targeting || matches!(t, Targeting::Manual(_))) {
+        session.targeting = targeting;
+        if let Targeting::Manual(slot) = targeting {
+            session.target = Some(slot);
+        }
+        conn.send(&ClientMessage::SetTargeting { targeting });
+    }
+}
+
 fn handle_game_input(
     input: &Frame,
     session: &mut GameSession,
@@ -308,7 +362,7 @@ mod tests {
     use super::*;
 
     fn synced_session() -> GameSession {
-        let mut session = GameSession::new(1);
+        let mut session = GameSession::new(1, Vec::new());
         session.predicted_board.spawn_piece();
         session.synced = true;
         session
@@ -372,7 +426,7 @@ mod tests {
 
     #[test]
     fn the_board_waits_for_the_first_update() {
-        let mut session = GameSession::new(1);
+        let mut session = GameSession::new(1, Vec::new());
         run_steps(&mut session, 10);
         assert_eq!(session.local_tick, 0);
     }
@@ -496,5 +550,58 @@ mod tests {
             1,
             "a new press moves at once"
         );
+    }
+
+    fn arena() -> (GameSession, Connection) {
+        let mut session = synced_session();
+        session.team = 1;
+        for (slot, team) in [(2, 1), (3, 2), (4, 3)] {
+            session.add_rival(crate::state::Rival::new(slot, team, session.board.clone()));
+        }
+        (session, Connection::new("p"))
+    }
+
+    #[test]
+    fn the_strategy_key_goes_round_and_manual_aims_at_an_opponent() {
+        let (mut s, mut conn) = arena();
+        let key = Frame::pressing(Action::Strategy);
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            choose_target(&key, None, &mut s, &mut conn);
+            seen.push(s.targeting);
+        }
+        assert_eq!(
+            seen,
+            [
+                Targeting::Attackers,
+                Targeting::Danger,
+                Targeting::Manual(3),
+                Targeting::Random
+            ],
+            "the partner in slot 2 is skipped"
+        );
+    }
+
+    #[test]
+    fn next_target_skips_partners_and_the_knocked_out() {
+        let (mut s, mut conn) = arena();
+        s.rivals[1].board.state = GameState::GameOver;
+        let key = Frame::pressing(Action::NextTarget);
+        choose_target(&key, None, &mut s, &mut conn);
+        assert_eq!(s.targeting, Targeting::Manual(4));
+        choose_target(&key, None, &mut s, &mut conn);
+        assert_eq!(s.targeting, Targeting::Manual(4), "the only one left");
+    }
+
+    #[test]
+    fn clicking_a_board_aims_at_it_unless_it_is_a_partner() {
+        let (mut s, mut conn) = arena();
+        let none = Frame::default();
+        choose_target(&none, Some(crate::draw::GameClick::Board(2)), &mut s, &mut conn);
+        assert_eq!(s.targeting, Targeting::Random);
+        choose_target(&none, Some(crate::draw::GameClick::Board(4)), &mut s, &mut conn);
+        assert_eq!((s.targeting, s.target), (Targeting::Manual(4), Some(4)));
+        choose_target(&none, Some(crate::draw::GameClick::Strategy(2)), &mut s, &mut conn);
+        assert_eq!(s.targeting, Targeting::Danger);
     }
 }

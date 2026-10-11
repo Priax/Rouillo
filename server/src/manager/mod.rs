@@ -326,6 +326,18 @@ impl Manager {
         }
     }
 
+    fn send_game_start(&mut self, id: RoomId) {
+        for (c, payload) in self.rooms.get(&id).map(Room::game_start_payloads).unwrap_or_default() {
+            self.deliver(c, payload);
+        }
+    }
+
+    fn deliver_game_start(&mut self, id: RoomId, conn: ConnId) {
+        if let Some(msg) = self.rooms.get(&id).map(|r| r.game_start_for(conn)) {
+            self.deliver_msg(conn, &msg);
+        }
+    }
+
     fn send_lobby(&mut self, id: RoomId) {
         let Some(msgs) = self.rooms.get(&id).map(Room::lobby_payloads) else {
             return;

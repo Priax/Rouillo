@@ -71,8 +71,17 @@ pub struct Room {
     pub sim: Sim,
     pub series: Option<Series>,
     pub spectators: Vec<Spectator>,
-    /// The account of each game slot, as the game started.
-    pub seats: Vec<Option<Uuid>>,
+    /// Who sits in each game slot, as the game started.
+    pub seats: Vec<Seat>,
+}
+
+pub struct Seat {
+    pub user_id: Option<Uuid>,
+    pub name: String,
+}
+
+fn encoded(msg: &ServerMessage) -> Option<Vec<u8>> {
+    shared::encode(msg).map_err(|e| error!("encode failed: {e}")).ok()
 }
 
 impl Room {
@@ -97,7 +106,14 @@ impl Room {
         for (i, m) in self.members.iter_mut().enumerate() {
             m.game_slot = Some(i);
         }
-        self.seats = self.members.iter().map(|m| m.user_id).collect();
+        self.seats = self
+            .members
+            .iter()
+            .map(|m| Seat {
+                user_id: m.user_id,
+                name: m.name.clone(),
+            })
+            .collect();
         let teams = self.teams();
         self.sim.reset_boards(&self.settings, teams);
     }
@@ -120,13 +136,7 @@ impl Room {
     }
 
     pub fn lobby_payloads(&self) -> Vec<(ConnId, Vec<u8>)> {
-        let encode = |info: LobbyInfo| match shared::encode(&ServerMessage::Lobby { info }) {
-            Ok(payload) => Some(payload),
-            Err(e) => {
-                error!("encode Lobby failed: {e}");
-                None
-            }
-        };
+        let encode = |info: LobbyInfo| encoded(&ServerMessage::Lobby { info });
         let members = self
             .members
             .iter()
@@ -139,10 +149,27 @@ impl Room {
         members.chain(spectators).collect()
     }
 
+    /// The start of the running game as `conn` sees it: its own slot, 0 for
+    /// one without a board, and every seat's name.
+    pub fn game_start_for(&self, conn: ConnId) -> ServerMessage {
+        let your_slot = self.game_slot_of_conn(conn).map_or(0, |s| slot_byte(s + 1));
+        ServerMessage::GameStart {
+            your_slot,
+            names: self.seats.iter().map(|s| s.name.clone()).collect(),
+        }
+    }
+
     fn send_to_audience(&self, payload: &[u8], outgoing: &mut Vec<(ConnId, Vec<u8>)>) {
         for c in self.audience() {
             outgoing.push((c, payload.to_vec()));
         }
+    }
+
+    pub fn game_start_payloads(&self) -> Vec<(ConnId, Vec<u8>)> {
+        self.audience()
+            .into_iter()
+            .filter_map(|c| Some((c, encoded(&self.game_start_for(c))?)))
+            .collect()
     }
 
     pub fn spectator_slot(&self, conn: ConnId) -> Option<usize> {
@@ -159,10 +186,7 @@ impl Room {
         if *t <= 0.0 {
             self.phase = Phase::Playing;
             self.start_game();
-            match shared::encode(&ServerMessage::GameStart) {
-                Ok(payload) => self.send_to_audience(&payload, outgoing),
-                Err(e) => error!("encode GameStart failed: {e}"),
-            }
+            outgoing.extend(self.game_start_payloads());
             return true;
         }
         if t.ceil() as u8 != before {
@@ -201,9 +225,8 @@ impl Room {
         if (do_broadcast && advanced) || just_finished {
             let msg = self.sim.state_update(just_finished);
             self.sim.last_sent_rng = Some(self.sim.rng_positions());
-            match shared::encode(&msg) {
-                Ok(upd) => self.send_to_audience(&upd, outgoing),
-                Err(e) => error!("encode StateUpdate failed: {e}"),
+            if let Some(upd) = encoded(&msg) {
+                self.send_to_audience(&upd, outgoing);
             }
         }
         record
@@ -272,7 +295,7 @@ impl Room {
         let n = |v: &[u32], s: usize| v.get(s).copied().unwrap_or(0);
         let players = (0..self.sim.boards.len())
             .map(|s| db::PlayerRecord {
-                user_id: self.seats.get(s).copied().flatten(),
+                user_id: self.seats.get(s).and_then(|seat| seat.user_id),
                 slot: slot_byte(s + 1),
                 team: self.sim.teams[s],
                 place: places[s],

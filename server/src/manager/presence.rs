@@ -80,10 +80,10 @@ impl Manager {
         self.send_lobby(id);
         match resume {
             (true, true) => {
-                self.send_room_msg(id, &ServerMessage::GameStart);
+                self.send_game_start(id);
             }
             (true, false) => {
-                self.deliver_msg(conn, &ServerMessage::GameStart);
+                self.deliver_game_start(id, conn);
                 self.deliver_msg(conn, &ServerMessage::OpponentDisconnected);
             }
             _ => {}

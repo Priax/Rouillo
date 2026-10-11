@@ -336,13 +336,13 @@ fn a_ranked_game_keeps_running_while_a_player_is_away() {
     hello_as(&mut mgr, 3, "P2", 2);
     assert_eq!(mgr.room_of(3), Some(id), "back in the series");
     let back = drain(&mut rx3);
-    assert!(has(&back, |m| matches!(m, ServerMessage::GameStart)));
+    assert!(has(&back, |m| matches!(m, ServerMessage::GameStart { .. })));
     assert!(has(&back, |m| matches!(m, ServerMessage::StateUpdate { .. })));
     let stayed = drain(&mut rx1);
     assert!(
         !has(&stayed, |m| matches!(
             m,
-            ServerMessage::Lobby { .. } | ServerMessage::GameStart | ServerMessage::OpponentDisconnected
+            ServerMessage::Lobby { .. } | ServerMessage::GameStart { .. } | ServerMessage::OpponentDisconnected
         )),
         "the one who stayed is not pulled out of the game"
     );

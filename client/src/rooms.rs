@@ -360,13 +360,6 @@ fn lobby_player_row(view: View, i: usize, players: usize) -> Rect {
     list.nth_row(i, h - 4.0, 4.0)
 }
 
-const TEAMS: [(&str, Color); 4] = [
-    ("Rouge", theme::bar::RED),
-    ("Bleu", theme::bar::BLUE),
-    ("Vert", theme::bar::GREEN),
-    ("Jaune", theme::bar::YELLOW),
-];
-
 /// One's own row, while one may still change team on it.
 fn team_picker(info: &LobbyInfo) -> Option<usize> {
     let open = info.ranked.is_none() && info.countdown.is_none();
@@ -383,9 +376,7 @@ fn next_team(team: Option<u8>) -> Option<u8> {
 }
 
 fn team_look(team: Option<u8>, pal: &theme::Palette) -> (&'static str, Color) {
-    team.and_then(|t| TEAMS.get(usize::from(t).checked_sub(1)?))
-        .copied()
-        .unwrap_or(("Solo", pal.text_dim))
+    team.and_then(theme::team).unwrap_or(("Solo", pal.text_dim))
 }
 
 /// Whether the players make two sides at least: one without a team is a side.

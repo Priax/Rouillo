@@ -121,7 +121,7 @@ pub enum Targeting {
     Attackers,
     /// The opponent whose board is fullest, to finish them off.
     Danger,
-    /// A slot of the player's choosing.
+    /// A slot of the player's choosing, from 1.
     Manual(u8),
 }
 
@@ -377,12 +377,16 @@ pub enum ClientMessage {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServerMessage {
-    GameStart,
+    /// Also restarts a finished game. Slots may change between games.
+    GameStart {
+        your_slot: u8,
+        /// Each game slot's player, from slot 1.
+        names: Vec<String>,
+    },
     StateUpdate {
         tick: u32,
         players: Vec<PlayerUpdate>,
     },
-    Restart,
     OpponentDisconnected,
     RoomList {
         rooms: Vec<RoomInfo>,

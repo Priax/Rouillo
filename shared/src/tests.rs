@@ -1256,7 +1256,10 @@ fn server_samples() -> Vec<ServerMessage> {
     let board = busy_board();
     let settings = RoomSettings::default();
     vec![
-        ServerMessage::GameStart,
+        ServerMessage::GameStart {
+            your_slot: 2,
+            names: vec!["a".into(), "b".into(), "c".into()],
+        },
         ServerMessage::StateUpdate {
             tick: 3,
             players: vec![PlayerUpdate {
@@ -1269,7 +1272,6 @@ fn server_samples() -> Vec<ServerMessage> {
                 target: Some(3),
             }],
         },
-        ServerMessage::Restart,
         ServerMessage::OpponentDisconnected,
         ServerMessage::RoomList {
             rooms: vec![RoomInfo {
@@ -1337,30 +1339,29 @@ fn server_samples() -> Vec<ServerMessage> {
     ]
 }
 
-const SERVER_VARIANTS: usize = 20;
+const SERVER_VARIANTS: usize = 19;
 
 fn server_variant(m: &ServerMessage) -> usize {
     match m {
-        ServerMessage::GameStart => 0,
+        ServerMessage::GameStart { .. } => 0,
         ServerMessage::StateUpdate { .. } => 1,
-        ServerMessage::Restart => 2,
-        ServerMessage::OpponentDisconnected => 3,
-        ServerMessage::RoomList { .. } => 4,
-        ServerMessage::Lobby { .. } => 5,
-        ServerMessage::JoinFailed { .. } => 6,
-        ServerMessage::FriendInvitation { .. } => 7,
-        ServerMessage::Pong { .. } => 8,
-        ServerMessage::Maintenance => 9,
-        ServerMessage::QueueRefused { .. } => 10,
-        ServerMessage::SeriesScore { .. } => 11,
-        ServerMessage::SeriesOver { .. } => 12,
-        ServerMessage::SessionRevoked => 13,
-        ServerMessage::MatchFound { .. } => 14,
-        ServerMessage::MatchCancelled { .. } => 15,
-        ServerMessage::QueueCooldown { .. } => 16,
-        ServerMessage::Chat { .. } => 17,
-        ServerMessage::Spectators { .. } => 18,
-        ServerMessage::OpenedElsewhere => 19,
+        ServerMessage::OpponentDisconnected => 2,
+        ServerMessage::RoomList { .. } => 3,
+        ServerMessage::Lobby { .. } => 4,
+        ServerMessage::JoinFailed { .. } => 5,
+        ServerMessage::FriendInvitation { .. } => 6,
+        ServerMessage::Pong { .. } => 7,
+        ServerMessage::Maintenance => 8,
+        ServerMessage::QueueRefused { .. } => 9,
+        ServerMessage::SeriesScore { .. } => 10,
+        ServerMessage::SeriesOver { .. } => 11,
+        ServerMessage::SessionRevoked => 12,
+        ServerMessage::MatchFound { .. } => 13,
+        ServerMessage::MatchCancelled { .. } => 14,
+        ServerMessage::QueueCooldown { .. } => 15,
+        ServerMessage::Chat { .. } => 16,
+        ServerMessage::Spectators { .. } => 17,
+        ServerMessage::OpenedElsewhere => 18,
     }
 }
 
@@ -1393,7 +1394,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (10, 13_377_009_130_727_001_520);
+const PROTOCOL_DIGEST: (u32, u64) = (10, 2_504_796_092_044_091_527);
 
 #[test]
 fn protocol_changes_bump_the_version() {

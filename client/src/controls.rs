@@ -12,9 +12,11 @@ pub enum Action {
     HardDrop,
     RotateCw,
     RotateCcw,
+    Strategy,
+    NextTarget,
 }
 
-pub const ACTIONS: usize = 6;
+pub const ACTIONS: usize = 8;
 
 impl Action {
     pub const ALL: [Self; ACTIONS] = [
@@ -24,6 +26,8 @@ impl Action {
         Self::HardDrop,
         Self::RotateCw,
         Self::RotateCcw,
+        Self::Strategy,
+        Self::NextTarget,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -34,6 +38,8 @@ impl Action {
             Self::HardDrop => "Poser",
             Self::RotateCw => "Tourner (horaire)",
             Self::RotateCcw => "Tourner (anti-horaire)",
+            Self::Strategy => "Changer de stratégie",
+            Self::NextTarget => "Cible suivante",
         }
     }
 
@@ -108,6 +114,8 @@ impl Default for Bindings {
                 [key(KeyCode::Space), key(KeyCode::Enter)],
                 [key(KeyCode::ArrowUp), key(KeyCode::KeyZ)],
                 [key(KeyCode::KeyX), key(KeyCode::KeyW)],
+                [key(KeyCode::KeyC), None],
+                [key(KeyCode::KeyV), None],
             ],
             pads: [
                 Some(Pad::DPadLeft),
@@ -116,6 +124,8 @@ impl Default for Bindings {
                 Some(Pad::DPadUp),
                 Some(Pad::South),
                 Some(Pad::East),
+                Some(Pad::North),
+                Some(Pad::RightBumper),
             ],
         }
     }
@@ -123,11 +133,41 @@ impl Default for Bindings {
 
 const STORAGE_KEY: &str = "rouillo_bindings";
 
+#[derive(Deserialize)]
+struct Stored {
+    keys: Vec<[Option<KeyBinding>; 2]>,
+    pads: Vec<Option<Pad>>,
+}
+
 impl Bindings {
     pub fn load() -> Self {
         storage::get(STORAGE_KEY)
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+            .and_then(|text| serde_json::from_str::<Stored>(&text).ok())
+            .map_or_else(Self::default, Self::from_stored)
+    }
+
+    /// Saved bindings from before an action existed give it its default
+    /// key and button, unless the player already uses them for something.
+    fn from_stored(stored: Stored) -> Self {
+        let defaults = Self::default();
+        let known = stored.keys.len();
+        let mut keys = stored.keys.into_iter();
+        let mut pads = stored.pads.into_iter();
+        let mut out = Self {
+            keys: std::array::from_fn(|_| keys.next().unwrap_or_default()),
+            pads: std::array::from_fn(|_| pads.next().flatten()),
+        };
+        for action in Action::ALL.into_iter().skip(known) {
+            let i = action.index();
+            let used = |code: KeyCode, b: &Self| b.keys.iter().flatten().flatten().any(|k| k.code == code);
+            for (slot, key) in defaults.keys[i].iter().enumerate() {
+                if let Some(key) = key.as_ref().filter(|k| !used(k.code, &out)) {
+                    out.keys[i][slot] = Some(key.clone());
+                }
+            }
+            out.pads[i] = defaults.pads[i].filter(|p| !out.pads.contains(&Some(*p)));
+        }
+        out
     }
 
     pub fn save(&self) {
@@ -194,6 +234,13 @@ impl Frame {
     pub fn pressed(&self, action: Action) -> bool {
         self.pressed[action.index()]
     }
+
+    #[cfg(test)]
+    pub fn pressing(action: Action) -> Self {
+        let mut frame = Self::default();
+        frame.pressed[action.index()] = true;
+        frame
+    }
 }
 
 #[derive(Default)]
@@ -248,6 +295,22 @@ mod tests {
         assert_eq!(b.key(Action::HardDrop, 0).map(|k| k.code), Some(KeyCode::ArrowUp));
         assert_eq!(b.key(Action::RotateCw, 0), None, "ArrowUp still rotated");
         assert_eq!(b.key(Action::RotateCw, 1).map(|k| k.code), Some(KeyCode::KeyZ));
+    }
+
+    #[test]
+    fn bindings_saved_before_the_targeting_actions_keep_working() {
+        let mut old = Bindings::default();
+        old.set_key(Action::RotateCw, 1, Some(KeyBinding::new(KeyCode::KeyC)));
+        let text = serde_json::to_string(&old).expect("json");
+        let mut value: serde_json::Value = serde_json::from_str(&text).expect("value");
+        for field in ["keys", "pads"] {
+            value[field].as_array_mut().expect("an array").truncate(6);
+        }
+        let b = Bindings::from_stored(serde_json::from_value(value).expect("stored"));
+        assert_eq!(b.key(Action::RotateCw, 1).map(|k| k.code), Some(KeyCode::KeyC));
+        assert_eq!(b.key(Action::Strategy, 0), None, "C was taken already");
+        assert_eq!(b.key(Action::NextTarget, 0).map(|k| k.code), Some(KeyCode::KeyV));
+        assert_eq!(b.pad(Action::Strategy), Some(Pad::North));
     }
 
     #[test]

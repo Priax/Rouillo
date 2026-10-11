@@ -5,7 +5,7 @@ use shared::{config, Board, GameState, IncomingGarbage, RoomSettings};
 
 use crate::cpu::{Cpu, Difficulty, Style};
 use crate::draw::Hud;
-use crate::state::{GameSession, Screen, State};
+use crate::state::{GameSession, Rival, Screen, State};
 use crate::ui::{self, Pill, Rect, SettingsPanel, SharpText, View};
 use crate::{http, logic, theme};
 
@@ -68,15 +68,18 @@ impl SoloGame {
 
     fn with_seed(settings: SoloSettings, seed: u64) -> Self {
         let board = Board::for_match(seed, &settings.room);
-        let mut session = GameSession::new(1);
+        let mut session = GameSession::new(1, Vec::new());
         session.predicted_board = board.clone();
-        session.other_board = board;
+        let cpu = settings
+            .opponent
+            .map(|difficulty| Cpu::new(difficulty, settings.character, seed));
+        if cpu.is_some() {
+            session.add_rival(Rival::new(2, 1, board));
+        }
         Self {
             session,
             settings,
-            cpu: settings
-                .opponent
-                .map(|difficulty| Cpu::new(difficulty, settings.character, seed)),
+            cpu,
             new_best: false,
         }
     }
@@ -95,8 +98,7 @@ impl SoloGame {
     }
 
     fn over(&self) -> bool {
-        self.session.predicted_board.state == GameState::GameOver
-            || (self.cpu.is_some() && self.session.other_board.state == GameState::GameOver)
+        self.session.predicted_board.state == GameState::GameOver || self.session.rivals.iter().any(Rival::out)
     }
 
     fn paused(&self) -> bool {
@@ -105,7 +107,9 @@ impl SoloGame {
 
     fn set_paused(&mut self, paused: bool) {
         self.session.predicted_board.set_paused(paused);
-        self.session.other_board.set_paused(paused);
+        for rival in &mut self.session.rivals {
+            rival.board.set_paused(paused);
+        }
     }
 
     fn step(&mut self, dt: f32) {
@@ -122,23 +126,18 @@ impl SoloGame {
         let sent = logic::advance_one(session);
         let now = session.local_tick;
         session.incoming.retain(|g| g.at > now);
-        let Some(cpu) = cpu else {
+        let (Some(cpu), Some(rival)) = (cpu, session.rivals.first_mut()) else {
             return;
         };
 
-        let landed: u32 = session
-            .opp_incoming
-            .iter()
-            .filter(|g| g.at <= now)
-            .map(|g| g.amount)
-            .sum();
-        session.opp_incoming.retain(|g| g.at > now);
-        let input = cpu.input(&session.other_board, session.opp_nuisance() + landed);
-        let sent_back = session.other_board.step(input, landed);
+        let landed: u32 = rival.incoming.iter().filter(|g| g.at <= now).map(|g| g.amount).sum();
+        rival.incoming.retain(|g| g.at > now);
+        let input = cpu.input(&rival.board, rival.nuisance() + landed);
+        let sent_back = rival.board.step(input, landed);
 
         let at = now + config::GARBAGE_TRAVEL_TICKS;
         if sent > 0 {
-            session.opp_incoming.push(IncomingGarbage { at, amount: sent });
+            rival.incoming.push(IncomingGarbage { at, amount: sent });
         }
         if sent_back > 0 {
             session.incoming.push(IncomingGarbage { at, amount: sent_back });
@@ -336,7 +335,7 @@ mod tests {
     #[test]
     fn both_players_are_dealt_the_same_pairs() {
         let game = game(Some(Difficulty::Easy), 9);
-        let (me, cpu) = (&game.session.predicted_board, &game.session.other_board);
+        let (me, cpu) = (&game.session.predicted_board, &game.session.rivals[0].board);
         assert_eq!(me.active_piece, cpu.active_piece);
         assert_eq!(me.next_types, cpu.next_types);
         assert_eq!(me.next_next_types, cpu.next_next_types);
@@ -372,39 +371,36 @@ mod tests {
     fn nuisance_sent_by_the_player_reaches_the_cpu() {
         let mut game = game(Some(Difficulty::Easy), 4);
         let now = game.session.local_tick;
-        game.session
-            .opp_incoming
+        game.session.rivals[0]
+            .incoming
             .push(IncomingGarbage { at: now + 3, amount: 7 });
-        assert_eq!(game.session.opp_nuisance(), 7);
+        assert_eq!(game.session.rivals[0].nuisance(), 7);
         for _ in 0..3 {
             game.advance();
         }
-        assert!(game.session.opp_incoming.is_empty());
-        assert_eq!(game.session.other_board.pending_garbage, 7);
-        assert_eq!(game.session.opp_nuisance(), 7, "counted twice or lost on landing");
+        let cpu = &game.session.rivals[0];
+        assert!(cpu.incoming.is_empty());
+        assert_eq!(cpu.board.pending_garbage, 7);
+        assert_eq!(cpu.nuisance(), 7, "counted twice or lost on landing");
     }
 
     #[test]
     fn a_game_without_opponent_only_moves_the_player() {
         let mut game = game(None, 4);
-        let idle = game.session.other_board.state_hash();
+        assert!(game.session.rivals.is_empty());
         for _ in 0..600 {
             game.advance();
         }
         assert_eq!(game.session.local_tick, 600);
-        assert_eq!(game.session.other_board.state_hash(), idle);
-        assert!(game.session.incoming.is_empty() && game.session.opp_incoming.is_empty());
+        assert!(game.session.incoming.is_empty());
     }
 
     #[test]
-    fn a_topped_out_cpu_ends_the_game_only_when_there_is_one() {
+    fn a_topped_out_cpu_ends_the_game() {
         let mut versus = game(Some(Difficulty::Easy), 1);
-        versus.session.other_board.state = GameState::GameOver;
+        assert!(!versus.over());
+        versus.session.rivals[0].board.state = GameState::GameOver;
         assert!(versus.over());
-
-        let mut alone = game(None, 1);
-        alone.session.other_board.state = GameState::GameOver;
-        assert!(!alone.over());
     }
 
     #[test]
@@ -413,13 +409,13 @@ mod tests {
         game.set_paused(true);
         let (me, cpu) = (
             game.session.predicted_board.state_hash(),
-            game.session.other_board.state_hash(),
+            game.session.rivals[0].board.state_hash(),
         );
         for _ in 0..120 {
             game.advance();
         }
         assert_eq!(game.session.predicted_board.state_hash(), me);
-        assert_eq!(game.session.other_board.state_hash(), cpu);
+        assert_eq!(game.session.rivals[0].board.state_hash(), cpu);
         game.set_paused(false);
         game.advance();
         assert_ne!(game.session.predicted_board.state_hash(), me);

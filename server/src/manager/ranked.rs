@@ -56,7 +56,7 @@ impl Manager {
         let result = room.series.as_ref().and_then(|s| s.result);
         self.deliver_msg(conn, &lobby);
         if let Some(snapshot) = snapshot {
-            self.deliver_msg(conn, &ServerMessage::GameStart);
+            self.deliver_game_start(id, conn);
             self.deliver_msg(conn, &snapshot);
         }
         if let Some(result) = result {
@@ -368,7 +368,7 @@ impl Manager {
                     series.next_game_at = None;
                 }
             }
-            self.send_room_msg(id, &ServerMessage::Restart);
+            self.send_game_start(id);
         }
     }
 

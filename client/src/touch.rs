@@ -17,7 +17,7 @@ enum Button {
     Pause,
 }
 
-fn layout(view: View) -> [(Button, Rect); ACTIONS + 1] {
+fn layout(view: View) -> [(Button, Rect); 7] {
     let (w, h) = view.size();
     let low = h - MARGIN - SIZE;
     let high = low - SIZE - GAP;
@@ -138,6 +138,7 @@ fn icon(draw: &mut Draw, action: Action, cx: f32, cy: f32, r: f32, color: Color)
         }
         Action::RotateCw => curl(draw, cx, cy, r, true, color),
         Action::RotateCcw => curl(draw, cx, cy, r, false, color),
+        Action::Strategy | Action::NextTarget => {}
     }
 }
 

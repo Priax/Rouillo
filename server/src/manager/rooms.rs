@@ -234,6 +234,10 @@ impl Manager {
 
     pub(super) fn set_targeting(&mut self, conn: ConnId, targeting: Targeting) {
         let Some(id) = self.room_of(conn) else { return };
+        let targeting = match targeting {
+            Targeting::Manual(slot) => slot.checked_sub(1).map_or(Targeting::Random, Targeting::Manual),
+            other => other,
+        };
         self.with_room(id, |room| {
             if let Some(slot) = room.game_slot_of_conn(conn) {
                 room.sim.set_targeting(slot, targeting);
@@ -294,7 +298,7 @@ impl Manager {
                 })
                 .unwrap_or(false);
             if restarted {
-                self.send_room_msg(id, &ServerMessage::Restart);
+                self.send_game_start(id);
             }
         }
     }
