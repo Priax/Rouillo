@@ -206,9 +206,9 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
                 y += 12.0;
             }
             draw.sharp_text(&state.fonts.text, &text)
-                .position(btn.x + btn.w, y)
+                .position(btn.x + btn.w / 2.0, y)
                 .size(theme::size::SMALL)
-                .h_align_right()
+                .h_align_center()
                 .v_align_middle()
                 .color(pal.text_dim);
         }
