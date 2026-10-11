@@ -77,6 +77,12 @@ fn tabs(info: Rect) -> [Rect; 2] {
         .columns(20.0, [FILL, FILL])
 }
 
+/// The buttons to the lesson before and after, around its title.
+fn lesson_arrows(demo_card: Rect) -> [Rect; 2] {
+    let row = demo_card.pad(6.0, 8.0, 0.0, 8.0).top(32.0);
+    [row.left(40.0), row.right(40.0)]
+}
+
 fn back_btn(view: View) -> Rect {
     Frame::of(view).back
 }
@@ -93,7 +99,14 @@ pub fn update(app: &App, state: &mut State) {
     let view = state.ui.view();
     if let Some(help) = state.help.as_mut() {
         help.demo.update(app.timer.delta_f32());
-        let [controls, rules] = tabs(cards(view).0);
+        let (info, demo_card) = cards(view);
+        let [previous, next] = lesson_arrows(demo_card);
+        if state.ui.clicked(previous) || app.keyboard.was_pressed(KeyCode::ArrowLeft) {
+            help.demo.previous();
+        } else if state.ui.clicked(next) || app.keyboard.was_pressed(KeyCode::ArrowRight) {
+            help.demo.next();
+        }
+        let [controls, rules] = tabs(info);
         if state.ui.clicked(controls) {
             help.rules = false;
         } else if state.ui.clicked(rules) {
@@ -225,7 +238,7 @@ fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, t
     let pal = ui.palette();
     ui::card(draw, &pal, card);
     let title = demo.title();
-    let title = fonts.fit(Face::Display, &title, theme::size::LABEL, card.w - 24.0);
+    let title = fonts.fit(Face::Display, &title, theme::size::LABEL, card.w - 110.0);
     draw.sharp_text(&fonts.display, &title)
         .position(card.x + card.w / 2.0, card.y + 22.0)
         .size(theme::size::LABEL)
@@ -239,6 +252,9 @@ fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, t
         Rect::at(x, card.y + 44.0, game_draw::BOARD_W, game_draw::BOARD_H)
     };
     game_draw::draw_demo(draw, fonts, demo, board, time);
+    let [previous, next] = lesson_arrows(card);
+    ui.button(draw, fonts, previous, "<");
+    ui.button(draw, fonts, next, ">");
     if let Some((key, left)) = demo.key {
         draw.sharp_text(&fonts.display, key)
             .position(card.x + card.w / 2.0, board.y + board.h + 24.0)

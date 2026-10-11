@@ -348,6 +348,19 @@ impl Demo {
         demo
     }
 
+    pub fn next(&mut self) {
+        *self = Self::at((self.lesson + 1) % LESSONS.len());
+    }
+
+    pub fn previous(&mut self) {
+        *self = Self::at((self.lesson + LESSONS.len() - 1) % LESSONS.len());
+    }
+
+    /// The lesson's opening words are on screen: the pair is not shown yet.
+    pub fn introducing(&self) -> bool {
+        matches!(self.phase, Phase::Intro(_))
+    }
+
     /// The lesson's name and number, shown above the board.
     pub fn title(&self) -> String {
         format!("{}/{}  {}", self.lesson + 1, LESSONS.len(), LESSONS[self.lesson].title)
@@ -416,7 +429,7 @@ impl Demo {
             Phase::Outro(left) => {
                 *left -= dt;
                 if *left <= 0.0 {
-                    *self = Self::at((self.lesson + 1) % LESSONS.len());
+                    self.next();
                 }
                 return;
             }
@@ -684,5 +697,16 @@ mod tests {
             demo.update(STEP);
         }
         assert!(visited.iter().all(|v| *v), "{visited:?}");
+    }
+
+    #[test]
+    fn the_arrows_go_round_the_lessons() {
+        let mut demo = Demo::new();
+        demo.previous();
+        assert_eq!(demo.lesson, LESSONS.len() - 1);
+        demo.next();
+        demo.next();
+        assert_eq!(demo.lesson, 1);
+        assert!(demo.introducing(), "a lesson picked starts from its words");
     }
 }
