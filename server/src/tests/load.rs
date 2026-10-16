@@ -150,8 +150,9 @@ fn run(rooms: usize, players: usize, datagrams: bool) -> Report {
 ///
 /// `PUYO_LOAD_PLAYERS=2,16,99` sets the room sizes, `PUYO_LOAD_TOTAL=1000`
 /// the players in all (rooms = total / size, at least one), and
-/// `PUYO_LOAD_ROOMS=500` a fixed number of rooms instead. Single thread,
-/// no sockets: the manager's share of the work, as on the server.
+/// `PUYO_LOAD_ROOMS=500` a fixed number of rooms instead. No sockets: the
+/// manager's share of the work, as on the server, with the rooms spread
+/// over `RAYON_NUM_THREADS` threads (all the cores by default).
 #[test]
 #[ignore = "load test: run with --release -- --ignored --nocapture"]
 fn load_rooms() {
@@ -160,7 +161,10 @@ fn load_rooms() {
     let fixed = env_list("PUYO_LOAD_ROOMS", &[]).first().copied();
     let budget = Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64);
     let secs = f64::from(TICKS) / config::SERVER_TICK_HZ as f64;
-    println!("\n{TICKS} ticks ({secs:.0} s of play), budget {budget:?} per tick, one thread");
+    println!(
+        "\n{TICKS} ticks ({secs:.0} s of play), budget {budget:?} per tick, {} threads",
+        rayon::current_num_threads()
+    );
     println!(
         "{:>6} {:>7} {:>8} {:>10} {:>10} {:>10} {:>7} {:>11} {:>10} {:>8}",
         "rooms", "players", "link", "tick avg", "tick p99", "tick max", "p99 %", "kB/s/player", "Mbit/s", "alive"

@@ -27,6 +27,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 ring = "0.17"
 bytes = "1"
+rayon = "1"
 time = "0.3"
 
 [dev-dependencies]

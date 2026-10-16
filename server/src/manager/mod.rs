@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bytes::Bytes;
+use rayon::prelude::*;
 use shared::{config, InputKind, PausePolicy, RoomId, RoomInfo, RoomSettings, ServerMessage, Targeting};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
@@ -21,6 +22,15 @@ pub mod social;
 pub use client::Client;
 use friends::FriendCheck;
 use ranked::{PendingMatch, QueueEntry, RankedCheck};
+
+/// What the rooms one thread stepped and sent leave to record.
+#[derive(Default)]
+struct RoomsTicked {
+    records: Vec<db::MatchRecord>,
+    games_won: Vec<(RoomId, Option<usize>)>,
+    dead: Vec<ConnId>,
+    list_changed: bool,
+}
 
 pub const COUNTDOWN_SECS: f32 = 3.0;
 pub const GRACE: Duration = Duration::from_secs(config::RECONNECT_GRACE_SECS);
@@ -305,12 +315,6 @@ impl Manager {
         }
     }
 
-    fn deliver_state(&mut self, conn: ConnId, out: StateOut) {
-        if self.clients.get(&conn).is_some_and(|c| !c.send_state(out)) {
-            self.dead.push(conn);
-        }
-    }
-
     fn deliver_msg(&mut self, conn: ConnId, msg: &ServerMessage) {
         self.deliver(conn, shared::encode(msg));
     }
@@ -500,32 +504,42 @@ impl Manager {
         }
         self.expire_grace_periods();
 
-        let mut outgoing: Vec<(ConnId, Vec<u8>)> = Vec::new();
-        let mut states: Vec<(ConnId, StateOut)> = Vec::new();
-        let mut list_changed = false;
-        let mut games_won: Vec<(RoomId, Option<usize>)> = Vec::new();
-        for room in self.rooms.values_mut() {
-            list_changed |= room.tick_countdown(dt, &mut outgoing);
-            let split = |c| self.clients.get(&c).is_some_and(Client::splits_states);
-            if let Some(rec) = room.tick_game(do_broadcast, split, &mut states, &mut outgoing) {
-                if room.series.is_some() {
-                    games_won.push((room.id, rec.winner_slot().map(|w| usize::from(w) - 1)));
+        let clients = &self.clients;
+        let ticked: Vec<RoomsTicked> = self
+            .rooms
+            .par_iter_mut()
+            .fold(RoomsTicked::default, |mut out, (_, room)| {
+                let (mut outgoing, mut states) = (Vec::new(), Vec::new());
+                out.list_changed |= room.tick_countdown(dt, &mut outgoing);
+                let split = |c| clients.get(&c).is_some_and(Client::splits_states);
+                if let Some(rec) = room.tick_game(do_broadcast, split, &mut states, &mut outgoing) {
+                    if room.series.is_some() {
+                        out.games_won
+                            .push((room.id, rec.winner_slot().map(|w| usize::from(w) - 1)));
+                    }
+                    out.records.push(rec);
                 }
-                self.unsaved_matches.push(rec);
-            }
-        }
+                for (conn, payload) in outgoing {
+                    if clients.get(&conn).is_some_and(|c| !c.send(payload)) {
+                        out.dead.push(conn);
+                    }
+                }
+                for (conn, state) in states {
+                    if clients.get(&conn).is_some_and(|c| !c.send_state(state)) {
+                        out.dead.push(conn);
+                    }
+                }
+                out
+            })
+            .collect();
 
-        for (conn, payload) in outgoing {
-            self.deliver(conn, payload);
-        }
-        for (conn, payload) in states {
-            self.deliver_state(conn, payload);
-        }
-        if list_changed {
-            self.room_list_dirty = true;
-        }
-        for (id, winner) in games_won {
-            self.series_game_won(id, winner);
+        for out in ticked {
+            self.dead.extend(out.dead);
+            self.room_list_dirty |= out.list_changed;
+            self.unsaved_matches.extend(out.records);
+            for (id, winner) in out.games_won {
+                self.series_game_won(id, winner);
+            }
         }
         self.advance_series();
         self.expire_matches();

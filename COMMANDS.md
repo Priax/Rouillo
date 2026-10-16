@@ -94,8 +94,9 @@ cargo test -p server --release -- --ignored --nocapture load_rooms
 PUYO_LOAD_PLAYERS=16,40 PUYO_LOAD_TOTAL=2000 cargo test -p server --release -- --ignored --nocapture load_rooms
 PUYO_LOAD_PLAYERS=2 PUYO_LOAD_ROOMS=500 cargo test -p server --release -- --ignored --nocapture load_rooms
 ```
-Le manager seul, sur un thread, sans sockets, avec des inputs aléatoires: 10 s de jeu par
-taille, une fois en WebSocket et une fois en datagrammes. Affiche la tick (moyenne, p99, max,
+Le manager seul, sans sockets, avec des inputs aléatoires: 10 s de jeu par taille, une fois
+en WebSocket et une fois en datagrammes. Les rooms avancent en parallèle sur tous les cœurs,
+comme sur le serveur; `RAYON_NUM_THREADS=2` imite la VM (2 OCPU). Affiche la tick (moyenne, p99, max,
 p99 en % du budget de 16,7 ms), les octets envoyés par joueur et au total, et les plateaux
 encore en vie. Les rooms au-delà de `MAX_ROOM_PLAYERS` ne sont possibles que dans ce test.
 

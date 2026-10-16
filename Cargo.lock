@@ -4682,6 +4682,7 @@ dependencies = [
  "futures-util",
  "image",
  "rand 0.10.3",
+ "rayon",
  "rcgen",
  "ring",
  "rustls",
