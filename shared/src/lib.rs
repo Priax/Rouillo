@@ -145,7 +145,7 @@ pub enum Targeting {
 pub struct PlayerUpdate {
     pub slot: u8,
     pub team: u8,
-    pub board: Box<Board>,
+    pub board: std::sync::Arc<Board>,
     pub ack: u32,
     pub incoming: Vec<IncomingGarbage>,
     /// The slot this player's nuisance goes to now.

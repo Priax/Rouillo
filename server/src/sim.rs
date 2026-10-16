@@ -1,3 +1,6 @@
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+
 use rand::RngExt;
 use shared::{
     config, Board, GameState, IncomingGarbage, InputKind, PlayerUpdate, RoomSettings, ServerMessage, Targeting,
@@ -21,6 +24,25 @@ pub struct GarbageDelivery {
     amount: u32,
 }
 
+/// A board that messages share rather than copy. Writing to it copies it
+/// only if a message still holds it, which none does past its tick.
+#[derive(Clone)]
+pub struct SharedBoard(Arc<Board>);
+
+impl Deref for SharedBoard {
+    type Target = Board;
+
+    fn deref(&self) -> &Board {
+        &self.0
+    }
+}
+
+impl DerefMut for SharedBoard {
+    fn deref_mut(&mut self) -> &mut Board {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
 pub struct PendingInput {
     at: u32,
     seq: u32,
@@ -30,7 +52,7 @@ pub struct PendingInput {
 /// One game: a board per slot, and what travels between them. Every slot
 /// starts from the same seed, so all players get the same pieces.
 pub struct Sim {
-    pub boards: Vec<Board>,
+    pub boards: Vec<SharedBoard>,
     /// Slots on the same team never attack each other.
     pub teams: Vec<u8>,
     pub targeting: Vec<Targeting>,
@@ -71,7 +93,7 @@ impl Sim {
         let board = Board::for_match(rand::rng().random(), settings);
         let piece_id = board.piece_id;
         Self {
-            boards: vec![board; n],
+            boards: vec![SharedBoard(Arc::new(board)); n],
             teams,
             targeting: vec![Targeting::default(); n],
             targets: vec![None; n],
@@ -351,7 +373,7 @@ impl Sim {
             .map(|i| PlayerUpdate {
                 slot: slot_byte(i + 1),
                 team: self.teams[i],
-                board: Box::new(self.boards[i].clone()),
+                board: Arc::clone(&self.boards[i].0),
                 ack: self.last_seq[i],
                 incoming: self.incoming(i),
                 target: self.targets[i].map(|t| slot_byte(t + 1)),

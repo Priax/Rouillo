@@ -35,7 +35,7 @@ fn state_update(p1: &Board, p2: &Board) -> ServerMessage {
     let player = |slot: u8, board: &Board| PlayerUpdate {
         slot,
         team: slot,
-        board: Box::new(board.clone()),
+        board: std::sync::Arc::new(board.clone()),
         ack: 0,
         incoming: Vec::new(),
         target: Some(3 - slot),

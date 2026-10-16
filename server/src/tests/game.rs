@@ -353,7 +353,10 @@ fn a_restart_clears_attacks_in_flight() {
 
 fn last_board(rx: &mut mpsc::Receiver<Vec<u8>>, slot: u8) -> Option<shared::Board> {
     drain(rx).into_iter().rev().find_map(|m| match m {
-        ServerMessage::StateUpdate { players, .. } => players.into_iter().find(|p| p.slot == slot).map(|p| *p.board),
+        ServerMessage::StateUpdate { players, .. } => players
+            .into_iter()
+            .find(|p| p.slot == slot)
+            .map(|p| std::sync::Arc::unwrap_or_clone(p.board)),
         _ => None,
     })
 }

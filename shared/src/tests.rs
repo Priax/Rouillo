@@ -436,7 +436,7 @@ fn player(slot: u8, board: &Board, ack: u32) -> PlayerUpdate {
     PlayerUpdate {
         slot,
         team: slot,
-        board: Box::new(board.clone()),
+        board: std::sync::Arc::new(board.clone()),
         ack,
         incoming: Vec::new(),
         target: None,
@@ -481,7 +481,7 @@ fn a_sent_board_draws_what_the_original_draws() {
     board.drop_garbage();
     board.state = GameState::Playing;
     let (_, mut players) = round_trip(vec![player(1, &board, 0)], 0);
-    let mut restored = *players.remove(0).board;
+    let mut restored = std::sync::Arc::unwrap_or_clone(players.remove(0).board);
     assert_eq!(restored.state_hash(), board.state_hash());
 
     for _ in 0..20 {
@@ -1266,7 +1266,7 @@ fn server_samples() -> Vec<ServerMessage> {
             players: vec![PlayerUpdate {
                 slot: 1,
                 team: 2,
-                board: Box::new(board.clone()),
+                board: std::sync::Arc::new(board.clone()),
                 ack: 1,
                 incoming: vec![IncomingGarbage { at: 4, amount: 5 }],
                 target: Some(3),

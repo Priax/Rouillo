@@ -184,7 +184,7 @@ fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<Pl
             }
         };
         let rival = &mut session.rivals[i];
-        let board = *p.board;
+        let board = std::sync::Arc::unwrap_or_clone(p.board);
         rival.view.push(tick, board.clone(), now);
         rival.board = board;
         rival.team = p.team;
@@ -194,7 +194,7 @@ fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<Pl
     let Some(me) = mine else { return };
     session.team = me.team;
     session.target = me.target;
-    let board = *me.board;
+    let board = std::sync::Arc::unwrap_or_clone(me.board);
     if session.spectating() {
         watch(session, board, tick, me.incoming);
         return;
@@ -537,7 +537,7 @@ mod tests {
         PlayerUpdate {
             slot,
             team,
-            board: Box::new(board),
+            board: std::sync::Arc::new(board),
             ack: 0,
             incoming: Vec::new(),
             target: None,
@@ -600,7 +600,7 @@ mod tests {
         let mut session = GameSession::new(1, Vec::new());
         session.game = 4;
         let mut scored = update(1, 1, false);
-        scored.board.score = 70;
+        std::sync::Arc::make_mut(&mut scored.board).score = 70;
         apply_update(&mut session, 4, 10, vec![scored]);
         apply_update(&mut session, 4, 9, vec![update(1, 1, false)]);
         apply_update(&mut session, 3, 11, vec![update(1, 1, false)]);
