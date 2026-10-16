@@ -212,7 +212,7 @@ Prérequis: `perf` installé + `kernel.perf_event_paranoid <= 2` (sinon
 ### Flamegraph (hotspots CPU)
 
 ```bash
-# Hot path d'encodage (bincode + lz4) via un bench Criterion borné à 12 s
+# Hot path d'encodage (bitcode + lz4) via un bench Criterion borné à 12 s
 cargo flamegraph -p shared --bench sim -o flamegraph-encode.svg -- --profile-time 12 encode_state_update_full
 
 # Idem sur le vrai travail serveur par room (tick + clone + encode)
