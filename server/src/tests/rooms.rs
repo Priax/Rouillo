@@ -550,17 +550,26 @@ fn a_manual_target_is_a_slot_from_one() {
     assert_eq!(mgr.rooms[&1].sim.targets[0], Some(2));
 }
 
+/// The slots of a state, whole boards or thumbnails, as `('S', ..)` or
+/// `('T', ..)`.
+fn slots_of(msg: &ServerMessage) -> Option<(char, Vec<u8>)> {
+    match msg {
+        ServerMessage::StateUpdate { players, .. } => Some(('S', players.iter().map(|p| p.slot).collect())),
+        ServerMessage::Thumbs { thumbs, .. } => Some(('T', thumbs.iter().map(|t| t.slot).collect())),
+        _ => None,
+    }
+}
+
 fn update_slots(msgs: &[ServerMessage]) -> Vec<Vec<u8>> {
     msgs.iter()
-        .filter_map(|m| match m {
-            ServerMessage::StateUpdate { players, .. } => Some(players.iter().map(|p| p.slot).collect()),
-            _ => None,
-        })
+        .filter_map(slots_of)
+        .filter(|(kind, _)| *kind == 'S')
+        .map(|(_, slots)| slots)
         .collect()
 }
 
 #[test]
-fn with_three_boards_the_others_come_one_tick_in_three() {
+fn with_three_boards_a_player_gets_the_others_small_one_tick_in_three() {
     let mut mgr = new_mgr();
     let mut rxs = big_room(&mut mgr, 3, 3);
     start(&mut mgr);
@@ -574,14 +583,12 @@ fn with_three_boards_the_others_come_one_tick_in_three() {
     for _ in 0..6 {
         mgr.tick(1.0 / 60.0, true);
     }
-    let seen = update_slots(&drain(&mut rxs[1]));
-    assert_eq!(seen.len(), 6);
-    assert_eq!(
-        seen.iter().filter(|s| s.as_slice() == [2]).count(),
-        4,
-        "own board alone"
-    );
-    assert_eq!(seen.iter().filter(|s| s.as_slice() == [1, 2, 3]).count(), 2);
+    let seen: Vec<_> = drain(&mut rxs[1]).iter().filter_map(slots_of).collect();
+    let own = ('S', vec![2]);
+    let small = ('T', vec![1, 2, 3]);
+    assert_eq!(seen.iter().filter(|s| **s == own).count(), 6, "own board every tick");
+    assert_eq!(seen.iter().filter(|s| **s == small).count(), 2, "{seen:?}");
+    assert_eq!(seen.len(), 8);
     let watched = update_slots(&drain(&mut watcher));
     assert!(
         watched.len() == 6 && watched.iter().all(|s| s.len() == 3),
@@ -635,18 +642,15 @@ fn each_game_of_a_room_has_its_number() {
     assert_eq!(states, starts, "the new game's updates carry its number");
 }
 
-fn datagram_slots(boards: &[bytes::Bytes]) -> Vec<Vec<u8>> {
+fn datagram_slots(boards: &[bytes::Bytes]) -> Vec<(char, Vec<u8>)> {
     boards
         .iter()
-        .map(|b| match shared::decode(b) {
-            Some(ServerMessage::StateUpdate { players, .. }) => players.iter().map(|p| p.slot).collect(),
-            _ => panic!("not a state"),
-        })
+        .map(|b| shared::decode(b).as_ref().and_then(slots_of).expect("a state"))
         .collect()
 }
 
 #[test]
-fn a_datagram_link_gets_its_own_board_alone_and_the_others_packed() {
+fn a_datagram_link_gets_its_own_board_alone_and_the_others_small() {
     let mut mgr = new_mgr();
     let (tx, _rx) = mpsc::channel(CLIENT_CHAN_CAP);
     let (states_tx, mut states) = mpsc::channel(64);
@@ -677,16 +681,17 @@ fn a_datagram_link_gets_its_own_board_alone_and_the_others_packed() {
         .map(|b| datagram_slots(&b))
         .collect();
     assert_eq!(watched.len(), 3);
-    assert!(watched.iter().all(|t| t == &[vec![1, 2, 3]]), "{watched:?}");
+    assert!(watched.iter().all(|t| t == &[('S', vec![1, 2, 3])]), "{watched:?}");
     let played: Vec<_> = std::iter::from_fn(|| pstates.try_recv().ok())
         .map(|b| datagram_slots(&b))
         .collect();
     assert_eq!(
-        played.iter().filter(|t| t.as_slice() == [vec![2]]).count(),
+        played.iter().filter(|t| t.as_slice() == [('S', vec![2])]).count(),
         2,
         "{played:?}"
     );
-    assert_eq!(played.iter().filter(|t| t.as_slice() == [vec![1, 2, 3]]).count(), 1);
+    let with_thumbs = [('S', vec![2]), ('T', vec![1, 2, 3])];
+    assert_eq!(played.iter().filter(|t| t.as_slice() == with_thumbs).count(), 1);
 }
 
 #[test]
@@ -733,7 +738,7 @@ fn a_big_room_is_packed_into_datagrams_that_fit() {
     let datagrams = states.try_recv().expect("a state");
     assert!(datagrams.len() > 1, "99 boards in one datagram");
     assert!(datagrams.iter().all(|d| d.len() <= DATAGRAM_BUDGET));
-    let slots: Vec<u8> = datagram_slots(&datagrams).concat();
+    let slots: Vec<u8> = datagram_slots(&datagrams).into_iter().flat_map(|(_, s)| s).collect();
     assert_eq!(slots, (1..=players).collect::<Vec<_>>());
 }
 

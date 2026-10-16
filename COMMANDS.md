@@ -110,7 +110,9 @@ PUYO_PROFILE=1 cargo run -p server --release
 cargo run -p loadbot --release -- --rooms 32 --players 16 --secs 60
 ```
 Options: `--url` (défaut `ws://127.0.0.1:8080/ws`), `--rooms`, `--players`, `--secs`,
-`--ramp-ms` (délai entre deux connexions). Chaque bot joue en WebSocket (inputs aléatoires,
+`--ramp-ms` (délai entre deux connexions), `--join ID` (les bots rejoignent la room `ID`, créée
+depuis un vrai client, et jouent les parties que son hôte lance: pratique pour voir une grande
+room à l'écran). Chaque bot joue en WebSocket (inputs aléatoires,
 un ping par seconde); toutes les 5 s: bots connectés et en jeu, débit reçu, états/s, RTT p50
 et p99, trous de plus de 100 ms entre deux états, refus et déconnexions. Le premier bot de
 chaque room la crée, l'agrandit, lance la partie et la relance quand elle se termine.

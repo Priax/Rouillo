@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use bytes::Bytes;
 use shared::{LobbyInfo, RankedInfo, RoomId, RoomInfo, RoomSettings, ServerMessage};
 use tokio::time::Instant;
@@ -81,8 +83,8 @@ pub struct Seat {
     pub name: String,
 }
 
-/// From this many boards, the others' are sent one tick in `OTHERS_EVERY`:
-/// they are small on screen, and smoothed between updates.
+/// From this many boards, a player sees the others small: they are sent as
+/// thumbnails, one tick in `OTHERS_EVERY`, and smoothed between updates.
 const SPARSE_FROM: usize = 3;
 const OTHERS_EVERY: u32 = 3;
 
@@ -98,18 +100,18 @@ pub enum StateOut {
 /// the smallest MTU QUIC allows, framing included.
 pub const DATAGRAM_BUDGET: usize = 1100;
 
-/// The boards in `slots`, in as few datagrams as fit `DATAGRAM_BUDGET`:
-/// boards compressed together cost a fraction of each alone. A board too
-/// big on its own still goes, and takes the stream.
-fn packed(sim: &Sim, slots: std::ops::Range<usize>, out: &mut Vec<Bytes>) {
-    let bytes = shared::encode(&sim.state_update_of(slots.clone()));
+/// The boards in `slots`, as `encode` makes them, in as few datagrams as fit
+/// `DATAGRAM_BUDGET`: boards compressed together cost a fraction of each
+/// alone. A board too big on its own still goes, and takes the stream.
+fn packed(slots: Range<usize>, encode: &impl Fn(Range<usize>) -> Vec<u8>, out: &mut Vec<Bytes>) {
+    let bytes = encode(slots.clone());
     if bytes.len() <= DATAGRAM_BUDGET || slots.len() == 1 {
         out.push(Bytes::from(bytes));
         return;
     }
     let mid = slots.start + slots.len() / 2;
-    packed(sim, slots.start..mid, out);
-    packed(sim, mid..slots.end, out);
+    packed(slots.start..mid, encode, out);
+    packed(mid..slots.end, encode, out);
 }
 
 impl Room {
@@ -273,40 +275,78 @@ impl Room {
         record
     }
 
-    /// From `SPARSE_FROM` boards, a player gets the others' one tick in
-    /// `OTHERS_EVERY` only, their own every tick; whoever watches gets them
-    /// all. Each message is made once and shared.
-    fn send_states(&self, split: impl Fn(ConnId) -> bool, sink: &mut Vec<(ConnId, StateOut)>) {
+    /// From `SPARSE_FROM` boards, a player gets their own board every tick
+    /// and the others as thumbnails one tick in `OTHERS_EVERY`; whoever
+    /// watches gets them all whole. Each message shared is made once.
+    fn send_states(&mut self, split: impl Fn(ConnId) -> bool, sink: &mut Vec<(ConnId, StateOut)>) {
         let boards = self.sim.boards.len();
-        let everyone = boards < SPARSE_FROM || self.sim.tick.is_multiple_of(OTHERS_EVERY);
-        let mut whole = None;
-        let mut all = None;
+        let sparse = boards >= SPARSE_FROM;
+        let thumbs = (sparse && self.sim.tick.is_multiple_of(OTHERS_EVERY)).then(|| self.sim.thumbs());
+        let sim = &self.sim;
+        let (mut whole, mut all, mut small, mut small_packed) = (None, None, None, None);
         let seated = self
             .members
             .iter()
-            .filter_map(|m| Some((m.conn?, m.game_slot.filter(|&s| s < boards && !everyone))));
+            .filter_map(|m| Some((m.conn?, m.game_slot.filter(|&s| s < boards && sparse))));
         let watching = self.spectators.iter().map(|s| (s.conn, None));
         for (conn, own) in seated.chain(watching) {
-            let out = if split(conn) {
-                StateOut::Boards(match own {
-                    Some(s) => vec![Bytes::from(shared::encode(&self.sim.state_update_of([s])))],
-                    None => all
-                        .get_or_insert_with(|| {
+            let datagrams = split(conn);
+            let Some(slot) = own else {
+                let out = if datagrams {
+                    StateOut::Boards(
+                        all.get_or_insert_with(|| {
                             let mut out = Vec::new();
-                            packed(&self.sim, 0..boards, &mut out);
+                            packed(0..boards, &|r| shared::encode(&sim.state_update_of(r)), &mut out);
                             out
                         })
                         .clone(),
-                })
-            } else {
-                StateOut::Whole(match own {
-                    Some(s) => shared::encode(&self.sim.state_update_of([s])),
-                    None => whole
-                        .get_or_insert_with(|| shared::encode(&self.sim.state_update()))
-                        .clone(),
-                })
+                    )
+                } else {
+                    StateOut::Whole(whole.get_or_insert_with(|| shared::encode(&sim.state_update())).clone())
+                };
+                sink.push((conn, out));
+                continue;
             };
-            sink.push((conn, out));
+            let mine = shared::encode(&sim.state_update_of([slot]));
+            let Some(
+                msg @ ServerMessage::Thumbs {
+                    game,
+                    tick,
+                    thumbs: list,
+                },
+            ) = &thumbs
+            else {
+                sink.push((
+                    conn,
+                    if datagrams {
+                        StateOut::Boards(vec![Bytes::from(mine)])
+                    } else {
+                        StateOut::Whole(mine)
+                    },
+                ));
+                continue;
+            };
+            if datagrams {
+                let others = small_packed.get_or_insert_with(|| {
+                    let mut out = Vec::new();
+                    let encode = |r: Range<usize>| {
+                        shared::encode(&ServerMessage::Thumbs {
+                            game: *game,
+                            tick: *tick,
+                            thumbs: list[r].to_vec(),
+                        })
+                    };
+                    packed(0..list.len(), &encode, &mut out);
+                    out
+                });
+                let mut out = vec![Bytes::from(mine)];
+                out.extend(others.iter().cloned());
+                sink.push((conn, StateOut::Boards(out)));
+            } else {
+                sink.push((conn, StateOut::Whole(mine)));
+                let others = small.get_or_insert_with(|| shared::encode(msg));
+                sink.push((conn, StateOut::Whole(others.clone())));
+            }
         }
     }
 

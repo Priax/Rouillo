@@ -152,6 +152,70 @@ pub struct PlayerUpdate {
     pub target: Option<u8>,
 }
 
+/// Another player's board as a player of a big room sees it, small: what
+/// is drawn, without the random state, score or next pairs. The stack is
+/// left out while it has not changed since it was last sent.
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone)]
+pub struct Thumb {
+    pub slot: u8,
+    pub team: u8,
+    pub target: Option<u8>,
+    pub incoming: Vec<IncomingGarbage>,
+    pub width: u8,
+    pub height: u8,
+    pub cells: Option<Vec<Vec<Option<PuyoType>>>>,
+    pub active_piece: Option<ActivePuyo>,
+    pub piece_id: u32,
+    pub fall_offset: u32,
+    pub state: GameState,
+    pub settle: Settle,
+    pub falls: Vec<CellFall>,
+    pub popping: Vec<(u8, u8)>,
+    pub pending_garbage: u32,
+}
+
+impl Thumb {
+    /// `board`, whose stack goes along only with `cells`.
+    pub fn of(board: &Board, cells: bool) -> Self {
+        Self {
+            slot: 0,
+            team: 0,
+            target: None,
+            incoming: Vec::new(),
+            width: small(board.width),
+            height: small(board.height),
+            cells: cells.then(|| board.cells.clone()),
+            active_piece: board.active_piece.clone(),
+            piece_id: board.piece_id,
+            fall_offset: board.fall_offset,
+            state: board.state,
+            settle: board.settle,
+            falls: board.falls.clone(),
+            popping: board.popping.clone(),
+            pending_garbage: board.pending_garbage,
+        }
+    }
+
+    /// Brings `board`, the last one known for this player, up to date.
+    pub fn apply_to(self, board: &mut Board) {
+        let (width, height) = (usize::from(self.width), usize::from(self.height));
+        if (board.width, board.height) != (width, height) {
+            *board = Board::new(width, height, 0, 1, 5);
+        }
+        if let Some(cells) = self.cells {
+            board.cells = cells;
+        }
+        board.active_piece = self.active_piece;
+        board.piece_id = self.piece_id;
+        board.fall_offset = self.fall_offset;
+        board.state = self.state;
+        board.settle = self.settle;
+        board.falls = self.falls;
+        board.popping = self.popping;
+        board.pending_garbage = self.pending_garbage;
+    }
+}
+
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IncomingGarbage {
     pub at: u32,
@@ -485,6 +549,12 @@ pub enum ServerMessage {
     /// Another connection with the same player id took this one's seat:
     /// the game was opened in another tab or window.
     OpenedElsewhere,
+    /// The other boards of a big room, small, for one who plays in it.
+    Thumbs {
+        game: u32,
+        tick: u32,
+        thumbs: Vec<Thumb>,
+    },
 }
 
 pub const MAX_USERNAME_CHARS: usize = 24;

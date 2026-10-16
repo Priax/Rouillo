@@ -5,6 +5,8 @@
 //! Each room is made by its first bot, which raises the seat count, waits
 //! for the others and starts the game, then restarts it whenever it ends.
 //! Every bot sends inputs, pings once a second and counts what it gets.
+//! With `--join ID`, the bots join a room someone made instead, and play
+//! the games its host starts: a room to watch from a real client.
 //!
 //! The server allows 16 connections per address; each bot says it comes
 //! from an address of its own in `X-Forwarded-For`, which the server only
@@ -32,6 +34,7 @@ struct Args {
     players: usize,
     secs: u64,
     ramp: Duration,
+    join: Option<RoomId>,
 }
 
 impl Args {
@@ -42,6 +45,7 @@ impl Args {
             players: 16,
             secs: 60,
             ramp: Duration::from_millis(10),
+            join: None,
         };
         let mut it = std::env::args().skip(1);
         while let Some(flag) = it.next() {
@@ -57,6 +61,7 @@ impl Args {
                 "--players" => args.players = number() as usize,
                 "--secs" => args.secs = number(),
                 "--ramp-ms" => args.ramp = Duration::from_millis(number()),
+                "--join" => args.join = Some(RoomId::try_from(number()).unwrap_or_else(|_| usage("--join: a room id"))),
                 _ => usage(&format!("unknown flag {flag}")),
             }
         }
@@ -69,7 +74,7 @@ impl Args {
 
 fn usage(why: &str) -> ! {
     eprintln!(
-        "{why}\nusage: loadbot [--url ws://127.0.0.1:8080/ws] [--rooms 1] [--players 16] [--secs 60] [--ramp-ms 10]"
+        "{why}\nusage: loadbot [--url ws://127.0.0.1:8080/ws] [--rooms 1] [--players 16] [--secs 60] [--ramp-ms 10] [--join ROOM_ID]"
     );
     std::process::exit(2);
 }
@@ -328,6 +333,9 @@ fn report(stats: &Stats, last: &mut (u64, u64, Instant), bots: usize) {
 #[tokio::main]
 async fn main() {
     let mut args = Args::parse();
+    if args.join.is_some() {
+        args.rooms = 1;
+    }
     let seats = usize::from(shared::MAX_ROOM_PLAYERS);
     if args.players > seats {
         println!("a room seats {seats} at most: raise MAX_ROOM_PLAYERS, here and on the server, to go further");
@@ -342,11 +350,15 @@ async fn main() {
     let until = Instant::now() + args.ramp * bots as u32 + Duration::from_secs(args.secs);
     let mut tasks = Vec::with_capacity(bots);
     for room in 0..args.rooms {
-        let (id_tx, _) = watch::channel(None);
+        let (id_tx, _) = watch::channel(args.join);
         for seat in 0..args.players {
             let bot = Bot {
                 n: room * args.players + seat + 1,
-                role: if seat == 0 { Role::Host } else { Role::Guest },
+                role: if seat == 0 && args.join.is_none() {
+                    Role::Host
+                } else {
+                    Role::Guest
+                },
                 players: args.players,
                 room: id_tx.clone(),
                 stats: Arc::clone(&stats),

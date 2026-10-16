@@ -1,4 +1,4 @@
-use shared::{config, Board, ClientMessage, IncomingGarbage, PlayerUpdate, ServerMessage, StampedInput};
+use shared::{config, Board, ClientMessage, IncomingGarbage, PlayerUpdate, ServerMessage, StampedInput, Thumb};
 
 use crate::connection::ConnEvent;
 use crate::state::{GameSession, Rival, Room, Screen, State};
@@ -160,6 +160,40 @@ fn watch(session: &mut GameSession, board: Board, tick: u32, incoming: Vec<Incom
     crate::logic::announce_events(session);
 }
 
+/// The rival in `slot`, made from `board` if it is new.
+fn rival_of(session: &mut GameSession, slot: u8, team: u8, board: impl FnOnce() -> Board) -> &mut Rival {
+    let i = match session.rivals.iter().position(|r| r.slot == slot) {
+        Some(i) => i,
+        None => {
+            session.add_rival(Rival::new(slot, team, board()));
+            session.rivals.iter().position(|r| r.slot == slot).unwrap_or_default()
+        }
+    };
+    &mut session.rivals[i]
+}
+
+/// The other boards of a big room, small: each brings its rival's board up
+/// to date, the stack kept when it did not come along.
+fn apply_thumbs(session: &mut GameSession, game: u32, tick: u32, thumbs: Vec<Thumb>) {
+    if game != session.game || session.applied.is_some_and(|t| tick < t) {
+        return;
+    }
+    session.applied = Some(tick);
+    let now = crate::connection::now_secs();
+    for mut t in thumbs {
+        if t.slot == session.focus {
+            continue;
+        }
+        let new = || Board::new(usize::from(t.width), usize::from(t.height), 0, 1, 5);
+        let rival = rival_of(session, t.slot, t.team, new);
+        rival.team = t.team;
+        rival.target = t.target;
+        rival.incoming = std::mem::take(&mut t.incoming);
+        t.apply_to(&mut rival.board);
+        rival.view.push(tick, rival.board.clone(), now);
+    }
+}
+
 /// Hands each player's part of an update to its board: the large one is
 /// reconciled with the predicted inputs, the others are smoothed.
 fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<PlayerUpdate>) {
@@ -176,14 +210,7 @@ fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<Pl
             mine = Some(p);
             continue;
         }
-        let i = match session.rivals.iter().position(|r| r.slot == p.slot) {
-            Some(i) => i,
-            None => {
-                session.add_rival(Rival::new(p.slot, p.team, (*p.board).clone()));
-                session.rivals.iter().position(|r| r.slot == p.slot).unwrap_or_default()
-            }
-        };
-        let rival = &mut session.rivals[i];
+        let rival = rival_of(session, p.slot, p.team, || (*p.board).clone());
         let board = std::sync::Arc::unwrap_or_clone(p.board);
         rival.view.push(tick, board.clone(), now);
         rival.board = board;
@@ -252,6 +279,11 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         ServerMessage::StateUpdate { game, tick, players } => {
             if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
                 apply_update(session, game, tick, players);
+            }
+        }
+        ServerMessage::Thumbs { game, tick, thumbs } => {
+            if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
+                apply_thumbs(session, game, tick, thumbs);
             }
         }
         ServerMessage::OpponentDisconnected => {
@@ -593,6 +625,30 @@ mod tests {
         assert_eq!(session.focus, 3);
         let slots: Vec<u8> = session.rivals.iter().map(|r| r.slot).collect();
         assert_eq!(slots, [1, 2]);
+    }
+
+    #[test]
+    fn a_thumbnail_without_its_stack_keeps_the_last_one() {
+        let mut session = GameSession::new(1, Vec::new());
+        let mut board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 3, 1, 5);
+        board.cells[config::GRID_HEIGHT - 1][0] = Some(shared::PuyoType::Red);
+        let thumb = |board: &Board, slot, cells| Thumb {
+            slot,
+            team: slot,
+            ..Thumb::of(board, cells)
+        };
+        apply_thumbs(&mut session, 0, 5, vec![thumb(&board, 1, true), thumb(&board, 2, true)]);
+        assert_eq!(session.rivals.len(), 1, "the player's own slot is not a rival");
+        board.pending_garbage = 4;
+        apply_thumbs(&mut session, 0, 8, vec![thumb(&board, 2, false)]);
+        let rival = &session.rivals[0];
+        assert_eq!(
+            rival.board.cells[config::GRID_HEIGHT - 1][0],
+            Some(shared::PuyoType::Red)
+        );
+        assert_eq!(rival.board.pending_garbage, 4);
+        apply_thumbs(&mut session, 0, 7, vec![thumb(&board, 3, true)]);
+        assert_eq!(session.rivals.len(), 1, "an older one is dropped");
     }
 
     #[test]

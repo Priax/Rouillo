@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use rand::RngExt;
 use shared::{
-    config, Board, GameState, IncomingGarbage, InputKind, PlayerUpdate, RoomSettings, ServerMessage, Targeting,
+    config, Board, GameState, IncomingGarbage, InputKind, PlayerUpdate, PuyoType, RoomSettings, ServerMessage,
+    Targeting, Thumb,
 };
 use tokio::time::Instant;
 use tracing::warn;
@@ -14,6 +15,12 @@ pub const INPUT_QUEUE_CAP: usize = 2048;
 
 /// How long a random target is kept before another is drawn.
 const RANDOM_TARGET_TICKS: u32 = 8 * config::SERVER_TICK_HZ as u32;
+
+/// A stack unchanged is sent again this often in thumbnails, for one whose
+/// datagram with the change was lost.
+const THUMB_REFRESH_TICKS: u32 = config::SERVER_TICK_HZ as u32;
+
+type Cells = Vec<Vec<Option<PuyoType>>>;
 
 const _: () = assert!(INPUT_QUEUE_CAP as f64 > CLIENT_MSG_BURST);
 
@@ -84,6 +91,8 @@ pub struct Sim {
     prev_chain: Vec<u32>,
     prev_all_clear: Vec<bool>,
     prev_piece_id: Vec<u32>,
+    /// Each board's stack as last sent in thumbnails, and when.
+    thumb_cells: Vec<Option<(u32, Cells)>>,
 }
 
 impl Sim {
@@ -119,6 +128,7 @@ impl Sim {
             prev_chain: vec![0; n],
             prev_all_clear: vec![false; n],
             prev_piece_id: vec![piece_id; n],
+            thumb_cells: vec![None; n],
         }
     }
 
@@ -243,6 +253,7 @@ impl Sim {
             self.received_seq[slot] = 0;
             self.set_targeting(slot, Targeting::default());
         }
+        self.thumb_cells.fill(None);
     }
 
     pub fn queue_input(&mut self, slot: usize, tick: u32, seq: u32, kind: InputKind) {
@@ -386,6 +397,32 @@ impl Sim {
         }
     }
 
+    /// Every board small, each stack only if it changed or is due again.
+    pub fn thumbs(&mut self) -> ServerMessage {
+        let mut thumbs = Vec::with_capacity(self.boards.len());
+        for i in 0..self.boards.len() {
+            let board = &self.boards[i];
+            let send = self.thumb_cells[i]
+                .as_ref()
+                .is_none_or(|(at, cells)| *cells != board.cells || self.tick >= at + THUMB_REFRESH_TICKS);
+            if send {
+                self.thumb_cells[i] = Some((self.tick, board.cells.clone()));
+            }
+            thumbs.push(Thumb {
+                slot: slot_byte(i + 1),
+                team: self.teams[i],
+                target: self.targets[i].map(|t| slot_byte(t + 1)),
+                incoming: self.incoming(i),
+                ..Thumb::of(board, send)
+            });
+        }
+        ServerMessage::Thumbs {
+            game: self.game,
+            tick: self.tick,
+            thumbs,
+        }
+    }
+
     pub fn reset_boards(&mut self, s: &RoomSettings, teams: Vec<u8>) {
         let last_restart = self.last_restart;
         *self = Self::new(s, teams);
@@ -501,6 +538,29 @@ mod tests {
         s.eliminate(2);
         assert_eq!(s.places(), [1, 1, 2, 3]);
         assert_eq!((0..4).map(|i| s.won(i)).collect::<Vec<_>>(), [true, true, false, false]);
+    }
+
+    fn stacks_sent(s: &mut Sim) -> Vec<bool> {
+        let ServerMessage::Thumbs { thumbs, .. } = s.thumbs() else {
+            unreachable!()
+        };
+        thumbs.iter().map(|t| t.cells.is_some()).collect()
+    }
+
+    #[test]
+    fn a_thumbnail_carries_its_stack_only_when_it_changed_or_is_due() {
+        let mut s = sim(&[0, 1, 2]);
+        assert_eq!(stacks_sent(&mut s), [true; 3], "the first time");
+        s.tick += 1;
+        assert_eq!(stacks_sent(&mut s), [false; 3], "nothing changed");
+        fill(&mut s, 1, 2);
+        s.tick += 1;
+        assert_eq!(stacks_sent(&mut s), [false, true, false]);
+        s.tick += THUMB_REFRESH_TICKS;
+        assert_eq!(stacks_sent(&mut s), [true; 3], "sent again after a while");
+        s.tick += 1;
+        s.restart_client(2);
+        assert_eq!(stacks_sent(&mut s), [true; 3], "a player back needs them all");
     }
 
     #[test]

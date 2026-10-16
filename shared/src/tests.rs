@@ -1336,10 +1336,24 @@ fn server_samples() -> Vec<ServerMessage> {
         },
         ServerMessage::Spectators { count: 3 },
         ServerMessage::OpenedElsewhere,
+        ServerMessage::Thumbs {
+            game: 9,
+            tick: 3,
+            thumbs: vec![
+                Thumb {
+                    slot: 2,
+                    team: 1,
+                    target: Some(1),
+                    incoming: vec![IncomingGarbage { at: 4, amount: 5 }],
+                    ..Thumb::of(&board, true)
+                },
+                Thumb::of(&board, false),
+            ],
+        },
     ]
 }
 
-const SERVER_VARIANTS: usize = 19;
+const SERVER_VARIANTS: usize = 20;
 
 fn server_variant(m: &ServerMessage) -> usize {
     match m {
@@ -1362,6 +1376,7 @@ fn server_variant(m: &ServerMessage) -> usize {
         ServerMessage::Chat { .. } => 16,
         ServerMessage::Spectators { .. } => 17,
         ServerMessage::OpenedElsewhere => 18,
+        ServerMessage::Thumbs { .. } => 19,
     }
 }
 
@@ -1394,7 +1409,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (11, 10_103_239_714_688_290_398);
+const PROTOCOL_DIGEST: (u32, u64) = (11, 9_305_221_148_348_618_277);
 
 #[test]
 fn protocol_changes_bump_the_version() {
