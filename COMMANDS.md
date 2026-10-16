@@ -1,12 +1,13 @@
 # Commandes utiles
 
-Aide-mémoire de tout ce qu'on peut lancer sur le projet. Workspace Cargo à 3 crates:
+Aide-mémoire de tout ce qu'on peut lancer sur le projet. Workspace Cargo à 4 crates:
 
 | Crate    | Rôle                          | Cible            |
 |----------|-------------------------------|------------------|
 | `shared` | logique de jeu + protocole    | lib (+ benches)  |
 | `server` | serveur autoritatif axum+tokio| binaire natif    |
 | `client` | jeu: **natif (notan)** OU **WASM (navigateur)** | bin natif + WASM |
+| `loadbot`| bots de test de charge        | binaire natif    |
 
 ---
 
@@ -55,7 +56,7 @@ cargo run -p client
 | Variable          | Effet | Exemple |
 |-------------------|-------|---------|
 | `PUYO_PROFILE=1`  | Le serveur imprime toutes les 5 s une ligne `[tick] rooms=N avg=.. max=.. budget=16.6ms peak_load=X%`. Sans la variable: silencieux. | `PUYO_PROFILE=1 cargo run -p server --release` |
-| `PUYO_LOAD_ROOMS` | Nombre de rooms du test de charge (défaut 500). | `PUYO_LOAD_ROOMS=2000 cargo test -p server --release -- --ignored --nocapture load_many_rooms` |
+| `PUYO_LOAD_PLAYERS`, `PUYO_LOAD_TOTAL`, `PUYO_LOAD_ROOMS` | Test de charge: tailles de room, joueurs au total, ou nombre fixe de rooms (cf. plus bas). | `PUYO_LOAD_PLAYERS=99 cargo test -p server --release -- --ignored --nocapture load_rooms` |
 | `RUST_LOG`        | Niveau de logs du serveur (défaut `info`, syntaxe `EnvFilter` de tracing). Sans effet avec la feature `console`. | `RUST_LOG=debug cargo run -p server` |
 
 ---
@@ -86,13 +87,43 @@ DATABASE_URL=postgres://priax@%2Fvar%2Frun%2Fpostgresql/puyorust_test \
 ### Test de charge (perf, opt-in, à lancer en release)
 
 ```bash
-# 500 rooms par défaut
-cargo test -p server --release -- --ignored --nocapture load_many_rooms
+# 1000 joueurs au total, en rooms de 2, 16 puis 99
+cargo test -p server --release -- --ignored --nocapture load_rooms
 
-# nombre custom
-PUYO_LOAD_ROOMS=2000 cargo test -p server --release -- --ignored --nocapture load_many_rooms
+# autres tailles, autre total, ou un nombre fixe de rooms
+PUYO_LOAD_PLAYERS=16,40 PUYO_LOAD_TOTAL=2000 cargo test -p server --release -- --ignored --nocapture load_rooms
+PUYO_LOAD_PLAYERS=2 PUYO_LOAD_ROOMS=500 cargo test -p server --release -- --ignored --nocapture load_rooms
 ```
-Affiche `tick avg/max`, coût par room, `peak_load` et l'estimation du nb de rooms par tick.
+Le manager seul, sur un thread, sans sockets, avec des inputs aléatoires: 10 s de jeu par
+taille, une fois en WebSocket et une fois en datagrammes. Affiche la tick (moyenne, p99, max,
+p99 en % du budget de 16,7 ms), les octets envoyés par joueur et au total, et les plateaux
+encore en vie. Les rooms au-delà de `MAX_ROOM_PLAYERS` ne sont possibles que dans ce test.
+
+### Bots contre un vrai serveur (`loadbot`)
+
+```bash
+# Terminal 1: le serveur, avec la mesure de la tick
+PUYO_PROFILE=1 cargo run -p server --release
+
+# Terminal 2: 32 rooms de 16 bots pendant 60 s
+cargo run -p loadbot --release -- --rooms 32 --players 16 --secs 60
+```
+Options: `--url` (défaut `ws://127.0.0.1:8080/ws`), `--rooms`, `--players`, `--secs`,
+`--ramp-ms` (délai entre deux connexions). Chaque bot joue en WebSocket (inputs aléatoires,
+un ping par seconde); toutes les 5 s: bots connectés et en jeu, débit reçu, états/s, RTT p50
+et p99, trous de plus de 100 ms entre deux états, refus et déconnexions. Le premier bot de
+chaque room la crée, l'agrandit, lance la partie et la relance quand elle se termine.
+
+- Le serveur limite à 16 connexions par adresse: chaque bot annonce une adresse à lui dans
+  `X-Forwarded-For`, que le serveur ne croit que d'un pair en loopback. Contre la VM, passer
+  par un tunnel SSH vers son port local, pas par Caddy:
+  `ssh -L 8080:127.0.0.1:8080 vm` puis `--url ws://127.0.0.1:8080/ws`.
+- Plus de 16 joueurs par room: monter `MAX_ROOM_PLAYERS` (`shared/src/lib.rs`) dans un build
+  local, pour le serveur comme pour les bots.
+- Mesurer avec les bots sur une autre machine que le serveur, sinon ils se partagent le CPU.
+  CPU du serveur: `top -H -p $(pgrep -x server)` (par thread: le manager est le plus chargé).
+- Le serveur lancé pour un test s'arrête en attendant la fin des parties: `kill -9` s'il
+  n'y a rien à garder.
 
 ---
 

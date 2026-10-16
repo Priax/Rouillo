@@ -1,0 +1,13 @@
+[package]
+name = "loadbot"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+shared = { path = "../shared" }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.30"
+futures-util = "0.3"
+
+[lints]
+workspace = true

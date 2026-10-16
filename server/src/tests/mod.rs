@@ -18,6 +18,7 @@ use crate::ws::*;
 mod connection;
 mod friends;
 mod game;
+mod load;
 mod ranked;
 mod rooms;
 mod shutdown;

@@ -97,69 +97,6 @@ fn opponent_disconnect_pauses_running_game() {
     )));
 }
 
-pub(super) fn drain_all(rxs: &mut [mpsc::Receiver<Vec<u8>>]) {
-    for rx in rxs.iter_mut() {
-        while rx.try_recv().is_ok() {}
-    }
-}
-
-#[test]
-#[ignore = "load test: run with --release -- --ignored --nocapture"]
-fn load_many_rooms_tick_budget() {
-    use std::time::{Duration, Instant};
-
-    let rooms: usize = std::env::var("PUYO_LOAD_ROOMS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(500);
-    let ticks: usize = 300;
-    let dt = 1.0 / config::SERVER_TICK_HZ as f32;
-    let budget = Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64);
-
-    let mut mgr = new_mgr();
-    let mut receivers = Vec::with_capacity(rooms * 2);
-    for i in 0..rooms {
-        let host = (2 * i + 1) as ConnId;
-        let member = (2 * i + 2) as ConnId;
-        receivers.push(reg(&mut mgr, host));
-        hello(&mut mgr, host, &format!("h{i}"));
-        mgr.handle(Command::CreateRoom {
-            conn: host,
-            name: "L".into(),
-        });
-        let id = (i + 1) as RoomId;
-        receivers.push(reg(&mut mgr, member));
-        hello(&mut mgr, member, &format!("m{i}"));
-        mgr.handle(Command::JoinRoom { conn: member, id });
-        mgr.handle(Command::ToggleCountdown { conn: host });
-    }
-    mgr.tick(3.5, false);
-    let playing = mgr.rooms.values().filter(|r| matches!(r.phase, Phase::Playing)).count();
-    assert_eq!(playing, rooms, "every room should be playing");
-    drain_all(&mut receivers);
-
-    let mut sum = Duration::ZERO;
-    let mut max = Duration::ZERO;
-    for _ in 0..ticks {
-        let t0 = Instant::now();
-        mgr.tick(dt, true);
-        let e = t0.elapsed();
-        sum += e;
-        max = max.max(e);
-        drain_all(&mut receivers);
-    }
-
-    let avg = sum / ticks as u32;
-    let per_room_ns = avg.as_nanos() as f64 / rooms as f64;
-    let peak_load = max.as_secs_f64() / budget.as_secs_f64() * 100.0;
-    let rooms_at_budget = budget.as_nanos() as f64 / per_room_ns;
-    println!("\nload: {rooms} rooms playing, {ticks} broadcast ticks");
-    println!("tick  avg = {avg:?}   max = {max:?}   budget = {budget:?}");
-    println!("per-room avg = {per_room_ns:.0} ns");
-    println!("peak_load = {peak_load:.1}% of one 60Hz tick");
-    println!("=> ~{rooms_at_budget:.0} rooms would fill one tick (single thread)\n");
-}
-
 pub(super) fn running_game(mgr: &mut Manager) -> (mpsc::Receiver<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
     let (_id, rx1, rx2) = two_player_room(mgr);
     mgr.handle(Command::ToggleCountdown { conn: 1 });

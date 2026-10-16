@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "client",
+    "loadbot",
     "server",
     "shared"
 ]
