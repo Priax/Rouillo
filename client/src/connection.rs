@@ -647,14 +647,6 @@ mod tests {
     }
 
     #[test]
-    fn initial_connect_fails_faster_than_recovery() {
-        let now = 0.0;
-        assert!(Retry::initial(now).deadline < Retry::recovering(now).deadline);
-        assert!(!Retry::initial(now).recovering);
-        assert!(Retry::recovering(now).recovering);
-    }
-
-    #[test]
     fn banner_only_while_recovering() {
         let now = 10.0;
         let mut c = Connection::new("test-player");

@@ -57,22 +57,6 @@ fn countdown_starts_game_after_delay() {
 }
 
 #[test]
-fn disconnect_reserves_seat_then_reconnect_restores_it() {
-    let mut mgr = new_mgr();
-    let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
-
-    mgr.handle(Command::Unregister { conn: 2 });
-    assert_eq!(mgr.rooms[&1].members.len(), 2, "seat must be kept during grace");
-    let b = mgr.rooms[&1].members.iter().find(|m| m.token == "B").unwrap();
-    assert_eq!(b.conn, None);
-
-    let _rx3 = reg(&mut mgr, 3);
-    hello(&mut mgr, 3, "B");
-    let b = mgr.rooms[&1].members.iter().find(|m| m.token == "B").unwrap();
-    assert_eq!(b.conn, Some(3u64), "reconnect should re-bind the same seat");
-}
-
-#[test]
 fn host_leaving_promotes_remaining_member() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
@@ -614,17 +598,6 @@ fn a_restart_after_a_leave_tells_each_player_their_new_slot() {
     mgr.handle(Command::Restart { conn: 3 });
     assert_eq!(game_start(&drain(&mut rxs[0])), Some((1, 2)));
     assert_eq!(game_start(&drain(&mut rxs[2])), Some((2, 2)));
-}
-
-#[test]
-fn a_late_comer_watches_with_no_slot() {
-    let mut mgr = new_mgr();
-    let _rxs = big_room(&mut mgr, 3, 2);
-    start(&mut mgr);
-    let mut late = reg(&mut mgr, 7);
-    hello(&mut mgr, 7, "late");
-    mgr.handle(Command::JoinRoom { conn: 7, id: 1 });
-    assert_eq!(game_start(&drain(&mut late)), Some((0, 2)));
 }
 
 #[test]

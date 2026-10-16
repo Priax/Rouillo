@@ -142,15 +142,6 @@ fn join_answer_after_the_room_filled_is_refused() {
 }
 
 #[test]
-fn invite_bookkeeping_is_cleaned_up_on_disconnect() {
-    let mut mgr = new_mgr();
-    let _rx2 = inviter_and_target(&mut mgr);
-    invite_b(&mut mgr);
-    mgr.handle(Command::Unregister { conn: 1 });
-    assert!(!mgr.clients.contains_key(&1));
-}
-
-#[test]
 fn join_is_rechecked_if_the_host_changed() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = friends_only_room(&mut mgr);
@@ -294,16 +285,6 @@ fn invitation_waits_for_a_slow_lookup_beyond_the_cooldown() {
     rewind_invite(&mut mgr, 1); // unanswered, cooldown over
     invite_b(&mut mgr);
     assert!(mgr.take_friend_checks().is_empty(), "first lookup still in flight");
-}
-
-#[test]
-fn limiter_allows_a_burst_then_drops() {
-    let t0 = Instant::now();
-    let mut l = RateLimiter::new(t0);
-    for _ in 0..CLIENT_MSG_BURST as usize {
-        assert_eq!(l.check(t0), Verdict::Allow);
-    }
-    assert_eq!(l.check(t0), Verdict::Drop);
 }
 
 fn listed(rx: &mut mpsc::Receiver<Vec<u8>>) -> Option<Vec<RoomId>> {

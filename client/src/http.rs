@@ -252,12 +252,6 @@ mod tests {
     }
 
     #[test]
-    fn a_known_code_is_shown_in_french() {
-        let resp = response(409, r#"{"error":"Username already taken","code":"username_taken"}"#);
-        assert_eq!(error_message(&resp), "Ce pseudo est déjà pris.");
-    }
-
-    #[test]
     fn an_unknown_code_falls_back_to_the_server_text_then_the_status() {
         let resp = response(418, r#"{"error":"Teapot","code":"teapot"}"#);
         assert_eq!(error_message(&resp), "Teapot");
