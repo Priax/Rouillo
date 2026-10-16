@@ -635,8 +635,18 @@ fn each_game_of_a_room_has_its_number() {
     assert_eq!(states, starts, "the new game's updates carry its number");
 }
 
+fn datagram_slots(boards: &[bytes::Bytes]) -> Vec<Vec<u8>> {
+    boards
+        .iter()
+        .map(|b| match shared::decode(b) {
+            Some(ServerMessage::StateUpdate { players, .. }) => players.iter().map(|p| p.slot).collect(),
+            _ => panic!("not a state"),
+        })
+        .collect()
+}
+
 #[test]
-fn a_datagram_link_gets_each_board_apart() {
+fn a_datagram_link_gets_its_own_board_alone_and_the_others_packed() {
     let mut mgr = new_mgr();
     let (tx, _rx) = mpsc::channel(CLIENT_CHAN_CAP);
     let (states_tx, mut states) = mpsc::channel(64);
@@ -663,25 +673,68 @@ fn a_datagram_link_gets_each_board_apart() {
     for _ in 0..3 {
         mgr.tick(1.0 / 60.0, true);
     }
-    let slots = |boards: Vec<bytes::Bytes>| -> Vec<Vec<u8>> {
-        boards
-            .iter()
-            .map(|b| match shared::decode(b) {
-                Some(ServerMessage::StateUpdate { players, .. }) => players.iter().map(|p| p.slot).collect(),
-                _ => panic!("not a state"),
-            })
-            .collect()
-    };
-    let watched: Vec<_> = std::iter::from_fn(|| states.try_recv().ok()).map(slots).collect();
+    let watched: Vec<_> = std::iter::from_fn(|| states.try_recv().ok())
+        .map(|b| datagram_slots(&b))
+        .collect();
     assert_eq!(watched.len(), 3);
-    assert!(watched.iter().all(|t| t == &[vec![1], vec![2], vec![3]]), "{watched:?}");
-    let played: Vec<_> = std::iter::from_fn(|| pstates.try_recv().ok()).map(slots).collect();
+    assert!(watched.iter().all(|t| t == &[vec![1, 2, 3]]), "{watched:?}");
+    let played: Vec<_> = std::iter::from_fn(|| pstates.try_recv().ok())
+        .map(|b| datagram_slots(&b))
+        .collect();
     assert_eq!(
         played.iter().filter(|t| t.as_slice() == [vec![2]]).count(),
         2,
         "{played:?}"
     );
-    assert_eq!(played.iter().filter(|t| t.len() == 3).count(), 1);
+    assert_eq!(played.iter().filter(|t| t.as_slice() == [vec![1, 2, 3]]).count(), 1);
+}
+
+#[test]
+fn a_big_room_is_packed_into_datagrams_that_fit() {
+    let mut mgr = new_mgr();
+    let players = 99;
+    let _rxs = big_room(&mut mgr, 2, 1);
+    mgr.rooms.get_mut(&1).unwrap().settings.max_players = players;
+    let _rxs: Vec<_> = (2..=ConnId::from(players))
+        .map(|conn| {
+            let rx = reg(&mut mgr, conn);
+            hello(&mut mgr, conn, &format!("P{conn}"));
+            mgr.handle(Command::JoinRoom { conn, id: 1 });
+            rx
+        })
+        .collect();
+    assert_eq!(mgr.rooms[&1].members.len(), usize::from(players), "setup");
+    start(&mut mgr);
+    let colours = [
+        PuyoType::Red,
+        PuyoType::Green,
+        PuyoType::Blue,
+        PuyoType::Yellow,
+        PuyoType::Purple,
+    ];
+    let mut noise = 7u32;
+    for board in &mut sim_of(&mut mgr).boards {
+        let h = board.height;
+        for cell in board.cells[h - 10..].iter_mut().flatten() {
+            noise = noise.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            *cell = Some(colours[(noise >> 16) as usize % colours.len()]);
+        }
+    }
+    let (tx, _rx) = mpsc::channel(CLIENT_CHAN_CAP);
+    let (states_tx, mut states) = mpsc::channel(64);
+    mgr.handle(Command::Register {
+        conn: 500,
+        sender: tx,
+        states: Some(states_tx),
+    });
+    hello(&mut mgr, 500, "W");
+    mgr.handle(Command::Spectate { conn: 500, id: 1 });
+    mgr.tick(1.0 / 60.0, true);
+    let datagrams = states.try_recv().expect("a state");
+    assert!(datagrams.len() > 1, "99 boards in one datagram");
+    assert!(datagrams.iter().all(|d| d.len() <= DATAGRAM_BUDGET));
+    let slots: Vec<u8> = datagram_slots(&datagrams).concat();
+    assert_eq!(slots, (1..=players).collect::<Vec<_>>());
 }
 
 #[test]

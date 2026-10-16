@@ -90,12 +90,32 @@ const OTHERS_EVERY: u32 = 3;
 pub enum StateOut {
     /// In one message, on a link that keeps every message.
     Whole(Vec<u8>),
-    /// A message per board, each to go alone in a datagram.
+    /// Messages of a few boards, each to go alone in a datagram.
     Boards(Vec<Bytes>),
 }
 
+/// What a packed state may weigh: under the datagram size of a path with
+/// the smallest MTU QUIC allows, framing included.
+pub const DATAGRAM_BUDGET: usize = 1100;
+
 fn encoded(msg: &ServerMessage) -> Option<Vec<u8>> {
     shared::encode(msg).map_err(|e| error!("encode failed: {e}")).ok()
+}
+
+/// The boards in `slots`, in as few datagrams as fit `DATAGRAM_BUDGET`:
+/// boards compressed together cost a fraction of each alone. A board too
+/// big on its own still goes, and takes the stream.
+fn packed(sim: &Sim, slots: std::ops::Range<usize>, out: &mut Vec<Bytes>) {
+    let Some(bytes) = encoded(&sim.state_update_of(slots.clone())) else {
+        return;
+    };
+    if bytes.len() <= DATAGRAM_BUDGET || slots.len() == 1 {
+        out.push(Bytes::from(bytes));
+        return;
+    }
+    let mid = slots.start + slots.len() / 2;
+    packed(sim, slots.start..mid, out);
+    packed(sim, mid..slots.end, out);
 }
 
 impl Room {
@@ -270,7 +290,7 @@ impl Room {
         let boards = self.sim.boards.len();
         let everyone = boards < SPARSE_FROM || self.sim.tick.is_multiple_of(OTHERS_EVERY);
         let mut whole = None;
-        let mut parts: Vec<Option<Option<Bytes>>> = vec![None; boards];
+        let mut all = None;
         let seated = self
             .members
             .iter()
@@ -278,14 +298,18 @@ impl Room {
         let watching = self.spectators.iter().map(|s| (s.conn, None));
         for (conn, own) in seated.chain(watching) {
             let out = if split(conn) {
-                let mut part = |s: usize| {
-                    parts[s]
-                        .get_or_insert_with(|| encoded(&self.sim.state_update_of([s])).map(Bytes::from))
-                        .clone()
-                };
                 StateOut::Boards(match own {
-                    Some(s) => part(s).into_iter().collect(),
-                    None => (0..boards).filter_map(&mut part).collect(),
+                    Some(s) => encoded(&self.sim.state_update_of([s]))
+                        .map(Bytes::from)
+                        .into_iter()
+                        .collect(),
+                    None => all
+                        .get_or_insert_with(|| {
+                            let mut out = Vec::new();
+                            packed(&self.sim, 0..boards, &mut out);
+                            out
+                        })
+                        .clone(),
                 })
             } else {
                 let payload = match own {
