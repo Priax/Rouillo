@@ -117,7 +117,7 @@ struct Bot {
 type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 fn frame(msg: &ClientMessage) -> Message {
-    Message::binary(shared::encode(msg).expect("encode"))
+    Message::binary(shared::encode(msg))
 }
 
 async fn connect(url: &str, n: usize) -> Result<Ws, String> {

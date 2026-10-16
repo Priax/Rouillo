@@ -299,9 +299,7 @@ impl Inbox {
                 }
             }
             ClientMessage::Ping { id } => {
-                if let Ok(bytes) = shared::encode(&ServerMessage::Pong { id }) {
-                    let _ = self.pong_tx.try_send(bytes);
-                }
+                let _ = self.pong_tx.try_send(shared::encode(&ServerMessage::Pong { id }));
                 return true;
             }
             ClientMessage::Inputs { inputs } => {

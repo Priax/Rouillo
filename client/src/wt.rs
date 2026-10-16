@@ -344,7 +344,7 @@ mod tests {
         let offer: Offer =
             serde_json::from_str(&std::env::var("PUYO_WT_OFFER").expect("PUYO_WT_OFFER")).expect("an offer");
         let mut link = Link::dial(&offer);
-        let ping = shared::encode(&shared::ClientMessage::Ping { id: 42 }).expect("encode");
+        let ping = shared::encode(&shared::ClientMessage::Ping { id: 42 });
         link.send(ping);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let mut opened = false;

@@ -50,8 +50,8 @@ fn state_update(p1: &Board, p2: &Board) -> ServerMessage {
 fn bench_codec(c: &mut Criterion) {
     let empty = state_update(&empty_board(), &empty_board());
     let full = state_update(&full_board(), &full_board());
-    let empty_bytes = encode(&empty).expect("encode empty StateUpdate");
-    let full_bytes = encode(&full).expect("encode full StateUpdate");
+    let empty_bytes = encode(&empty);
+    let full_bytes = encode(&full);
 
     c.bench_function("encode_state_update_empty", |b| b.iter(|| encode(black_box(&empty))));
     c.bench_function("encode_state_update_full", |b| b.iter(|| encode(black_box(&full))));

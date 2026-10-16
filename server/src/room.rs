@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use shared::{LobbyInfo, RankedInfo, RoomId, RoomInfo, RoomSettings, ServerMessage};
 use tokio::time::Instant;
-use tracing::{error, info};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::sim::{slot_byte, Sim};
@@ -98,17 +98,11 @@ pub enum StateOut {
 /// the smallest MTU QUIC allows, framing included.
 pub const DATAGRAM_BUDGET: usize = 1100;
 
-fn encoded(msg: &ServerMessage) -> Option<Vec<u8>> {
-    shared::encode(msg).map_err(|e| error!("encode failed: {e}")).ok()
-}
-
 /// The boards in `slots`, in as few datagrams as fit `DATAGRAM_BUDGET`:
 /// boards compressed together cost a fraction of each alone. A board too
 /// big on its own still goes, and takes the stream.
 fn packed(sim: &Sim, slots: std::ops::Range<usize>, out: &mut Vec<Bytes>) {
-    let Some(bytes) = encoded(&sim.state_update_of(slots.clone())) else {
-        return;
-    };
+    let bytes = shared::encode(&sim.state_update_of(slots.clone()));
     if bytes.len() <= DATAGRAM_BUDGET || slots.len() == 1 {
         out.push(Bytes::from(bytes));
         return;
@@ -172,16 +166,14 @@ impl Room {
     }
 
     pub fn lobby_payloads(&self) -> Vec<(ConnId, Vec<u8>)> {
-        let encode = |info: LobbyInfo| encoded(&ServerMessage::Lobby { info });
+        let encode = |info: LobbyInfo| shared::encode(&ServerMessage::Lobby { info });
         let members = self
             .members
             .iter()
             .enumerate()
-            .filter_map(|(i, m)| Some((m.conn?, encode(self.lobby_info_for(i))?)));
-        let spectators = encode(self.spectator_info())
-            .map(|payload| self.spectators.iter().map(move |s| (s.conn, payload.clone())))
-            .into_iter()
-            .flatten();
+            .filter_map(|(i, m)| Some((m.conn?, encode(self.lobby_info_for(i)))));
+        let watching = encode(self.spectator_info());
+        let spectators = self.spectators.iter().map(|s| (s.conn, watching.clone()));
         members.chain(spectators).collect()
     }
 
@@ -210,7 +202,7 @@ impl Room {
     pub fn game_start_payloads(&mut self) -> Vec<(ConnId, Vec<u8>)> {
         self.audience()
             .into_iter()
-            .filter_map(|c| Some((c, encoded(&self.game_start_for(c))?)))
+            .map(|c| (c, shared::encode(&self.game_start_for(c))))
             .collect()
     }
 
@@ -274,9 +266,7 @@ impl Room {
             }
         }
         if record.is_some() {
-            if let Some(upd) = encoded(&self.sim.state_update()) {
-                self.send_to_audience(&upd, outgoing);
-            }
+            self.send_to_audience(&shared::encode(&self.sim.state_update()), outgoing);
         } else if do_broadcast && advanced {
             self.send_states(split, states);
         }
@@ -299,10 +289,7 @@ impl Room {
         for (conn, own) in seated.chain(watching) {
             let out = if split(conn) {
                 StateOut::Boards(match own {
-                    Some(s) => encoded(&self.sim.state_update_of([s]))
-                        .map(Bytes::from)
-                        .into_iter()
-                        .collect(),
+                    Some(s) => vec![Bytes::from(shared::encode(&self.sim.state_update_of([s])))],
                     None => all
                         .get_or_insert_with(|| {
                             let mut out = Vec::new();
@@ -312,14 +299,12 @@ impl Room {
                         .clone(),
                 })
             } else {
-                let payload = match own {
-                    Some(s) => encoded(&self.sim.state_update_of([s])),
-                    None => whole.get_or_insert_with(|| encoded(&self.sim.state_update())).clone(),
-                };
-                match payload {
-                    Some(payload) => StateOut::Whole(payload),
-                    None => continue,
-                }
+                StateOut::Whole(match own {
+                    Some(s) => shared::encode(&self.sim.state_update_of([s])),
+                    None => whole
+                        .get_or_insert_with(|| shared::encode(&self.sim.state_update()))
+                        .clone(),
+                })
             };
             sink.push((conn, out));
         }

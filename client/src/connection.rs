@@ -112,13 +112,7 @@ enum NetEvent {
 
 impl Net {
     fn send(&mut self, msg: &ClientMessage) {
-        let bytes = match shared::encode(msg) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!("[net] encode failed: {e}");
-                return;
-            }
-        };
+        let bytes = shared::encode(msg);
         match self {
             Self::Ws { sender, .. } => sender.send(WsMessage::Binary(bytes)),
             Self::Wt(link) => link.send(bytes),
@@ -313,9 +307,7 @@ impl Connection {
     /// Sends `msg` again in a datagram, on a link that has them.
     pub fn send_datagram(&mut self, msg: &ClientMessage) {
         if let Link::Live { net: Net::Wt(link) } = &mut self.link {
-            if let Ok(bytes) = shared::encode(msg) {
-                link.send_datagram(bytes);
-            }
+            link.send_datagram(shared::encode(msg));
         }
     }
 

@@ -87,7 +87,7 @@ async fn an_up_to_date_client_is_registered() {
 }
 
 pub(super) fn frame(msg: &ClientMessage) -> WsMessage {
-    WsMessage::binary(shared::encode(msg).expect("encode"))
+    WsMessage::binary(shared::encode(msg))
 }
 
 pub(super) async fn commands_until(rx: &mut mpsc::Receiver<Command>, stop: impl Fn(&Command) -> bool) -> Vec<Command> {
@@ -364,7 +364,7 @@ async fn inputs_sent_again_each_count_against_the_limit() {
             kind: InputKind::MoveLeft,
         })
         .collect();
-    let datagram = shared::encode(&ClientMessage::Inputs { inputs }).unwrap();
+    let datagram = shared::encode(&ClientMessage::Inputs { inputs });
     let sent = 100;
     for _ in 0..sent {
         assert!(inbox.receive_datagram(&datagram).await, "closed early");

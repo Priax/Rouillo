@@ -5,6 +5,7 @@
     clippy::cast_lossless
 )]
 
+use bitcode::{Decode, Encode};
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 
@@ -16,20 +17,34 @@ use crate::config::{
     SOFT_DROP_UNITS, SPLIT_DELAY_AXIS, SPLIT_DELAY_SATELLITE, TARGET_POINTS, VISIBLE_ROW_OFFSET,
 };
 
-pub fn encode<T: serde::Serialize>(msg: &T) -> Result<Vec<u8>, bitcode::Error> {
-    let raw = bitcode::serialize(msg)?;
-    Ok(lz4_flex::block::compress_prepend_size(&raw))
+thread_local! {
+    static ENCODER: std::cell::RefCell<(bitcode::Buffer, Vec<u8>)> = std::cell::RefCell::default();
+}
+
+/// The message compressed, after its uncompressed size. The encoder and the
+/// compression scratch are kept from one message to the next: the output is
+/// the only allocation.
+pub fn encode<T: Encode + ?Sized>(msg: &T) -> Vec<u8> {
+    ENCODER.with_borrow_mut(|(buffer, scratch)| {
+        let raw = buffer.encode(msg);
+        scratch.resize(lz4_flex::block::get_maximum_output_size(raw.len()), 0);
+        let len = lz4_flex::block::compress_into(raw, scratch).expect("sized for the worst case");
+        let mut out = Vec::with_capacity(4 + len);
+        out.extend_from_slice(&u32::try_from(raw.len()).unwrap_or(u32::MAX).to_le_bytes());
+        out.extend_from_slice(&scratch[..len]);
+        out
+    })
 }
 
 pub const MAX_DECODED_SIZE: usize = 1 << 20;
 
-pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+pub fn decode<T: bitcode::DecodeOwned>(bytes: &[u8]) -> Option<T> {
     let size = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
     if size > MAX_DECODED_SIZE {
         return None;
     }
     let raw = lz4_flex::block::decompress_size_prepended(bytes).ok()?;
-    bitcode::deserialize(&raw).ok()
+    bitcode::decode(&raw).ok()
 }
 
 // Grid coordinates and cell counts are tiny (the grid is 6 by 13), so they fit
@@ -88,7 +103,7 @@ impl Fnv {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 pub enum PuyoType {
     Red,
     Blue,
@@ -98,7 +113,7 @@ pub enum PuyoType {
     Garbage,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputKind {
     MoveLeft,
     MoveRight,
@@ -113,7 +128,7 @@ pub type RoomId = u32;
 
 /// Who a player's nuisance goes to, among the opponents still playing. The
 /// player picks it and may change it during the game.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Targeting {
     #[default]
     Random,
@@ -126,7 +141,7 @@ pub enum Targeting {
 }
 
 /// One player's part of a state update.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone)]
 pub struct PlayerUpdate {
     pub slot: u8,
     pub team: u8,
@@ -137,7 +152,7 @@ pub struct PlayerUpdate {
     pub target: Option<u8>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IncomingGarbage {
     pub at: u32,
     pub amount: u32,
@@ -149,7 +164,7 @@ pub struct StampedInput {
     pub kind: InputKind,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PausePolicy {
     Everyone,
     HostOnly,
@@ -187,7 +202,7 @@ impl PausePolicy {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Copy, Debug)]
 pub struct RoomSettings {
     pub starting_level: u32,
     pub colors: u32,
@@ -276,7 +291,7 @@ fn step_clamped(value: u8, dir: i32, min: u8, max: u8) -> u8 {
     .clamp(min, max)
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug)]
 pub struct RoomInfo {
     pub id: RoomId,
     pub name: String,
@@ -288,7 +303,7 @@ pub struct RoomInfo {
     pub ranked: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug)]
 pub struct LobbyInfo {
     pub id: RoomId,
     pub name: String,
@@ -305,7 +320,7 @@ pub struct LobbyInfo {
     pub spectators: u8,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq, Eq)]
 pub struct RankedInfo {
     pub opponent: String,
     pub opponent_elo: i32,
@@ -313,14 +328,14 @@ pub struct RankedInfo {
     pub wins: [u8; 2],
 }
 
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;
 
 pub const MAX_CHAT_CHARS: usize = 200;
 pub const MAX_SPECTATORS: usize = 20;
 
 pub const OUTDATED_FRAME: &str = "outdated";
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone)]
 pub enum ClientMessage {
     Hello {
         player_id: String,
@@ -380,7 +395,7 @@ pub enum ClientMessage {
 }
 
 /// An input as the client numbered and stamped it.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SentInput {
     pub seq: u32,
     pub tick: u32,
@@ -402,7 +417,7 @@ pub fn frame_len(header: [u8; FRAME_HEADER]) -> usize {
 /// The most inputs one `Inputs` message carries.
 pub const MAX_RESENT_INPUTS: usize = 16;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone)]
 pub enum ServerMessage {
     /// Also restarts a finished game. Slots may change between games.
     GameStart {
@@ -504,7 +519,7 @@ impl PuyoType {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode, Debug)]
 pub struct ActivePuyo {
     pub row: i32,
     pub col: i32,
@@ -526,7 +541,7 @@ impl ActivePuyo {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum GameState {
     Playing,
     ResolvingMatches,
@@ -535,14 +550,14 @@ pub enum GameState {
     Paused,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum Settle {
     Idle,
     Falling { frame: u32, frames: u32 },
     Popping { frame: u32 },
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize, Encode, Decode)]
 pub struct CellFall {
     pub row: u8,
     pub col: u8,
@@ -599,7 +614,7 @@ impl CellFall {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug)]
 pub struct Board {
     pub width: usize,
     pub height: usize,
@@ -613,6 +628,7 @@ pub struct Board {
     pub score: i32,
     pub state: GameState,
     #[serde(skip)]
+    #[bitcode(skip)]
     pub previous_state: Option<GameState>,
     pub pending_garbage: u32,
     pub nuisance_points: u32,
@@ -630,64 +646,76 @@ pub struct Board {
     rng: BoardRng,
 }
 
-/// The board's two random streams, sent as their seed and how far each went:
-/// every update carries them whole, and a lost one costs nothing.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(from = "RngWire", into = "RngWire")]
+/// The board's two random streams, kept as their seed and how far each went:
+/// plain data, sent whole in every update, and a lost one costs nothing.
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone, Default)]
 struct BoardRng {
-    seed: u64,
-    pieces: rand_chacha::ChaCha12Rng,
-    garbage: rand_chacha::ChaCha12Rng,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy)]
-struct RngWire {
     seed: u64,
     pieces: u64,
     garbage: u64,
+    /// Each stream as last drawn from, kept while it is where its position
+    /// says: rebuilding one costs more than a draw.
+    #[serde(skip)]
+    #[bitcode(skip)]
+    cache: [Option<rand_chacha::ChaCha12Rng>; 2],
 }
 
-impl From<RngWire> for BoardRng {
-    fn from(w: RngWire) -> Self {
-        let mut rng = Self::from_seed(w.seed);
-        rng.pieces.set_word_pos(u128::from(w.pieces));
-        rng.garbage.set_word_pos(u128::from(w.garbage));
-        rng
-    }
-}
-
-impl From<BoardRng> for RngWire {
-    fn from(rng: BoardRng) -> Self {
-        let pos = |r: &rand_chacha::ChaCha12Rng| u64::try_from(r.get_word_pos()).unwrap_or(u64::MAX);
-        Self {
-            seed: rng.seed,
-            pieces: pos(&rng.pieces),
-            garbage: pos(&rng.garbage),
-        }
-    }
+#[derive(Clone, Copy)]
+enum Stream {
+    Pieces,
+    Garbage,
 }
 
 impl BoardRng {
-    fn from_seed(seed: u64) -> Self {
-        use rand::SeedableRng;
-        let pieces = rand_chacha::ChaCha12Rng::seed_from_u64(seed);
-        let mut garbage = pieces.clone();
-        garbage.set_stream(1);
-        Self { seed, pieces, garbage }
+    const fn from_seed(seed: u64) -> Self {
+        Self {
+            seed,
+            pieces: 0,
+            garbage: 0,
+            cache: [None, None],
+        }
     }
-}
 
-impl Default for BoardRng {
-    fn default() -> Self {
-        Self::from_seed(0)
+    const fn pos(&self, stream: Stream) -> u64 {
+        match stream {
+            Stream::Pieces => self.pieces,
+            Stream::Garbage => self.garbage,
+        }
+    }
+
+    fn stream(&self, stream: Stream) -> rand_chacha::ChaCha12Rng {
+        use rand::SeedableRng;
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(self.seed);
+        if matches!(stream, Stream::Garbage) {
+            rng.set_stream(1);
+        }
+        rng.set_word_pos(u128::from(self.pos(stream)));
+        rng
+    }
+
+    fn draw<T>(&mut self, stream: Stream, f: impl FnOnce(&mut rand_chacha::ChaCha12Rng) -> T) -> T {
+        let at = u128::from(self.pos(stream));
+        let mut rng = match self.cache[stream as usize].take() {
+            Some(rng) if rng.get_word_pos() == at => rng,
+            _ => self.stream(stream),
+        };
+        let value = f(&mut rng);
+        let pos = u64::try_from(rng.get_word_pos()).unwrap_or(u64::MAX);
+        match stream {
+            Stream::Pieces => self.pieces = pos,
+            Stream::Garbage => self.garbage = pos,
+        }
+        self.cache[stream as usize] = Some(rng);
+        value
     }
 }
 
 impl Board {
     pub fn new(width: usize, height: usize, seed: u64, start_level: u32, colors: u32) -> Self {
         let mut rng = BoardRng::from_seed(seed);
-        let n1 = PuyoType::random_pair(&mut rng.pieces, colors);
-        let n2 = PuyoType::random_pair(&mut rng.pieces, colors);
+        let (n1, n2) = rng.draw(Stream::Pieces, |r| {
+            (PuyoType::random_pair(r, colors), PuyoType::random_pair(r, colors))
+        });
 
         let mut board = Self {
             width,
@@ -748,7 +776,8 @@ impl Board {
         }
         let (c1, c2) = self.next_types;
         self.next_types = self.next_next_types;
-        self.next_next_types = PuyoType::random_pair(&mut self.rng.pieces, self.colors);
+        let colors = self.colors;
+        self.next_next_types = self.rng.draw(Stream::Pieces, |r| PuyoType::random_pair(r, colors));
         let new_piece = ActivePuyo {
             row: 1,
             col: small(self.spawn_col()),
@@ -1110,10 +1139,12 @@ impl Board {
 
         if leftover > 0 {
             let mut cols: Vec<usize> = (0..self.width).collect();
-            for i in 0..leftover as usize {
-                let j = self.rng.garbage.random_range(i..self.width);
-                cols.swap(i, j);
-            }
+            let width = self.width;
+            self.rng.draw(Stream::Garbage, |r| {
+                for i in 0..leftover as usize {
+                    cols.swap(i, r.random_range(i..width));
+                }
+            });
             for &col in cols.iter().take(leftover as usize) {
                 if let Some(r) = self.drop_one_garbage(col) {
                     landed.push((r, col));
@@ -1405,7 +1436,7 @@ impl Board {
         for (r, c) in popping {
             h.bytes(&[*r, *c]);
         }
-        for r in [&rng.pieces, &rng.garbage] {
+        for r in [rng.stream(Stream::Pieces), rng.stream(Stream::Garbage)] {
             h.bytes(&r.get_seed());
             h.u64(r.get_stream());
             h.bytes(&r.get_word_pos().to_le_bytes());

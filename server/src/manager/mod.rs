@@ -4,7 +4,7 @@ use bytes::Bytes;
 use shared::{config, InputKind, PausePolicy, RoomId, RoomInfo, RoomSettings, ServerMessage, Targeting};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::room::{Member, Phase, Room, Series, SeriesResult, Spectator, StateOut};
@@ -312,17 +312,11 @@ impl Manager {
     }
 
     fn deliver_msg(&mut self, conn: ConnId, msg: &ServerMessage) {
-        match shared::encode(msg) {
-            Ok(payload) => self.deliver(conn, payload),
-            Err(e) => error!("encode failed, dropping message: {e}"),
-        }
+        self.deliver(conn, shared::encode(msg));
     }
 
     fn send_room_msg(&mut self, id: RoomId, msg: &ServerMessage) {
-        match shared::encode(msg) {
-            Ok(payload) => self.send_room(id, &payload),
-            Err(e) => error!("encode failed, dropping message: {e}"),
-        }
+        self.send_room(id, &shared::encode(msg));
     }
 
     fn send_room(&mut self, id: RoomId, payload: &[u8]) {
@@ -401,15 +395,9 @@ impl Manager {
             .iter()
             .filter_map(|(&c, client)| client.room.is_none().then_some(c))
             .collect();
-        let public = match shared::encode(&ServerMessage::RoomList {
+        let public = shared::encode(&ServerMessage::RoomList {
             rooms: self.public_room_list(),
-        }) {
-            Ok(payload) => payload,
-            Err(e) => {
-                error!("encode RoomList failed: {e}");
-                return;
-            }
-        };
+        });
         for c in browsing {
             if self.private_rooms_for(c).next().is_some() {
                 self.send_room_list_to(c);

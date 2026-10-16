@@ -6,8 +6,8 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 rand = "0.10"
-rand_chacha = { version = "0.10", features = ["serde"] }
-bitcode = { version = "0.6", features = ["serde"] }
+rand_chacha = "0.10"
+bitcode = "0.6"
 # Safe encode/decode: the server decompresses what clients send, and with
 # messages of ~100 bytes the unsafe fast path buys nothing. `std` enables the
 # allocating block API used by `encode`/`decode`; the frame format is unused.

@@ -95,7 +95,7 @@ fn garbage_placement_leaves_the_piece_sequence_alone() {
         let pb = b.active_piece.take().expect("piece b");
         assert_eq!((pa.axis_type, pa.sat_type), (pb.axis_type, pb.sat_type), "pair {i}");
     }
-    let draws = |x: &Board| x.rng.garbage.get_word_pos();
+    let draws = |x: &Board| x.rng.garbage;
     assert_ne!(draws(&a), draws(&b), "setup: the drops drew nothing");
 }
 
@@ -444,7 +444,7 @@ fn player(slot: u8, board: &Board, ack: u32) -> PlayerUpdate {
 }
 
 fn round_trip(players: Vec<PlayerUpdate>, tick: u32) -> (u32, Vec<PlayerUpdate>) {
-    let bytes = encode(&ServerMessage::StateUpdate { game: 1, tick, players }).expect("encode");
+    let bytes = encode(&ServerMessage::StateUpdate { game: 1, tick, players });
     match decode(&bytes).expect("decode") {
         ServerMessage::StateUpdate { tick, players, .. } => (tick, players),
         _ => panic!("wrong variant"),
@@ -541,7 +541,7 @@ fn decode_accepts_large_legitimate_message() {
             ranked: false,
         })
         .collect();
-    let bytes = encode(&ServerMessage::RoomList { rooms }).expect("encode");
+    let bytes = encode(&ServerMessage::RoomList { rooms });
     match decode::<ServerMessage>(&bytes) {
         Some(ServerMessage::RoomList { rooms }) => assert_eq!(rooms.len(), 2_000),
         _ => panic!("large room list rejected"),
@@ -590,14 +590,13 @@ fn decode_survives_corrupted_messages() {
     use rand::SeedableRng;
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
     let samples = [
-        bitcode::serialize(&ClientMessage::Hello {
+        bitcode::encode(&ClientMessage::Hello {
             player_id: "p".repeat(32),
             auth_token: Some("t".repeat(36)),
             last_disconnect_reason: Some("read: boom".into()),
-        })
-        .unwrap(),
-        bitcode::serialize(&ClientMessage::CreateRoom { name: "room".into() }).unwrap(),
-        bitcode::serialize(&ServerMessage::RoomList {
+        }),
+        bitcode::encode(&ClientMessage::CreateRoom { name: "room".into() }),
+        bitcode::encode(&ServerMessage::RoomList {
             rooms: (0..20)
                 .map(|id| RoomInfo {
                     id,
@@ -610,8 +609,7 @@ fn decode_survives_corrupted_messages() {
                     ranked: false,
                 })
                 .collect(),
-        })
-        .unwrap(),
+        }),
     ];
     for i in 0..5_000 {
         let mut raw = samples[i % samples.len()].clone();
@@ -1388,15 +1386,15 @@ fn protocol_samples_cover_every_variant() {
 fn protocol_digest() -> u64 {
     let mut h = Fnv::new();
     for m in client_samples() {
-        h.bytes(&bitcode::serialize(&m).expect("encode"));
+        h.bytes(&bitcode::encode(&m));
     }
     for m in server_samples() {
-        h.bytes(&bitcode::serialize(&m).expect("encode"));
+        h.bytes(&bitcode::encode(&m));
     }
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (10, 11_330_670_461_999_495_574);
+const PROTOCOL_DIGEST: (u32, u64) = (11, 10_103_239_714_688_290_398);
 
 #[test]
 fn protocol_changes_bump_the_version() {

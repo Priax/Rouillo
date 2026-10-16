@@ -32,7 +32,7 @@ async fn dial(offer: &Offer, version: u32) -> Result<Session, String> {
 }
 
 async fn write_frame(send: &mut web_transport_quinn::SendStream, msg: &ClientMessage) {
-    let bytes = shared::encode(msg).expect("encode");
+    let bytes = shared::encode(msg);
     send.write_all(&shared::frame_header(bytes.len())).await.expect("write");
     send.write_all(&bytes).await.expect("write");
 }
@@ -74,15 +74,13 @@ async fn a_webtransport_client_plays_over_a_stream_and_datagrams() {
         panic!("registered without a way for states");
     };
 
-    sender
-        .try_send(shared::encode(&ServerMessage::Maintenance).unwrap())
-        .unwrap();
+    sender.try_send(shared::encode(&ServerMessage::Maintenance)).unwrap();
     assert!(matches!(
         within(read_frame(&mut recv)).await.expect("a message"),
         ServerMessage::Maintenance
     ));
 
-    let board = |count| bytes::Bytes::from(shared::encode(&ServerMessage::Spectators { count }).unwrap());
+    let board = |count| bytes::Bytes::from(shared::encode(&ServerMessage::Spectators { count }));
     states.try_send(vec![board(3), board(4)]).unwrap();
     for count in [3, 4] {
         let datagram = within(session.read_datagram())
@@ -102,7 +100,7 @@ async fn a_webtransport_client_plays_over_a_stream_and_datagrams() {
             .collect(),
         spectator: false,
     };
-    let bytes = shared::encode(&big).unwrap();
+    let bytes = shared::encode(&big);
     assert!(
         bytes.len() > session.max_datagram_size(),
         "setup: {} bytes fit in {}",
@@ -123,7 +121,7 @@ async fn a_webtransport_client_plays_over_a_stream_and_datagrams() {
         tick: 9,
         kind: InputKind::HardDrop,
     };
-    let datagram = |msg: &ClientMessage| bytes::Bytes::from(shared::encode(msg).unwrap());
+    let datagram = |msg: &ClientMessage| bytes::Bytes::from(shared::encode(msg));
     session
         .send_datagram(datagram(&ClientMessage::RequestRoomList))
         .unwrap();
