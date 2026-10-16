@@ -167,12 +167,12 @@ impl Bot {
             Role::Host => Self::send(ws, &ClientMessage::CreateRoom { name: "loadbot".into() }).await?,
             Role::Guest => {
                 let mut room = self.room.subscribe();
-                let id = loop {
-                    if let Some(id) = *room.borrow_and_update() {
-                        break id;
-                    }
-                    room.changed().await.map_err(|e| e.to_string())?;
-                };
+                let made = room.wait_for(Option::is_some);
+                let id = tokio::time::timeout_at(until.into(), made)
+                    .await
+                    .map_err(|_| "the room was never made".to_owned())?
+                    .map_err(|e| e.to_string())?
+                    .expect("waited for one");
                 Self::send(ws, &ClientMessage::JoinRoom { id }).await?;
             }
         }
