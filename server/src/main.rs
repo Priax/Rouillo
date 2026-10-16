@@ -29,6 +29,11 @@ type Token = String;
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(600);
 const SHUTDOWN_LINGER: Duration = Duration::from_secs(4);
 
+/// Counted in ticks, not timed: a tick that fires a little early must not
+/// skip a state.
+const BROADCAST_EVERY: u64 = config::SERVER_TICK_HZ / config::STATE_BROADCAST_HZ;
+const _: () = assert!(config::SERVER_TICK_HZ.is_multiple_of(config::STATE_BROADCAST_HZ));
+
 struct TickProfile {
     enabled: bool,
     budget: Duration,
@@ -156,9 +161,8 @@ fn run_side_effects(mgr: &mut Manager, pool: &db::DbPool, cmd_tx: &mpsc::Sender<
 async fn manager_loop(mut cmd_rx: mpsc::Receiver<Command>, cmd_tx: mpsc::Sender<Command>, pool: db::DbPool) {
     let tick_dt = 1.0 / config::SERVER_TICK_HZ as f32;
     let mut ticker = interval(Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64));
-    let broadcast_period = Duration::from_secs_f64(1.0 / config::STATE_BROADCAST_HZ as f64);
     let mut mgr = Manager::new();
-    let mut last_broadcast = Instant::now();
+    let mut ticks: u64 = 0;
     let mut profile = TickProfile::new();
     let mut saves = JoinSet::new();
     let mut winddown: Option<Winddown> = None;
@@ -166,8 +170,8 @@ async fn manager_loop(mut cmd_rx: mpsc::Receiver<Command>, cmd_tx: mpsc::Sender<
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let do_broadcast = last_broadcast.elapsed() >= broadcast_period;
-                if do_broadcast { last_broadcast = Instant::now(); }
+                let do_broadcast = ticks.is_multiple_of(BROADCAST_EVERY);
+                ticks += 1;
                 let t0 = Instant::now();
                 mgr.tick(tick_dt, do_broadcast);
                 profile.record(t0.elapsed(), mgr.rooms.len());
