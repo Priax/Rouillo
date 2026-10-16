@@ -167,6 +167,10 @@ pub enum Command {
         conn: ConnId,
         team: Option<u8>,
     },
+    Follow {
+        conn: ConnId,
+        slot: u8,
+    },
     /// Which of `users` are in a room, for the friend list.
     Playing {
         users: Vec<Uuid>,
@@ -219,7 +223,8 @@ impl Command {
             | Self::Spectate { conn, .. }
             | Self::WatchFriend { conn, .. }
             | Self::SetTargeting { conn, .. }
-            | Self::SetTeam { conn, .. } => Some(*conn),
+            | Self::SetTeam { conn, .. }
+            | Self::Follow { conn, .. } => Some(*conn),
         }
     }
 }
@@ -475,6 +480,7 @@ impl Manager {
             Command::WatchFriend { conn, user_id } => self.watch_friend(conn, &user_id),
             Command::SetTargeting { conn, targeting } => self.set_targeting(conn, targeting),
             Command::SetTeam { conn, team } => self.set_team(conn, team),
+            Command::Follow { conn, slot } => self.follow(conn, slot),
             Command::Playing { users, reply } => {
                 let _ = reply.send(self.playing(&users));
             }

@@ -42,6 +42,20 @@ impl Manager {
         self.send_room_msg(id, &msg);
     }
 
+    /// One without a board of their own picks the one to watch large, by
+    /// its slot from 1.
+    pub(super) fn follow(&mut self, conn: ConnId, slot: u8) {
+        let Some(room) = self.room_of(conn).and_then(|id| self.rooms.get_mut(&id)) else {
+            return;
+        };
+        let Some(slot) = usize::from(slot).checked_sub(1).filter(|&s| s < room.sim.boards.len()) else {
+            return;
+        };
+        if room.game_slot_of_conn(conn).is_none() {
+            room.follows.insert(conn, slot);
+        }
+    }
+
     pub(super) fn spectate(&mut self, conn: ConnId, id: RoomId) {
         if self.token_of(conn).is_none() || self.room_of(conn) == Some(id) {
             return;

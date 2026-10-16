@@ -49,6 +49,7 @@ pub fn update_game(
     if session.spectating() {
         if let Some(crate::draw::GameClick::Board(slot)) = click {
             session.follow(slot);
+            conn.send(&ClientMessage::Follow { slot });
         }
         if input.pause {
             conn.send(&ClientMessage::LeaveRoom);

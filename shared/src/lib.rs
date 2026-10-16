@@ -152,9 +152,9 @@ pub struct PlayerUpdate {
     pub target: Option<u8>,
 }
 
-/// Another player's board as a player of a big room sees it, small: what
-/// is drawn, without the random state, score or next pairs. The stack is
-/// left out while it has not changed since it was last sent.
+/// A board of a big room as it is drawn small, beside the one watched
+/// large: without the random state, score or next pairs. The stack is left
+/// out while it has not changed since it was last sent.
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone)]
 pub struct Thumb {
     pub slot: u8,
@@ -456,6 +456,11 @@ pub enum ClientMessage {
     Inputs {
         inputs: Vec<SentInput>,
     },
+    /// The board to watch large, from 1, for one in a big room without a
+    /// board of their own: the others come small.
+    Follow {
+        slot: u8,
+    },
 }
 
 /// An input as the client numbered and stamped it.
@@ -549,7 +554,8 @@ pub enum ServerMessage {
     /// Another connection with the same player id took this one's seat:
     /// the game was opened in another tab or window.
     OpenedElsewhere,
-    /// The other boards of a big room, small, for one who plays in it.
+    /// The boards of a big room, small, for those in it who watch another
+    /// one large: their own, or the one they follow.
     Thumbs {
         game: u32,
         tick: u32,

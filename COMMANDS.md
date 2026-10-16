@@ -56,7 +56,7 @@ cargo run -p client
 | Variable          | Effet | Exemple |
 |-------------------|-------|---------|
 | `PUYO_PROFILE=1`  | Le serveur imprime toutes les 5 s une ligne `[tick] rooms=N avg=.. max=.. budget=16.6ms peak_load=X%`. Sans la variable: silencieux. | `PUYO_PROFILE=1 cargo run -p server --release` |
-| `PUYO_LOAD_PLAYERS`, `PUYO_LOAD_TOTAL`, `PUYO_LOAD_ROOMS` | Test de charge: tailles de room, joueurs au total, ou nombre fixe de rooms (cf. plus bas). | `PUYO_LOAD_PLAYERS=99 cargo test -p server --release -- --ignored --nocapture load_rooms` |
+| `PUYO_LOAD_PLAYERS`, `PUYO_LOAD_TOTAL`, `PUYO_LOAD_ROOMS`, `PUYO_LOAD_SPECTATORS` | Test de charge: tailles de room, joueurs au total, ou nombre fixe de rooms, et spectateurs par room (cf. plus bas). | `PUYO_LOAD_PLAYERS=99 cargo test -p server --release -- --ignored --nocapture load_rooms` |
 | `RUST_LOG`        | Niveau de logs du serveur (défaut `info`, syntaxe `EnvFilter` de tracing). Sans effet avec la feature `console`. | `RUST_LOG=debug cargo run -p server` |
 
 ---
@@ -93,6 +93,8 @@ cargo test -p server --release -- --ignored --nocapture load_rooms
 # autres tailles, autre total, ou un nombre fixe de rooms
 PUYO_LOAD_PLAYERS=16,40 PUYO_LOAD_TOTAL=2000 cargo test -p server --release -- --ignored --nocapture load_rooms
 PUYO_LOAD_PLAYERS=2 PUYO_LOAD_ROOMS=500 cargo test -p server --release -- --ignored --nocapture load_rooms
+# avec 5 spectateurs par room (débit compté à part, colonne kB/s/watcher)
+PUYO_LOAD_PLAYERS=16,99 PUYO_LOAD_SPECTATORS=5 cargo test -p server --release -- --ignored --nocapture load_rooms
 ```
 Le manager seul, sans sockets, avec des inputs aléatoires: 10 s de jeu par taille, une fois
 en WebSocket et une fois en datagrammes. Les rooms avancent en parallèle sur tous les cœurs,

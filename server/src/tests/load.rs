@@ -45,10 +45,25 @@ impl Link {
     }
 }
 
-/// `rooms` rooms of `players` each, all started. The seat limit is lifted
-/// past `MAX_ROOM_PLAYERS` here only, to see what a bigger room would cost.
-fn seat(mgr: &mut Manager, rooms: usize, players: usize, datagrams: bool) -> Vec<Link> {
+struct Setup {
+    rooms: usize,
+    players: usize,
+    spectators: usize,
+    datagrams: bool,
+}
+
+/// The rooms, all started, their players' links and their spectators'. The
+/// seat limit is lifted past `MAX_ROOM_PLAYERS` here only, to see what a
+/// bigger room would cost.
+fn seat(mgr: &mut Manager, setup: &Setup) -> (Vec<Link>, Vec<Link>) {
+    let Setup {
+        rooms,
+        players,
+        spectators,
+        datagrams,
+    } = *setup;
     let mut links = Vec::with_capacity(rooms * players);
+    let mut ids = Vec::with_capacity(rooms);
     for _ in 0..rooms {
         let first = links.len() as ConnId + 1;
         let host = Link::new(mgr, first, datagrams);
@@ -58,6 +73,7 @@ fn seat(mgr: &mut Manager, rooms: usize, players: usize, datagrams: bool) -> Vec
             name: "load".into(),
         });
         let id = mgr.room_of(first).expect("the room was made");
+        ids.push(id);
         mgr.rooms.get_mut(&id).expect("room").settings.max_players = u8::try_from(players).expect("at most 255");
         links.push(host);
         let start = links.len() - 1;
@@ -74,10 +90,19 @@ fn seat(mgr: &mut Manager, rooms: usize, players: usize, datagrams: bool) -> Vec
     mgr.tick(3.5, false);
     let playing = mgr.rooms.values().filter(|r| r.game_running()).count();
     assert_eq!(playing, rooms, "every room should be playing");
-    for link in &mut links {
+    let mut watching = Vec::with_capacity(rooms * spectators);
+    for id in ids {
+        for _ in 0..spectators {
+            let conn = (links.len() + watching.len()) as ConnId + 1;
+            watching.push(Link::new(mgr, conn, datagrams));
+            hello(mgr, conn, &format!("s{conn}"));
+            mgr.handle(Command::Spectate { conn, id });
+        }
+    }
+    for link in links.iter_mut().chain(&mut watching) {
         link.drain();
     }
-    links
+    (links, watching)
 }
 
 /// A player's inputs: now and then a move, a turn or a soft drop, never a
@@ -102,18 +127,19 @@ struct Report {
     p99: Duration,
     max: Duration,
     bytes: usize,
+    watched_bytes: usize,
     boards_alive: usize,
     boards: usize,
 }
 
-fn run(rooms: usize, players: usize, datagrams: bool) -> Report {
+fn run(setup: &Setup) -> Report {
     let dt = 1.0 / config::SERVER_TICK_HZ as f32;
     let mut mgr = new_mgr();
-    let mut links = seat(&mut mgr, rooms, players, datagrams);
+    let (mut links, mut watching) = seat(&mut mgr, setup);
     let mut noise = 42;
     let mut seqs = vec![0u32; links.len()];
     let mut times = Vec::with_capacity(TICKS as usize);
-    let mut bytes = 0;
+    let (mut bytes, mut watched_bytes) = (0, 0);
     for _ in 0..TICKS {
         let t0 = Instant::now();
         for (link, seq) in links.iter().zip(&mut seqs) {
@@ -131,6 +157,7 @@ fn run(rooms: usize, players: usize, datagrams: bool) -> Report {
         mgr.tick(dt, true);
         times.push(t0.elapsed());
         bytes += links.iter_mut().map(Link::drain).sum::<usize>();
+        watched_bytes += watching.iter_mut().map(Link::drain).sum::<usize>();
     }
     times.sort_unstable();
     let boards = mgr.rooms.values().flat_map(|r| &r.sim.boards);
@@ -139,6 +166,7 @@ fn run(rooms: usize, players: usize, datagrams: bool) -> Report {
         p99: times[times.len() * 99 / 100],
         max: times[times.len() - 1],
         bytes,
+        watched_bytes,
         boards_alive: boards.clone().filter(|b| b.state != GameState::GameOver).count(),
         boards: boards.count(),
     }
@@ -150,7 +178,8 @@ fn run(rooms: usize, players: usize, datagrams: bool) -> Report {
 ///
 /// `PUYO_LOAD_PLAYERS=2,16,99` sets the room sizes, `PUYO_LOAD_TOTAL=1000`
 /// the players in all (rooms = total / size, at least one), and
-/// `PUYO_LOAD_ROOMS=500` a fixed number of rooms instead. No sockets: the
+/// `PUYO_LOAD_ROOMS=500` a fixed number of rooms instead, and
+/// `PUYO_LOAD_SPECTATORS=5` spectators in each room. No sockets: the
 /// manager's share of the work, as on the server, with the rooms spread
 /// over `RAYON_NUM_THREADS` threads (all the cores by default).
 #[test]
@@ -159,6 +188,7 @@ fn load_rooms() {
     let sizes = env_list("PUYO_LOAD_PLAYERS", &[2, 16, 99]);
     let total = env_list("PUYO_LOAD_TOTAL", &[1000])[0];
     let fixed = env_list("PUYO_LOAD_ROOMS", &[]).first().copied();
+    let spectators = env_list("PUYO_LOAD_SPECTATORS", &[0])[0];
     let budget = Duration::from_secs_f64(1.0 / config::SERVER_TICK_HZ as f64);
     let secs = f64::from(TICKS) / config::SERVER_TICK_HZ as f64;
     println!(
@@ -166,17 +196,33 @@ fn load_rooms() {
         rayon::current_num_threads()
     );
     println!(
-        "{:>6} {:>7} {:>8} {:>10} {:>10} {:>10} {:>7} {:>11} {:>10} {:>8}",
-        "rooms", "players", "link", "tick avg", "tick p99", "tick max", "p99 %", "kB/s/player", "Mbit/s", "alive"
+        "{:>6} {:>7} {:>8} {:>10} {:>10} {:>10} {:>7} {:>11} {:>12} {:>10} {:>8}",
+        "rooms",
+        "players",
+        "link",
+        "tick avg",
+        "tick p99",
+        "tick max",
+        "p99 %",
+        "kB/s/player",
+        "kB/s/watcher",
+        "Mbit/s",
+        "alive"
     );
     for players in sizes {
         let rooms = fixed.unwrap_or((total / players).max(1));
         for datagrams in [false, true] {
-            let r = run(rooms, players, datagrams);
+            let r = run(&Setup {
+                rooms,
+                players,
+                spectators,
+                datagrams,
+            });
             let per_player = r.bytes as f64 / secs / (rooms * players) as f64 / 1000.0;
-            let mbits = r.bytes as f64 * 8.0 / secs / 1e6;
+            let per_watcher = r.watched_bytes as f64 / secs / (rooms * spectators).max(1) as f64 / 1000.0;
+            let mbits = (r.bytes + r.watched_bytes) as f64 * 8.0 / secs / 1e6;
             println!(
-                "{rooms:>6} {players:>7} {:>8} {:>10.2?} {:>10.2?} {:>10.2?} {:>6.1}% {per_player:>11.1} {mbits:>10.1} {:>4}/{:<4}",
+                "{rooms:>6} {players:>7} {:>8} {:>10.2?} {:>10.2?} {:>10.2?} {:>6.1}% {per_player:>11.1} {per_watcher:>12.1} {mbits:>10.1} {:>4}/{:<4}",
                 if datagrams { "datagram" } else { "ws" },
                 r.avg,
                 r.p99,

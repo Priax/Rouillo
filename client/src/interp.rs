@@ -252,20 +252,22 @@ mod tests {
     }
 
     #[test]
-    fn updates_one_tick_in_three_still_play_smoothly() {
-        let mut view = OpponentView::default();
-        let mut rts = Vec::new();
-        for frame in 1..=600u32 {
-            if frame % 3 == 0 {
-                view.push(frame, board_at(0, 1), f64::from(frame) / TICK_HZ);
+    fn updates_one_tick_in_three_or_six_still_play_smoothly() {
+        for every in [3, 6] {
+            let mut view = OpponentView::default();
+            let mut rts = Vec::new();
+            for frame in 1..=600u32 {
+                if frame % every == 0 {
+                    view.push(frame, board_at(0, 1), f64::from(frame) / TICK_HZ);
+                }
+                view.advance(DT);
+                rts.extend(view.render_tick);
             }
-            view.advance(DT);
-            rts.extend(view.render_tick);
-        }
-        assert!(view.delay_ticks() >= 3.0);
-        for w in rts[rts.len() - 120..].windows(2) {
-            let step = w[1] - w[0];
-            assert!(step > 0.85 && step < 1.15, "playback stalled: {w:?}");
+            assert!(view.delay_ticks() >= f64::from(every));
+            for w in rts[rts.len() - 120..].windows(2) {
+                let step = w[1] - w[0];
+                assert!(step > 0.85 && step < 1.15, "one in {every}: playback stalled: {w:?}");
+            }
         }
     }
 

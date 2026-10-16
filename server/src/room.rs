@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ops::Range;
 
 use bytes::Bytes;
@@ -74,6 +75,9 @@ pub struct Room {
     pub sim: Sim,
     pub series: Option<Series>,
     pub spectators: Vec<Spectator>,
+    /// The board watched large by those without one of their own, by game
+    /// slot: the first unless they picked another this game.
+    pub follows: HashMap<ConnId, usize>,
     /// Who sits in each game slot, as the game started.
     pub seats: Vec<Seat>,
 }
@@ -83,10 +87,10 @@ pub struct Seat {
     pub name: String,
 }
 
-/// From this many boards, a player sees the others small: they are sent as
+/// From this many boards, the others than the one watched large are sent as
 /// thumbnails, one tick in `OTHERS_EVERY`, and smoothed between updates.
 const SPARSE_FROM: usize = 3;
-const OTHERS_EVERY: u32 = 3;
+const OTHERS_EVERY: u32 = 6;
 
 /// One tick's game state for one connection.
 pub enum StateOut {
@@ -127,6 +131,7 @@ impl Room {
             sim: Sim::new(&settings, (0..members_len).map(slot_byte).collect()),
             series,
             spectators: Vec::new(),
+            follows: HashMap::new(),
             seats: Vec::new(),
         }
     }
@@ -136,6 +141,7 @@ impl Room {
         for (i, m) in self.members.iter_mut().enumerate() {
             m.game_slot = Some(i);
         }
+        self.follows.clear();
         self.seats = self
             .members
             .iter()
@@ -275,21 +281,27 @@ impl Room {
         record
     }
 
-    /// From `SPARSE_FROM` boards, a player gets their own board every tick
-    /// and the others as thumbnails one tick in `OTHERS_EVERY`; whoever
-    /// watches gets them all whole. Each message shared is made once.
+    /// From `SPARSE_FROM` boards, players get their own board every tick and
+    /// the others as thumbnails one tick in `OTHERS_EVERY`; those without a
+    /// board the same, with the one they follow as their own. Below, everyone
+    /// gets every board whole. Each message shared is made once.
     fn send_states(&mut self, split: impl Fn(ConnId) -> bool, sink: &mut Vec<(ConnId, StateOut)>) {
         let boards = self.sim.boards.len();
         let sparse = boards >= SPARSE_FROM;
         let thumbs = (sparse && self.sim.tick.is_multiple_of(OTHERS_EVERY)).then(|| self.sim.thumbs());
         let sim = &self.sim;
         let (mut whole, mut all, mut small, mut small_packed) = (None, None, None, None);
+        let followed = |conn| self.follows.get(&conn).copied().unwrap_or(0);
         let seated = self
             .members
             .iter()
-            .filter_map(|m| Some((m.conn?, m.game_slot.filter(|&s| s < boards && sparse))));
+            .filter_map(|m| Some((m.conn?, m.game_slot.filter(|&s| s < boards))));
         let watching = self.spectators.iter().map(|s| (s.conn, None));
-        for (conn, own) in seated.chain(watching) {
+        let audience = seated.chain(watching).map(|(conn, own)| {
+            let large = own.unwrap_or_else(|| followed(conn));
+            (conn, sparse.then_some(large))
+        });
+        for (conn, own) in audience {
             let datagrams = split(conn);
             let Some(slot) = own else {
                 let out = if datagrams {

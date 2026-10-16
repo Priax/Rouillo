@@ -358,6 +358,7 @@ fn command(conn: ConnId, msg: ClientMessage) -> Option<Command> {
         ClientMessage::WatchFriend { user_id } => Command::WatchFriend { conn, user_id },
         ClientMessage::SetTargeting { targeting } => Command::SetTargeting { conn, targeting },
         ClientMessage::SetTeam { team } => Command::SetTeam { conn, team },
+        ClientMessage::Follow { slot } => Command::Follow { conn, slot },
     })
 }
 
