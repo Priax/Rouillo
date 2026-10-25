@@ -1,4 +1,4 @@
-use shared::{config, Board, GameState, InputKind, PuyoType};
+use shared::{config, Board, GameState, InputKind, PuyoType, Rotation};
 
 const W: usize = config::GRID_WIDTH;
 const H: usize = config::GRID_HEIGHT;
@@ -13,6 +13,7 @@ pub enum Difficulty {
     Easy,
     Normal,
     Hard,
+    Pro,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -96,13 +97,14 @@ struct Profile {
 }
 
 impl Difficulty {
-    pub const ALL: [Self; 3] = [Self::Easy, Self::Normal, Self::Hard];
+    pub const ALL: [Self; 4] = [Self::Easy, Self::Normal, Self::Hard, Self::Pro];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Easy => "Facile",
             Self::Normal => "Normal",
             Self::Hard => "Difficile",
+            Self::Pro => "Pro",
         }
     }
 
@@ -112,17 +114,18 @@ impl Difficulty {
 }
 
 fn profile(difficulty: Difficulty, style: Style, seed: u64) -> Profile {
-    let (think_ticks, input_ticks, lookahead, noise) = match difficulty {
-        Difficulty::Easy => (30, 18, false, 50.0),
-        Difficulty::Normal => (28, 16, true, 30.0),
-        Difficulty::Hard => (14, 7, true, 20.0),
+    let (think_ticks, input_ticks, lookahead, hard_drop, noise) = match difficulty {
+        Difficulty::Easy => (30, 18, false, false, 50.0),
+        Difficulty::Normal => (28, 16, true, false, 30.0),
+        Difficulty::Hard => (14, 7, true, false, 20.0),
+        Difficulty::Pro => (9, 7, true, true, 0.0),
     };
-    let pick = |chains: [u32; 3]| chains[difficulty.level()];
-    let base = pick([1, 2, 5]);
+    let pick = |chains: [u32; 4]| chains[difficulty.level()];
+    let base = pick([1, 2, 5, 6]);
     let mut profile = Profile {
         think_ticks,
         input_ticks,
-        hard_drop: false,
+        hard_drop,
         lookahead,
         min_chain: base,
         calm_chain: base,
@@ -136,29 +139,29 @@ fn profile(difficulty: Difficulty, style: Style, seed: u64) -> Profile {
     match style {
         Style::Balanced => {}
         Style::Harasser => {
-            profile.calm_chain = pick([1, 2, 2]);
+            profile.calm_chain = pick([1, 2, 2, 3]);
             profile.min_chain = profile.calm_chain;
             profile.potential_weight *= 0.5;
         }
         Style::Builder => {
-            profile.calm_chain = pick([2, 4, 7]);
+            profile.calm_chain = pick([2, 4, 7, 8]);
             profile.min_chain = profile.calm_chain;
             profile.potential_weight *= 1.5;
             profile.height_cost *= 3.0;
         }
         Style::Counter => {
-            profile.min_chain = pick([1, 2, 4]);
-            profile.calm_chain = pick([3, 4, 7]);
+            profile.min_chain = pick([1, 2, 4, 4]);
+            profile.calm_chain = pick([3, 4, 7, 8]);
             profile.potential_weight *= 1.6;
             profile.height_cost *= 3.0;
         }
         Style::AllClear => {
-            profile.calm_chain = pick([1, 2, 3]);
+            profile.calm_chain = pick([1, 2, 3, 4]);
             profile.min_chain = profile.calm_chain;
             profile.all_clear = true;
         }
         Style::Architect => {
-            profile.calm_chain = pick([2, 3, 4]);
+            profile.calm_chain = pick([2, 3, 4, 5]);
             profile.min_chain = profile.calm_chain;
             match TEMPLATES.get((seed % (TEMPLATES.len() as u64 + 1)) as usize) {
                 Some(rows) => profile.template = template(rows),
@@ -172,25 +175,25 @@ fn profile(difficulty: Difficulty, style: Style, seed: u64) -> Profile {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Placement {
     col: usize,
-    rotation: usize,
+    rotation: Rotation,
 }
 
 impl Placement {
     fn satellite_col(self) -> usize {
         match self.rotation {
-            1 => self.col + 1,
-            3 => self.col - 1,
-            _ => self.col,
+            Rotation::Right => self.col + 1,
+            Rotation::Left => self.col - 1,
+            Rotation::Up | Rotation::Down => self.col,
         }
     }
 }
 
 fn placements() -> impl Iterator<Item = Placement> {
-    (0..4).flat_map(|rotation| {
+    Rotation::ALL.into_iter().flat_map(|rotation| {
         let cols = match rotation {
-            1 => 0..W - 1,
-            3 => 1..W,
-            _ => 0..W,
+            Rotation::Right => 0..W - 1,
+            Rotation::Left => 1..W,
+            Rotation::Up | Rotation::Down => 0..W,
         };
         cols.map(move |col| Placement { col, rotation })
     })
@@ -216,7 +219,7 @@ impl Exec {
     }
 
     fn next(&mut self, board: &Board, profile: &Profile) -> Option<InputKind> {
-        let piece = board.active_piece.as_ref()?;
+        let piece = board.piece()?;
         if self.dropped {
             return None;
         }
@@ -228,9 +231,10 @@ impl Exec {
         let step = if self.inputs_left == 0 {
             None
         } else if piece.rotation != self.target.rotation {
-            Some(match (self.target.rotation + 4 - piece.rotation) % 4 {
-                3 => InputKind::RotateCCW,
-                _ => InputKind::RotateCW,
+            Some(if piece.rotation.ccw() == self.target.rotation {
+                InputKind::RotateCCW
+            } else {
+                InputKind::RotateCW
             })
         } else if piece.col < col {
             Some(InputKind::MoveRight)
@@ -259,7 +263,7 @@ fn simulate(board: &Board, mut exec: Exec, profile: &Profile) -> Option<Board> {
     let mut board = board.clone();
     let id = board.piece_id;
     for _ in 0..MAX_PAIR_TICKS {
-        if board.state != GameState::Playing || board.piece_id != id {
+        if board.state() != GameState::Playing || board.piece_id != id {
             return Some(board);
         }
         let input = exec.next(&board, profile);
@@ -270,7 +274,7 @@ fn simulate(board: &Board, mut exec: Exec, profile: &Profile) -> Option<Board> {
 
 fn grid_of(board: &Board) -> Grid {
     let mut grid = [[0; W]; H];
-    for (r, row) in board.cells.iter().take(H).enumerate() {
+    for (r, row) in board.cells().rows().take(H).enumerate() {
         for (c, cell) in row.iter().take(W).enumerate() {
             grid[r][c] = cell.map_or(0, code);
         }
@@ -423,7 +427,7 @@ fn place(grid: &Grid, (axis, satellite): (u8, u8), p: Placement) -> Option<Grid>
         return None;
     }
     let mut grid = *grid;
-    let order = if p.rotation == 2 {
+    let order = if p.rotation == Rotation::Down {
         [(sat_col, satellite), (p.col, axis)]
     } else {
         [(p.col, axis), (sat_col, satellite)]
@@ -655,7 +659,7 @@ impl Search {
                 f32::NEG_INFINITY,
                 Placement {
                     col: SPAWN,
-                    rotation: 0,
+                    rotation: Rotation::Up,
                 },
             ),
         }
@@ -723,11 +727,11 @@ impl Cpu {
 
     pub fn input(&mut self, board: &Board, threat: u32) -> Option<InputKind> {
         debug_assert_eq!(
-            (board.width, board.height),
+            (board.width(), board.height()),
             (W, H),
             "the CPU plays the standard board only"
         );
-        let playing = board.state == GameState::Playing && board.active_piece.is_some();
+        let playing = board.state() == GameState::Playing && board.piece().is_some();
         let current = self.turn.as_ref().is_some_and(|(id, _)| *id == board.piece_id);
         if self.soft_drop_held && !(playing && current) {
             self.soft_drop_held = false;
@@ -770,6 +774,8 @@ fn urgent(board: &Board, threat: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use shared::Rules;
+
     use super::*;
 
     fn random_grid(rng: &mut Noise, colours: u32, fill: f32) -> Grid {
@@ -790,10 +796,10 @@ mod tests {
     }
 
     fn board_with(grid: &Grid) -> Board {
-        let mut board = Board::new(W, H, 1, 1, 5);
+        let mut board = Board::new(1, &Rules::default());
         for (r, row) in grid.iter().enumerate() {
             for (c, cell) in row.iter().enumerate() {
-                board.cells[r][c] = match cell {
+                board.cells_mut()[(r, c)] = match cell {
                     0 => None,
                     1 => Some(PuyoType::Red),
                     2 => Some(PuyoType::Blue),
@@ -832,7 +838,7 @@ mod tests {
     }
 
     fn started(seed: u64) -> Board {
-        let mut board = Board::new(W, H, seed, 1, 5);
+        let mut board = Board::new(seed, &Rules::default());
         board.spawn_piece();
         board
     }
@@ -862,7 +868,7 @@ mod tests {
             let mut expected: Option<(u32, Grid)> = None;
             let mut checked = 0;
             for _ in 0..30 * 60 {
-                if board.state == GameState::GameOver {
+                if board.state() == GameState::GameOver {
                     break;
                 }
                 let before = board.clone();
@@ -879,7 +885,7 @@ mod tests {
                 }
                 board.step(input, 0);
                 if let Some((id, grid)) = expected {
-                    if board.state != GameState::Playing && board.piece_id == id {
+                    if board.state() != GameState::Playing && board.piece_id == id {
                         assert_eq!(grid_of(&board), grid, "{difficulty:?}, pair {id}");
                         expected = None;
                         checked += 1;
@@ -922,7 +928,7 @@ mod tests {
         }
         let mut board = board_with(&grid);
         board.spawn_piece();
-        let piece = board.active_piece.as_mut().unwrap();
+        let piece = board.piece_mut().unwrap();
         (piece.axis_type, piece.sat_type) = (PuyoType::Red, PuyoType::Red);
         board.next_types = (PuyoType::Yellow, PuyoType::Green);
         board.next_next_types = (PuyoType::Purple, PuyoType::Yellow);
@@ -933,7 +939,7 @@ mod tests {
             if board.chain_count >= 2 {
                 return true;
             }
-            if board.piece_id != id && board.state == GameState::Playing {
+            if board.piece_id != id && board.state() == GameState::Playing {
                 return false;
             }
         }
@@ -1005,7 +1011,7 @@ mod tests {
             }
             sent.push(total);
         }
-        assert!(sent[0] < sent[1] && sent[1] < sent[2], "nuisance sent: {sent:?}");
+        assert!(sent.is_sorted_by(|a, b| a < b), "nuisance sent: {sent:?}");
     }
 
     struct Run {
@@ -1036,14 +1042,14 @@ mod tests {
         };
         let mut last = (board.piece_id, 0);
         for _ in 0..ticks {
-            if board.state == GameState::GameOver {
+            if board.state() == GameState::GameOver {
                 run.alive = false;
                 break;
             }
             let input = cpu.input(&board, 0);
-            let cleared = board.last_was_all_clear;
-            run.sent += board.step(input, 0);
-            run.all_clears += u32::from(!cleared && board.last_was_all_clear);
+            let events = board.step(input, 0);
+            run.sent += events.sent;
+            run.all_clears += u32::from(events.all_clear);
             run.ticks += 1;
             if board.piece_id != last.0 {
                 if last.1 > 0 {
@@ -1080,14 +1086,14 @@ mod tests {
                 in_flight.retain(|&(to, at, _)| to != i || at > tick);
                 let travelling: u32 = in_flight.iter().filter(|g| g.0 == i).map(|g| g.2).sum();
                 let input = cpus[i].input(&boards[i], boards[i].pending_garbage + landed + travelling);
-                sent[i] = boards[i].step(input, landed);
+                sent[i] = boards[i].step(input, landed).sent;
             }
             for (i, amount) in sent.into_iter().enumerate() {
                 if amount > 0 {
                     in_flight.push((1 - i, tick + config::GARBAGE_TRAVEL_TICKS, amount));
                 }
             }
-            let lost = [0, 1].map(|i| boards[i].state == GameState::GameOver);
+            let lost = [0, 1].map(|i| boards[i].state() == GameState::GameOver);
             if lost[0] || lost[1] {
                 return (usize::from(lost[0] && !lost[1]), tick);
             }
@@ -1169,6 +1175,7 @@ mod tests {
             [Difficulty::Easy, Difficulty::Easy],
             [Difficulty::Easy, Difficulty::Normal],
             [Difficulty::Normal, Difficulty::Hard],
+            [Difficulty::Hard, Difficulty::Pro],
         ] {
             let (mut wins, mut ticks) = ([0; 2], 0);
             let games = 60;

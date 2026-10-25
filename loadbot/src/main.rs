@@ -18,13 +18,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use shared::{ClientMessage, InputKind, RoomId, ServerMessage};
+use shared::{ClientMessage, InputKind, RoomId, RoomSetting, ServerMessage};
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::Message;
 
-const SEATS: u8 = 6;
 const INPUT_LEAD: u32 = 6;
 const STALL: Duration = Duration::from_millis(100);
 
@@ -211,7 +210,10 @@ impl Bot {
                             if !raised {
                                 raised = true;
                                 for _ in 2..self.players {
-                                    Self::send(ws, &ClientMessage::SetRoomSetting { index: SEATS, dir: 1 }).await?;
+                                    Self::send(ws, &ClientMessage::SetRoomSetting {
+                                            setting: RoomSetting::MaxPlayers,
+                                            dir: 1,
+                                        }).await?;
                                 }
                             }
                             if usize::from(info.settings.max_players) >= self.players {

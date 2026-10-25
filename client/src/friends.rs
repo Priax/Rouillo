@@ -6,8 +6,8 @@ use notan::prelude::*;
 
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
 use crate::ui::{
-    self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Pager, Pill, Rect,
-    SharpText, Size, Status, TextInput, Ui, View,
+    self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Icon, Label, Pager,
+    Pill, Rect, SharpText, Size, Status, TextInput, Ui, View,
 };
 use crate::{http, theme};
 
@@ -558,7 +558,11 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
         draw_lists(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
 
         state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
-        let label = if f.list_slot.is_some() { "..." } else { "Rafraîchir" };
+        let label = if f.list_slot.is_some() {
+            Label::from(Icon::Busy)
+        } else {
+            Label::from("Rafraîchir")
+        };
         state
             .ui
             .button_enabled(&mut draw, &state.fonts, refresh_btn(view), label, can_refresh(f));
@@ -586,7 +590,11 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, 
         draw,
         fonts,
         search_submit_btn(view),
-        if searching { "..." } else { "Rechercher" },
+        if searching {
+            Label::from(Icon::Busy)
+        } else {
+            Label::from("Rechercher")
+        },
         !searching,
     );
 

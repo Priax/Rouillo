@@ -22,6 +22,12 @@ const ICON_THICKNESS: f32 = 0.09;
 pub enum Icon {
     Minus,
     Plus,
+    Previous,
+    Next,
+    Play,
+    Pause,
+    /// Dots that pulse in turn, while something is on its way.
+    Busy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +54,11 @@ impl<'a> Label<'a> {
             Self::Text(text) => text,
             Self::Icon(Icon::Minus) => "icon:minus",
             Self::Icon(Icon::Plus) => "icon:plus",
+            Self::Icon(Icon::Previous) => "icon:previous",
+            Self::Icon(Icon::Next) => "icon:next",
+            Self::Icon(Icon::Play) => "icon:play",
+            Self::Icon(Icon::Pause) => "icon:pause",
+            Self::Icon(Icon::Busy) => "icon:busy",
         }
     }
 }
@@ -70,11 +81,20 @@ impl Ui {
         if r.entered {
             crate::audio::play_ui_hover();
         }
-        paint(draw, &self.palette(), fonts, rect, label, r, enabled);
+        let time = self.time() as f32;
+        paint(draw, &self.palette(), fonts, rect, (label, time), r, enabled);
     }
 }
 
-fn paint(draw: &mut Draw, pal: &Palette, fonts: &Fonts, b: Rect, label: Label, r: Response, enabled: bool) {
+fn paint(
+    draw: &mut Draw,
+    pal: &Palette,
+    fonts: &Fonts,
+    b: Rect,
+    (label, time): (Label, f32),
+    r: Response,
+    enabled: bool,
+) {
     let center = vec2(b.x + b.w / 2.0, b.y + b.h / 2.0);
     let scale = 1.0 + HOVER_GROW * r.hover - PRESS_SHRINK * r.press;
     draw.transform()
@@ -133,21 +153,54 @@ fn paint(draw: &mut Draw, pal: &Palette, fonts: &Fonts, b: Rect, label: Label, r
                 .v_align_middle()
                 .color(text);
         }
-        Label::Icon(icon) => paint_icon(draw, icon, center.x, center.y, b.h.min(b.w), text),
+        Label::Icon(icon) => paint_icon(draw, icon, (center.x, center.y), b.h.min(b.w), text, time),
     }
 
     draw.transform().pop();
 }
 
-fn paint_icon(draw: &mut Draw, icon: Icon, cx: f32, cy: f32, size: f32, color: Color) {
+fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, color: Color, time: f32) {
     let (long, thick) = (size * ICON_LENGTH, size * ICON_THICKNESS);
-    let bar = |draw: &mut Draw, w: f32, h: f32| {
-        draw.rect((cx - w / 2.0, cy - h / 2.0), (w, h))
+    let bar = |draw: &mut Draw, x: f32, w: f32, h: f32| {
+        draw.rect((x - w / 2.0, cy - h / 2.0), (w, h))
             .corner_radius(thick / 2.0)
             .color(color);
     };
-    bar(draw, long, thick);
-    if icon == Icon::Plus {
-        bar(draw, thick, long);
+    let half = long / 2.0;
+    match icon {
+        Icon::Minus => bar(draw, cx, long, thick),
+        Icon::Plus => {
+            bar(draw, cx, long, thick);
+            bar(draw, cx, thick, long);
+        }
+        Icon::Previous | Icon::Next => {
+            let tip = if icon == Icon::Next { half / 2.0 } else { -half / 2.0 };
+            draw.path()
+                .move_to(cx - tip, cy - half)
+                .line_to(cx + tip, cy)
+                .line_to(cx - tip, cy + half)
+                .stroke(thick)
+                .round_cap()
+                .round_join()
+                .color(color);
+        }
+        Icon::Play => {
+            let left = cx - half * 0.7;
+            draw.triangle((left, cy - half), (left, cy + half), (cx + half, cy))
+                .color(color);
+        }
+        Icon::Pause => {
+            bar(draw, cx - half * 0.45, thick * 1.4, long);
+            bar(draw, cx + half * 0.45, thick * 1.4, long);
+        }
+        Icon::Busy => {
+            for i in 0..3u8 {
+                let phase = time * 5.0 - f32::from(i) * 0.9;
+                let alpha = 0.3 + 0.7 * (0.5 + 0.5 * phase.sin());
+                draw.circle(size * 0.07)
+                    .position(cx + (f32::from(i) - 1.0) * size * 0.2, cy)
+                    .color(color.with_alpha(color.a * alpha));
+            }
+        }
     }
 }

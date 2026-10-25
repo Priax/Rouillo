@@ -59,7 +59,7 @@ pub(super) fn ranked_pair(mgr: &mut Manager) -> (RoomId, mpsc::Receiver<Vec<u8>>
 }
 
 pub(super) fn lose(mgr: &mut Manager, id: RoomId, slot: usize) {
-    mgr.rooms.get_mut(&id).unwrap().sim.boards[slot].state = GameState::GameOver;
+    mgr.rooms.get_mut(&id).unwrap().sim.boards[slot].lose();
     mgr.tick(STEP, false);
 }
 
@@ -235,7 +235,7 @@ fn an_account_cannot_queue_twice() {
 fn casual_games_leave_elo_alone() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
-    sim_of(&mut mgr).boards[1].state = GameState::GameOver;
+    sim_of(&mut mgr).boards[1].lose();
     mgr.tick(STEP, false);
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
@@ -279,7 +279,7 @@ async fn a_ranked_draw_scores_nobody_and_is_replayed() {
     let mut mgr = new_mgr();
     let (id, _rx1, _rx2) = ranked_pair(&mut mgr);
     for board in &mut mgr.rooms.get_mut(&id).unwrap().sim.boards {
-        board.state = GameState::GameOver;
+        board.lose();
     }
     mgr.tick(STEP, false);
     assert_eq!(mgr.rooms[&id].series.as_ref().unwrap().wins, [0, 0]);
@@ -313,7 +313,7 @@ fn a_casual_game_where_both_top_out_together_is_a_draw() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
     for board in &mut sim_of(&mut mgr).boards {
-        board.state = GameState::GameOver;
+        board.lose();
     }
     mgr.tick(STEP, false);
     let recs = mgr.take_unsaved_matches();

@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
-use shared::{ClientMessage, LobbyInfo, RoomInfo, RoomSettings};
+use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSetting, RoomSettings};
 
 use crate::state::{ApiFriendsResponse, Invite, Screen, State};
 use crate::ui::{
-    self, field_clicked, list_row, text_field, Face, Field, Frame, ListCard, Modal, Pill, Rect, SettingsPanel,
-    SharpText, Size, TextInput, View, FILL, PAGER_H,
+    self, field_clicked, list_row, text_field, Face, Field, Frame, ListCard, Modal, Pill, Rect, SettingsGrid,
+    SharpText, Size, Stepper, TextInput, View, FILL, PAGER_H,
 };
 use crate::{http, theme};
 
@@ -328,8 +328,74 @@ pub fn draw_join_by_id(gfx: &mut Graphics, state: &State) {
 
 const INVITE_ROW_H: f32 = 52.0;
 
-fn lobby_panel(view: View) -> SettingsPanel {
-    SettingsPanel::new(view, RoomSettings::COUNT)
+pub fn setting_label(setting: RoomSetting) -> &'static str {
+    match setting {
+        RoomSetting::StartingLevel => "Niveau de départ",
+        RoomSetting::Colors => "Couleurs",
+        RoomSetting::Columns => "Largeur",
+        RoomSetting::Rows => "Hauteur",
+        RoomSetting::FriendsOnly => "Amis seulement",
+        RoomSetting::Pause => "Pause",
+        RoomSetting::MaxPlayers => "Joueurs max",
+    }
+}
+
+pub fn setting_value(settings: &RoomSettings, setting: RoomSetting) -> String {
+    let rules = &settings.rules;
+    match setting {
+        RoomSetting::StartingLevel => match config::starting_garbage_rows(rules.starting_level) {
+            0 => rules.starting_level.to_string(),
+            1 => format!("{} (+1 ligne)", rules.starting_level),
+            rows => format!("{} (+{rows} lignes)", rules.starting_level),
+        },
+        RoomSetting::Colors => rules.colors.to_string(),
+        RoomSetting::Columns => rules.columns.to_string(),
+        RoomSetting::Rows => rules.rows.to_string(),
+        RoomSetting::FriendsOnly => if settings.friends_only { "Oui" } else { "Non" }.into(),
+        RoomSetting::Pause => match settings.pause {
+            PausePolicy::Everyone => "Tous",
+            PausePolicy::HostOnly => "Hôte",
+            PausePolicy::Nobody => "Personne",
+        }
+        .into(),
+        RoomSetting::MaxPlayers => settings.max_players.to_string(),
+    }
+}
+
+/// The lobby's settings, by column: the game played, then the room.
+const LOBBY_SETTINGS: [(&str, &[RoomSetting]); 2] = [
+    (
+        "Partie",
+        &[
+            RoomSetting::StartingLevel,
+            RoomSetting::Colors,
+            RoomSetting::Columns,
+            RoomSetting::Rows,
+        ],
+    ),
+    (
+        "Room",
+        &[RoomSetting::MaxPlayers, RoomSetting::Pause, RoomSetting::FriendsOnly],
+    ),
+];
+
+fn lobby_panel(view: View) -> SettingsGrid {
+    let rows = LOBBY_SETTINGS.iter().map(|(_, s)| s.len()).max().unwrap_or(0);
+    SettingsGrid::new(view, rows)
+}
+
+/// Each setting of the lobby with its tile.
+fn lobby_tiles(view: View) -> impl Iterator<Item = (RoomSetting, Rect)> {
+    let grid = lobby_panel(view);
+    LOBBY_SETTINGS
+        .into_iter()
+        .enumerate()
+        .flat_map(move |(column, (_, settings))| {
+            settings
+                .iter()
+                .enumerate()
+                .map(move |(row, &setting)| (setting, grid.tile(column, row)))
+        })
 }
 
 fn lobby_launch(view: View) -> Rect {
@@ -516,16 +582,22 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
     room.chat.click(ui, fonts, lobby_chat(view));
 
     if info.is_host && info.countdown.is_none() {
-        for i in 0..RoomSettings::COUNT {
-            let stepper = lobby_panel(view).stepper(i);
-            let dir = if ui.clicked(stepper.minus) {
+        for (setting, tile) in lobby_tiles(view) {
+            let stepper = Stepper::in_tile(tile);
+            let dir = if setting == RoomSetting::FriendsOnly {
+                if ui.clicked(Stepper::tile_band(tile)) {
+                    1
+                } else {
+                    continue;
+                }
+            } else if ui.clicked(stepper.minus) {
                 -1
             } else if ui.clicked(stepper.plus) {
                 1
             } else {
                 continue;
             };
-            conn.send(&ClientMessage::SetRoomSetting { index: i as u8, dir });
+            conn.send(&ClientMessage::SetRoomSetting { setting, dir });
             return;
         }
     }
@@ -573,19 +645,23 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     draw_lobby_header(&mut draw, state, info);
     draw_lobby_players(&mut draw, state, info);
 
-    let panel = lobby_panel(view);
-    panel.draw(&mut draw, &pal, fonts, "Réglages de la room");
+    lobby_panel(view).draw(
+        &mut draw,
+        &pal,
+        fonts,
+        "Réglages de la room",
+        LOBBY_SETTINGS.map(|(section, _)| section),
+    );
     let editable = info.is_host && info.countdown.is_none();
-    for i in 0..RoomSettings::COUNT {
-        let value = info.settings.value(i);
-        state.ui.stepper(
-            &mut draw,
-            fonts,
-            panel.stepper(i),
-            RoomSettings::label(i),
-            &value,
-            editable,
-        );
+    for (setting, tile) in lobby_tiles(view) {
+        let label = setting_label(setting);
+        if setting == RoomSetting::FriendsOnly {
+            let on = info.settings.friends_only;
+            state.ui.switch_tile(&mut draw, fonts, tile, label, on, editable);
+        } else {
+            let value = setting_value(&info.settings, setting);
+            state.ui.stepper_tile(&mut draw, fonts, tile, label, &value, editable);
+        }
     }
 
     let (label, color, enabled) = launch_bar(info, state.maintenance);

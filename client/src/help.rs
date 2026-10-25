@@ -5,7 +5,7 @@ use crate::controls::{Action, Bindings};
 use crate::demo::Demo;
 use crate::pads::Pad;
 use crate::state::{Screen, State};
-use crate::ui::{self, Face, Fonts, Frame, Rect, SharpText, Size, Ui, View, FILL};
+use crate::ui::{self, Face, Fonts, Frame, Icon, Rect, SharpText, Size, Ui, View, FILL};
 use crate::{draw as game_draw, theme};
 
 const RULES: [(&str, &str); 7] = [
@@ -253,8 +253,8 @@ fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, t
     };
     game_draw::draw_demo(draw, fonts, demo, board, time);
     let [previous, next] = lesson_arrows(card);
-    ui.button(draw, fonts, previous, "<");
-    ui.button(draw, fonts, next, ">");
+    ui.button(draw, fonts, previous, Icon::Previous);
+    ui.button(draw, fonts, next, Icon::Next);
     if let Some((key, left)) = demo.key {
         draw.sharp_text(&fonts.display, key)
             .position(card.x + card.w / 2.0, board.y + board.h + 24.0)

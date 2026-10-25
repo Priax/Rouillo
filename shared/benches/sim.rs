@@ -1,14 +1,14 @@
-// Run with:  cargo bench -p shared
+// Run with:  cargo bench -p shared --features test-support
 // HTML report lands in target/criterion/.
 
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use shared::config::{GRID_HEIGHT, GRID_WIDTH};
-use shared::{decode, encode, Board, PlayerUpdate, PuyoType, ServerMessage};
+use shared::{decode, encode, Board, PlayerUpdate, PuyoType, Rules, ServerMessage};
 
 fn empty_board() -> Board {
-    let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 1, 5);
+    let mut b = Board::new(1, &Rules::default());
     b.spawn_piece();
     b
 }
@@ -21,11 +21,11 @@ fn full_board() -> Board {
         PuyoType::Green,
         PuyoType::Purple,
     ];
-    let mut b = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 1, 5);
+    let mut b = Board::new(1, &Rules::default());
     b.spawn_piece();
     for r in 0..GRID_HEIGHT {
         for c in 0..GRID_WIDTH {
-            b.cells[r][c] = Some(palette[(r + c) % palette.len()]);
+            b.cells_mut()[(r, c)] = Some(palette[(r + c) % palette.len()]);
         }
     }
     b
@@ -85,11 +85,9 @@ fn bench_simulation(c: &mut Criterion) {
     c.bench_function("check_matches_full_board", |b| {
         b.iter_batched(
             || {
-                let mut board = Board::new(GRID_WIDTH, GRID_HEIGHT, 1, 1, 5);
-                for row in &mut board.cells {
-                    for cell in row.iter_mut() {
-                        *cell = Some(PuyoType::Red);
-                    }
+                let mut board = Board::new(1, &Rules::default());
+                for row in board.cells_mut().rows_mut() {
+                    row.fill(Some(PuyoType::Red));
                 }
                 board
             },

@@ -25,7 +25,7 @@ pub(super) fn friends_only_room(mgr: &mut Manager) -> (mpsc::Receiver<Vec<u8>>, 
     });
     mgr.handle(Command::SetSetting {
         conn: 1,
-        index: 4,
+        setting: RoomSetting::FriendsOnly,
         dir: 1,
     });
     assert!(mgr.rooms[&1].settings.friends_only, "setup");

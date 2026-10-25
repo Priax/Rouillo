@@ -340,10 +340,10 @@ fn a_second_tab_takes_the_seat_and_tells_the_first() {
     assert_eq!(mgr.room_of(2), None, "the first tab left the room");
     assert_eq!(mgr.room_of(3), Some(1));
 
-    let before = mgr.rooms[&1].sim.boards[1].active_piece.clone().map(|p| p.col);
+    let before = mgr.rooms[&1].sim.boards[1].piece().copied().map(|p| p.col);
     super::game::press(&mut mgr, 2, 1, 1);
     mgr.tick(0.1, false);
-    let after = mgr.rooms[&1].sim.boards[1].active_piece.clone().map(|p| p.col);
+    let after = mgr.rooms[&1].sim.boards[1].piece().copied().map(|p| p.col);
     assert_eq!(before, after, "the first tab no longer plays");
 
     mgr.handle(Command::Unregister { conn: 2 });

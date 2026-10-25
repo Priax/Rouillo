@@ -1,7 +1,7 @@
 use notan::draw::{Draw, DrawShapes};
 use notan::math::{vec2, Mat3};
 use notan::prelude::*;
-use shared::{Board, GameState, PuyoType, Settle, Targeting};
+use shared::{Board, GameState, Phase, PuyoType, Targeting};
 
 use crate::config;
 use crate::sprites::{self, Joint, Layer, Mood, Nuisance, Puyo};
@@ -68,8 +68,8 @@ struct GameLayout {
 
 fn natural_size(board: &Board) -> (f32, f32) {
     (
-        board.width as f32 * config::CELL_SIZE,
-        (board.height - config::VISIBLE_ROW_OFFSET) as f32 * config::CELL_SIZE,
+        board.width() as f32 * config::CELL_SIZE,
+        (board.height() - config::VISIBLE_ROW_OFFSET) as f32 * config::CELL_SIZE,
     )
 }
 
@@ -224,7 +224,7 @@ impl Hud {
     const fn series(self) -> Option<SeriesView> {
         match self {
             Self::Online(role) => role.series,
-            Self::Solo { .. } => None,
+            Self::Solo { .. } | Self::Replay => None,
         }
     }
 }
@@ -232,14 +232,20 @@ impl Hud {
 #[derive(Clone, Copy)]
 pub enum Hud {
     Online(Role),
-    Solo { versus: bool, best: i32, new_best: bool },
+    Solo {
+        versus: bool,
+        best: u32,
+        new_best: bool,
+    },
+    /// A finished game played again.
+    Replay,
 }
 
 impl Hud {
     /// The name of a rival without one.
     const fn rival_name(self) -> &'static str {
         match self {
-            Self::Online(_) => "OPPONENT",
+            Self::Online(_) | Self::Replay => "OPPONENT",
             Self::Solo { .. } => "CPU",
         }
     }
@@ -247,7 +253,7 @@ impl Hud {
     const fn deciding(self, session: &GameSession) -> &Board {
         match self {
             Self::Online(_) => &session.board,
-            Self::Solo { .. } => &session.predicted_board,
+            Self::Solo { .. } | Self::Replay => &session.predicted_board,
         }
     }
 }
@@ -278,7 +284,7 @@ impl Overlay {
                 draw: false,
             });
         }
-        let me_out = me.state == GameState::GameOver;
+        let me_out = me.state() == GameState::GameOver;
         if let Some(alive) = session.outcome(me_out) {
             if session.spectating() {
                 return Some(Self::Watched(alive.first().map(|&team| winner(session, team))));
@@ -290,7 +296,7 @@ impl Overlay {
         }
         if session.opponent_disconnected {
             Some(Self::OpponentGone)
-        } else if me.state == GameState::Paused {
+        } else if me.state() == GameState::Paused {
             Some(Self::Paused)
         } else if session.quit_menu {
             Some(Self::QuitMenu)
@@ -701,7 +707,7 @@ fn draw_header(draw: &mut Draw, fonts: &Fonts, header: Header, board: &Board, ar
         .corner_radius(tray.h / 2.0)
         .stroke(2.0)
         .color(game::FRAME_INNER);
-    let icons = Nuisance::tray(nuisance, board.width);
+    let icons = Nuisance::tray(nuisance, board.width());
     let cy = tray.y + tray.h / 2.0;
     let tint = game::nuisance(nuisance);
     let flash = if board.pending_garbage > 0 {
@@ -762,10 +768,13 @@ fn draw_sidebar(
 }
 
 fn draw_lock_meter(draw: &mut Draw, me: &Board, area: Rect) {
-    if me.state != GameState::Playing || me.active_piece.is_none() || me.can_fall() {
+    let Some(pair) = me.pair() else {
+        return;
+    };
+    if me.state() != GameState::Playing || me.can_fall() {
         return;
     }
-    let used = me.ground_frames as f32 / config::GRACE_FRAMES as f32;
+    let used = pair.ground_frames() as f32 / config::GRACE_FRAMES as f32;
     let ratio = (1.0 - used).max(0.0);
     let color = if used > 0.75 { theme::DANGER } else { theme::WARNING };
     draw.rect((area.x, area.y + area.h + 3.0), (area.w * ratio, 4.0))
@@ -839,9 +848,7 @@ fn draw_overlay(
     }
     match overlay {
         Overlay::Watched(winner) => {
-            let title = winner
-                .as_ref()
-                .map_or_else(|| "DRAW".to_owned(), |w| format!("{w} WINS"));
+            let title = winner.clone().unwrap_or_else(|| "DRAW".to_owned());
             let title = fonts.fit(Face::Display, &title, theme::size::HERO, layout.win_w - 80.0);
             centered(draw, &title, cy - 20.0, theme::size::HERO, theme::GOLD);
         }
@@ -880,7 +887,7 @@ fn draw_overlay(
             let blink = 0.2 + (elapsed * 2.0).sin().abs() * 0.8;
             let can_resume = match hud {
                 Hud::Online(role) => role.can_pause,
-                Hud::Solo { .. } => true,
+                Hud::Solo { .. } | Hud::Replay => true,
             };
             let hint = if can_resume {
                 "Press ESC to continue"
@@ -901,7 +908,10 @@ fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32)
     let board = |label: &str, b: &Board| {
         format!(
             "{label} state={:?} pid={} pend_garb={} nuis={}",
-            b.state, b.piece_id, b.pending_garbage, b.nuisance_points
+            b.state(),
+            b.piece_id,
+            b.pending_garbage,
+            b.nuisance_points
         )
     };
     let lines = [
@@ -964,6 +974,7 @@ fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, fonts: &Fonts, hud: Hud, forfeits
             (leave, "", false)
         }
         Hud::Solo { .. } => ("Quitter", "Recommencer", true),
+        Hud::Replay => ("Quitter", "Revoir", true),
         Hud::Online(role) if forfeits => ("Abandonner (défaite)", "Lobby (défaite)", role.is_host),
         Hud::Online(role) => ("Quitter la room", "Retour au lobby", role.is_host),
     };
@@ -1015,8 +1026,8 @@ fn draw_well(draw: &mut Draw, area: Rect, board: &Board, danger: bool, time: f32
         .color(game::WELL);
 
     let cell = config::CELL_SIZE;
-    let cols = board.width;
-    let rows = board.height - config::VISIBLE_ROW_OFFSET;
+    let cols = board.width();
+    let rows = board.height() - config::VISIBLE_ROW_OFFSET;
     for c in (1..cols).step_by(2) {
         draw.rect((area.x + c as f32 * cell, area.y), (cell, area.h))
             .color(game::WELL_LANE);
@@ -1052,35 +1063,35 @@ struct Cell {
 /// `peek` shows the hidden row above the well, faded.
 fn draw_board(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, peek: bool, time: f32) {
     let hidden = config::VISIBLE_ROW_OFFSET;
-    let danger = (hidden..hidden + 3).any(|r| board.cells[r][board.spawn_col()].is_some());
+    let danger = (hidden..hidden + 3).any(|r| board.cells()[(r, board.spawn_col())].is_some());
     draw_well(draw, area, board, danger, time);
     let top = if peek { -(hidden as f32) - 0.5 } else { -0.5 };
 
     let cell = config::CELL_SIZE;
     let center = |row: f32, col: f32| (area.x + (col + 0.5) * cell, area.y + (row + 0.5) * cell);
-    let fall_frame = match board.settle {
-        Settle::Falling { frame, .. } => Some(frame),
+    let falling = match board.phase() {
+        Phase::Falling(fall) => Some(fall),
         _ => None,
     };
-    let pop_frame = match board.settle {
-        Settle::Popping { frame } => Some(frame),
+    let popping = match board.phase() {
+        Phase::Popping { frame, cells } => Some((*frame, cells.as_slice())),
         _ => None,
     };
 
     let mut cells = Vec::new();
-    for r in 0..board.height {
-        for c in 0..board.width {
-            let Some(kind) = board.cells[r][c] else {
+    for r in 0..board.height() {
+        for c in 0..board.width() {
+            let Some(kind) = board.cells()[(r, c)] else {
                 continue;
             };
             let mut row = r as f32 - hidden as f32;
             let mut squash = 0.0;
             let mut settled = true;
-            if let Some(frame) = fall_frame {
-                if let Some(f) = board.falls.iter().find(|f| f.row as usize == r && f.col as usize == c) {
-                    let height = f.height_at(frame);
+            if let Some(fall) = falling {
+                if let Some(f) = fall.cells.iter().find(|f| f.row as usize == r && f.col as usize == c) {
+                    let height = fall.height(f);
                     row -= height;
-                    let bounce = f.bounce_at(frame);
+                    let bounce = fall.bounce(f);
                     settled = height <= 0.0 && bounce.is_none();
                     squash = (bounce.unwrap_or(0.0) * std::f32::consts::PI).sin() * 0.22;
                 }
@@ -1094,8 +1105,8 @@ fn draw_board(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, peek: bo
             }
             puyo.squash = squash;
             puyo.mood = blink(time, r, c);
-            if let Some(frame) = pop_frame {
-                if board.popping.contains(&(r as u8, c as u8)) {
+            if let Some((frame, popping)) = popping {
+                if popping.contains(&(r as u8, c as u8)) {
                     pop_look(&mut puyo, frame);
                 }
             }
@@ -1108,20 +1119,20 @@ fn draw_board(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, peek: bo
         }
     }
 
-    let mut at = vec![None; board.height * board.width];
+    let mut at = vec![None; board.height() * board.width()];
     for (i, c) in cells.iter().enumerate() {
-        at[c.row * board.width + c.col] = Some(i);
+        at[c.row * board.width() + c.col] = Some(i);
     }
     let mut bridges = Vec::new();
     for a in &cells {
         let neighbours = [
             (
                 Joint::Right,
-                (a.col + 1 < board.width).then(|| a.row * board.width + a.col + 1),
+                (a.col + 1 < board.width()).then(|| a.row * board.width() + a.col + 1),
             ),
             (
                 Joint::Down,
-                (a.row + 1 < board.height).then(|| (a.row + 1) * board.width + a.col),
+                (a.row + 1 < board.height()).then(|| (a.row + 1) * board.width() + a.col),
             ),
         ];
         for (joint, index) in neighbours {
@@ -1148,22 +1159,21 @@ fn draw_board(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, peek: bo
         sprites::face(draw, &c.puyo);
     }
 
-    if board.state != GameState::Playing && board.state != GameState::Paused {
+    if board.state() != GameState::Playing && board.state() != GameState::Paused {
         return;
     }
-    if let Some(ghost) = board.get_ghost_piece() {
-        for (i, &(r, c)) in ghost.get_positions().iter().enumerate() {
-            if (!peek && r < hidden as i32) || board.cells[r as usize][c as usize].is_some() {
+    if let Some(ghost) = board.ghost_piece() {
+        for ((r, c), kind) in ghost.puyos() {
+            if (!peek && r < hidden as i32) || board.cells()[(r as usize, c as usize)].is_some() {
                 continue;
             }
-            let kind = if i == 0 { ghost.axis_type } else { ghost.sat_type };
             let at = center(r as f32 - hidden as f32, c as f32 + piece.offset.1);
             draw.circle(RADIUS * 0.32)
                 .position(at.0, at.1)
                 .color(game::puyo(kind).with_alpha(0.6));
         }
     }
-    if let Some(ref active) = board.active_piece {
+    if let Some(active) = board.piece() {
         let axis_r = active.row as f32 - hidden as f32 + piece.offset.0;
         let axis_c = active.col as f32 + piece.offset.1;
         let (sr, sc) = piece.satellite;

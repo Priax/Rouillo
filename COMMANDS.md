@@ -123,7 +123,7 @@ chaque room la crée, l'agrandit, lance la partie et la relance quand elle se te
   `X-Forwarded-For`, que le serveur ne croit que d'un pair en loopback. Contre la VM, passer
   par un tunnel SSH vers son port local, pas par Caddy:
   `ssh -L 8080:127.0.0.1:8080 vm` puis `--url ws://127.0.0.1:8080/ws`.
-- Plus de 16 joueurs par room: monter `MAX_ROOM_PLAYERS` (`shared/src/lib.rs`) dans un build
+- Plus de 16 joueurs par room: monter `MAX_ROOM_PLAYERS` (`shared/src/room.rs`) dans un build
   local, pour le serveur comme pour les bots.
 - Mesurer avec les bots sur une autre machine que le serveur, sinon ils se partagent le CPU.
   CPU du serveur: `top -H -p $(pgrep -x server)` (par thread: le manager est le plus chargé).

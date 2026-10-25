@@ -31,6 +31,7 @@ rayon = "1"
 time = "0.3"
 
 [dev-dependencies]
+shared = { path = "../shared", features = ["test-support"] }
 url = "2"
 tokio-tungstenite = "0.30"
 tower = { version = "0.5", features = ["util"] }

@@ -110,10 +110,23 @@ impl EditKeys {
         self.redo = typed.redo;
     }
 
+    /// A character from the keyboard: with Ctrl held, a letter is a
+    /// shortcut, taken here; anything else is typed text. Pasted text never
+    /// comes through here, though Ctrl is held while it arrives.
     #[cfg(not(target_arch = "wasm32"))]
-    /// A letter typed with Ctrl held: the letter follows the keyboard layout,
-    /// where key codes are positions.
-    pub fn shortcut(&mut self, letter: char) {
+    pub fn key_char(&mut self, c: char) -> Option<char> {
+        match ctrl_letter(c).filter(|_| self.ctrl) {
+            Some(letter) => {
+                self.shortcut(letter);
+                None
+            }
+            None => Some(c),
+        }
+    }
+
+    /// The letter follows the keyboard layout, where key codes are positions.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn shortcut(&mut self, letter: char) {
         match letter.to_ascii_lowercase() {
             'a' => self.typed.select_all = true,
             'c' => self.typed.copy = true,
@@ -131,7 +144,7 @@ impl EditKeys {
 /// The letter of a key typed with Ctrl held. Most systems send it as a
 /// control character (Ctrl+A as 1), others as the letter itself; anything
 /// else, such as AltGr characters on Windows, is typed text.
-pub fn ctrl_letter(c: char) -> Option<char> {
+fn ctrl_letter(c: char) -> Option<char> {
     match c {
         '\u{1}'..='\u{1a}' => char::from_u32(c as u32 - 1 + 'a' as u32),
         c if c.is_ascii_alphabetic() => Some(c),
@@ -168,6 +181,20 @@ mod tests {
         assert_eq!(ctrl_letter('V'), Some('V'));
         assert_eq!(ctrl_letter('@'), None, "AltGr on Windows holds Ctrl too");
         assert_eq!(ctrl_letter('\u{7f}'), None);
+    }
+
+    #[test]
+    fn with_ctrl_held_letters_are_shortcuts_and_the_rest_is_typed() {
+        let mut keys = EditKeys {
+            ctrl: true,
+            ..EditKeys::default()
+        };
+        assert_eq!(keys.key_char('\u{16}'), None, "Ctrl+V as a control character");
+        assert_eq!(keys.key_char('a'), None, "Ctrl+A as the letter");
+        assert!(keys.typed.paste && keys.typed.select_all);
+        assert_eq!(keys.key_char('@'), Some('@'), "AltGr holds Ctrl on Windows");
+        keys.ctrl = false;
+        assert_eq!(keys.key_char('v'), Some('v'));
     }
 
     #[test]

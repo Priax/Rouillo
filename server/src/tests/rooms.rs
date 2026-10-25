@@ -258,7 +258,7 @@ pub(super) fn set_pause_policy(mgr: &mut Manager, policy: PausePolicy) {
         }
         mgr.handle(Command::SetSetting {
             conn: 1,
-            index: 5,
+            setting: RoomSetting::Pause,
             dir: 1,
         });
     }
@@ -309,7 +309,7 @@ fn pause_policy_is_host_and_lobby_only() {
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
     mgr.handle(Command::SetSetting {
         conn: 2,
-        index: 5,
+        setting: RoomSetting::Pause,
         dir: 1,
     });
     assert_eq!(
@@ -322,7 +322,7 @@ fn pause_policy_is_host_and_lobby_only() {
     mgr.tick(3.5, false);
     mgr.handle(Command::SetSetting {
         conn: 1,
-        index: 5,
+        setting: RoomSetting::Pause,
         dir: 1,
     });
     assert_eq!(mgr.rooms[&1].settings.pause, PausePolicy::Everyone, "not mid-game");
@@ -332,13 +332,17 @@ fn pause_policy_is_host_and_lobby_only() {
 fn the_host_sets_the_board_size_the_match_is_played_on() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
-    for (index, dir) in [(2, 1), (2, 1), (3, -1)] {
-        mgr.handle(Command::SetSetting { conn: 1, index, dir });
+    for (setting, dir) in [
+        (RoomSetting::Columns, 1),
+        (RoomSetting::Columns, 1),
+        (RoomSetting::Rows, -1),
+    ] {
+        mgr.handle(Command::SetSetting { conn: 1, setting, dir });
     }
     mgr.handle(Command::ToggleCountdown { conn: 1 });
     mgr.tick(3.5, false);
     let board = &mgr.rooms[&1].sim.boards[0];
-    assert_eq!((board.width, board.height), (8, 12));
+    assert_eq!((board.width(), board.height()), (8, 12));
 }
 
 #[test]
@@ -390,7 +394,7 @@ fn big_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<Ve
     for _ in 2..max {
         mgr.handle(Command::SetSetting {
             conn: 1,
-            index: 6,
+            setting: RoomSetting::MaxPlayers,
             dir: 1,
         });
     }
@@ -459,7 +463,7 @@ fn the_seats_never_drop_below_who_is_seated() {
     for _ in 0..5 {
         mgr.handle(Command::SetSetting {
             conn: 1,
-            index: 6,
+            setting: RoomSetting::MaxPlayers,
             dir: -1,
         });
     }
@@ -759,8 +763,8 @@ fn the_thumbnails_of_a_big_room_are_packed_into_datagrams_that_fit() {
     ];
     let mut noise = 7u32;
     for board in &mut sim_of(&mut mgr).boards {
-        let h = board.height;
-        for cell in board.cells[h - 10..].iter_mut().flatten() {
+        let h = board.height();
+        for cell in board.cells_mut().rows_mut().skip(h - 10).flatten() {
             noise = noise.wrapping_mul(1_103_515_245).wrapping_add(12_345);
             *cell = Some(colours[(noise >> 16) as usize % colours.len()]);
         }

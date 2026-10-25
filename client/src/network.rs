@@ -1,4 +1,4 @@
-use shared::{config, Board, ClientMessage, IncomingGarbage, PlayerUpdate, ServerMessage, StampedInput, Thumb};
+use shared::{config, Board, ClientMessage, IncomingGarbage, PlayerUpdate, Rules, ServerMessage, StampedInput, Thumb};
 
 use crate::connection::ConnEvent;
 use crate::state::{GameSession, Rival, Room, Screen, State};
@@ -98,7 +98,7 @@ pub struct Update {
 }
 
 pub fn reconcile(session: &mut GameSession, update: Update) {
-    let prev_piece = session.predicted_board.active_piece.clone();
+    let prev_piece = session.predicted_board.piece().copied();
     let prev_piece_id = session.predicted_board.piece_id;
     let nuisance_before = session.my_nuisance();
 
@@ -126,7 +126,7 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
         .replay(update.tick, session.local_tick, &pending, &session.incoming);
 
     if predicted.piece_id == prev_piece_id {
-        if let (Some(prev), Some(cur)) = (&prev_piece, predicted.active_piece.as_ref()) {
+        if let (Some(prev), Some(cur)) = (&prev_piece, predicted.piece()) {
             let off = &mut session.piece_visual_offset;
             off.0 = (off.0 + (prev.row - cur.row) as f32).clamp(-3.0, 3.0);
             off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
@@ -184,13 +184,13 @@ fn apply_thumbs(session: &mut GameSession, game: u32, tick: u32, thumbs: Vec<Thu
         if t.slot == session.focus {
             continue;
         }
-        let new = || Board::new(usize::from(t.width), usize::from(t.height), 0, 1, 5);
-        let rival = rival_of(session, t.slot, t.team, new);
+        let rival = rival_of(session, t.slot, t.team, || Board::new(0, &Rules::default()));
         rival.team = t.team;
         rival.target = t.target;
         rival.incoming = std::mem::take(&mut t.incoming);
-        t.apply_to(&mut rival.board);
-        rival.view.push(tick, rival.board.clone(), now);
+        if t.apply_to(&mut rival.board) {
+            rival.view.push(tick, rival.board.clone(), now);
+        }
     }
 }
 
@@ -198,6 +198,9 @@ fn apply_thumbs(session: &mut GameSession, game: u32, tick: u32, thumbs: Vec<Thu
 /// reconciled with the predicted inputs, the others are smoothed.
 fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<PlayerUpdate>) {
     if game != session.game || session.applied.is_some_and(|t| tick < t) {
+        return;
+    }
+    if players.iter().any(|p| !p.board.is_well_formed()) {
         return;
     }
     session.applied = Some(tick);
@@ -468,7 +471,7 @@ mod tests {
     fn updates_never_correct_a_board_that_was_predicted_right() {
         let latency = 6;
         let margin = config::INPUT_LEAD_MARGIN_TICKS;
-        let mut server = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 77, 1, 5);
+        let mut server = Board::new(77, &Rules::default());
         server.spawn_piece();
         let mut history = vec![server.clone()];
         let mut queue: Vec<(u32, StampedInput)> = Vec::new();
@@ -495,7 +498,7 @@ mod tests {
         for step in 0..1_200u32 {
             crate::logic::advance_one(&mut session);
 
-            if step % 9 == 0 && session.predicted_board.state == GameState::Playing {
+            if step % 9 == 0 && session.predicted_board.state() == GameState::Playing {
                 let kind = script[(step / 9) as usize % script.len()];
                 session.input_seq += 1;
                 let input = StampedInput {
@@ -562,9 +565,9 @@ mod tests {
     }
 
     fn update(slot: u8, team: u8, out: bool) -> PlayerUpdate {
-        let mut board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 3, 1, 5);
+        let mut board = Board::new(3, &Rules::default());
         if out {
-            board.state = GameState::GameOver;
+            board.lose();
         }
         PlayerUpdate {
             slot,
@@ -630,8 +633,8 @@ mod tests {
     #[test]
     fn a_thumbnail_without_its_stack_keeps_the_last_one() {
         let mut session = GameSession::new(1, Vec::new());
-        let mut board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 3, 1, 5);
-        board.cells[config::GRID_HEIGHT - 1][0] = Some(shared::PuyoType::Red);
+        let mut board = Board::new(3, &Rules::default());
+        board.cells_mut()[(config::GRID_HEIGHT - 1, 0)] = Some(shared::PuyoType::Red);
         let thumb = |board: &Board, slot, cells| Thumb {
             slot,
             team: slot,
@@ -643,7 +646,7 @@ mod tests {
         apply_thumbs(&mut session, 0, 8, vec![thumb(&board, 2, false)]);
         let rival = &session.rivals[0];
         assert_eq!(
-            rival.board.cells[config::GRID_HEIGHT - 1][0],
+            rival.board.cells()[(config::GRID_HEIGHT - 1, 0)],
             Some(shared::PuyoType::Red)
         );
         assert_eq!(rival.board.pending_garbage, 4);

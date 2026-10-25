@@ -6,7 +6,9 @@ use notan::prelude::*;
 use crate::http::{self, HttpSlot};
 use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
-use crate::ui::{field_clicked, text_field, EditKeys, Field, Fonts, Rect, SharpText, Status, TextInput, Ui, FILL};
+use crate::ui::{
+    field_clicked, text_field, EditKeys, Field, Fonts, Icon, Label, Rect, SharpText, Status, TextInput, Ui, FILL,
+};
 
 const MIN_PASSWORD: usize = 8;
 const FIELD_W: f32 = 460.0;
@@ -337,7 +339,11 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &AccountForm, cx: f32
             draw,
             fonts,
             confirm_btn,
-            if busy { "..." } else { confirm_label(form.page) },
+            if busy {
+                Label::from(Icon::Busy)
+            } else {
+                Label::from(confirm_label(form.page))
+            },
             !busy,
         );
         ui.button(draw, fonts, cancel_btn, "Annuler");

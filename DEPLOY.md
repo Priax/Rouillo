@@ -355,7 +355,7 @@ deux cœurs et que les parties en cours en ont besoin d'un.
 `rollback` ne défait pas les migrations: si le déploiement en a appliqué une, l'ancien binaire
 refuse de démarrer (sqlx voit une migration qu'il ne connaît pas).
 
-Si `shared/` a changé (protocole), **incrémenter `PROTOCOL_VERSION`** (`shared/src/lib.rs`)
+Si `shared/` a changé (protocole), **incrémenter `PROTOCOL_VERSION`** (`shared/src/protocol.rs`)
 (le test `protocol_changes_bump_the_version` échoue tant que ce n'est pas fait)
 et republier aussi le client (version du `Cargo.toml` racine puis tag `vX.Y.Z`): un ancien client ne peut plus parler au nouveau
 serveur (bitcode n'est pas auto-descriptif). Grâce au numéro de version, le serveur refuse

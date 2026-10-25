@@ -78,8 +78,7 @@ fn every_state_update_carries_the_current_tick() {
 
 pub(super) fn piece_col(mgr: &Manager, slot: usize) -> i32 {
     mgr.rooms[&1].sim.boards[slot]
-        .active_piece
-        .as_ref()
+        .piece()
         .expect("a piece must be falling")
         .col
 }
@@ -216,11 +215,10 @@ pub(super) fn sim_of(mgr: &mut Manager) -> &mut Sim {
 
 pub(super) fn attack_on_next_tick(mgr: &mut Manager) {
     let sim = sim_of(mgr);
-    for row in &mut sim.boards[0].cells[8..=12] {
-        row[0] = Some(PuyoType::Red);
+    for r in 8..=12 {
+        sim.boards[0].cells_mut()[(r, 0)] = Some(PuyoType::Red);
     }
-    sim.boards[0].state = GameState::ResolvingMatches;
-    sim.boards[0].settle = shared::Settle::Idle;
+    sim.boards[0].settle();
 }
 
 #[test]
@@ -283,7 +281,7 @@ fn an_attack_still_in_flight_at_the_end_is_not_credited() {
     mgr.tick(STEP, false);
     assert!(!mgr.rooms[&1].sim.garbage_in_flight.is_empty(), "setup");
 
-    sim_of(&mut mgr).boards[1].state = GameState::GameOver;
+    sim_of(&mut mgr).boards[1].lose();
     mgr.tick(STEP, false);
     assert!(mgr.rooms[&1].sim.finished, "setup: the game should be over");
     assert_eq!(mgr.rooms[&1].sim.nuisance_sent[0], 0);
@@ -367,8 +365,7 @@ fn every_update_carries_the_draws_so_far() {
     let (mut rx1, _rx2) = running_game(&mut mgr);
     let drop = |b: &mut shared::Board| {
         b.pending_garbage = 3; // not a multiple of 6: the leftover columns are drawn
-        b.state = GameState::DroppingGarbage;
-        b.drop_garbage();
+        b.drop_pending_garbage();
     };
     drop(&mut sim_of(&mut mgr).boards[0]);
     mgr.tick(STEP, true);
@@ -376,7 +373,11 @@ fn every_update_carries_the_draws_so_far() {
     let mut server = mgr.rooms[&1].sim.boards[0].clone();
     drop(&mut sent);
     drop(&mut server);
-    assert_eq!(sent.cells, server.cells, "the next drop lands elsewhere on the client");
+    assert_eq!(
+        sent.cells(),
+        server.cells(),
+        "the next drop lands elsewhere on the client"
+    );
     assert_eq!(sent.state_hash(), server.state_hash());
 }
 

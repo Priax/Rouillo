@@ -80,6 +80,22 @@ pub(super) async fn serve_image(api: &Api, user_id: Uuid, kind: Kind) -> Result<
     Ok((headers, data).into_response())
 }
 
+/// A match to be played again, as the shared crate encodes it.
+pub(super) async fn handle_match_replay(
+    State(Api { pool, .. }): State<Api>,
+    PathParam(match_id): PathParam<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let data = db::get_replay(&pool, match_id)
+        .await
+        .map_err(internal)?
+        .ok_or(ApiError::NotFound)?;
+    let headers = [
+        (header::CONTENT_TYPE, "application/octet-stream"),
+        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+    ];
+    Ok((headers, data))
+}
+
 pub(super) async fn handle_avatar_get(
     State(api): State<Api>,
     PathParam(user_id): PathParam<Uuid>,

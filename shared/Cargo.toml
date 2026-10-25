@@ -13,12 +13,17 @@ bitcode = "0.6"
 # allocating block API used by `encode`/`decode`; the frame format is unused.
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 
+[features]
+# Shortcuts into a board's state for tests in other crates: never in a build.
+test-support = []
+
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
 name = "sim"
 harness = false
+required-features = ["test-support"]
 
 [lints]
 workspace = true

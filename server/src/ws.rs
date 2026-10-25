@@ -343,7 +343,7 @@ fn command(conn: ConnId, msg: ClientMessage) -> Option<Command> {
         ClientMessage::CreateRoom { name } => Command::CreateRoom { conn, name },
         ClientMessage::JoinRoom { id } => Command::JoinRoom { conn, id },
         ClientMessage::LeaveRoom => Command::LeaveRoom { conn },
-        ClientMessage::SetRoomSetting { index, dir } => Command::SetSetting { conn, index, dir },
+        ClientMessage::SetRoomSetting { setting, dir } => Command::SetSetting { conn, setting, dir },
         ClientMessage::ToggleCountdown => Command::ToggleCountdown { conn },
         ClientMessage::ReturnToLobby => Command::ReturnToLobby { conn },
         ClientMessage::InviteFriend { user_id } => Command::InviteFriend {

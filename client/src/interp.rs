@@ -98,7 +98,7 @@ impl OpponentView {
         let rt = self.render_tick?;
         let i = self.snapshots.iter().rposition(|s| s.tick as f64 <= rt).unwrap_or(0);
         let a = self.snapshots.get(i)?;
-        let Some(pa) = a.board.active_piece.as_ref() else {
+        let Some(pa) = a.board.piece() else {
             return Some((&a.board, (0.0, 0.0)));
         };
         let from = (pa.row as f32 + crate::draw::fall_step(&a.board), pa.col as f32);
@@ -107,7 +107,7 @@ impl OpponentView {
             .get(i + 1)
             .filter(|b| b.board.piece_id == a.board.piece_id && b.tick > a.tick)
             .and_then(|b| {
-                let pb = b.board.active_piece.as_ref()?;
+                let pb = b.board.piece()?;
                 let to = (pb.row as f32 + crate::draw::fall_step(&b.board), pb.col as f32);
                 let frac = ((rt - a.tick as f64) / (b.tick - a.tick) as f64).clamp(0.0, 1.0) as f32;
                 Some((from.0 + frac * (to.0 - from.0), from.1 + frac * (to.1 - from.1)))
@@ -119,21 +119,23 @@ impl OpponentView {
 
 #[cfg(test)]
 mod tests {
+    use shared::Rules;
+
     use super::*;
 
     const DT: f32 = 1.0 / 60.0;
 
     fn board_at(col: i32, id: u32) -> Board {
-        let mut b = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 1, 1, 5);
+        let mut b = Board::new(1, &Rules::default());
         b.spawn_piece();
         b.piece_id = id;
-        b.active_piece.as_mut().expect("a piece").col = col;
+        b.piece_mut().expect("a piece").col = col;
         b
     }
 
     fn col_of(view: &OpponentView) -> f32 {
         let (board, off) = view.frame().expect("a frame");
-        board.active_piece.as_ref().expect("a piece").col as f32 + off.1
+        board.piece().expect("a piece").col as f32 + off.1
     }
 
     fn play(view: &mut OpponentView, ticks: u32, lateness: impl Fn(u32) -> f64) -> Vec<f64> {
@@ -174,7 +176,7 @@ mod tests {
 
     fn row_of(view: &OpponentView) -> f32 {
         let (board, off) = view.frame().expect("a frame");
-        board.active_piece.as_ref().expect("a piece").row as f32 + off.0
+        board.piece().expect("a piece").row as f32 + off.0
     }
 
     #[test]
@@ -182,11 +184,11 @@ mod tests {
         // Just before the drop: row 3, almost at the next row. Just after:
         // row 4, progress back to zero. Both say "about 4".
         let mut before = board_at(2, 7);
-        before.active_piece.as_mut().expect("a piece").row = 3;
-        before.fall_offset = config::CELL_UNITS - 1;
+        before.piece_mut().expect("a piece").row = 3;
+        before.pair_mut().expect("a pair").fall_offset = config::CELL_UNITS - 1;
         let mut after = board_at(2, 7);
-        after.active_piece.as_mut().expect("a piece").row = 4;
-        after.fall_offset = 0;
+        after.piece_mut().expect("a piece").row = 4;
+        after.pair_mut().expect("a pair").fall_offset = 0;
 
         let mut view = OpponentView::default();
         view.push(10, before, 0.0);
@@ -211,7 +213,7 @@ mod tests {
             (px, 1.0 / 16.0),
             (config::CELL_UNITS - 1, 15.0 / 16.0),
         ] {
-            b.fall_offset = offset;
+            b.pair_mut().expect("a pair").fall_offset = offset;
             assert_eq!(crate::draw::fall_step(&b), drawn, "at offset {offset:#x}");
         }
     }

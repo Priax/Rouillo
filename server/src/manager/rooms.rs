@@ -133,12 +133,12 @@ impl Manager {
         info!("Room #{id} créée (conn {conn})");
     }
 
-    pub(super) fn set_setting(&mut self, conn: ConnId, index: u8, dir: i32) {
+    pub(super) fn set_setting(&mut self, conn: ConnId, setting: RoomSetting, dir: i32) {
         if let Some(id) = self.room_of(conn) {
             let changed = self
                 .with_room(id, |room| {
                     if room.series.is_none() && room.is_host_conn(conn) && matches!(room.phase, Phase::Lobby) {
-                        room.settings.adjust(index as usize, dir);
+                        room.settings.adjust(setting, dir);
                         let seated = u8::try_from(room.members.len()).unwrap_or(u8::MAX);
                         room.settings.max_players = room.settings.max_players.max(seated);
                         true

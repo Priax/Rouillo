@@ -1,5 +1,7 @@
 use notan::prelude::*;
-use shared::{config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, StampedInput, Targeting};
+use shared::{
+    config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, Rotation, Rules, StampedInput, Targeting,
+};
 
 use crate::connection::Connection;
 use crate::interp::OpponentView;
@@ -26,6 +28,7 @@ pub enum Screen {
     Ranked,
     Leaderboard,
     Help,
+    Replay,
 }
 
 impl Screen {
@@ -40,7 +43,8 @@ impl Screen {
             | Self::Game
             | Self::SoloSetup
             | Self::Solo
-            | Self::Ranked => hue::BLUE,
+            | Self::Ranked
+            | Self::Replay => hue::BLUE,
             Self::Friends => hue::GREEN,
             Self::Profile | Self::OtherProfile => hue::PINK,
             Self::Settings | Self::Leaderboard => hue::ORANGE,
@@ -217,6 +221,8 @@ pub struct OtherProfileData {
 pub struct ApiMatchPlayer {
     pub user_id: Option<String>,
     pub username: Option<String>,
+    #[serde(default)]
+    pub slot: i16,
     pub place: i16,
     pub won: bool,
     pub max_chain: i16,
@@ -226,7 +232,11 @@ pub struct ApiMatchPlayer {
 #[derive(serde::Deserialize)]
 pub struct ApiMatchEntry {
     #[serde(default)]
+    pub id: String,
+    #[serde(default)]
     pub ranked: bool,
+    #[serde(default)]
+    pub has_replay: bool,
     pub duration_secs: f64,
     pub players: Vec<ApiMatchPlayer>,
 }
@@ -255,6 +265,8 @@ pub struct ProfileCore {
     pub history: crate::history::History,
     pub about_open: bool,
     pub profile_slot: Option<HttpSlot>,
+    /// Why a replay asked from the history did not come.
+    pub replay_status: Status,
 }
 
 pub struct ProfileData {
@@ -280,11 +292,11 @@ pub fn clear_stored_token() {
     storage::remove(TOKEN_KEY);
 }
 
-pub fn load_best_score() -> i32 {
+pub fn load_best_score() -> u32 {
     storage::get(BEST_SCORE_KEY).and_then(|v| v.parse().ok()).unwrap_or(0)
 }
 
-pub fn save_best_score(score: i32) {
+pub fn save_best_score(score: u32) {
     storage::set(BEST_SCORE_KEY, &score.to_string());
 }
 
@@ -444,7 +456,7 @@ impl Rival {
     }
 
     pub fn out(&self) -> bool {
-        self.board.state == GameState::GameOver
+        self.board.state() == GameState::GameOver
     }
 
     /// The board to draw, smoothed between updates, and its piece's offset.
@@ -523,7 +535,7 @@ pub struct GameSession {
 
 impl GameSession {
     pub fn new(my_slot: u8, names: Vec<String>) -> Self {
-        let board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 0, 1, 5);
+        let board = Board::new(0, &Rules::default());
         Self {
             predicted_board: board.clone(),
             board,
@@ -578,8 +590,8 @@ pub struct TurnAnim {
 const TURN_FRAMES: f32 = 7.0;
 
 impl TurnAnim {
-    pub fn update(&mut self, piece_id: u32, rotation: usize, dt: f32) {
-        let target = rotation as f32;
+    pub fn update(&mut self, piece_id: u32, rotation: Rotation, dt: f32) {
+        let target = f32::from(rotation.quarter_turns());
         if piece_id != self.piece_id {
             *self = Self {
                 piece_id,
@@ -630,12 +642,12 @@ impl GameSession {
     }
 
     pub fn decided(&self) -> bool {
-        self.outcome(self.board.state == GameState::GameOver).is_some()
+        self.outcome(self.board.state() == GameState::GameOver).is_some()
     }
 
     /// Out of a game that goes on without this player.
     pub fn eliminated(&self) -> bool {
-        !self.spectating() && self.board.state == GameState::GameOver && !self.decided()
+        !self.spectating() && self.board.state() == GameState::GameOver && !self.decided()
     }
 
     pub fn name_of(&self, slot: u8) -> &str {
@@ -741,8 +753,10 @@ pub struct State {
     pub solo_settings: crate::solo::SoloSettings,
     pub solo: Option<crate::solo::SoloGame>,
     /// A guest's best lives on the device, an account's on the server.
-    pub solo_best: i32,
+    pub solo_best: u32,
     pub solo_best_slot: Option<HttpSlot>,
+    pub replay: Option<crate::replay::ReplayViewer>,
+    pub replay_loading: Option<crate::replay::Loading>,
 }
 
 impl State {
@@ -787,6 +801,8 @@ impl State {
             solo: None,
             solo_best: load_best_score(),
             solo_best_slot: None,
+            replay: None,
+            replay_loading: None,
         }
     }
 }
@@ -830,9 +846,9 @@ mod session_tests {
 
     fn knock_out(s: &mut GameSession, slot: u8) {
         if slot == s.focus {
-            s.board.state = GameState::GameOver;
+            s.board.lose();
         } else if let Some(r) = s.rivals.iter_mut().find(|r| r.slot == slot) {
-            r.board.state = GameState::GameOver;
+            r.board.lose();
         }
     }
 

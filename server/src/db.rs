@@ -233,6 +233,8 @@ pub struct MatchRecord {
     pub ranked: bool,
     pub duration_secs: f64,
     pub players: Vec<PlayerRecord>,
+    /// The encoded `shared::Replay`.
+    pub replay: Option<Vec<u8>>,
 }
 
 pub struct PlayerRecord {
@@ -260,12 +262,14 @@ impl MatchRecord {
 
 pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let match_id =
-        sqlx::query_scalar::<_, Uuid>("INSERT INTO matches (duration_secs, ranked) VALUES ($1, $2) RETURNING id")
-            .bind(rec.duration_secs)
-            .bind(rec.ranked)
-            .fetch_one(&mut *tx)
-            .await?;
+    let match_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO matches (duration_secs, ranked, replay) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(rec.duration_secs)
+    .bind(rec.ranked)
+    .bind(&rec.replay)
+    .fetch_one(&mut *tx)
+    .await?;
 
     let small = |v: u32| i16::try_from(v).unwrap_or(i16::MAX);
     let int = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
@@ -487,6 +491,7 @@ pub struct MatchRow {
     pub played_at: DateTime<Utc>,
     pub duration_secs: f64,
     pub ranked: bool,
+    pub has_replay: bool,
     pub players: Vec<MatchPlayer>,
 }
 
@@ -514,6 +519,7 @@ struct MatchHead {
     played_at: DateTime<Utc>,
     duration_secs: f64,
     ranked: bool,
+    has_replay: bool,
 }
 
 pub enum FriendshipError {
@@ -681,7 +687,7 @@ pub async fn get_match_history(
     offset: i64,
 ) -> Result<Vec<MatchRow>, sqlx::Error> {
     let heads = sqlx::query_as::<_, MatchHead>(
-        "SELECT m.id, m.played_at, m.duration_secs, m.ranked
+        "SELECT m.id, m.played_at, m.duration_secs, m.ranked, m.replay IS NOT NULL AS has_replay
          FROM matches m
          JOIN match_stats me ON me.match_id = m.id AND me.user_id = $1
          ORDER BY m.played_at DESC, m.id
@@ -715,10 +721,20 @@ pub async fn get_match_history(
                 played_at: h.played_at,
                 duration_secs: h.duration_secs,
                 ranked: h.ranked,
+                has_replay: h.has_replay,
                 players: mine,
             }
         })
         .collect())
+}
+
+/// A match's replay, if it was kept.
+pub async fn get_replay(pool: &DbPool, match_id: Uuid) -> Result<Option<Vec<u8>>, sqlx::Error> {
+    let row: Option<Option<Vec<u8>>> = sqlx::query_scalar("SELECT replay FROM matches WHERE id = $1")
+        .bind(match_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.flatten())
 }
 
 #[cfg(test)]

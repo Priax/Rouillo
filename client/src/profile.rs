@@ -71,11 +71,13 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
         },
         about_open: false,
         profile_slot: Some(profile_slot),
+        replay_status: Status::Empty,
     }
 }
 
 fn update_history(app: &App, state: &mut State, other: bool) {
-    let area = pager_area(state.ui.view());
+    let view = state.ui.view();
+    let area = pager_area(view);
     let State {
         profile,
         other_profile,
@@ -89,10 +91,23 @@ fn update_history(app: &App, state: &mut State, other: bool) {
     } else {
         profile.as_mut().map(|p| &mut p.core)
     };
-    if let Some(core) = core {
-        let total = core.info.total_matches;
-        core.history
-            .update(app, ui, fonts, keys, area, total, history_rows(ui.view()));
+    let Some(core) = core else { return };
+    let total = core.info.total_matches;
+    core.history
+        .update(app, ui, fonts, keys, area, total, history_rows(view));
+    let (_, card) = cards(view);
+    let replay = core
+        .history
+        .entries
+        .iter()
+        .take(core.history.per_page)
+        .enumerate()
+        .filter(|(_, m)| m.has_replay)
+        .find(|&(i, _)| ui.clicked(replay_zone(history_row(card, i))))
+        .map(|(_, m)| (m.id.clone(), m.me(&core.user_id).map_or(1, |me| me.slot)));
+    if let Some((id, slot)) = replay {
+        let back = if other { Screen::OtherProfile } else { Screen::Profile };
+        crate::replay::open(state, &id, u8::try_from(slot).unwrap_or(1), back);
     }
 }
 
@@ -335,6 +350,14 @@ fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCor
     let (_, card) = cards(ui.view());
     ui::card(draw, &pal, card);
     card_title(draw, &pal, fonts, card, "Matchs");
+    if let Some((msg, color)) = core.replay_status.shown(&pal) {
+        draw.sharp_text(&fonts.text, msg)
+            .position(card.x + card.w - CARD_PAD, card.y + CARD_TITLE_H / 2.0)
+            .size(theme::size::SMALL)
+            .h_align_right()
+            .v_align_middle()
+            .color(color);
+    }
 
     if core.history.slot.is_some() && core.history.entries.is_empty() {
         card_message(draw, fonts, card, "Chargement...", pal.text_muted);
@@ -370,6 +393,10 @@ fn history_row(card: Rect, i: usize) -> Rect {
         card.w - CARD_PAD,
         HISTORY_ROW_H - 4.0,
     )
+}
+
+fn replay_zone(row: Rect) -> Rect {
+    Rect::at(row.x + row.w * 0.78, row.y + 5.0, 96.0, row.h - 10.0)
 }
 
 fn opponent_zone(row: Rect) -> Rect {
@@ -438,6 +465,10 @@ fn draw_match_row(
     .h_align_center()
     .v_align_middle()
     .color(theme::GOLD);
+
+    if m.has_replay {
+        ui.button(draw, fonts, replay_zone(row), "Revoir");
+    }
 
     let secs = m.duration_secs as u32;
     draw.sharp_text(&fonts.text, &format!("{}:{:02}", secs / 60, secs % 60))

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use notan::prelude::*;
-use shared::{config, Board, GameState, IncomingGarbage, RoomSettings};
+use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings};
 
 use crate::cpu::{Cpu, Difficulty, Style};
 use crate::draw::Hud;
 use crate::state::{GameSession, Rival, Screen, State};
 use crate::ui::{self, Pill, Rect, SettingsPanel, SharpText, View};
-use crate::{http, logic, theme};
+use crate::{http, logic, rooms, theme};
 
 #[derive(Clone, Copy, Default)]
 pub struct SoloSettings {
@@ -28,7 +28,7 @@ impl SoloSettings {
         match i {
             0 => "Adversaire",
             1 => "Personnage",
-            _ => RoomSettings::label(i - 2),
+            _ => rooms::setting_label(RoomSetting::ALL[i - 2]),
         }
     }
 
@@ -37,7 +37,7 @@ impl SoloSettings {
             0 => self.opponent.map_or("Aucun", Difficulty::label).into(),
             1 if self.opponent.is_none() => "-".into(),
             1 => self.character.character().into(),
-            _ => self.room.value(i - 2),
+            _ => rooms::setting_value(&self.room, RoomSetting::ALL[i - 2]),
         }
     }
 
@@ -49,7 +49,7 @@ impl SoloSettings {
             }
             1 if self.opponent.is_some() => self.character = cycle(&Style::ALL, self.character, dir),
             1 => {}
-            _ => self.room.adjust(i - 2, dir),
+            _ => self.room.adjust(RoomSetting::ALL[i - 2], dir),
         }
     }
 }
@@ -67,7 +67,7 @@ impl SoloGame {
     }
 
     fn with_seed(settings: SoloSettings, seed: u64) -> Self {
-        let board = Board::for_match(seed, &settings.room);
+        let board = Board::for_match(seed, &settings.room.rules);
         let mut session = GameSession::new(1, Vec::new());
         session.predicted_board = board.clone();
         let cpu = settings
@@ -84,7 +84,7 @@ impl SoloGame {
         }
     }
 
-    pub fn hud(&self, best: i32) -> Hud {
+    pub fn hud(&self, best: u32) -> Hud {
         Hud::Solo {
             versus: self.cpu.is_some(),
             best,
@@ -98,11 +98,11 @@ impl SoloGame {
     }
 
     fn over(&self) -> bool {
-        self.session.predicted_board.state == GameState::GameOver || self.session.rivals.iter().any(Rival::out)
+        self.session.predicted_board.state() == GameState::GameOver || self.session.rivals.iter().any(Rival::out)
     }
 
     fn paused(&self) -> bool {
-        self.session.predicted_board.state == GameState::Paused
+        self.session.predicted_board.state() == GameState::Paused
     }
 
     fn set_paused(&mut self, paused: bool) {
@@ -133,7 +133,7 @@ impl SoloGame {
         let landed: u32 = rival.incoming.iter().filter(|g| g.at <= now).map(|g| g.amount).sum();
         rival.incoming.retain(|g| g.at > now);
         let input = cpu.input(&rival.board, rival.nuisance() + landed);
-        let sent_back = rival.board.step(input, landed);
+        let sent_back = rival.board.step(input, landed).sent;
 
         let at = now + config::GARBAGE_TRAVEL_TICKS;
         if sent > 0 {
@@ -148,7 +148,7 @@ impl SoloGame {
 
 /// Sends a score to the account, which keeps its best. At sign-in this is the
 /// device's best, so a guest's record follows them into their account.
-pub fn send_best(state: &mut State, score: i32) {
+pub fn send_best(state: &mut State, score: u32) {
     let Some(auth) = &state.auth else { return };
     let slot = http::new_slot();
     let body = serde_json::json!({ "score": score }).to_string();
@@ -168,7 +168,7 @@ pub fn signed_in(state: &mut State) {
 pub fn poll_best(state: &mut State) {
     #[derive(serde::Deserialize)]
     struct Best {
-        solo_best: i32,
+        solo_best: u32,
     }
     let Some(result) = http::take_json::<Best>(&mut state.solo_best_slot) else {
         return;
@@ -336,7 +336,7 @@ mod tests {
     fn both_players_are_dealt_the_same_pairs() {
         let game = game(Some(Difficulty::Easy), 9);
         let (me, cpu) = (&game.session.predicted_board, &game.session.rivals[0].board);
-        assert_eq!(me.active_piece, cpu.active_piece);
+        assert_eq!(me.piece(), cpu.piece());
         assert_eq!(me.next_types, cpu.next_types);
         assert_eq!(me.next_next_types, cpu.next_next_types);
     }
@@ -399,7 +399,7 @@ mod tests {
     fn a_topped_out_cpu_ends_the_game() {
         let mut versus = game(Some(Difficulty::Easy), 1);
         assert!(!versus.over());
-        versus.session.rivals[0].board.state = GameState::GameOver;
+        versus.session.rivals[0].board.lose();
         assert!(versus.over());
     }
 
@@ -426,13 +426,13 @@ mod tests {
         let mut settings = SoloSettings::default();
         assert_eq!(settings.value(0), "Aucun");
         settings.adjust(0, -1);
-        assert_eq!(settings.opponent, Some(Difficulty::Hard));
+        assert_eq!(settings.opponent, Some(Difficulty::Pro));
         settings.adjust(0, 1);
         settings.adjust(0, 1);
         assert_eq!(settings.opponent, Some(Difficulty::Easy));
         settings.adjust(1, -1);
         assert_eq!(settings.character, Style::Architect);
         settings.adjust(2, 1);
-        assert_eq!(settings.room.starting_level, 2);
+        assert_eq!(settings.room.rules.starting_level, 2);
     }
 }

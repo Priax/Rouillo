@@ -32,6 +32,7 @@ mod profile;
 mod profile_about;
 mod profile_edit;
 mod ranked;
+mod replay;
 mod rooms;
 mod solo;
 mod sprites;
@@ -99,20 +100,15 @@ fn setup(gfx: &mut Graphics) -> State {
 fn event(state: &mut State, evt: Event) {
     #[cfg(not(target_arch = "wasm32"))]
     if let Event::ReceivedCharacter(c) = evt {
-        type_char(state, c);
+        if let Some(c) = state.keys.key_char(c) {
+            type_char(state, c);
+        }
     }
     #[cfg(target_arch = "wasm32")]
     let _ = (state, evt);
 }
 
 fn type_char(state: &mut State, c: char) {
-    #[cfg(not(target_arch = "wasm32"))]
-    if state.keys.ctrl {
-        if let Some(letter) = ui::ctrl_letter(c) {
-            state.keys.shortcut(letter);
-            return;
-        }
-    }
     if state.screen == Screen::Settings {
         state.bindings_panel.type_char(c);
     } else if let Some(input) = typing(state) {
@@ -160,7 +156,7 @@ fn can_chat(state: &State) -> bool {
             || s.decided()
             || s.eliminated()
             || s.opponent_disconnected
-            || s.board.state == shared::GameState::Paused
+            || s.board.state() == shared::GameState::Paused
     })
 }
 
@@ -354,6 +350,7 @@ fn update(app: &mut App, state: &mut State) {
 
     login::poll_startup_check(state);
     solo::poll_best(state);
+    replay::poll(state);
 
     update_invitation(state);
     network::handle_server_messages(state);
@@ -375,6 +372,7 @@ fn update(app: &mut App, state: &mut State) {
         Screen::Leaderboard => leaderboard::update(app, state),
         Screen::Help => help::update(app, state),
         Screen::Solo => solo::update_game(app, state),
+        Screen::Replay => replay::update(app, state),
         Screen::Game => {
             let online = state
                 .room
@@ -452,6 +450,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         Screen::Ranked => ranked::draw(gfx, state),
         Screen::Leaderboard => leaderboard::draw(gfx, state),
         Screen::Help => help::draw(gfx, state),
+        Screen::Replay => replay::draw(app, gfx, state),
         Screen::Solo => {
             if let Some(game) = state.solo.as_ref() {
                 let hud = game.hud(state.solo_best);

@@ -1,7 +1,7 @@
 use futures_util::{SinkExt, StreamExt};
 use shared::{
     config, ClientMessage, GameState, IncomingGarbage, InputKind, LobbyInfo, PausePolicy, PuyoType, RoomId,
-    ServerMessage,
+    RoomSetting, ServerMessage,
 };
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use bytes::Bytes;
 use rayon::prelude::*;
-use shared::{config, InputKind, PausePolicy, RoomId, RoomInfo, RoomSettings, ServerMessage, Targeting};
+use shared::{config, InputKind, PausePolicy, RoomId, RoomInfo, RoomSetting, RoomSettings, ServerMessage, Targeting};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tracing::{info, warn};
@@ -101,7 +101,7 @@ pub enum Command {
     },
     SetSetting {
         conn: ConnId,
-        index: u8,
+        setting: RoomSetting,
         dir: i32,
     },
     ToggleCountdown {
@@ -462,7 +462,7 @@ impl Manager {
                 self.leave_current(conn);
                 self.send_room_list_to(conn);
             }
-            Command::SetSetting { conn, index, dir } => self.set_setting(conn, index, dir),
+            Command::SetSetting { conn, setting, dir } => self.set_setting(conn, setting, dir),
             Command::ToggleCountdown { conn } => self.toggle_countdown(conn),
             Command::ReturnToLobby { conn } => self.return_to_lobby(conn),
             Command::Input { conn, kind, seq, tick } => self.on_input(conn, kind, seq, tick),

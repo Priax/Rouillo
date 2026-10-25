@@ -52,5 +52,8 @@ web-sys = { version = "0.3", features = [
     "GainNode", "AudioParam",
 ] }
 
+[dev-dependencies]
+shared = { path = "../shared", features = ["test-support"] }
+
 [lints]
 workspace = true

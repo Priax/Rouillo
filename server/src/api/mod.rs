@@ -182,6 +182,7 @@ pub fn routes(pool: DbPool, cmd_tx: mpsc::Sender<Command>) -> Router {
         .route("/api/users/search", get(handle_search_users))
         .route("/api/users/{id}", get(handle_user_profile))
         .route("/api/users/{id}/matches", get(handle_match_history))
+        .route("/api/matches/{id}/replay", get(handle_match_replay))
         .route(
             "/api/friends",
             get(handle_list_friends).post(handle_send_friend_request),

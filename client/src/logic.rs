@@ -27,7 +27,7 @@ pub fn update_game(
     }
 
     let game_over = session.decided() || online.ended;
-    let paused = session.board.state == GameState::Paused;
+    let paused = session.board.state() == GameState::Paused;
     let is_host = online.is_host;
     let menu = paused || game_over || session.opponent_disconnected || session.quit_menu;
 
@@ -80,13 +80,13 @@ pub fn update_game(
 }
 
 pub fn animate(session: &mut GameSession, dt: f32) {
-    if let Some(p) = &session.predicted_board.active_piece {
+    if let Some(p) = session.predicted_board.piece() {
         session.my_turn.update(session.predicted_board.piece_id, p.rotation, dt);
     }
     for rival in &mut session.rivals {
         rival.view.advance(dt);
         let shown = rival.view.frame().map_or(&rival.board, |(board, _)| board);
-        if let Some(p) = &shown.active_piece {
+        if let Some(p) = shown.piece() {
             let (id, rotation) = (shown.piece_id, p.rotation);
             rival.turn.update(id, rotation, dt);
         }
@@ -124,7 +124,7 @@ pub fn read_controls(
     dt: f32,
 ) {
     handle_soft_drop_key(input, session, conn.as_deref_mut());
-    if session.predicted_board.state == GameState::Playing {
+    if session.predicted_board.state() == GameState::Playing {
         handle_game_input(input, session, settings, conn, dt);
     } else {
         release_keys(session);
@@ -178,13 +178,12 @@ pub(crate) fn advance_one(session: &mut GameSession) -> u32 {
     session.local_tick = session.local_tick.wrapping_add(1);
     let now = session.local_tick;
     let landed = session.incoming.iter().filter(|g| g.at == now).map(|g| g.amount).sum();
-    let was_playing = session.predicted_board.state == GameState::Playing;
-    let sent = session.predicted_board.step([], landed);
-    if was_playing && session.predicted_board.state == GameState::ResolvingMatches {
+    let events = session.predicted_board.step([], landed);
+    if events.locked {
         crate::audio::play_lock();
     }
     announce_events(session);
-    sent
+    events.sent
 }
 
 pub fn announce_events(session: &mut GameSession) {
@@ -214,13 +213,13 @@ fn unacknowledged(session: &GameSession) -> Vec<SentInput> {
 }
 
 fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: InputKind) -> bool {
-    let before = session.predicted_board.active_piece.clone();
-    session.predicted_board.apply_input(kind);
-    let moved = session.predicted_board.active_piece != before;
-    match kind {
-        InputKind::RotateCW | InputKind::RotateCCW if moved => crate::audio::play_rotate(),
-        InputKind::HardDrop => crate::audio::play_lock(),
-        _ => {}
+    let before = session.predicted_board.piece().copied();
+    let events = session.predicted_board.apply_input(kind);
+    let moved = session.predicted_board.piece().copied() != before;
+    if events.locked {
+        crate::audio::play_lock();
+    } else if moved && matches!(kind, InputKind::RotateCW | InputKind::RotateCCW) {
+        crate::audio::play_rotate();
     }
     if let Some(conn) = conn {
         session.input_seq += 1;
@@ -371,7 +370,7 @@ fn handle_soft_drop_key(input: &Frame, session: &mut GameSession, conn: Option<&
 
 #[cfg(test)]
 mod tests {
-    use shared::IncomingGarbage;
+    use shared::{IncomingGarbage, Rotation};
 
     use super::*;
 
@@ -384,7 +383,7 @@ mod tests {
 
     fn rows_fallen(frame_dts: &[f32], secs: f32) -> i32 {
         let mut session = synced_session();
-        let start = session.predicted_board.active_piece.as_ref().expect("a piece").row;
+        let start = session.predicted_board.piece().expect("a piece").row;
 
         let mut elapsed = 0.0;
         for dt in frame_dts.iter().cycle() {
@@ -394,7 +393,7 @@ mod tests {
             step_simulation(&mut session, *dt);
             elapsed += dt;
         }
-        session.predicted_board.active_piece.as_ref().expect("a piece").row - start
+        session.predicted_board.piece().expect("a piece").row - start
     }
 
     #[test]
@@ -419,11 +418,11 @@ mod tests {
     #[test]
     fn a_long_stall_does_not_replay_as_a_burst() {
         let mut session = synced_session();
-        let start = session.predicted_board.active_piece.as_ref().expect("a piece").row;
+        let start = session.predicted_board.piece().expect("a piece").row;
 
         step_simulation(&mut session, 30.0);
 
-        let fell = session.predicted_board.active_piece.as_ref().expect("a piece").row - start;
+        let fell = session.predicted_board.piece().expect("a piece").row - start;
         assert!(
             fell <= config::MAX_SIM_STEPS_PER_FRAME as i32,
             "{fell} rows in one frame, at most {} allowed",
@@ -502,14 +501,14 @@ mod tests {
     #[test]
     fn the_satellite_turns_the_short_way_in_seven_frames() {
         let mut turn = crate::state::TurnAnim::default();
-        turn.update(1, 3, 0.0);
+        turn.update(1, Rotation::Left, 0.0);
         for _ in 0..7 {
-            turn.update(1, 0, 1.0 / 60.0);
+            turn.update(1, Rotation::Up, 1.0 / 60.0);
         }
         let (dr, dc) = turn.satellite();
         assert!((dr + 1.0).abs() < 1e-4 && dc.abs() < 1e-4, "not pointing up: {dr} {dc}");
 
-        turn.update(1, 1, 3.0 / 60.0);
+        turn.update(1, Rotation::Right, 3.0 / 60.0);
         let (_, dc) = turn.satellite();
         assert!(dc > 0.1 && dc < 0.95, "mid-turn should be part way right: {dc}");
     }
@@ -517,8 +516,8 @@ mod tests {
     #[test]
     fn a_new_pair_shows_its_rotation_at_once() {
         let mut turn = crate::state::TurnAnim::default();
-        turn.update(1, 0, 0.0);
-        turn.update(2, 2, 1.0 / 60.0);
+        turn.update(1, Rotation::Up, 0.0);
+        turn.update(2, Rotation::Down, 1.0 / 60.0);
         let (dr, _) = turn.satellite();
         assert!((dr - 1.0).abs() < 1e-4);
     }
@@ -599,7 +598,7 @@ mod tests {
     #[test]
     fn next_target_skips_partners_and_the_knocked_out() {
         let (mut s, mut conn) = arena();
-        s.rivals[1].board.state = GameState::GameOver;
+        s.rivals[1].board.lose();
         let key = Frame::pressing(Action::NextTarget);
         choose_target(&key, None, &mut s, &mut conn);
         assert_eq!(s.targeting, Targeting::Manual(4));

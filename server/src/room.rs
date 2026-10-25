@@ -257,7 +257,6 @@ impl Room {
         let mut record = None;
         if advanced {
             self.sim.advance();
-            self.sim.record_stats();
             let alive = self.sim.teams_alive();
             if alive.len() <= 1 {
                 self.sim.finished = true;
@@ -438,10 +437,13 @@ impl Room {
                 pieces_placed: n(&self.sim.pieces_placed, s),
             })
             .collect();
+        let names =
+            (0..self.sim.boards.len()).map(|s| self.seats.get(s).map_or_else(String::new, |seat| seat.name.clone()));
         db::MatchRecord {
             ranked: self.series.is_some(),
             duration_secs: self.sim.start.elapsed().as_secs_f64(),
             players,
+            replay: Some(shared::encode(&self.sim.replay(names))),
         }
     }
 

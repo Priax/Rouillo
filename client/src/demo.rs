@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use shared::{config, ActivePuyo, Board, GameState, InputKind, PuyoType, RoomSettings};
+use shared::{config, ActivePuyo, Board, Events, GameState, InputKind, PuyoType, Rules};
 
 use crate::cpu::{Cpu, Difficulty, Style};
 use crate::state::TurnAnim;
@@ -210,11 +210,11 @@ fn pair(colours: (char, char)) -> (PuyoType, PuyoType) {
 }
 
 fn board_for(art: &[&str]) -> Board {
-    let mut board = Board::new(config::GRID_WIDTH, config::GRID_HEIGHT, 1, 1, 5);
+    let mut board = Board::new(1, &Rules::default());
     let top = config::GRID_HEIGHT - art.len();
     for (r, row) in art.iter().enumerate() {
         for (c, ch) in row.chars().enumerate() {
-            board.cells[top + r][c] = puyo(ch);
+            board.cells_mut()[(top + r, c)] = puyo(ch);
         }
     }
     board.spawn_piece();
@@ -266,17 +266,15 @@ pub struct Rival {
     cpu: Cpu,
     pub turn: TurnAnim,
     pub chain: Option<(u32, f32)>,
-    last_chain: u32,
 }
 
 fn versus(seed: u64) -> (Board, Option<Cpu>, Option<Rival>) {
-    let board = Board::for_match(seed, &RoomSettings::default());
+    let board = Board::for_match(seed, &Rules::default());
     let rival = Rival {
         board: board.clone(),
         cpu: Cpu::new(Difficulty::Hard, Style::Balanced, seed),
         turn: TurnAnim::default(),
         chain: None,
-        last_chain: 0,
     };
     let cpu = Cpu::new(Difficulty::Hard, Style::Architect, ARCHITECT_SEED);
     (board, Some(cpu), Some(rival))
@@ -290,11 +288,9 @@ pub struct Demo {
     pub turn: TurnAnim,
     phase: Phase,
     next_drop: usize,
-    piece_id: u32,
     keys: VecDeque<InputKind>,
     wait: u32,
     clock: f32,
-    last_chain: u32,
     pops: usize,
     cpu: Option<Cpu>,
     pub rival: Option<Rival>,
@@ -319,7 +315,7 @@ impl Demo {
         let (board, cpu, rival) = match l.play {
             Play::Script { board, .. } => (board_for(board), None, None),
             Play::Cpu => (
-                Board::for_match(CPU_SEED, &RoomSettings::default()),
+                Board::for_match(CPU_SEED, &Rules::default()),
                 Some(Cpu::new(Difficulty::Hard, Style::Balanced, CPU_SEED)),
                 None,
             ),
@@ -331,11 +327,9 @@ impl Demo {
             turn: TurnAnim::default(),
             phase: Phase::Intro(INTRO_SECS),
             next_drop: 0,
-            piece_id: 0,
             keys: VecDeque::new(),
             wait: INPUT_GAP,
             clock: 0.0,
-            last_chain: 0,
             pops: 0,
             cpu,
             rival,
@@ -350,8 +344,8 @@ impl Demo {
             demo.take_next_drop();
         }
         demo.first_pairs = [
-            demo.board.active_piece.take(),
-            demo.rival.as_mut().and_then(|r| r.board.active_piece.take()),
+            demo.board.take_piece(),
+            demo.rival.as_mut().and_then(|r| r.board.take_piece()),
         ];
         demo
     }
@@ -384,14 +378,13 @@ impl Demo {
     /// Dresses the pair that just appeared as the next scripted one.
     fn take_next_drop(&mut self) {
         let l = &LESSONS[self.lesson];
-        self.piece_id = self.board.piece_id;
         let Play::Script { drops, .. } = l.play else { return };
         let Some(d) = drops.get(self.next_drop) else {
-            self.board.active_piece = None;
+            self.board.take_piece();
             self.end();
             return;
         };
-        if let Some(piece) = self.board.active_piece.as_mut() {
+        if let Some(piece) = self.board.piece_mut() {
             (piece.axis_type, piece.sat_type) = pair(d.pair);
         }
         let upcoming = |i: usize| drops.get(i).map(|d| pair(d.pair));
@@ -416,7 +409,7 @@ impl Demo {
         }
         if let Some(rival) = self.rival.as_mut() {
             rival.chain = rival.chain.map(|(n, t)| (n, t - dt)).filter(|c| c.1 > 0.0);
-            if let Some(p) = &rival.board.active_piece {
+            if let Some(p) = rival.board.piece() {
                 rival.turn.update(rival.board.piece_id, p.rotation, dt);
             }
         }
@@ -452,7 +445,7 @@ impl Demo {
             self.clock -= STEP;
             self.step();
         }
-        if let Some(p) = &self.board.active_piece {
+        if let Some(p) = self.board.piece() {
             self.turn.update(self.board.piece_id, p.rotation, dt);
         }
     }
@@ -461,9 +454,11 @@ impl Demo {
     fn begin(&mut self) {
         self.phase = Phase::Play;
         let [mine, theirs] = std::mem::take(&mut self.first_pairs);
-        self.board.active_piece = mine;
-        if let Some(rival) = self.rival.as_mut() {
-            rival.board.active_piece = theirs;
+        if let Some(piece) = mine {
+            self.board.set_piece(piece);
+        }
+        if let (Some(rival), Some(piece)) = (self.rival.as_mut(), theirs) {
+            rival.board.set_piece(piece);
         }
     }
 
@@ -482,16 +477,16 @@ impl Demo {
             if let Some(label) = input.and_then(key_label) {
                 self.key = Some((label, 0.6));
             }
-            self.board.step(input, 0);
-            self.explain_pops();
-            let chain_over = self.pops > 0 && self.board.chain_count == 0;
-            if chain_over || self.board.state == GameState::GameOver {
+            let events = self.board.step(input, 0);
+            self.explain_pops(events.link);
+            let chain_over = self.pops > 0 && events.spawned;
+            if chain_over || self.board.state() == GameState::GameOver {
                 self.end();
             }
             return;
         }
         let mut inputs = Vec::new();
-        if self.board.state == GameState::Playing {
+        if self.board.state() == GameState::Playing {
             if self.wait > 0 {
                 self.wait -= 1;
             } else if let Some(key) = self.keys.pop_front() {
@@ -502,17 +497,16 @@ impl Demo {
                 inputs.push(key);
             }
         }
-        let was_dropping = self.board.state == GameState::DroppingGarbage;
-        self.board.step(inputs, 0);
-        self.explain_pops();
+        let events = self.board.step(inputs, 0);
+        self.explain_pops(events.link);
         let l = &LESSONS[self.lesson];
-        if !was_dropping && self.board.state == GameState::DroppingGarbage && !l.garbage.is_empty() {
+        if events.ojama_dropped && !l.garbage.is_empty() {
             self.text = l.garbage;
             self.phase = Phase::Paused(PAUSE_SECS);
         }
-        if self.board.state == GameState::GameOver {
+        if self.board.state() == GameState::GameOver {
             self.end();
-        } else if self.board.piece_id != self.piece_id {
+        } else if events.spawned {
             self.take_next_drop();
         }
     }
@@ -531,7 +525,7 @@ impl Demo {
         };
         *tick += 1;
         let now = *tick;
-        let mut sent = [0; 2];
+        let mut events = [Events::default(); 2];
         for (i, (board, cpu)) in [(board, cpu), (&mut rival.board, &mut rival.cpu)]
             .into_iter()
             .enumerate()
@@ -540,38 +534,35 @@ impl Demo {
             let landed: u32 = in_flight.iter().filter(to_me).filter(|g| g.1 <= now).map(|g| g.2).sum();
             let travelling: u32 = in_flight.iter().filter(to_me).filter(|g| g.1 > now).map(|g| g.2).sum();
             let input = cpu.input(board, board.pending_garbage + landed + travelling);
-            sent[i] = board.step(input, landed);
+            events[i] = board.step(input, landed);
         }
         in_flight.retain(|g| g.1 > now);
-        for (i, amount) in sent.into_iter().enumerate() {
-            if amount > 0 {
-                in_flight.push((i == 0, now + config::GARBAGE_TRAVEL_TICKS, amount));
+        for (i, e) in events.iter().enumerate() {
+            if e.sent > 0 {
+                in_flight.push((i == 0, now + config::GARBAGE_TRAVEL_TICKS, e.sent));
             }
         }
-        let links = rival.board.chain_count;
-        if links > rival.last_chain {
-            rival.chain = Some((links, 2.0));
+        if let Some(link) = events[1].link {
+            rival.chain = Some((link, 2.0));
         }
-        rival.last_chain = links;
-        let over = rival.board.state == GameState::GameOver;
-        self.explain_pops();
-        if over || self.board.state == GameState::GameOver {
+        let over = rival.board.state() == GameState::GameOver;
+        self.explain_pops(events[0].link);
+        if over || self.board.state() == GameState::GameOver {
             self.end();
         }
     }
 
     /// Stops on each new link of a chain to say what happened.
-    fn explain_pops(&mut self) {
-        let chain = self.board.chain_count;
-        if chain > self.last_chain {
-            self.chain = Some((chain, 2.0));
-            if let Some(text) = LESSONS[self.lesson].pops.get(self.pops) {
-                self.text = text;
-                self.phase = Phase::Paused(PAUSE_SECS);
-            }
-            self.pops += 1;
+    fn explain_pops(&mut self, link: Option<u32>) {
+        let Some(link) = link else {
+            return;
+        };
+        self.chain = Some((link, 2.0));
+        if let Some(text) = LESSONS[self.lesson].pops.get(self.pops) {
+            self.text = text;
+            self.phase = Phase::Paused(PAUSE_SECS);
         }
-        self.last_chain = chain;
+        self.pops += 1;
     }
 }
 
@@ -611,15 +602,14 @@ mod tests {
             if let Phase::Outro(_) = demo.phase {
                 seen.garbage_left = demo
                     .board
-                    .cells
+                    .cells()
                     .iter()
-                    .flatten()
                     .filter(|c| **c == Some(PuyoType::Garbage))
                     .count();
                 seen.all_clear = demo.board.last_was_all_clear;
                 seen.pops = demo.pops;
-                seen.lost = demo.board.state == GameState::GameOver;
-                seen.rival_lost = demo.rival.is_some_and(|r| r.board.state == GameState::GameOver);
+                seen.lost = demo.board.state() == GameState::GameOver;
+                seen.rival_lost = demo.rival.is_some_and(|r| r.board.state() == GameState::GameOver);
                 return seen;
             }
             match demo.phase {
@@ -629,7 +619,7 @@ mod tests {
             demo.step();
             seen.ticks += 1;
             seen.best_chain = seen.best_chain.max(demo.board.chain_count);
-            seen.dropped_garbage |= demo.board.state == GameState::DroppingGarbage;
+            seen.dropped_garbage |= demo.board.state() == GameState::DroppingGarbage;
         }
         panic!("lesson {lesson} never ended");
     }
@@ -741,19 +731,13 @@ mod tests {
         for lesson in 0..LESSONS.len() {
             let mut demo = Demo::at(lesson);
             let versus = demo.rival.is_some();
-            assert!(
-                demo.board.active_piece.is_none(),
-                "lesson {lesson}: a pair under the words"
-            );
+            assert!(demo.board.piece().is_none(), "lesson {lesson}: a pair under the words");
             demo.update(INTRO_SECS - 0.1);
-            assert!(demo.board.active_piece.is_none());
+            assert!(demo.board.piece().is_none());
             demo.update(0.2);
-            assert!(
-                demo.board.active_piece.is_some(),
-                "lesson {lesson}: no pair after the words"
-            );
+            assert!(demo.board.piece().is_some(), "lesson {lesson}: no pair after the words");
             if versus {
-                assert!(demo.rival.as_ref().is_some_and(|r| r.board.active_piece.is_some()));
+                assert!(demo.rival.as_ref().is_some_and(|r| r.board.piece().is_some()));
             }
         }
     }

@@ -4,7 +4,7 @@ use notan::prelude::*;
 use crate::controls::{Action, Bindings, KeyBinding, ACTIONS, RESERVED};
 use crate::pads::Pads;
 use crate::theme;
-use crate::ui::{self, Fonts, Frame, Rect, SharpText, Size, Ui, View};
+use crate::ui::{self, Fonts, Frame, Icon, Rect, SharpText, Size, Ui, View};
 
 const TOP: f32 = 360.0;
 const TITLE_H: f32 = 48.0;
@@ -152,16 +152,17 @@ impl BindingsPanel {
                 .v_align_middle()
                 .color(pal.text);
             for slot in SLOTS {
-                let label = if self.capture == Some((action, slot)) {
-                    "...".to_owned()
-                } else {
-                    match slot {
-                        Slot::Key(i) => bindings.key(action, i).map(|k| k.label.clone()),
-                        Slot::Pad => bindings.pad(action).map(|p| p.label().to_owned()),
-                    }
-                    .unwrap_or_else(|| "-".to_owned())
-                };
-                ui.button(draw, fonts, cell(view, row, slot), label.as_str());
+                let rect = cell(view, row, slot);
+                if self.capture == Some((action, slot)) {
+                    ui.button(draw, fonts, rect, Icon::Busy);
+                    continue;
+                }
+                let label = match slot {
+                    Slot::Key(i) => bindings.key(action, i).map(|k| k.label.clone()),
+                    Slot::Pad => bindings.pad(action).map(|p| p.label().to_owned()),
+                }
+                .unwrap_or_else(|| "-".to_owned());
+                ui.button(draw, fonts, rect, label.as_str());
             }
         }
 

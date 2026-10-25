@@ -24,15 +24,13 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-pub use button::Icon;
+pub use button::{Icon, Label};
 pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge, Persona, Pill};
 mod clipboard;
 pub use clipboard::get as clipboard_text;
 pub use field::{area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field};
 pub use fonts::{Face, Fonts};
 pub use input::TextInput;
-#[cfg(not(target_arch = "wasm32"))]
-pub use keys::ctrl_letter;
 pub use keys::EditKeys;
 #[cfg(target_arch = "wasm32")]
 pub use keys::Shortcuts;
@@ -42,7 +40,7 @@ use notan::draw::{CreateDraw, Draw, DrawImages};
 use notan::math::{vec2, Mat3};
 use notan::prelude::{App, BlendMode, Color, Graphics, RenderTexture, TextureFilter};
 pub use pager::{page_count, Pager, PAGER_H};
-pub use panel::SettingsPanel;
+pub use panel::{SettingsGrid, SettingsPanel};
 pub use rect::Rect;
 pub use status::Status;
 pub use stepper::Stepper;

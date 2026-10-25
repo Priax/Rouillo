@@ -48,6 +48,7 @@ pub const DAS_DELAY: f32 = 8.0 / 60.0;
 pub const DAS_SPEED: f32 = 2.0 / 60.0;
 
 pub const ALL_CLEAR_BONUS: u32 = 30;
+pub const MAX_GARBAGE_DROP: u32 = 30;
 
 pub const CHAIN_POWERS: [u32; 20] = [
     0, 0, 8, 16, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,

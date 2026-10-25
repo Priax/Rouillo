@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use rand::RngExt;
 use shared::{
-    config, Board, GameState, IncomingGarbage, InputKind, PlayerUpdate, PuyoType, RoomSettings, ServerMessage,
-    Targeting, Thumb,
+    config, Board, Events, GameState, Grid, IncomingGarbage, InputKind, PlayerUpdate, Replay, ReplayPlayer,
+    RoomSettings, Rules, ServerMessage, Targeting, Thumb,
 };
 use tokio::time::Instant;
 use tracing::warn;
@@ -19,8 +19,6 @@ const RANDOM_TARGET_TICKS: u32 = 8 * config::SERVER_TICK_HZ as u32;
 /// A stack unchanged is sent again this often in thumbnails, for one whose
 /// datagram with the change was lost.
 const THUMB_REFRESH_TICKS: u32 = config::SERVER_TICK_HZ as u32;
-
-type Cells = Vec<Vec<Option<PuyoType>>>;
 
 const _: () = assert!(INPUT_QUEUE_CAP as f64 > CLIENT_MSG_BURST);
 
@@ -88,19 +86,27 @@ pub struct Sim {
     pub out_at: Vec<Option<u32>>,
     pub all_clears: Vec<u32>,
     pub pieces_placed: Vec<u32>,
-    prev_chain: Vec<u32>,
-    prev_all_clear: Vec<bool>,
-    prev_piece_id: Vec<u32>,
     /// Each board's stack as last sent in thumbnails, and when.
-    thumb_cells: Vec<Option<(u32, Cells)>>,
+    thumb_cells: Vec<Option<(u32, Grid)>>,
+    seed: u64,
+    rules: Rules,
+    /// What each board took, tick by tick, to play the game again.
+    taken: Vec<ReplayPlayer>,
 }
 
 impl Sim {
     /// A game for `teams.len()` slots, each on the team given.
     pub fn new(settings: &RoomSettings, teams: Vec<u8>) -> Self {
         let n = teams.len();
-        let board = Board::for_match(rand::rng().random(), settings);
-        let piece_id = board.piece_id;
+        let seed = rand::rng().random();
+        let board = Board::for_match(seed, &settings.rules);
+        let taken = teams
+            .iter()
+            .map(|&team| ReplayPlayer {
+                team,
+                ..ReplayPlayer::default()
+            })
+            .collect();
         Self {
             boards: vec![SharedBoard(Arc::new(board)); n],
             teams,
@@ -125,35 +131,36 @@ impl Sim {
             out_at: vec![None; n],
             all_clears: vec![0; n],
             pieces_placed: vec![0; n],
-            prev_chain: vec![0; n],
-            prev_all_clear: vec![false; n],
-            prev_piece_id: vec![piece_id; n],
             thumb_cells: vec![None; n],
+            seed,
+            rules: settings.rules,
+            taken,
         }
     }
 
-    /// Updates the per-player match statistics after a step.
-    pub fn record_stats(&mut self) {
-        for i in 0..self.boards.len() {
-            let cc = self.boards[i].chain_count;
-            if cc > 0 && self.prev_chain[i] == 0 {
-                self.total_chains[i] += 1;
-            }
-            self.max_chain[i] = self.max_chain[i].max(cc);
-            self.prev_chain[i] = cc;
-
-            let ac = self.boards[i].last_was_all_clear;
-            if ac && !self.prev_all_clear[i] {
-                self.all_clears[i] += 1;
-            }
-            self.prev_all_clear[i] = ac;
-
-            let pid = self.boards[i].piece_id;
-            if pid != self.prev_piece_id[i] {
-                self.pieces_placed[i] += 1;
-                self.prev_piece_id[i] = pid;
-            }
+    /// The game so far, to be played again, with each slot's name.
+    pub fn replay(&self, names: impl IntoIterator<Item = String>) -> Replay {
+        let mut players = self.taken.clone();
+        for ((player, name), out_at) in players.iter_mut().zip(names).zip(&self.out_at) {
+            player.name = name;
+            player.out_at = *out_at;
         }
+        Replay {
+            seed: self.seed,
+            rules: self.rules,
+            ticks: self.tick,
+            players,
+        }
+    }
+
+    /// Counts what a slot's step did into the match statistics.
+    fn record_stats(&mut self, slot: usize, events: Events) {
+        if let Some(link) = events.link {
+            self.total_chains[slot] += u32::from(link == 1);
+            self.max_chain[slot] = self.max_chain[slot].max(link);
+        }
+        self.all_clears[slot] += u32::from(events.all_clear);
+        self.pieces_placed[slot] += u32::from(events.spawned);
     }
 
     pub fn set_paused(&mut self, paused: bool) {
@@ -164,7 +171,7 @@ impl Sim {
     }
 
     pub fn alive(&self, slot: usize) -> bool {
-        self.boards[slot].state != GameState::GameOver
+        self.boards[slot].state() != GameState::GameOver
     }
 
     /// The teams with a board still playing.
@@ -181,7 +188,7 @@ impl Sim {
     /// Takes a slot out of the game, as when its player leaves.
     pub fn eliminate(&mut self, slot: usize) {
         if let Some(board) = self.boards.get_mut(slot) {
-            board.state = GameState::GameOver;
+            board.lose();
             self.out_at[slot].get_or_insert(self.tick);
         }
     }
@@ -328,15 +335,21 @@ impl Sim {
         self.tick += 1;
         self.update_targets();
         let at = self.tick + config::GARBAGE_TRAVEL_TICKS;
-        let produced: Vec<u32> = (0..self.boards.len())
+        let stepped: Vec<Events> = (0..self.boards.len())
             .map(|slot| {
                 let inputs = self.take_due_inputs(slot);
                 let landed = self.take_due_garbage(slot);
+                let taken = &mut self.taken[slot];
+                taken.inputs.extend(inputs.iter().map(|&kind| (self.tick, kind)));
+                if landed > 0 {
+                    taken.garbage.push((self.tick, landed));
+                }
                 self.boards[slot].step(inputs, landed)
             })
             .collect();
-        for (slot, sent) in produced.into_iter().enumerate() {
-            self.send_garbage(slot, sent, at);
+        for (slot, events) in stepped.into_iter().enumerate() {
+            self.record_stats(slot, events);
+            self.send_garbage(slot, events.sent, at);
             if !self.alive(slot) {
                 self.out_at[slot].get_or_insert(self.tick);
             }
@@ -404,9 +417,9 @@ impl Sim {
             let board = &self.boards[i];
             let send = self.thumb_cells[i]
                 .as_ref()
-                .is_none_or(|(at, cells)| *cells != board.cells || self.tick >= at + THUMB_REFRESH_TICKS);
+                .is_none_or(|(at, cells)| cells != board.cells() || self.tick >= at + THUMB_REFRESH_TICKS);
             if send {
-                self.thumb_cells[i] = Some((self.tick, board.cells.clone()));
+                self.thumb_cells[i] = Some((self.tick, board.cells().clone()));
             }
             thumbs.push(Thumb {
                 slot: slot_byte(i + 1),
@@ -444,10 +457,70 @@ mod tests {
     }
 
     fn fill(sim: &mut Sim, slot: usize, rows: usize) {
-        let h = sim.boards[slot].height;
-        for row in &mut sim.boards[slot].cells[h - rows..] {
+        let h = sim.boards[slot].height();
+        for row in sim.boards[slot].cells_mut().rows_mut().skip(h - rows) {
             row[0] = Some(shared::PuyoType::Red);
         }
+    }
+
+    /// The whole point of a replay: played again from what it kept, every
+    /// board goes through the server's states, tick for tick, nuisance and
+    /// forfeits included.
+    #[test]
+    fn a_replay_plays_the_game_again_board_for_board() {
+        let mut s = sim(&[0, 1, 2]);
+        let kinds = [
+            InputKind::MoveLeft,
+            InputKind::RotateCW,
+            InputKind::MoveRight,
+            InputKind::HardDrop,
+            InputKind::SoftDropPress,
+            InputKind::SoftDropRelease,
+            InputKind::RotateCCW,
+        ];
+        let mut seq = 0;
+        let mut states = Vec::new();
+        for t in 1..=3000u32 {
+            for slot in 0..3 {
+                if (t + 7 * slot as u32).is_multiple_of(11) {
+                    seq += 1;
+                    s.queue_input(slot, s.tick + 1, seq, kinds[(t as usize + slot) % kinds.len()]);
+                }
+            }
+            if t % 97 == 0 {
+                s.send_garbage(t as usize % 3, 7, s.tick + 5);
+            }
+            if t == 1500 {
+                s.eliminate(2);
+            }
+            s.advance();
+            states.push(s.boards.iter().map(|b| b.state_hash()).collect::<Vec<_>>());
+        }
+        assert!(s.taken.iter().all(|p| !p.garbage.is_empty()), "no nuisance landed");
+        let mut playback = s.replay(["a", "b", "c"].map(String::from)).play();
+        for (t, expected) in states.iter().enumerate() {
+            playback.step();
+            let got: Vec<u64> = playback.boards().iter().map(Board::state_hash).collect();
+            assert_eq!(&got, expected, "the replay left the game at tick {}", t + 1);
+        }
+        assert!(playback.done());
+        assert_eq!(playback.boards()[2].state(), GameState::GameOver, "the forfeit");
+    }
+
+    #[test]
+    fn the_statistics_count_what_each_board_did() {
+        let mut s = sim(&[0, 1]);
+        for r in 9..=12 {
+            s.boards[0].cells_mut()[(r, 0)] = Some(shared::PuyoType::Red);
+        }
+        s.boards[0].settle();
+        for _ in 0..400 {
+            s.advance();
+        }
+        assert_eq!((s.total_chains[0], s.max_chain[0], s.all_clears[0]), (1, 1, 1));
+        assert!(s.pieces_placed[0] >= 1);
+        assert_eq!((s.total_chains[1], s.max_chain[1], s.all_clears[1]), (0, 0, 0));
+        assert!(s.pieces_placed[1] >= 1);
     }
 
     #[test]

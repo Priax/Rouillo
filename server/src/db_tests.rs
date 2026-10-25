@@ -31,6 +31,7 @@ fn game(ranked: bool, p1: Option<Uuid>, p2: Option<Uuid>, winner_slot: u8) -> Ma
         ranked,
         duration_secs: 60.0,
         players: vec![player(p1, 1, winner_slot == 1), player(p2, 2, winner_slot == 2)],
+        replay: None,
     }
 }
 
@@ -49,6 +50,27 @@ async fn elo(pool: &PgPool, id: Uuid) -> i32 {
         .fetch_one(pool)
         .await
         .unwrap()
+}
+
+#[sqlx::test]
+#[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
+async fn db_a_match_keeps_its_replay(pool: PgPool) {
+    let (alice, bob) = (user(&pool, "alice").await, user(&pool, "bob").await);
+    let kept = MatchRecord {
+        replay: Some(vec![1, 2, 3]),
+        ..game(false, Some(alice), Some(bob), 1)
+    };
+    db::record_match_result(&pool, kept).await.unwrap();
+    db::record_match_result(&pool, game(false, Some(alice), Some(bob), 2))
+        .await
+        .unwrap();
+    let history = db::get_match_history(&pool, alice, 10, 0).await.unwrap();
+    let with: Vec<_> = history.iter().filter(|m| m.has_replay).collect();
+    assert_eq!(with.len(), 1, "one match of two kept a replay");
+    assert_eq!(db::get_replay(&pool, with[0].id).await.unwrap(), Some(vec![1, 2, 3]));
+    let without = history.iter().find(|m| !m.has_replay).unwrap();
+    assert_eq!(db::get_replay(&pool, without.id).await.unwrap(), None);
+    assert_eq!(db::get_replay(&pool, Uuid::new_v4()).await.unwrap(), None);
 }
 
 #[sqlx::test]
@@ -561,6 +583,7 @@ async fn db_a_four_player_game_keeps_every_place(pool: PgPool) {
             ranked: false,
             duration_secs: 90.0,
             players,
+            replay: None,
         },
     )
     .await

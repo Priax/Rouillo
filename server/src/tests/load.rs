@@ -167,7 +167,7 @@ fn run(setup: &Setup) -> Report {
         max: times[times.len() - 1],
         bytes,
         watched_bytes,
-        boards_alive: boards.clone().filter(|b| b.state != GameState::GameOver).count(),
+        boards_alive: boards.clone().filter(|b| b.state() != GameState::GameOver).count(),
         boards: boards.count(),
     }
 }
