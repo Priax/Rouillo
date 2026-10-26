@@ -103,6 +103,13 @@ impl Ui {
         }
     }
 
+    /// A settings tile whose value is a button over `Stepper::tile_band`,
+    /// for a setting changed somewhere else.
+    pub fn button_tile(&self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str, value: &str) {
+        self.tile_label(draw, fonts, tile, label);
+        self.button(draw, fonts, Stepper::tile_band(tile), value);
+    }
+
     /// A settings tile for a yes or no: its name, then a switch and what it
     /// says. Clicks on `Stepper::tile_band` flip it, when `editable`.
     pub fn switch_tile(&self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str, on: bool, editable: bool) {

@@ -403,6 +403,7 @@ pub struct Room {
     pub chat: crate::chat::Chat,
     pub series_over: Option<(Option<u8>, i32)>,
     pub invite: Invite,
+    pub sizing: bool,
 }
 
 impl Room {
@@ -413,6 +414,7 @@ impl Room {
             chat: crate::chat::Chat::default(),
             series_over: None,
             invite: Invite::default(),
+            sizing: false,
         }
     }
 }

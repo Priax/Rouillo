@@ -9,7 +9,7 @@ use crate::ui::{
     self, field_clicked, list_row, text_field, Face, Field, Frame, ListCard, Modal, Pill, Rect, SettingsGrid,
     SharpText, Size, Stepper, TextInput, View, FILL, PAGER_H,
 };
-use crate::{http, theme};
+use crate::{board_size, http, theme};
 
 fn send(state: &mut State, msg: &ClientMessage) {
     state.conn.send(msg);
@@ -362,20 +362,30 @@ pub fn setting_value(settings: &RoomSettings, setting: RoomSetting) -> String {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tile {
+    Setting(RoomSetting),
+    /// The board's columns and rows, changed in their own view.
+    Size,
+}
+
 /// The lobby's settings, by column: the game played, then the room.
-const LOBBY_SETTINGS: [(&str, &[RoomSetting]); 2] = [
+const LOBBY_SETTINGS: [(&str, &[Tile]); 2] = [
     (
         "Partie",
         &[
-            RoomSetting::StartingLevel,
-            RoomSetting::Colors,
-            RoomSetting::Columns,
-            RoomSetting::Rows,
+            Tile::Setting(RoomSetting::StartingLevel),
+            Tile::Setting(RoomSetting::Colors),
+            Tile::Size,
         ],
     ),
     (
         "Room",
-        &[RoomSetting::MaxPlayers, RoomSetting::Pause, RoomSetting::FriendsOnly],
+        &[
+            Tile::Setting(RoomSetting::MaxPlayers),
+            Tile::Setting(RoomSetting::Pause),
+            Tile::Setting(RoomSetting::FriendsOnly),
+        ],
     ),
 ];
 
@@ -385,7 +395,7 @@ fn lobby_panel(view: View) -> SettingsGrid {
 }
 
 /// Each setting of the lobby with its tile.
-fn lobby_tiles(view: View) -> impl Iterator<Item = (RoomSetting, Rect)> {
+fn lobby_tiles(view: View) -> impl Iterator<Item = (Tile, Rect)> {
     let grid = lobby_panel(view);
     LOBBY_SETTINGS
         .into_iter()
@@ -396,6 +406,12 @@ fn lobby_tiles(view: View) -> impl Iterator<Item = (RoomSetting, Rect)> {
                 .enumerate()
                 .map(move |(row, &setting)| (setting, grid.tile(column, row)))
         })
+}
+
+fn lobby_size_button(view: View) -> Rect {
+    lobby_tiles(view)
+        .find_map(|(t, rect)| (t == Tile::Size).then(|| Stepper::tile_band(rect)))
+        .expect("the lobby has a size tile")
 }
 
 fn lobby_launch(view: View) -> Rect {
@@ -567,6 +583,23 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         return;
     }
 
+    if info.countdown.is_some() {
+        room.sizing = false;
+    }
+    let editable = info.is_host && info.countdown.is_none();
+    if room.sizing {
+        match board_size::update(app, ui, &info.settings.rules, editable) {
+            Some(board_size::Action::Close) => room.sizing = false,
+            Some(board_size::Action::Adjust(steps)) => {
+                for (setting, dir) in steps {
+                    conn.send(&ClientMessage::SetRoomSetting { setting, dir });
+                }
+            }
+            None => {}
+        }
+        return;
+    }
+
     if let Some(me) = team_picker(info) {
         if ui.clicked(lobby_player_row(view, me, info.names.len())) {
             let team = next_team(info.teams.get(me).copied().flatten());
@@ -581,8 +614,14 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
     }
     room.chat.click(ui, fonts, lobby_chat(view));
 
-    if info.is_host && info.countdown.is_none() {
+    if ui.clicked(lobby_size_button(view)) {
+        room.sizing = true;
+        return;
+    }
+
+    if editable {
         for (setting, tile) in lobby_tiles(view) {
+            let Tile::Setting(setting) = setting else { continue };
             let stepper = Stepper::in_tile(tile);
             let dir = if setting == RoomSetting::FriendsOnly {
                 if ui.clicked(Stepper::tile_band(tile)) {
@@ -640,7 +679,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     let view = state.ui.view();
     let fonts = &state.fonts;
     let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.set_input(!room.invite.open);
+    state.ui.set_input(!room.invite.open && !room.sizing);
 
     draw_lobby_header(&mut draw, state, info);
     draw_lobby_players(&mut draw, state, info);
@@ -654,6 +693,11 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     );
     let editable = info.is_host && info.countdown.is_none();
     for (setting, tile) in lobby_tiles(view) {
+        let Tile::Setting(setting) = setting else {
+            let size = board_size::label(&info.settings.rules);
+            state.ui.button_tile(&mut draw, fonts, tile, "Taille", &size);
+            continue;
+        };
         let label = setting_label(setting);
         if setting == RoomSetting::FriendsOnly {
             let on = info.settings.friends_only;
@@ -690,6 +734,9 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
 
     if room.invite.open {
         draw_invite_overlay(&mut draw, state, &room.invite);
+    }
+    if room.sizing {
+        board_size::draw(&mut draw, &state.ui, fonts, &info.settings.rules, editable);
     }
 
     state.ui.render(gfx, &draw);

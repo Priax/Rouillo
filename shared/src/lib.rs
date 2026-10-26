@@ -25,7 +25,7 @@ pub use protocol::{
     PROTOCOL_VERSION,
 };
 pub use replay::{Playback, Replay, ReplayPlayer};
-pub use room::{PausePolicy, RoomSetting, RoomSettings, MAX_ROOM_PLAYERS, MAX_TEAMS};
+pub use room::{PausePolicy, RoomSetting, RoomSettings, BOARD_COLUMNS, BOARD_ROWS, MAX_ROOM_PLAYERS, MAX_TEAMS};
 
 // Grid coordinates and cell counts are tiny (the grid is 6 by 13), so they fit
 // any integer type; this checks it rather than truncating silently, since a

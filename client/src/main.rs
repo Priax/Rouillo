@@ -8,6 +8,7 @@ use shared::{config, ClientMessage};
 mod account;
 mod audio;
 mod bindings_panel;
+mod board_size;
 mod chat;
 mod connection;
 mod controls;

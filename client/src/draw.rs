@@ -1,7 +1,7 @@
 use notan::draw::{Draw, DrawShapes};
 use notan::math::{vec2, Mat3};
 use notan::prelude::*;
-use shared::{Board, GameState, Phase, PuyoType, Targeting};
+use shared::{Board, GameState, Phase, PuyoType, Rules, Targeting};
 
 use crate::config;
 use crate::sprites::{self, Joint, Layer, Mood, Nuisance, Puyo};
@@ -9,7 +9,7 @@ use crate::state::GameSession;
 use crate::theme::{self, game, Palette};
 use crate::ui::{Face, Fonts, Rect, SharpText, Ui, View};
 
-const FRAME_PAD: f32 = 10.0;
+pub const FRAME_PAD: f32 = 10.0;
 const COLUMN_W: f32 = 170.0;
 const VERSUS_GAP: f32 = 250.0;
 const SIDE_GAP: f32 = 40.0;
@@ -1051,6 +1051,15 @@ fn draw_well(draw: &mut Draw, area: Rect, board: &Board, danger: bool, time: f32
             .round_cap()
             .color(game::DEATH_CROSS.with_alpha(alpha));
     }
+}
+
+/// An empty well of the size `rules` give, filling `screen`.
+pub fn draw_empty_well(draw: &mut Draw, rules: &Rules, screen: Rect, time: f32) {
+    let board = Board::for_match(0, rules);
+    let scale = screen.w / natural_size(&board).0;
+    scaled(draw, screen, scale, |draw, area| {
+        draw_well(draw, area, &board, false, time)
+    });
 }
 
 struct Cell {
