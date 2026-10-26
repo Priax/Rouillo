@@ -233,9 +233,12 @@ impl Hud {
 pub enum Hud {
     Online(Role),
     Solo {
-        versus: bool,
+        /// Whether the game may set a record, so the best one is shown.
+        records: bool,
         best: u32,
         new_best: bool,
+        /// A CPU plays the player's board, in a game between CPUs.
+        watching: bool,
     },
     /// A finished game played again.
     Replay,
@@ -351,7 +354,7 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
         );
     }
     match Overlay::of(session, hud) {
-        Some(Overlay::Out) => draw_out(&mut draw, ui, fonts, layout.mine),
+        Some(Overlay::Out) => draw_out(&mut draw, ui, fonts, layout.mine, hud),
         Some(overlay) => {
             let game_over = matches!(overlay, Overlay::GameOver { .. } | Overlay::Watched(_));
             let leaving_forfeits = !game_over && !session.opponent_disconnected;
@@ -417,10 +420,10 @@ fn draw_boards(
         offset: (row_off + fall_step(me), col_off),
         satellite: session.my_turn.satellite(),
     };
-    let mine = if session.spectating() {
-        session.name_of(session.focus)
-    } else {
-        "YOU"
+    let mine = match hud {
+        _ if session.spectating() => session.name_of(session.focus),
+        Hud::Solo { watching: true, .. } => session.name_of(session.my_slot),
+        _ => "YOU",
     };
     let color = match theme::team(session.team) {
         Some((_, color)) if !layout.thumbs.is_empty() => color,
@@ -434,7 +437,7 @@ fn draw_boards(
     draw_player(draw, fonts, me, (layout.mine, layout.scale), piece, header, time);
     let mut stats = vec![("SCORE", me.score.to_string())];
     if let Hud::Solo {
-        versus: false, best, ..
+        records: true, best, ..
     } = hud
     {
         stats.push(("BEST", best.max(me.score).to_string()));
@@ -601,15 +604,23 @@ fn draw_arena(
 }
 
 /// One's board once out: the others play on, one may leave.
-fn draw_out(draw: &mut Draw, ui: &Ui, fonts: &Fonts, mine: Rect) {
+fn draw_out(draw: &mut Draw, ui: &Ui, fonts: &Fonts, mine: Rect, hud: Hud) {
     let frame = framed(mine);
     draw.rect((frame.x, frame.y), (frame.w, frame.h))
         .corner_radius(18.0)
         .color(theme::SCRIM_DARK);
     let (cx, cy) = mine.center();
     shadowed(draw, fonts, "K.O.", (cx, cy - 40.0), theme::size::HERO, theme::DANGER);
-    let (leave, _) = exit_rows(ui.view(), false);
-    ui.menu_bar(draw, fonts, leave, "Quitter la room", theme::bar::RED);
+    let label = match hud {
+        Hud::Solo { .. } => "Quitter",
+        Hud::Online(_) | Hud::Replay => "Quitter la room",
+    };
+    ui.menu_bar(draw, fonts, out_row(ui.view()), label, theme::bar::RED);
+}
+
+/// The way out for a player knocked out of a game the others play on.
+pub fn out_row(view: View) -> Rect {
+    exit_rows(view, false).0
 }
 
 fn framed(area: Rect) -> Rect {

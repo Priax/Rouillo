@@ -65,6 +65,9 @@ pub const SERVER_PORT: u16 = 8080;
 pub const CHANNEL_CAPACITY: usize = 256;
 
 pub const SERVER_TICK_HZ: u64 = 60;
+/// How long a target drawn by chance is kept before another is drawn.
+#[allow(clippy::cast_possible_truncation)]
+pub const RANDOM_TARGET_TICKS: u32 = 8 * SERVER_TICK_HZ as u32;
 pub const STATE_BROADCAST_HZ: u64 = 60;
 
 pub const RECONNECT_GRACE_SECS: u64 = 120;

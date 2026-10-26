@@ -28,10 +28,14 @@ impl Stepper {
 
     /// The controls of a settings tile: under its name, a button at each end.
     pub fn in_tile(tile: Rect) -> Self {
-        let y = tile.y + TILE_LABEL_H;
+        Self::across(Self::tile_band(tile))
+    }
+
+    /// A square button at each end of `band`.
+    pub fn across(band: Rect) -> Self {
         Self {
-            minus: Rect::at(tile.x, y, TILE_BUTTON, TILE_BUTTON),
-            plus: Rect::at(tile.x + tile.w - TILE_BUTTON, y, TILE_BUTTON, TILE_BUTTON),
+            minus: Rect::at(band.x, band.y, band.h, band.h),
+            plus: Rect::at(band.x + band.w - band.h, band.y, band.h, band.h),
         }
     }
 
@@ -87,7 +91,12 @@ impl Ui {
     /// step it, the buttons only when `editable`.
     pub fn stepper_tile(&self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str, value: &str, editable: bool) {
         self.tile_label(draw, fonts, tile, label);
-        let s = Stepper::in_tile(tile);
+        self.stepper_band(draw, fonts, Stepper::tile_band(tile), value, editable);
+    }
+
+    /// A value between the buttons that step it, across `band`.
+    pub fn stepper_band(&self, draw: &mut Draw, fonts: &Fonts, band: Rect, value: &str, editable: bool) {
+        let s = Stepper::across(band);
         let room = s.plus.x - (s.minus.x + s.minus.w) - 12.0;
         let full = theme::size::EMPHASIS;
         let size = full.min(full * room / fonts.width(Face::Display, value, full));

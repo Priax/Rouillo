@@ -65,7 +65,9 @@ pub fn update_game(
 
     handle_global_input(input, session, conn, online.ranked);
     if !menu && !session.eliminated() {
-        choose_target(input, click, session, conn);
+        if let Some(targeting) = choose_target(input, click, session) {
+            conn.send(&ClientMessage::SetTargeting { targeting });
+        }
     }
 
     if !game_over && !paused && !session.quit_menu {
@@ -255,14 +257,15 @@ fn opponents(session: &GameSession) -> Vec<u8> {
     foes.map(|r| r.slot).collect()
 }
 
-fn choose_target(
+/// The way of aiming the player switches to, by key or click: the session
+/// takes it, the caller tells the server if there is one.
+pub fn choose_target(
     input: &Frame,
     click: Option<crate::draw::GameClick>,
     session: &mut GameSession,
-    conn: &mut Connection,
-) {
+) -> Option<Targeting> {
     if session.rivals.len() < 2 {
-        return;
+        return None;
     }
     let foes = opponents(session);
     let current = match session.targeting {
@@ -287,13 +290,12 @@ fn choose_target(
         None if input.pressed(Action::NextTarget) => after(current).map(Targeting::Manual),
         None => None,
     };
-    if let Some(targeting) = chosen.filter(|&t| t != session.targeting || matches!(t, Targeting::Manual(_))) {
-        session.targeting = targeting;
-        if let Targeting::Manual(slot) = targeting {
-            session.target = Some(slot);
-        }
-        conn.send(&ClientMessage::SetTargeting { targeting });
+    let targeting = chosen.filter(|&t| t != session.targeting || matches!(t, Targeting::Manual(_)))?;
+    session.targeting = targeting;
+    if let Targeting::Manual(slot) = targeting {
+        session.target = Some(slot);
     }
+    Some(targeting)
 }
 
 fn handle_game_input(
@@ -565,22 +567,22 @@ mod tests {
         );
     }
 
-    fn arena() -> (GameSession, Connection) {
+    fn arena() -> GameSession {
         let mut session = synced_session();
         session.team = 1;
         for (slot, team) in [(2, 1), (3, 2), (4, 3)] {
             session.add_rival(crate::state::Rival::new(slot, team, session.board.clone()));
         }
-        (session, Connection::new("p"))
+        session
     }
 
     #[test]
     fn the_strategy_key_goes_round_and_manual_aims_at_an_opponent() {
-        let (mut s, mut conn) = arena();
+        let mut s = arena();
         let key = Frame::pressing(Action::Strategy);
         let mut seen = Vec::new();
         for _ in 0..4 {
-            choose_target(&key, None, &mut s, &mut conn);
+            choose_target(&key, None, &mut s);
             seen.push(s.targeting);
         }
         assert_eq!(
@@ -597,24 +599,24 @@ mod tests {
 
     #[test]
     fn next_target_skips_partners_and_the_knocked_out() {
-        let (mut s, mut conn) = arena();
+        let mut s = arena();
         s.rivals[1].board.lose();
         let key = Frame::pressing(Action::NextTarget);
-        choose_target(&key, None, &mut s, &mut conn);
+        choose_target(&key, None, &mut s);
         assert_eq!(s.targeting, Targeting::Manual(4));
-        choose_target(&key, None, &mut s, &mut conn);
+        choose_target(&key, None, &mut s);
         assert_eq!(s.targeting, Targeting::Manual(4), "the only one left");
     }
 
     #[test]
     fn clicking_a_board_aims_at_it_unless_it_is_a_partner() {
-        let (mut s, mut conn) = arena();
+        let mut s = arena();
         let none = Frame::default();
-        choose_target(&none, Some(crate::draw::GameClick::Board(2)), &mut s, &mut conn);
+        choose_target(&none, Some(crate::draw::GameClick::Board(2)), &mut s);
         assert_eq!(s.targeting, Targeting::Random);
-        choose_target(&none, Some(crate::draw::GameClick::Board(4)), &mut s, &mut conn);
+        choose_target(&none, Some(crate::draw::GameClick::Board(4)), &mut s);
         assert_eq!((s.targeting, s.target), (Targeting::Manual(4), Some(4)));
-        choose_target(&none, Some(crate::draw::GameClick::Strategy(2)), &mut s, &mut conn);
+        choose_target(&none, Some(crate::draw::GameClick::Strategy(2)), &mut s);
         assert_eq!(s.targeting, Targeting::Danger);
     }
 

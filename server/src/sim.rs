@@ -13,9 +13,6 @@ use crate::ws::CLIENT_MSG_BURST;
 
 pub const INPUT_QUEUE_CAP: usize = 2048;
 
-/// How long a random target is kept before another is drawn.
-const RANDOM_TARGET_TICKS: u32 = 8 * config::SERVER_TICK_HZ as u32;
-
 /// A stack unchanged is sent again this often in thumbnails, for one whose
 /// datagram with the change was lost.
 const THUMB_REFRESH_TICKS: u32 = config::SERVER_TICK_HZ as u32;
@@ -212,25 +209,14 @@ impl Sim {
         if opponents.is_empty() {
             return None;
         }
-        let random = |sim: &mut Self| {
-            let kept = sim.targets[slot].filter(|t| opponents.contains(t) && sim.tick < sim.random_until[slot]);
+        let aimed = self.targeting[slot].aim(slot, &opponents, &self.targets, |o| self.boards[o].danger());
+        Some(aimed.unwrap_or_else(|| {
+            let kept = self.targets[slot].filter(|t| opponents.contains(t) && self.tick < self.random_until[slot]);
             kept.unwrap_or_else(|| {
-                sim.random_until[slot] = sim.tick + RANDOM_TARGET_TICKS;
+                self.random_until[slot] = self.tick + config::RANDOM_TARGET_TICKS;
                 opponents[rand::rng().random_range(0..opponents.len())]
             })
-        };
-        Some(match self.targeting[slot] {
-            Targeting::Manual(t) if opponents.contains(&usize::from(t)) => usize::from(t),
-            Targeting::Danger => *opponents
-                .iter()
-                .max_by_key(|&&o| self.boards[o].danger())
-                .unwrap_or(&opponents[0]),
-            Targeting::Attackers => match opponents.iter().find(|&&o| self.targets[o] == Some(slot)) {
-                Some(&attacker) => attacker,
-                None => random(self),
-            },
-            Targeting::Random | Targeting::Manual(_) => random(self),
-        })
+        }))
     }
 
     fn update_targets(&mut self) {
@@ -536,7 +522,7 @@ mod tests {
             assert_eq!(s.targets[1], Some(2));
             assert!(matches!(s.targets[2], Some(0 | 1)));
             assert_eq!(s.targets[3], None, "out of the game");
-            s.tick += RANDOM_TARGET_TICKS;
+            s.tick += config::RANDOM_TARGET_TICKS;
         }
     }
 
@@ -574,7 +560,7 @@ mod tests {
         let mut s = sim(&[0, 1, 2, 3, 4]);
         s.update_targets();
         let first = s.targets[0];
-        for _ in 0..RANDOM_TARGET_TICKS - 1 {
+        for _ in 0..config::RANDOM_TARGET_TICKS - 1 {
             s.tick += 1;
             s.update_targets();
             assert_eq!(s.targets[0], first);

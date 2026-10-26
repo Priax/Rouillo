@@ -477,7 +477,7 @@ impl Room {
         self.members
             .iter()
             .enumerate()
-            .map(|(i, m)| m.team.unwrap_or(shared::MAX_TEAMS + 1 + slot_byte(i)))
+            .map(|(i, m)| m.team.unwrap_or(shared::own_team(slot_byte(i))))
             .collect()
     }
 

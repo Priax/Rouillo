@@ -753,6 +753,8 @@ pub struct State {
     pub pads: crate::pads::Pads,
     pub touch: crate::touch::TouchPad,
     pub solo_settings: crate::solo::SoloSettings,
+    /// The board size view is open over the solo settings.
+    pub solo_sizing: bool,
     pub solo: Option<crate::solo::SoloGame>,
     /// A guest's best lives on the device, an account's on the server.
     pub solo_best: u32,
@@ -800,6 +802,7 @@ impl State {
             pads: crate::pads::Pads::new(),
             touch: crate::touch::TouchPad::default(),
             solo_settings: crate::solo::SoloSettings::default(),
+            solo_sizing: false,
             solo: None,
             solo_best: load_best_score(),
             solo_best_slot: None,

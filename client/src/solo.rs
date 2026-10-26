@@ -2,62 +2,111 @@ use std::sync::Arc;
 
 use notan::prelude::*;
 use shared::cpu::{Cpu, Difficulty, Style};
-use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings};
+use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings, Targeting};
 
 use crate::draw::Hud;
 use crate::state::{GameSession, Rival, Screen, State};
-use crate::ui::{self, Pill, Rect, SettingsPanel, SharpText, View};
-use crate::{http, logic, rooms, theme};
+use crate::ui::{self, Frame, Icon, Pill, Rect, SharpText, Size, Stepper, View, FILL};
+use crate::{board_size, http, logic, rooms, theme};
 
-#[derive(Clone, Copy, Default)]
+/// The most CPUs a solo game takes on: each one thinks on this device.
+pub const MAX_OPPONENTS: usize = 3;
+
+#[derive(Clone, Default)]
 pub struct SoloSettings {
-    opponent: Option<Difficulty>,
-    character: Style,
+    /// A CPU playing the player's board, for a game between CPUs.
+    pilot: Option<Difficulty>,
+    pilot_style: Style,
+    opponents: Vec<(Difficulty, Style)>,
     room: RoomSettings,
 }
 
-fn cycle<T: Copy + PartialEq>(options: &[T], at: T, dir: i32) -> T {
-    let i = options.iter().position(|&o| o == at).unwrap_or(0) as i32;
-    options[(i + dir.signum()).rem_euclid(options.len() as i32) as usize]
+/// The settings of the game itself, before the opponents.
+const GAME_ROWS: usize = 5;
+const PILOT_ROW: usize = 0;
+const PILOT_STYLE_ROW: usize = 1;
+const SIZE_ROW: usize = 2;
+const LEVEL_ROW: usize = 3;
+
+fn pilot_name(pilot: Option<Difficulty>) -> String {
+    pilot.map_or_else(|| "Joueur".to_owned(), |d| format!("IA {}", d.label()))
 }
 
 impl SoloSettings {
-    const COUNT: usize = 4;
-
     fn label(i: usize) -> &'static str {
         match i {
-            0 => "Adversaire",
-            1 => "Personnage",
-            _ => rooms::setting_label(RoomSetting::ALL[i - 2]),
+            PILOT_ROW => "Vous",
+            PILOT_STYLE_ROW => "Personnage",
+            SIZE_ROW => "Taille",
+            LEVEL_ROW => rooms::setting_label(RoomSetting::StartingLevel),
+            _ => rooms::setting_label(RoomSetting::Colors),
         }
     }
 
     fn value(&self, i: usize) -> String {
         match i {
-            0 => self.opponent.map_or("Aucun", Difficulty::label).into(),
-            1 if self.opponent.is_none() => "-".into(),
-            1 => self.character.character().into(),
-            _ => rooms::setting_value(&self.room, RoomSetting::ALL[i - 2]),
+            PILOT_ROW => pilot_name(self.pilot),
+            PILOT_STYLE_ROW if self.pilot.is_none() => "-".to_owned(),
+            PILOT_STYLE_ROW => self.pilot_style.character().to_owned(),
+            SIZE_ROW => board_size::label(&self.room.rules),
+            LEVEL_ROW => rooms::setting_value(&self.room, RoomSetting::StartingLevel),
+            _ => rooms::setting_value(&self.room, RoomSetting::Colors),
         }
     }
 
     fn adjust(&mut self, i: usize, dir: i32) {
         match i {
-            0 => {
+            PILOT_ROW => {
                 let options: Vec<_> = std::iter::once(None).chain(Difficulty::ALL.map(Some)).collect();
-                self.opponent = cycle(&options, self.opponent, dir);
+                self.pilot = ui::cycle(&options, self.pilot, dir);
             }
-            1 if self.opponent.is_some() => self.character = cycle(&Style::ALL, self.character, dir),
-            1 => {}
-            _ => self.room.adjust(RoomSetting::ALL[i - 2], dir),
+            PILOT_STYLE_ROW if self.pilot.is_some() => self.pilot_style = ui::cycle(&Style::ALL, self.pilot_style, dir),
+            PILOT_STYLE_ROW | SIZE_ROW => {}
+            LEVEL_ROW => self.room.adjust(RoomSetting::StartingLevel, dir),
+            _ => self.room.adjust(RoomSetting::Colors, dir),
         }
+    }
+
+    /// Steps the difficulty of opponent `i` (`part` 0) or its character.
+    fn adjust_opponent(&mut self, i: usize, part: usize, dir: i32) {
+        let Some((difficulty, style)) = self.opponents.get_mut(i) else {
+            return;
+        };
+        if part == 0 {
+            *difficulty = ui::cycle(&Difficulty::ALL, *difficulty, dir);
+        } else {
+            *style = ui::cycle(&Style::ALL, *style, dir);
+        }
+    }
+
+    fn add_opponent(&mut self) {
+        if self.opponents.len() < MAX_OPPONENTS {
+            let style = Style::ALL[self.opponents.len() % Style::ALL.len()];
+            self.opponents.push((Difficulty::Normal, style));
+        }
+    }
+
+    /// Whether a score here may be a record: the player alone on the
+    /// standard board.
+    fn counts_for_best(&self) -> bool {
+        self.pilot.is_none() && self.opponents.is_empty() && board_size::is_standard(&self.room.rules)
+    }
+
+    /// Whether row `i` may be changed now: the pilot's character only with a pilot.
+    fn editable(&self, i: usize) -> bool {
+        i != PILOT_STYLE_ROW || self.pilot.is_some()
     }
 }
 
 pub struct SoloGame {
     pub session: GameSession,
     settings: SoloSettings,
-    cpu: Option<Cpu>,
+    pilot: Option<Cpu>,
+    /// One per rival, in the same order.
+    cpus: Vec<Cpu>,
+    /// Where each board's nuisance goes: 0 is the player's, `i + 1` rival `i`'s.
+    targets: Vec<Option<usize>>,
+    random_until: Vec<u32>,
     new_best: bool,
 }
 
@@ -68,37 +117,64 @@ impl SoloGame {
 
     fn with_seed(settings: SoloSettings, seed: u64) -> Self {
         let board = Board::for_match(seed, &settings.room.rules);
-        let mut session = GameSession::new(1, Vec::new());
+        let mine = settings
+            .pilot
+            .map_or_else(String::new, |d| shared::cpu::name(d, settings.pilot_style));
+        let names = std::iter::once(mine).chain(settings.opponents.iter().map(|&(d, s)| shared::cpu::name(d, s)));
+        let mut session = GameSession::new(1, names.collect());
         session.predicted_board = board.clone();
-        let cpu = settings
-            .opponent
-            .map(|difficulty| Cpu::new(difficulty, settings.character, seed));
-        if cpu.is_some() {
-            session.add_rival(Rival::new(2, 1, board));
+        let mut cpus = Vec::new();
+        for (i, &(difficulty, style)) in settings.opponents.iter().enumerate() {
+            cpus.push(Cpu::new(difficulty, style, seed.wrapping_add(i as u64)));
+            let seat = i as u8 + 1;
+            let (slot, team) = (seat + 1, shared::own_team(seat));
+            session.add_rival(Rival::new(slot, team, board.clone()));
         }
+        let pilot = settings.pilot.map(|difficulty| {
+            Cpu::new(
+                difficulty,
+                settings.pilot_style,
+                seed.wrapping_add(MAX_OPPONENTS as u64),
+            )
+        });
+        let boards = cpus.len() + 1;
         Self {
             session,
             settings,
-            cpu,
+            pilot,
+            cpus,
+            targets: vec![None; boards],
+            random_until: vec![0; boards],
             new_best: false,
         }
     }
 
     pub fn hud(&self, best: u32) -> Hud {
         Hud::Solo {
-            versus: self.cpu.is_some(),
+            records: self.settings.counts_for_best(),
             best,
             new_best: self.new_best,
+            watching: self.pilot.is_some(),
         }
+    }
+
+    fn me_out(&self) -> bool {
+        self.session.predicted_board.state() == GameState::GameOver
+    }
+
+    /// Whether the game is over: one side is left, or the player alone is out.
+    fn over(&self) -> bool {
+        self.session.outcome(self.me_out()).is_some()
+    }
+
+    /// Out of a game the CPUs play on.
+    fn knocked_out(&self) -> bool {
+        self.me_out() && !self.over()
     }
 
     /// Whether nothing is being played: the game is over or paused.
     pub fn idle(&self) -> bool {
         self.over() || self.paused()
-    }
-
-    fn over(&self) -> bool {
-        self.session.predicted_board.state() == GameState::GameOver || self.session.rivals.iter().any(Rival::out)
     }
 
     fn paused(&self) -> bool {
@@ -121,27 +197,75 @@ impl SoloGame {
         }
     }
 
-    fn advance(&mut self) {
-        let Self { session, cpu, .. } = self;
-        let sent = logic::advance_one(session);
-        let now = session.local_tick;
-        session.incoming.retain(|g| g.at > now);
-        let (Some(cpu), Some(rival)) = (cpu, session.rivals.first_mut()) else {
-            return;
-        };
+    fn board(&self, i: usize) -> &Board {
+        i.checked_sub(1)
+            .map_or(&self.session.predicted_board, |r| &self.session.rivals[r].board)
+    }
 
-        let landed: u32 = rival.incoming.iter().filter(|g| g.at <= now).map(|g| g.amount).sum();
-        rival.incoming.retain(|g| g.at > now);
-        let input = cpu.input(&rival.board, rival.nuisance() + landed);
-        let sent_back = rival.board.step(input, landed).sent;
-
-        let at = now + config::GARBAGE_TRAVEL_TICKS;
-        if sent > 0 {
-            rival.incoming.push(IncomingGarbage { at, amount: sent });
+    /// Picks where each board's nuisance goes: the player by the way they
+    /// chose, every CPU by chance.
+    fn aim(&mut self) {
+        let alive: Vec<usize> = (0..self.targets.len())
+            .filter(|&i| self.board(i).state() != GameState::GameOver)
+            .collect();
+        let now = self.session.local_tick;
+        for i in 0..self.targets.len() {
+            let opponents: Vec<usize> = alive.iter().copied().filter(|&o| o != i).collect();
+            if !alive.contains(&i) || opponents.is_empty() {
+                self.targets[i] = None;
+                continue;
+            }
+            let targeting = match self.session.targeting {
+                Targeting::Manual(slot) => Targeting::Manual(slot.saturating_sub(1)),
+                t => t,
+            };
+            let targeting = if i == 0 && self.pilot.is_none() {
+                targeting
+            } else {
+                Targeting::Random
+            };
+            let aimed = targeting.aim(i, &opponents, &self.targets, |o| self.board(o).danger());
+            let kept = self.targets[i].filter(|t| opponents.contains(t) && now < self.random_until[i]);
+            self.targets[i] = Some(aimed.or(kept).unwrap_or_else(|| {
+                self.random_until[i] = now + config::RANDOM_TARGET_TICKS;
+                opponents[rand::random_range(0..opponents.len())]
+            }));
         }
-        if sent_back > 0 {
-            session.incoming.push(IncomingGarbage { at, amount: sent_back });
-            crate::audio::play_garbage();
+        let slot = |t: Option<usize>| t.map(|t| t as u8 + 1);
+        self.session.target = slot(self.targets[0]);
+        for (i, rival) in self.session.rivals.iter_mut().enumerate() {
+            rival.target = slot(self.targets[i + 1]);
+        }
+    }
+
+    fn advance(&mut self) {
+        if let Some(pilot) = &mut self.pilot {
+            let threat = self.session.my_nuisance();
+            if let Some(kind) = pilot.input(&self.session.predicted_board, threat) {
+                self.session.predicted_board.apply_input(kind);
+            }
+        }
+        let mut sent = vec![logic::advance_one(&mut self.session)];
+        let now = self.session.local_tick;
+        self.session.incoming.retain(|g| g.at > now);
+        for (cpu, rival) in self.cpus.iter_mut().zip(&mut self.session.rivals) {
+            let landed: u32 = rival.incoming.iter().filter(|g| g.at <= now).map(|g| g.amount).sum();
+            rival.incoming.retain(|g| g.at > now);
+            let input = cpu.input(&rival.board, rival.nuisance() + landed);
+            sent.push(rival.board.step(input, landed).sent);
+        }
+        self.aim();
+        let at = now + config::GARBAGE_TRAVEL_TICKS;
+        for (from, amount) in sent.into_iter().enumerate().filter(|&(_, amount)| amount > 0) {
+            let garbage = IncomingGarbage { at, amount };
+            match self.targets[from] {
+                Some(0) => {
+                    self.session.incoming.push(garbage);
+                    crate::audio::play_garbage();
+                }
+                Some(to) => self.session.rivals[to - 1].incoming.push(garbage),
+                None => {}
+            }
         }
     }
 }
@@ -204,6 +328,11 @@ pub fn update_game(app: &mut App, state: &mut State) {
         return;
     };
 
+    if game.knocked_out() && (input.pause || ui.bar_clicked(crate::draw::out_row(ui.view()))) {
+        *solo = None;
+        *screen = Screen::SoloSetup;
+        return;
+    }
     if !game.over() && input.pause {
         game.set_paused(!game.paused());
     }
@@ -216,7 +345,7 @@ pub fn update_game(app: &mut App, state: &mut State) {
             return;
         }
         if ui.bar_clicked(again) || (over && input.restart) {
-            *game = SoloGame::new(game.settings);
+            *game = SoloGame::new(game.settings.clone());
             return;
         }
     }
@@ -225,10 +354,14 @@ pub fn update_game(app: &mut App, state: &mut State) {
     if over || paused {
         logic::hold(&mut game.session);
     } else {
-        logic::read_controls(&input, &mut game.session, *settings, None, dt);
+        if game.pilot.is_none() && !game.knocked_out() {
+            let click = crate::draw::game_click(ui, &game.session);
+            logic::choose_target(&input, click, &mut game.session);
+            logic::read_controls(&input, &mut game.session, *settings, None, dt);
+        }
         game.step(dt);
         let score = game.session.predicted_board.score;
-        if game.over() && game.cpu.is_none() && score > *solo_best {
+        if game.over() && game.settings.counts_for_best() && score > *solo_best {
             *solo_best = score;
             game.new_best = true;
             if signed_in {
@@ -244,24 +377,143 @@ pub fn update_game(app: &mut App, state: &mut State) {
     }
 }
 
-fn setup_panel(view: View) -> SettingsPanel {
-    SettingsPanel::new(view, SoloSettings::COUNT)
+const ROW_H: f32 = 44.0;
+const ROW_GAP: f32 = 12.0;
+/// The opponents' rows stand a little lower than tiles would.
+const FOES_TOP: f32 = 8.0;
+const CARD_GAP: f32 = 24.0;
+const GAME_W: f32 = 420.0;
+const FOES_W: f32 = 600.0;
+const ADD_W: f32 = 260.0;
+
+/// The settings screen: the game's settings in one card, the opponents in
+/// another, side by side or one above the other on a narrow screen.
+struct Setup {
+    game: Rect,
+    foes: Rect,
+    view_w: f32,
+}
+
+/// An opponent's row: its number, its difficulty, its character, the
+/// button that takes it away.
+struct FoeRow {
+    number: Rect,
+    difficulty: Rect,
+    style: Rect,
+    remove: Rect,
+}
+
+impl Setup {
+    fn new(view: View) -> Self {
+        let body = Frame::of(view).body;
+        let game_h = ui::card_height(GAME_ROWS as f32 * ui::TILE_H);
+        let foes_h = ui::card_height(FOES_TOP + (MAX_OPPONENTS + 1) as f32 * (ROW_H + ROW_GAP));
+        let (game, foes) = if view.portrait() {
+            let game = body.top(game_h).max_width(FOES_W);
+            let below = body.below(game_h + CARD_GAP);
+            (game, below.top(foes_h).max_width(FOES_W))
+        } else {
+            let both = body.top(game_h.max(foes_h)).max_width(GAME_W + CARD_GAP + FOES_W);
+            (both.left(GAME_W), both.right(FOES_W))
+        };
+        Self {
+            game,
+            foes,
+            view_w: view.w,
+        }
+    }
+
+    fn tile(&self, i: usize) -> Rect {
+        ui::card_body(self.game).nth_row(i, ui::TILE_H, 0.0)
+    }
+
+    fn row(&self, i: usize) -> Rect {
+        ui::card_body(self.foes)
+            .pad(FOES_TOP, 0.0, 0.0, 0.0)
+            .nth_row(i, ROW_H, ROW_GAP)
+    }
+
+    fn foe(&self, i: usize) -> FoeRow {
+        let [number, difficulty, style, remove] = self
+            .row(i)
+            .columns(20.0, [Size::Px(24.0), FILL, Size::Fill(1.3), Size::Px(ROW_H)]);
+        FoeRow {
+            number,
+            difficulty,
+            style,
+            remove,
+        }
+    }
+
+    fn add(&self, opponents: usize) -> Rect {
+        self.row(opponents).centered(ADD_W, ROW_H)
+    }
+
+    fn action_row(&self, k: usize) -> Rect {
+        let lower = if self.foes.bottom() > self.game.bottom() {
+            self.foes
+        } else {
+            self.game
+        };
+        ui::action_row(lower, self.view_w, k)
+    }
 }
 
 pub fn update_setup(app: &mut App, state: &mut State) {
-    let panel = setup_panel(state.ui.view());
-    for i in 0..SoloSettings::COUNT {
-        if state.ui.clicked(panel.stepper(i).minus) {
-            state.solo_settings.adjust(i, -1);
+    let setup = Setup::new(state.ui.view());
+    let settings = &mut state.solo_settings;
+    if state.solo_sizing {
+        match board_size::update(app, &state.ui, &settings.room.rules, true) {
+            Some(board_size::Action::Close) => state.solo_sizing = false,
+            Some(board_size::Action::Adjust(steps)) => {
+                for (setting, dir) in steps {
+                    settings.room.adjust(setting, dir);
+                }
+            }
+            None => {}
         }
-        if state.ui.clicked(panel.stepper(i).plus) {
-            state.solo_settings.adjust(i, 1);
+        return;
+    }
+    let ui = &state.ui;
+    for i in 0..GAME_ROWS {
+        let tile = setup.tile(i);
+        if i == SIZE_ROW {
+            if ui.clicked(Stepper::tile_band(tile)) {
+                state.solo_sizing = true;
+                return;
+            }
+            continue;
+        }
+        let stepper = Stepper::in_tile(tile);
+        if ui.clicked(stepper.minus) {
+            settings.adjust(i, -1);
+        } else if ui.clicked(stepper.plus) {
+            settings.adjust(i, 1);
         }
     }
-    if state.ui.bar_clicked(panel.action_row(0)) || app.keyboard.was_pressed(KeyCode::Enter) {
-        state.solo = Some(SoloGame::new(state.solo_settings));
+    for i in 0..settings.opponents.len() {
+        let row = setup.foe(i);
+        if ui.clicked(row.remove) {
+            settings.opponents.remove(i);
+            return;
+        }
+        for (part, band) in [row.difficulty, row.style].into_iter().enumerate() {
+            let stepper = Stepper::across(band);
+            if ui.clicked(stepper.minus) {
+                settings.adjust_opponent(i, part, -1);
+            } else if ui.clicked(stepper.plus) {
+                settings.adjust_opponent(i, part, 1);
+            }
+        }
+    }
+    if settings.opponents.len() < MAX_OPPONENTS && ui.clicked(setup.add(settings.opponents.len())) {
+        settings.add_opponent();
+    }
+
+    if ui.bar_clicked(setup.action_row(0)) || app.keyboard.was_pressed(KeyCode::Enter) {
+        state.solo = Some(SoloGame::new(state.solo_settings.clone()));
         state.screen = Screen::Solo;
-    } else if state.ui.bar_clicked(panel.action_row(1)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    } else if ui.bar_clicked(setup.action_row(1)) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.screen = Screen::PlayMenu;
     }
 }
@@ -270,7 +522,9 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
     let view = state.ui.view();
     let fonts = &state.fonts;
+    let settings = &state.solo_settings;
     let mut draw = state.ui.screen_canvas(gfx);
+    state.ui.set_input(!state.solo_sizing);
 
     state
         .ui
@@ -291,32 +545,56 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
         ui::pills_ending_at(&mut draw, fonts, &[pill], view.w - 60.0, mid);
     }
 
-    let panel = setup_panel(view);
-    panel.draw(&mut draw, &pal, fonts, "Réglages de la partie");
-    for i in 0..SoloSettings::COUNT {
-        let value = state.solo_settings.value(i);
-        let editable = i != 1 || state.solo_settings.opponent.is_some();
-        state.ui.stepper(
-            &mut draw,
-            fonts,
-            panel.stepper(i),
-            SoloSettings::label(i),
-            &value,
-            editable,
-        );
+    let setup = Setup::new(view);
+    ui::panel_card(&mut draw, &pal, fonts, setup.game, "Partie");
+    for i in 0..GAME_ROWS {
+        let (tile, label, value) = (setup.tile(i), SoloSettings::label(i), settings.value(i));
+        if i == SIZE_ROW {
+            state.ui.button_tile(&mut draw, fonts, tile, label, &value);
+        } else {
+            state
+                .ui
+                .stepper_tile(&mut draw, fonts, tile, label, &value, settings.editable(i));
+        }
+    }
+
+    ui::panel_card(&mut draw, &pal, fonts, setup.foes, "Adversaires");
+    for (i, &(difficulty, style)) in settings.opponents.iter().enumerate() {
+        let row = setup.foe(i);
+        let (x, y) = row.number.center();
+        draw.sharp_text(&fonts.display, &(i + 1).to_string())
+            .position(x, y)
+            .size(theme::size::EMPHASIS)
+            .h_align_center()
+            .v_align_middle()
+            .color(pal.text_dim);
+        state
+            .ui
+            .stepper_band(&mut draw, fonts, row.difficulty, difficulty.label(), true);
+        state
+            .ui
+            .stepper_band(&mut draw, fonts, row.style, style.character(), true);
+        state.ui.button(&mut draw, fonts, row.remove, Icon::Close);
+    }
+    let count = settings.opponents.len();
+    if count < MAX_OPPONENTS {
+        state.ui.button(&mut draw, fonts, setup.add(count), "Ajouter un CPU");
     }
 
     state.ui.menu_bar(
         &mut draw,
         fonts,
-        panel.action_row(0),
+        setup.action_row(0),
         "Lancer la partie",
         theme::bar::GREEN,
     );
     state
         .ui
-        .menu_bar(&mut draw, fonts, panel.action_row(1), "Retour", theme::bar::RED);
+        .menu_bar(&mut draw, fonts, setup.action_row(1), "Retour", theme::bar::RED);
 
+    if state.solo_sizing {
+        board_size::draw(&mut draw, &state.ui, fonts, &settings.room.rules, true);
+    }
     state.ui.render(gfx, &draw);
 }
 
@@ -326,7 +604,16 @@ mod tests {
 
     fn game(opponent: Option<Difficulty>, seed: u64) -> SoloGame {
         let settings = SoloSettings {
-            opponent,
+            opponents: opponent.map(|d| (d, Style::Balanced)).into_iter().collect(),
+            ..SoloSettings::default()
+        };
+        SoloGame::with_seed(settings, seed)
+    }
+
+    fn against(opponents: &[(Difficulty, Style)], pilot: Option<Difficulty>, seed: u64) -> SoloGame {
+        let settings = SoloSettings {
+            pilot,
+            opponents: opponents.to_vec(),
             ..SoloSettings::default()
         };
         SoloGame::with_seed(settings, seed)
@@ -343,7 +630,7 @@ mod tests {
 
     #[test]
     fn the_cpu_attacks_and_its_nuisance_lands_after_the_trip() {
-        let mut game = game(Some(Difficulty::Hard), 2);
+        let mut game = against(&[(Difficulty::Hard, Style::Balanced)], Some(Difficulty::Easy), 2);
         let mut expected = None;
         for _ in 0..3 * 60 * 60 {
             game.advance();
@@ -422,17 +709,144 @@ mod tests {
     }
 
     #[test]
-    fn the_opponent_setting_cycles_both_ways() {
+    fn opponents_are_added_up_to_the_most_and_set_one_by_one() {
         let mut settings = SoloSettings::default();
-        assert_eq!(settings.value(0), "Aucun");
-        settings.adjust(0, -1);
-        assert_eq!(settings.opponent, Some(Difficulty::Pro));
-        settings.adjust(0, 1);
-        settings.adjust(0, 1);
-        assert_eq!(settings.opponent, Some(Difficulty::Easy));
-        settings.adjust(1, -1);
-        assert_eq!(settings.character, Style::Architect);
-        settings.adjust(2, 1);
+        for _ in 0..MAX_OPPONENTS + 2 {
+            settings.add_opponent();
+        }
+        assert_eq!(settings.opponents.len(), MAX_OPPONENTS);
+        assert_eq!(
+            settings.opponents[1],
+            (Difficulty::Normal, Style::Harasser),
+            "each one a new character"
+        );
+        settings.adjust_opponent(1, 0, 1);
+        settings.adjust_opponent(1, 1, -1);
+        assert_eq!(settings.opponents[1], (Difficulty::Hard, Style::Balanced));
+        assert_eq!(settings.value(PILOT_ROW), "Joueur");
+        settings.adjust(PILOT_STYLE_ROW, 1);
+        assert_eq!(settings.value(PILOT_STYLE_ROW), "-", "a character for no CPU");
+        assert!(!settings.editable(PILOT_STYLE_ROW));
+        settings.adjust(PILOT_ROW, -1);
+        assert_eq!(settings.value(PILOT_ROW), "IA Pro");
+        settings.adjust(PILOT_STYLE_ROW, -1);
+        assert_eq!(settings.pilot_style, Style::Architect);
+        let game = SoloGame::with_seed(settings.clone(), 2);
+        assert_eq!(
+            game.session.name_of(1),
+            "Personnage 6 (Pro)",
+            "the pilot plays as picked"
+        );
+        settings.adjust(LEVEL_ROW, 1);
         assert_eq!(settings.room.rules.starting_level, 2);
+    }
+
+    #[test]
+    fn the_settings_and_the_opponents_stay_in_their_cards() {
+        for view in [View::default(), View::fit(393.0, 852.0)] {
+            let setup = Setup::new(view);
+            let inside = |r: Rect, card: Rect| {
+                let body = ui::card_body(card);
+                r.x >= body.x && r.x + r.w <= body.x + body.w && r.y >= body.y && r.bottom() <= card.bottom()
+            };
+            for i in 0..GAME_ROWS {
+                assert!(
+                    inside(setup.tile(i), setup.game),
+                    "tile {i} out of its card in {view:?}"
+                );
+            }
+            for i in 0..=MAX_OPPONENTS {
+                assert!(inside(setup.row(i), setup.foes), "row {i} out of its card in {view:?}");
+            }
+            let (first, last) = (setup.action_row(0), setup.action_row(1));
+            assert!(first.y > setup.game.bottom().max(setup.foes.bottom()));
+            assert!(last.bottom() <= view.h, "the actions run off {view:?}");
+        }
+    }
+
+    #[test]
+    fn a_record_counts_alone_on_the_standard_board_only() {
+        let shows_best = |settings: &SoloSettings| {
+            matches!(
+                SoloGame::with_seed(settings.clone(), 1).hud(0),
+                Hud::Solo { records: true, .. }
+            )
+        };
+        let mut settings = SoloSettings::default();
+        assert!(settings.counts_for_best() && shows_best(&settings));
+        settings.room.adjust(RoomSetting::Columns, 1);
+        assert!(!settings.counts_for_best(), "on a wider board");
+        assert!(!shows_best(&settings), "the best shown where no record counts");
+        settings.room.adjust(RoomSetting::Columns, -1);
+        settings.pilot = Some(Difficulty::Easy);
+        assert!(!settings.counts_for_best(), "played by a CPU");
+        settings.pilot = None;
+        settings.add_opponent();
+        assert!(!settings.counts_for_best(), "against a CPU");
+    }
+
+    #[test]
+    fn cpus_attack_each_other_and_the_last_one_standing_wins() {
+        let foes = [
+            (Difficulty::Hard, Style::Harasser),
+            (Difficulty::Easy, Style::Balanced),
+            (Difficulty::Easy, Style::Balanced),
+        ];
+        let mut game = against(&foes, Some(Difficulty::Easy), 3);
+        let mut hit = [false; 3];
+        for _ in 0..10 * 60 * 60 {
+            game.advance();
+            for (i, rival) in game.session.rivals.iter().enumerate() {
+                hit[i] |= rival.board.pending_garbage > 0;
+            }
+            if game.over() {
+                break;
+            }
+        }
+        assert!(game.over(), "nobody won in ten minutes");
+        assert!(
+            hit.iter().filter(|&&h| h).count() >= 2,
+            "nuisance only went one way: {hit:?}"
+        );
+        let alive = game.session.teams_alive(game.me_out());
+        assert_eq!(alive.len(), 1, "one side left: {alive:?}");
+    }
+
+    #[test]
+    fn the_cpus_play_on_once_the_player_is_out() {
+        let foes = [
+            (Difficulty::Normal, Style::Balanced),
+            (Difficulty::Normal, Style::Builder),
+        ];
+        let mut game = against(&foes, None, 5);
+        game.session.predicted_board.lose();
+        assert!(game.knocked_out() && !game.over());
+        let before: Vec<u64> = game.session.rivals.iter().map(|r| r.board.state_hash()).collect();
+        for _ in 0..120 {
+            game.advance();
+        }
+        let after: Vec<u64> = game.session.rivals.iter().map(|r| r.board.state_hash()).collect();
+        assert!(
+            before.iter().zip(&after).all(|(b, a)| b != a),
+            "a CPU stopped with the player"
+        );
+        assert!(
+            game.targets[1..].iter().all(|&t| t != Some(0)),
+            "a CPU still aims at the player"
+        );
+    }
+
+    #[test]
+    fn a_cpu_plays_the_board_of_a_player_who_watches() {
+        let mut game = against(&[], Some(Difficulty::Hard), 8);
+        let first = game.session.predicted_board.piece_id;
+        for _ in 0..30 * 60 {
+            game.advance();
+        }
+        assert!(
+            game.session.predicted_board.piece_id > first + 5,
+            "the CPU placed no pairs"
+        );
+        assert!(matches!(game.hud(0), Hud::Solo { watching: true, .. }));
     }
 }

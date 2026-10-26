@@ -10,16 +10,29 @@ const TIGHT_ROW_H: f32 = 56.0;
 const TIGHTER_ROW_H: f32 = 52.0;
 const ACTION_ROW_H: f32 = 60.0;
 const SECTION_H: f32 = 34.0;
-const TILE_H: f32 = 78.0;
+/// A settings tile: its name, then its controls.
+pub const TILE_H: f32 = 78.0;
 const CARD_PAD: f32 = 20.0;
 const COLUMN_GAP: f32 = 28.0;
 const MAX_CARD_W: f32 = 640.0;
 
-fn action_row(card: Rect, view_w: f32, k: usize) -> Rect {
+/// What is under a card's title, for its tiles or rows.
+pub fn card_body(card: Rect) -> Rect {
+    card.pad(TITLE_H + 6.0, CARD_PAD, 8.0, CARD_PAD)
+}
+
+/// How high a card is for `content` under its title.
+pub fn card_height(content: f32) -> f32 {
+    TITLE_H + 6.0 + content + 8.0
+}
+
+/// The `k`th wide bar under `card`, for what a settings screen leads to.
+pub fn action_row(card: Rect, view_w: f32, k: usize) -> Rect {
     Rect::at(0.0, card.bottom() + 30.0, view_w, 0.0).nth_row(k, ACTION_ROW_H, 0.0)
 }
 
-fn draw_card(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card_rect: Rect, title: &str) {
+/// A settings card: its title over a divider.
+pub fn panel_card(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card_rect: Rect, title: &str) {
     card(draw, pal, card_rect);
     draw.sharp_text(&fonts.display, title)
         .position(card_rect.x + CARD_PAD, card_rect.y + TITLE_H / 2.0)
@@ -38,7 +51,6 @@ fn draw_card(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card_rect: Rect, tit
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SettingsPanel {
     pub card: Rect,
-    view_w: f32,
     row_h: f32,
 }
 
@@ -52,7 +64,6 @@ impl SettingsPanel {
         let h = TITLE_H + rows as f32 * row_h + 16.0;
         Self {
             card: Frame::of(view).body.top(h).max_width(MAX_CARD_W),
-            view_w: view.w,
             row_h,
         }
     }
@@ -64,12 +75,8 @@ impl SettingsPanel {
         )
     }
 
-    pub fn action_row(self, k: usize) -> Rect {
-        action_row(self.card, self.view_w, k)
-    }
-
     pub fn draw(self, draw: &mut Draw, pal: &Palette, fonts: &Fonts, title: &str) {
-        draw_card(draw, pal, fonts, self.card, title);
+        panel_card(draw, pal, fonts, self.card, title);
     }
 }
 
@@ -106,7 +113,7 @@ impl SettingsGrid {
     }
 
     pub fn draw(self, draw: &mut Draw, pal: &Palette, fonts: &Fonts, title: &str, sections: [&str; 2]) {
-        draw_card(draw, pal, fonts, self.card, title);
+        panel_card(draw, pal, fonts, self.card, title);
         for (column, section) in sections.into_iter().enumerate() {
             draw.sharp_text(&fonts.display, section)
                 .position(self.column_x(column).0, self.card.y + TITLE_H + SECTION_H / 2.0 + 2.0)
@@ -123,11 +130,13 @@ mod tests {
 
     #[test]
     fn rows_stay_inside_the_card_and_actions_come_under_it() {
-        let panel = SettingsPanel::new(View::default(), 3);
+        let view = View::default();
+        let panel = SettingsPanel::new(view, 3);
         let last = panel.stepper(2);
         assert!(last.minus.y + last.minus.h <= panel.card.y + panel.card.h);
-        assert!(panel.action_row(0).y > panel.card.y + panel.card.h);
-        assert_eq!(panel.action_row(1).y, panel.action_row(0).y + ACTION_ROW_H);
+        let row = |k| action_row(panel.card, view.w, k);
+        assert!(row(0).y > panel.card.y + panel.card.h);
+        assert_eq!(row(1).y, row(0).y + ACTION_ROW_H);
     }
 
     #[test]
@@ -155,7 +164,7 @@ mod tests {
         let panel = SettingsPanel::new(view, 7);
         let last = panel.stepper(6);
         assert!(last.minus.y + last.minus.h <= panel.card.y + panel.card.h);
-        let actions = panel.action_row(2);
+        let actions = action_row(panel.card, view.w, 2);
         assert!(
             actions.y + actions.h <= view.h,
             "{} > {}",

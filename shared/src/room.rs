@@ -8,6 +8,12 @@ use crate::board::Rules;
 /// The teams a lobby offers; a player in none plays for themselves.
 pub const MAX_TEAMS: u8 = 4;
 pub const MAX_ROOM_PLAYERS: u8 = 16;
+
+/// The team of the player in `seat`, from 0, who picked none: one of their
+/// own, past those one may pick.
+pub const fn own_team(seat: u8) -> u8 {
+    MAX_TEAMS + 1 + seat
+}
 /// The board sizes a room may pick, hidden row aside.
 pub const BOARD_COLUMNS: RangeInclusive<u8> = 4..=10;
 pub const BOARD_ROWS: RangeInclusive<u8> = 8..=16;

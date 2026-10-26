@@ -35,6 +35,26 @@ pub enum Targeting {
     Manual(u8),
 }
 
+impl Targeting {
+    /// Who `slot` aims at among `opponents`, by index as `Manual` holds one,
+    /// or `None` for whoever chance picks. `targets` is where each index
+    /// aims now, `danger` how near a board is to topping out.
+    pub fn aim(
+        self,
+        slot: usize,
+        opponents: &[usize],
+        targets: &[Option<usize>],
+        danger: impl Fn(usize) -> (usize, usize),
+    ) -> Option<usize> {
+        match self {
+            Self::Manual(t) if opponents.contains(&usize::from(t)) => Some(usize::from(t)),
+            Self::Danger => opponents.iter().copied().max_by_key(|&o| danger(o)),
+            Self::Attackers => opponents.iter().copied().find(|&o| targets[o] == Some(slot)),
+            Self::Random | Self::Manual(_) => None,
+        }
+    }
+}
+
 /// One player's part of a state update.
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone)]
 pub struct PlayerUpdate {

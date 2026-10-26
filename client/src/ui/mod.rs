@@ -40,13 +40,19 @@ use notan::draw::{CreateDraw, Draw, DrawImages};
 use notan::math::{vec2, Mat3};
 use notan::prelude::{App, BlendMode, Color, Graphics, RenderTexture, TextureFilter};
 pub use pager::{page_count, Pager, PAGER_H};
-pub use panel::{SettingsGrid, SettingsPanel};
+pub use panel::{action_row, card_body, card_height, panel_card, SettingsGrid, SettingsPanel, TILE_H};
 pub use rect::Rect;
 pub use status::Status;
 pub use stepper::Stepper;
 pub use text::SharpText;
 pub use triangles::Triangles;
 pub use view::View;
+
+/// The option `dir` steps away from `at`, going round.
+pub fn cycle<T: Copy + PartialEq>(options: &[T], at: T, dir: i32) -> T {
+    let i = options.iter().position(|&o| o == at).unwrap_or(0) as i32;
+    options[(i + dir.signum()).rem_euclid(options.len() as i32) as usize]
+}
 
 use crate::theme::{hue, Palette};
 
