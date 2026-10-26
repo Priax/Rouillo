@@ -469,6 +469,9 @@ mod tests {
     #[test]
     fn a_replay_plays_the_game_again_board_for_board() {
         let mut s = sim(&[0, 1, 2]);
+        for slot in 0..3 {
+            s.set_targeting(slot, Targeting::Manual(((slot + 1) % 3) as u8));
+        }
         let kinds = [
             InputKind::MoveLeft,
             InputKind::RotateCW,
