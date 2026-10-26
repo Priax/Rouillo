@@ -1,7 +1,7 @@
 use notan::draw::Draw;
 use notan::prelude::*;
 
-use super::{field_clicked, text_field, EditKeys, Field, Fonts, Rect, SharpText, TextInput, Ui};
+use super::{field_clicked, text_field, EditKeys, Field, Fonts, Icon, Rect, SharpText, TextInput, Ui};
 use crate::theme;
 
 const PAGE_DIGITS: usize = 4;
@@ -143,8 +143,8 @@ impl Pager {
         let l = Layout::new(area);
         let back = self.page > 0;
         let forward = self.page + 1 < pages;
-        ui.button_enabled(draw, fonts, l.first, "<<", back);
-        ui.button_enabled(draw, fonts, l.prev, "<", back);
+        ui.button_enabled(draw, fonts, l.first, Icon::First, back);
+        ui.button_enabled(draw, fonts, l.prev, Icon::Previous, back);
         let field = Field {
             placeholder: "",
             input: &self.input,
@@ -156,8 +156,8 @@ impl Pager {
             .size(theme::size::LABEL)
             .v_align_middle()
             .color(ui.palette().text_dim);
-        ui.button_enabled(draw, fonts, l.next, ">", forward);
-        ui.button_enabled(draw, fonts, l.last, ">>", forward);
+        ui.button_enabled(draw, fonts, l.next, Icon::Next, forward);
+        ui.button_enabled(draw, fonts, l.last, Icon::Last, forward);
     }
 }
 

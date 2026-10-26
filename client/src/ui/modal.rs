@@ -1,6 +1,6 @@
 use notan::draw::{Draw, DrawShapes};
 
-use super::{card, Fonts, Rect, SharpText, Ui, View};
+use super::{card, Fonts, Icon, Rect, SharpText, Ui, View};
 use crate::theme;
 
 const MARGIN: f32 = 110.0;
@@ -22,7 +22,11 @@ impl Modal {
     }
 
     fn close(self) -> Rect {
-        self.card.pad(14.0, 16.0, 0.0, 0.0).right(48.0).top(40.0)
+        let size = 36.0;
+        self.card
+            .pad((TITLE_H - size) / 2.0, PADDING, 0.0, 0.0)
+            .right(size)
+            .top(size)
     }
 
     pub fn body(self) -> Rect {
@@ -46,7 +50,7 @@ impl Modal {
             .size(theme::size::HEADING)
             .v_align_middle()
             .color(pal.text);
-        ui.button(draw, fonts, self.close(), "X");
+        ui.button(draw, fonts, self.close(), Icon::Close);
     }
 }
 

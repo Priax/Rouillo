@@ -22,10 +22,13 @@ const ICON_THICKNESS: f32 = 0.09;
 pub enum Icon {
     Minus,
     Plus,
+    First,
     Previous,
     Next,
+    Last,
     Play,
     Pause,
+    Close,
     /// Dots that pulse in turn, while something is on its way.
     Busy,
 }
@@ -54,10 +57,13 @@ impl<'a> Label<'a> {
             Self::Text(text) => text,
             Self::Icon(Icon::Minus) => "icon:minus",
             Self::Icon(Icon::Plus) => "icon:plus",
+            Self::Icon(Icon::First) => "icon:first",
             Self::Icon(Icon::Previous) => "icon:previous",
             Self::Icon(Icon::Next) => "icon:next",
+            Self::Icon(Icon::Last) => "icon:last",
             Self::Icon(Icon::Play) => "icon:play",
             Self::Icon(Icon::Pause) => "icon:pause",
+            Self::Icon(Icon::Close) => "icon:close",
             Self::Icon(Icon::Busy) => "icon:busy",
         }
     }
@@ -173,16 +179,23 @@ fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, colo
             bar(draw, cx, long, thick);
             bar(draw, cx, thick, long);
         }
-        Icon::Previous | Icon::Next => {
-            let tip = if icon == Icon::Next { half / 2.0 } else { -half / 2.0 };
+        Icon::Previous | Icon::Next | Icon::First | Icon::Last => {
+            let forward = matches!(icon, Icon::Next | Icon::Last);
+            let tip = if forward { half / 2.0 } else { -half / 2.0 };
+            let edge = icon == Icon::First || icon == Icon::Last;
+            let to_bar = if edge { tip + 2.0 * thick * tip.signum() } else { 0.0 };
+            let x = if edge { cx - (to_bar - tip) / 2.0 } else { cx };
             draw.path()
-                .move_to(cx - tip, cy - half)
-                .line_to(cx + tip, cy)
-                .line_to(cx - tip, cy + half)
+                .move_to(x - tip, cy - half)
+                .line_to(x + tip, cy)
+                .line_to(x - tip, cy + half)
                 .stroke(thick)
                 .round_cap()
                 .round_join()
                 .color(color);
+            if edge {
+                bar(draw, x + to_bar, thick, long);
+            }
         }
         Icon::Play => {
             let left = cx - half * 0.7;
@@ -192,6 +205,14 @@ fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, colo
         Icon::Pause => {
             bar(draw, cx - half * 0.45, thick * 1.4, long);
             bar(draw, cx + half * 0.45, thick * 1.4, long);
+        }
+        Icon::Close => {
+            let arm = half * 0.8;
+            for dy in [arm, -arm] {
+                draw.line((cx - arm, cy - dy), (cx + arm, cy + dy))
+                    .width(thick)
+                    .color(color);
+            }
         }
         Icon::Busy => {
             for i in 0..3u8 {

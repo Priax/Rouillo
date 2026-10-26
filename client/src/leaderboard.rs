@@ -6,7 +6,7 @@ use notan::prelude::*;
 use crate::http::{self, HttpSlot};
 use crate::state::{Screen, State};
 use crate::theme;
-use crate::ui::{self, Face, Frame, ListCard, Pager, Pill, Rect, SharpText, Status, View};
+use crate::ui::{self, Face, Frame, Icon, Label, ListCard, Pager, Pill, Rect, SharpText, Status, View};
 
 const SIZE: i64 = 100;
 const ROW_H: f32 = 56.0;
@@ -251,7 +251,11 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
         &mut draw,
         &state.fonts,
         refresh_btn(view),
-        if loading { "..." } else { "Rafraîchir" },
+        if loading {
+            Label::from(Icon::Busy)
+        } else {
+            Label::from("Rafraîchir")
+        },
         !loading,
     );
     let back = back_btn(view);
