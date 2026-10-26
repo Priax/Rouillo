@@ -908,6 +908,51 @@ fn a_room_left_to_its_cpus_closes() {
 }
 
 #[test]
+#[ignore = "prints what a tick of a room full of CPUs costs"]
+fn report_cpu_room_cost() {
+    use shared::cpu::{Difficulty, Style};
+    for difficulty in [Difficulty::Normal, Difficulty::Pro] {
+        let mut mgr = new_mgr();
+        let _rxs = cpu_room(&mut mgr, 16, 1);
+        for _ in 0..15 {
+            mgr.handle(Command::AddCpu { conn: 1 });
+        }
+        for slot in 2..=16 {
+            mgr.handle(Command::SetCpu {
+                conn: 1,
+                slot,
+                difficulty,
+                style: Style::Balanced,
+                team: None,
+            });
+        }
+        start(&mut mgr);
+        let ticks = 60 * 60;
+        let mut times: Vec<(f64, u32)> = (0..ticks)
+            .map(|i| {
+                let tick = std::time::Instant::now();
+                mgr.tick(1.0 / 60.0, true);
+                (tick.elapsed().as_secs_f64() * 1000.0, i)
+            })
+            .collect();
+        let average = times.iter().map(|t| t.0).sum::<f64>() / f64::from(ticks);
+        times.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let at = |q: f64| times[((times.len() - 1) as f64 * q) as usize].0;
+        let worst: Vec<String> = times
+            .iter()
+            .rev()
+            .take(5)
+            .map(|(ms, i)| format!("{ms:.1} ms at tick {i}"))
+            .collect();
+        println!(
+            "{difficulty:?}: {average:.2} ms per tick on average, p99 {:.2} ms, p99.9 {:.2} ms, worst {worst:?}",
+            at(0.99),
+            at(0.999)
+        );
+    }
+}
+
+#[test]
 fn a_release_server_seats_no_cpu() {
     let mut mgr = new_mgr();
     let mut rxs = big_room(&mut mgr, 3, 1);

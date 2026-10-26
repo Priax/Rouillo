@@ -139,6 +139,10 @@ pub struct Seat {
     pub cpu: bool,
 }
 
+/// The placements a room's CPUs judge in one tick at most: a placement
+/// costs about a quarter of a millisecond on a standard board.
+const CPU_PLACEMENTS_PER_TICK: usize = 24;
+
 /// From this many boards, the others than the one watched large are sent as
 /// thumbnails, one tick in `OTHERS_EVERY`, and smoothed between updates.
 const SPARSE_FROM: usize = 3;
@@ -442,17 +446,22 @@ impl Room {
     }
 
     /// The CPUs' inputs for the next step, each from its board as it is.
+    /// They share `CPU_PLACEMENTS_PER_TICK`, from another one each tick, so
+    /// that a room of CPUs thinking at once spreads its thinking over ticks.
     fn play_cpus(&mut self) {
         let Self { members, sim, .. } = self;
         let tick = sim.tick + 1;
-        for m in members {
+        let mut budget = CPU_PLACEMENTS_PER_TICK;
+        let first = sim.tick as usize % members.len().max(1);
+        let (head, tail) = members.split_at_mut(first);
+        for m in tail.iter_mut().chain(head) {
             let (Some(slot), Some(CpuSeat { game: Some(player), .. })) = (m.game_slot, &mut m.cpu) else {
                 continue;
             };
             let Some(board) = sim.boards.get(slot) else {
                 continue;
             };
-            if let Some(kind) = player.cpu.input(board, sim.threat(slot)) {
+            if let Some(kind) = player.cpu.input_within(board, sim.threat(slot), &mut budget) {
                 player.seq += 1;
                 sim.queue_input(slot, tick, player.seq, kind);
             }
