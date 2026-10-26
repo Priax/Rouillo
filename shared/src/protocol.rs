@@ -2,9 +2,10 @@ use bitcode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 use crate::board::{Board, IncomingGarbage, InputKind, Phase, PuyoType};
+use crate::cpu::{Difficulty, Style};
 use crate::room::{RoomSetting, RoomSettings};
 
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 13;
 
 pub const MAX_CHAT_CHARS: usize = 200;
 pub const MAX_SPECTATORS: usize = 20;
@@ -112,6 +113,10 @@ pub struct LobbyInfo {
     pub names: Vec<String>,
     /// Each player's team, in the order of `names`.
     pub teams: Vec<Option<u8>>,
+    /// Whether the host may seat CPUs here.
+    pub cpu_seats: bool,
+    /// What plays each seat that a CPU takes, in the order of `names`.
+    pub cpus: Vec<Option<(Difficulty, Style)>>,
     pub spectators: u8,
 }
 
@@ -183,6 +188,18 @@ pub enum ClientMessage {
     /// The board to watch large, from 1, for one in a big room without a
     /// board of their own: the others come small.
     Follow {
+        slot: u8,
+    },
+    /// The host seats a CPU in the lobby.
+    AddCpu,
+    /// The host changes the CPU in `slot`, from 1.
+    SetCpu {
+        slot: u8,
+        difficulty: Difficulty,
+        style: Style,
+        team: Option<u8>,
+    },
+    RemoveCpu {
         slot: u8,
     },
 }

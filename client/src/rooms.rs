@@ -4,6 +4,7 @@ use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSetting, RoomSettings};
 
+use crate::cpu_seat::{self, CpuSeat};
 use crate::state::{ApiFriendsResponse, Invite, Screen, State};
 use crate::ui::{
     self, field_clicked, list_row, text_field, Face, Field, Frame, ListCard, Modal, Pill, Rect, SettingsGrid,
@@ -435,11 +436,40 @@ fn lobby_players(view: View) -> Rect {
 
 const PLAYERS_TITLE_H: f32 = 56.0;
 const PLAYER_ROW_H: f32 = 44.0;
-
+const ADD_CPU_H: f32 = 40.0;
 fn lobby_player_row(view: View, i: usize, players: usize) -> Rect {
-    let list = lobby_players(view).below(PLAYERS_TITLE_H).pad(0.0, 12.0, 12.0, 12.0);
+    let list = lobby_players(view)
+        .below(PLAYERS_TITLE_H)
+        .pad(0.0, 12.0, ADD_CPU_H + 24.0, 12.0);
     let h = (list.h / players.max(1) as f32).min(PLAYER_ROW_H);
     list.nth_row(i, h - 4.0, 4.0)
+}
+
+fn add_cpu_button(view: View) -> Rect {
+    lobby_players(view)
+        .pad(0.0, 12.0, 12.0, 12.0)
+        .bottom_band(ADD_CPU_H)
+        .centered(220.0, ADD_CPU_H)
+}
+
+/// Whether the host may seat, change and remove CPUs now.
+fn edits_cpus(info: &LobbyInfo) -> bool {
+    info.cpu_seats && info.is_host && info.countdown.is_none() && info.ranked.is_none()
+}
+
+fn may_add_cpu(info: &LobbyInfo) -> bool {
+    edits_cpus(info) && info.names.len() < usize::from(info.settings.max_players)
+}
+
+/// The CPU in lobby seat `i`, if a CPU plays it.
+fn cpu_seat_at(info: &LobbyInfo, i: usize) -> Option<CpuSeat> {
+    let (difficulty, style) = info.cpus.get(i).copied().flatten()?;
+    Some(CpuSeat {
+        slot: u8::try_from(i + 1).ok()?,
+        difficulty,
+        style,
+        team: info.teams.get(i).copied().flatten(),
+    })
 }
 
 /// One's own row, while one may still change team on it.
@@ -448,16 +478,13 @@ fn team_picker(info: &LobbyInfo) -> Option<usize> {
     usize::from(info.your_slot).checked_sub(1).filter(|_| open)
 }
 
-/// Solo, then each team in turn, then Solo again.
-fn next_team(team: Option<u8>) -> Option<u8> {
-    match team {
-        None => Some(1),
-        Some(t) if t < shared::MAX_TEAMS => Some(t + 1),
-        Some(_) => None,
-    }
+/// Solo, then each team in turn, then Solo again, the other way for `dir` < 0.
+pub fn step_team(team: Option<u8>, dir: i32) -> Option<u8> {
+    let teams: Vec<_> = std::iter::once(None).chain((1..=shared::MAX_TEAMS).map(Some)).collect();
+    ui::cycle(&teams, team, dir)
 }
 
-fn team_look(team: Option<u8>, pal: &theme::Palette) -> (&'static str, Color) {
+pub fn team_look(team: Option<u8>, pal: &theme::Palette) -> (&'static str, Color) {
     team.and_then(theme::team).unwrap_or(("Solo", pal.text_dim))
 }
 
@@ -490,6 +517,8 @@ fn draw_lobby_players(draw: &mut Draw, state: &State, info: &LobbyInfo) {
         let mine = own == Some(i);
         if picker == Some(i) {
             state.ui.row(draw, row, i, &format!("team:{i}"));
+        } else if edits_cpus(info) && cpu_seat_at(info, i).is_some() {
+            state.ui.row(draw, row, i, &format!("cpu:{i}"));
         } else {
             list_row(draw, &pal, row, i);
         }
@@ -507,6 +536,9 @@ fn draw_lobby_players(draw: &mut Draw, state: &State, info: &LobbyInfo) {
             .v_align_middle()
             .color(if mine { pal.text } else { pal.text_dim });
         pill.draw(draw, fonts, (row.x + row.w - 10.0 - pill_w, row.y + row.h / 2.0));
+    }
+    if may_add_cpu(info) {
+        state.ui.button(draw, fonts, add_cpu_button(view), "Ajouter un CPU");
     }
 }
 
@@ -585,6 +617,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
 
     if info.countdown.is_some() {
         room.sizing = false;
+        room.cpu_edit = None;
     }
     let editable = info.is_host && info.countdown.is_none();
     if room.sizing {
@@ -600,9 +633,41 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         return;
     }
 
+    if let Some((i, seats)) = room.cpu_edit {
+        match cpu_seat_at(info, i).filter(|_| edits_cpus(info) && seats == info.names.len()) {
+            None => room.cpu_edit = None,
+            Some(seat) => match cpu_seat::update(app, ui, seat) {
+                Some(cpu_seat::Action::Close) => room.cpu_edit = None,
+                Some(cpu_seat::Action::Send(msg)) => {
+                    if matches!(msg, ClientMessage::RemoveCpu { .. }) {
+                        room.cpu_edit = None;
+                    }
+                    conn.send(&msg);
+                }
+                None => {}
+            },
+        }
+        return;
+    }
+
+    let clicked_row = |i: usize| ui.clicked(lobby_player_row(view, i, info.names.len()));
+
+    if edits_cpus(info) {
+        let seats = info.names.len();
+        let clicked = (0..seats).find(|&i| cpu_seat_at(info, i).is_some() && clicked_row(i));
+        if let Some(i) = clicked {
+            room.cpu_edit = Some((i, seats));
+            return;
+        }
+        if may_add_cpu(info) && ui.clicked(add_cpu_button(view)) {
+            conn.send(&ClientMessage::AddCpu);
+            return;
+        }
+    }
+
     if let Some(me) = team_picker(info) {
-        if ui.clicked(lobby_player_row(view, me, info.names.len())) {
-            let team = next_team(info.teams.get(me).copied().flatten());
+        if clicked_row(me) {
+            let team = step_team(info.teams.get(me).copied().flatten(), 1);
             conn.send(&ClientMessage::SetTeam { team });
             return;
         }
@@ -679,7 +744,9 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     let view = state.ui.view();
     let fonts = &state.fonts;
     let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.set_input(!room.invite.open && !room.sizing);
+    state
+        .ui
+        .set_input(!room.invite.open && !room.sizing && room.cpu_edit.is_none());
 
     draw_lobby_header(&mut draw, state, info);
     draw_lobby_players(&mut draw, state, info);
@@ -737,6 +804,10 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     }
     if room.sizing {
         board_size::draw(&mut draw, &state.ui, fonts, &info.settings.rules, editable);
+    }
+    let editing = room.cpu_edit.filter(|&(_, seats)| seats == info.names.len());
+    if let Some(seat) = editing.and_then(|(i, _)| cpu_seat_at(info, i)) {
+        cpu_seat::draw(&mut draw, &state.ui, fonts, seat);
     }
 
     state.ui.render(gfx, &draw);
@@ -873,6 +944,8 @@ mod team_tests {
             countdown: None,
             ranked: None,
             names: teams.iter().map(|_| "p".into()).collect(),
+            cpu_seats: true,
+            cpus: vec![None; teams.len()],
             teams,
             spectators: 0,
         }
@@ -893,7 +966,7 @@ mod team_tests {
         let mut team = None;
         let mut seen = Vec::new();
         for _ in 0..=shared::MAX_TEAMS {
-            team = next_team(team);
+            team = step_team(team, 1);
             seen.push(team);
         }
         assert_eq!(seen, [Some(1), Some(2), Some(3), Some(4), None]);

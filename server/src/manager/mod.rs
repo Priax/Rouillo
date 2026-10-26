@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use bytes::Bytes;
 use rayon::prelude::*;
+use shared::cpu::{Difficulty, Style};
 use shared::{config, InputKind, PausePolicy, RoomId, RoomInfo, RoomSetting, RoomSettings, ServerMessage, Targeting};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
@@ -167,6 +168,20 @@ pub enum Command {
         conn: ConnId,
         team: Option<u8>,
     },
+    AddCpu {
+        conn: ConnId,
+    },
+    SetCpu {
+        conn: ConnId,
+        slot: u8,
+        difficulty: Difficulty,
+        style: Style,
+        team: Option<u8>,
+    },
+    RemoveCpu {
+        conn: ConnId,
+        slot: u8,
+    },
     Follow {
         conn: ConnId,
         slot: u8,
@@ -224,6 +239,9 @@ impl Command {
             | Self::WatchFriend { conn, .. }
             | Self::SetTargeting { conn, .. }
             | Self::SetTeam { conn, .. }
+            | Self::AddCpu { conn }
+            | Self::SetCpu { conn, .. }
+            | Self::RemoveCpu { conn, .. }
             | Self::Follow { conn, .. } => Some(*conn),
         }
     }
@@ -480,6 +498,15 @@ impl Manager {
             Command::WatchFriend { conn, user_id } => self.watch_friend(conn, &user_id),
             Command::SetTargeting { conn, targeting } => self.set_targeting(conn, targeting),
             Command::SetTeam { conn, team } => self.set_team(conn, team),
+            Command::AddCpu { conn } => self.add_cpu(conn),
+            Command::SetCpu {
+                conn,
+                slot,
+                difficulty,
+                style,
+                team,
+            } => self.set_cpu(conn, slot, difficulty, style, team),
+            Command::RemoveCpu { conn, slot } => self.remove_cpu(conn, slot),
             Command::Follow { conn, slot } => self.follow(conn, slot),
             Command::Playing { users, reply } => {
                 let _ = reply.send(self.playing(&users));

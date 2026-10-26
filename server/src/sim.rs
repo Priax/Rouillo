@@ -296,6 +296,17 @@ impl Sim {
         landed
     }
 
+    /// The nuisance coming to `slot`: waiting on its board, then on its way.
+    pub fn threat(&self, slot: usize) -> u32 {
+        let travelling: u32 = self
+            .garbage_in_flight
+            .iter()
+            .filter(|g| g.to == slot)
+            .map(|g| g.amount)
+            .sum();
+        self.boards[slot].pending_garbage + travelling
+    }
+
     fn incoming(&self, slot: usize) -> Vec<IncomingGarbage> {
         self.garbage_in_flight
             .iter()

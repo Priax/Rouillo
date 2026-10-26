@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use bytes::Bytes;
+use shared::cpu::{Cpu, Difficulty, Style};
 use shared::{LobbyInfo, RankedInfo, RoomId, RoomInfo, RoomSettings, ServerMessage};
 use tokio::time::Instant;
 use tracing::info;
@@ -27,6 +28,21 @@ pub struct Member {
     /// The board this member plays in the running game: none for one who
     /// came in after it started.
     pub game_slot: Option<usize>,
+    /// What plays this seat when no one does.
+    pub cpu: Option<CpuSeat>,
+}
+
+pub struct CpuSeat {
+    pub difficulty: Difficulty,
+    pub style: Style,
+    /// What plays the running game.
+    game: Option<CpuPlayer>,
+}
+
+struct CpuPlayer {
+    cpu: Box<Cpu>,
+    /// The number of its last input.
+    seq: u32,
 }
 
 impl Member {
@@ -39,7 +55,39 @@ impl Member {
             name,
             team: None,
             game_slot: None,
+            cpu: None,
         }
+    }
+
+    /// A CPU's seat: `n` makes its token, which no client holds.
+    pub fn cpu(n: u64, difficulty: Difficulty, style: Style) -> Self {
+        let mut member = Self {
+            token: format!("cpu:{n}"),
+            conn: None,
+            disconnect_at: None,
+            user_id: None,
+            name: String::new(),
+            team: None,
+            game_slot: None,
+            cpu: None,
+        };
+        member.set_cpu(difficulty, style);
+        member
+    }
+
+    /// Makes the CPU playing this seat this one, named after it.
+    pub fn set_cpu(&mut self, difficulty: Difficulty, style: Style) {
+        self.name = shared::cpu::name(difficulty, style);
+        self.cpu = Some(CpuSeat {
+            difficulty,
+            style,
+            game: None,
+        });
+    }
+
+    /// Whether someone, or a CPU, plays this seat now.
+    pub const fn playing(&self) -> bool {
+        self.conn.is_some() || self.cpu.is_some()
     }
 }
 
@@ -80,11 +128,15 @@ pub struct Room {
     pub follows: HashMap<ConnId, usize>,
     /// Who sits in each game slot, as the game started.
     pub seats: Vec<Seat>,
+    /// Whether the host may seat CPUs: in a debug build only, so that games
+    /// of CPUs never load the public server.
+    pub cpu_seats: bool,
 }
 
 pub struct Seat {
     pub user_id: Option<Uuid>,
     pub name: String,
+    pub cpu: bool,
 }
 
 /// From this many boards, the others than the one watched large are sent as
@@ -133,6 +185,7 @@ impl Room {
             spectators: Vec::new(),
             follows: HashMap::new(),
             seats: Vec::new(),
+            cpu_seats: cfg!(debug_assertions),
         }
     }
 
@@ -140,6 +193,10 @@ impl Room {
     pub fn start_game(&mut self) {
         for (i, m) in self.members.iter_mut().enumerate() {
             m.game_slot = Some(i);
+            if let Some(seat) = &mut m.cpu {
+                let cpu = Box::new(Cpu::new(seat.difficulty, seat.style, rand::random()));
+                seat.game = Some(CpuPlayer { cpu, seq: 0 });
+            }
         }
         self.follows.clear();
         self.seats = self
@@ -148,6 +205,7 @@ impl Room {
             .map(|m| Seat {
                 user_id: m.user_id,
                 name: m.name.clone(),
+                cpu: m.cpu.is_some(),
             })
             .collect();
         let teams = self.teams();
@@ -255,11 +313,14 @@ impl Room {
         }
         let advanced = !self.sim.paused && !self.sim.finished;
         let mut record = None;
+        let mut ended = false;
         if advanced {
+            self.play_cpus();
             self.sim.advance();
             let alive = self.sim.teams_alive();
             if alive.len() <= 1 {
                 self.sim.finished = true;
+                ended = true;
                 let rec = self.match_record();
                 info!(
                     "Match terminé room #{} → {} ({:.0}s, inputs en retard {:?})",
@@ -269,10 +330,10 @@ impl Room {
                     rec.duration_secs,
                     self.sim.late_inputs
                 );
-                record = Some(rec);
+                record = self.recorded(rec);
             }
         }
-        if record.is_some() {
+        if ended {
             self.send_to_audience(&shared::encode(&self.sim.state_update()), outgoing);
         } else if do_broadcast && advanced {
             self.send_states(split, states);
@@ -370,8 +431,37 @@ impl Room {
             .is_some_and(|s| self.members[s].token == self.host)
     }
 
+    /// The member in `slot`, from 1, if a CPU plays it.
+    pub fn cpu_member(&mut self, slot: u8) -> Option<&mut Member> {
+        let member = self.members.get_mut(usize::from(slot).checked_sub(1)?)?;
+        member.cpu.is_some().then_some(member)
+    }
+
     pub fn all_connected(&self) -> bool {
-        self.members.iter().all(|m| m.conn.is_some())
+        self.members.iter().all(Member::playing)
+    }
+
+    /// The CPUs' inputs for the next step, each from its board as it is.
+    fn play_cpus(&mut self) {
+        let Self { members, sim, .. } = self;
+        let tick = sim.tick + 1;
+        for m in members {
+            let (Some(slot), Some(CpuSeat { game: Some(player), .. })) = (m.game_slot, &mut m.cpu) else {
+                continue;
+            };
+            let Some(board) = sim.boards.get(slot) else {
+                continue;
+            };
+            if let Some(kind) = player.cpu.input(board, sim.threat(slot)) {
+                player.seq += 1;
+                sim.queue_input(slot, tick, player.seq, kind);
+            }
+        }
+    }
+
+    /// A game a CPU played in is not kept: neither history nor stats.
+    fn recorded(&self, record: db::MatchRecord) -> Option<db::MatchRecord> {
+        (!self.seats.iter().any(|s| s.cpu)).then_some(record)
     }
 
     /// Everyone who sees the room: its connected players, then its spectators.
@@ -401,7 +491,7 @@ impl Room {
             name: self.name.clone(),
             settings: self.settings,
             players: self.members.len() as u8,
-            connected: self.members.iter().filter(|m| m.conn.is_some()).count() as u8,
+            connected: self.members.iter().filter(|m| m.playing()).count() as u8,
             your_slot: 0,
             is_host: false,
             countdown: match self.phase {
@@ -411,6 +501,12 @@ impl Room {
             ranked: None,
             names: self.members.iter().map(|m| m.name.clone()).collect(),
             teams: self.members.iter().map(|m| m.team).collect(),
+            cpu_seats: self.cpu_seats,
+            cpus: self
+                .members
+                .iter()
+                .map(|m| m.cpu.as_ref().map(|c| (c.difficulty, c.style)))
+                .collect(),
             spectators: self.spectators.len() as u8,
         }
     }
@@ -456,7 +552,7 @@ impl Room {
         }
         let team = self.sim.teams[slot];
         let others_connected = self.members.iter().any(|m| {
-            m.conn.is_some()
+            m.playing()
                 && m.game_slot
                     .is_some_and(|s| s < self.sim.teams.len() && self.sim.teams[s] != team)
         });
@@ -469,7 +565,7 @@ impl Room {
             return None;
         }
         self.sim.finished = true;
-        Some(self.match_record())
+        self.recorded(self.match_record())
     }
 
     /// The game's team of each member: the one picked, or one of their own.

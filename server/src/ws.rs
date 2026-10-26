@@ -358,6 +358,20 @@ fn command(conn: ConnId, msg: ClientMessage) -> Option<Command> {
         ClientMessage::WatchFriend { user_id } => Command::WatchFriend { conn, user_id },
         ClientMessage::SetTargeting { targeting } => Command::SetTargeting { conn, targeting },
         ClientMessage::SetTeam { team } => Command::SetTeam { conn, team },
+        ClientMessage::AddCpu => Command::AddCpu { conn },
+        ClientMessage::SetCpu {
+            slot,
+            difficulty,
+            style,
+            team,
+        } => Command::SetCpu {
+            conn,
+            slot,
+            difficulty,
+            style,
+            team,
+        },
+        ClientMessage::RemoveCpu { slot } => Command::RemoveCpu { conn, slot },
         ClientMessage::Follow { slot } => Command::Follow { conn, slot },
     })
 }

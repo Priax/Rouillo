@@ -171,16 +171,17 @@ impl Manager {
                 return;
             }
             let removed = room.members.remove(slot);
-            if room.members.iter().all(|m| m.conn.is_none()) {
-                true
-            } else {
+            let human = room.members.iter().find(|m| m.cpu.is_none() && m.conn.is_some());
+            if let Some(human) = human {
                 if removed.token == room.host {
-                    room.host = room.members[0].token.clone();
+                    room.host = human.token.clone();
                 }
                 if room.members.len() < 2 && !matches!(room.phase, Phase::Lobby) {
                     room.back_to_lobby();
                 }
                 false
+            } else {
+                true
             }
         } else {
             return;

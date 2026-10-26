@@ -12,6 +12,7 @@ mod board_size;
 mod chat;
 mod connection;
 mod controls;
+mod cpu_seat;
 
 mod demo;
 mod draw;

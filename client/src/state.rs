@@ -404,6 +404,9 @@ pub struct Room {
     pub series_over: Option<(Option<u8>, i32)>,
     pub invite: Invite,
     pub sizing: bool,
+    /// The lobby seat whose CPU the host is changing, and how many seats
+    /// were taken then: one coming or going shifts the seats.
+    pub cpu_edit: Option<(usize, usize)>,
 }
 
 impl Room {
@@ -415,6 +418,7 @@ impl Room {
             series_over: None,
             invite: Invite::default(),
             sizing: false,
+            cpu_edit: None,
         }
     }
 }

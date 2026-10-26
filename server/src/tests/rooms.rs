@@ -406,6 +406,13 @@ fn big_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<Ve
     rxs
 }
 
+/// A room where the host may seat CPUs, as on a debug server.
+fn cpu_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<Vec<u8>>> {
+    let rxs = big_room(mgr, max, players);
+    mgr.rooms.get_mut(&1).expect("the room").cpu_seats = true;
+    rxs
+}
+
 fn start(mgr: &mut Manager) {
     mgr.handle(Command::ToggleCountdown { conn: 1 });
     mgr.tick(3.5, false);
@@ -807,4 +814,111 @@ fn a_new_game_aims_at_random_as_the_client_shows() {
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
     mgr.handle(Command::Restart { conn: 2 });
     assert_eq!(mgr.rooms[&1].sim.targeting[0], shared::Targeting::Random);
+}
+
+#[test]
+fn only_the_host_seats_cpus_and_only_up_to_the_seats() {
+    let mut mgr = new_mgr();
+    let _rxs = cpu_room(&mut mgr, 3, 2);
+    mgr.handle(Command::AddCpu { conn: 2 });
+    assert_eq!(mgr.rooms[&1].members.len(), 2, "a guest seated a CPU");
+    for _ in 0..3 {
+        mgr.handle(Command::AddCpu { conn: 1 });
+    }
+    let room = &mgr.rooms[&1];
+    assert_eq!(room.members.len(), 3, "past the seats");
+    assert!(room.members[2].cpu.is_some() && room.members[2].conn.is_none());
+    assert_eq!(room.spectator_info().connected, 3, "a CPU counts as there");
+}
+
+#[test]
+fn the_host_changes_and_removes_a_cpu_in_the_lobby() {
+    use shared::cpu::{Difficulty, Style};
+    let mut mgr = new_mgr();
+    let _rxs = cpu_room(&mut mgr, 3, 2);
+    mgr.handle(Command::AddCpu { conn: 1 });
+    let set = |conn, slot, team| Command::SetCpu {
+        conn,
+        slot,
+        difficulty: Difficulty::Pro,
+        style: Style::Counter,
+        team,
+    };
+    mgr.handle(set(1, 2, Some(1)));
+    assert!(mgr.rooms[&1].members[1].cpu.is_none(), "slot 2 is a player, not a CPU");
+    mgr.handle(set(2, 3, Some(1)));
+    assert_eq!(
+        mgr.rooms[&1].spectator_info().cpus[2],
+        Some((Difficulty::Normal, Style::ALL[2]))
+    );
+    mgr.handle(set(1, 3, Some(1)));
+    let info = mgr.rooms[&1].spectator_info();
+    assert_eq!(info.cpus[2], Some((Difficulty::Pro, Style::Counter)));
+    assert_eq!((info.teams[2], info.names[2].as_str()), (Some(1), "Personnage 4 (Pro)"));
+    mgr.handle(Command::RemoveCpu { conn: 1, slot: 2 });
+    assert_eq!(mgr.rooms[&1].members.len(), 3, "a player is not removed as a CPU");
+    mgr.handle(Command::RemoveCpu { conn: 1, slot: 3 });
+    assert_eq!(mgr.rooms[&1].members.len(), 2);
+}
+
+#[test]
+fn a_cpu_plays_its_seat_and_the_game_is_not_kept() {
+    let mut mgr = new_mgr();
+    let mut rxs = cpu_room(&mut mgr, 2, 1);
+    mgr.handle(Command::AddCpu { conn: 1 });
+    start(&mut mgr);
+    assert!(mgr.rooms[&1].game_running(), "the CPU did not count as a side");
+    let first = mgr.rooms[&1].sim.boards[1].piece_id;
+    for _ in 0..5 * 60 * 60 {
+        mgr.tick(1.0 / 60.0, false);
+        if mgr.rooms[&1].sim.finished {
+            break;
+        }
+    }
+    let room = &mgr.rooms[&1];
+    assert!(room.sim.boards[1].piece_id > first + 3, "the CPU placed no pairs");
+    assert!(room.sim.finished, "the idle player never lost");
+    assert!(room.sim.won(1) && !room.sim.won(0));
+    assert!(
+        mgr.take_unsaved_matches().is_empty(),
+        "a game against a CPU was recorded"
+    );
+    let last = drain(&mut rxs[0])
+        .into_iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::StateUpdate { players, .. } => Some(players),
+            _ => None,
+        })
+        .expect("the end of the game was never sent");
+    let board = |slot| &last.iter().find(|p| p.slot == slot).expect("every board").board;
+    assert_eq!(board(1).state(), shared::GameState::GameOver);
+    assert_ne!(board(2).state(), shared::GameState::GameOver, "the winner shown out");
+}
+
+#[test]
+fn a_room_left_to_its_cpus_closes() {
+    let mut mgr = new_mgr();
+    let _rxs = cpu_room(&mut mgr, 3, 2);
+    mgr.handle(Command::AddCpu { conn: 1 });
+    mgr.handle(Command::LeaveRoom { conn: 1 });
+    assert_eq!(mgr.rooms[&1].host.as_str(), "P2", "a CPU became host");
+    mgr.handle(Command::LeaveRoom { conn: 2 });
+    assert!(!mgr.rooms.contains_key(&1));
+}
+
+#[test]
+fn a_release_server_seats_no_cpu() {
+    let mut mgr = new_mgr();
+    let mut rxs = big_room(&mut mgr, 3, 1);
+    mgr.rooms.get_mut(&1).expect("the room").cpu_seats = false;
+    mgr.handle(Command::AddCpu { conn: 1 });
+    assert_eq!(mgr.rooms[&1].members.len(), 1, "a CPU was seated");
+    mgr.handle(Command::SetSetting {
+        conn: 1,
+        setting: RoomSetting::MaxPlayers,
+        dir: 1,
+    });
+    let lobby = last_lobby(&drain(&mut rxs[0])).expect("a lobby");
+    assert!(!lobby.cpu_seats, "the client was offered CPUs");
 }

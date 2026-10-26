@@ -346,10 +346,18 @@ fn client_samples() -> Vec<ClientMessage> {
             }],
         },
         ClientMessage::Follow { slot: 3 },
+        ClientMessage::AddCpu,
+        ClientMessage::SetCpu {
+            slot: 2,
+            difficulty: crate::cpu::Difficulty::Hard,
+            style: crate::cpu::Style::Architect,
+            team: Some(1),
+        },
+        ClientMessage::RemoveCpu { slot: 2 },
     ]
 }
 
-const CLIENT_VARIANTS: usize = 23;
+const CLIENT_VARIANTS: usize = 26;
 
 fn client_variant(m: &ClientMessage) -> usize {
     match m {
@@ -376,6 +384,9 @@ fn client_variant(m: &ClientMessage) -> usize {
         ClientMessage::SetTeam { .. } => 20,
         ClientMessage::Inputs { .. } => 21,
         ClientMessage::Follow { .. } => 22,
+        ClientMessage::AddCpu => 23,
+        ClientMessage::SetCpu { .. } => 24,
+        ClientMessage::RemoveCpu { .. } => 25,
     }
 }
 
@@ -461,6 +472,8 @@ fn server_samples() -> Vec<ServerMessage> {
                 }),
                 names: vec!["a".into(), "b".into()],
                 teams: vec![Some(1), None],
+                cpu_seats: true,
+                cpus: vec![None, Some((crate::cpu::Difficulty::Pro, crate::cpu::Style::Counter))],
                 spectators: 4,
             },
         },
@@ -568,7 +581,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (12, 5_069_958_515_325_842_568);
+const PROTOCOL_DIGEST: (u32, u64) = (13, 8_009_367_441_582_123_114);
 
 #[test]
 fn protocol_changes_bump_the_version() {

@@ -235,6 +235,56 @@ impl Manager {
         }
     }
 
+    /// What the host of a lobby may change about its CPUs, through `f`:
+    /// whether it changed anything.
+    fn edit_cpus(&mut self, conn: ConnId, f: impl FnOnce(&mut Room) -> bool) {
+        let Some(id) = self.room_of(conn) else { return };
+        let changed = self
+            .with_room(id, |room| {
+                let lobby = matches!(room.phase, Phase::Lobby) && room.series.is_none();
+                lobby && room.cpu_seats && room.is_host_conn(conn) && f(room)
+            })
+            .unwrap_or(false);
+        if changed {
+            self.send_lobby(id);
+            self.room_list_dirty = true;
+        }
+    }
+
+    pub(super) fn add_cpu(&mut self, conn: ConnId) {
+        self.edit_cpus(conn, |room| {
+            let full = room.members.len() >= usize::from(room.settings.max_players);
+            if !full {
+                let style = Style::ALL[room.members.len() % Style::ALL.len()];
+                room.members
+                    .push(Member::cpu(rand::random(), Difficulty::Normal, style));
+            }
+            !full
+        });
+    }
+
+    pub(super) fn set_cpu(&mut self, conn: ConnId, slot: u8, difficulty: Difficulty, style: Style, team: Option<u8>) {
+        let team = team.filter(|t| (1..=shared::MAX_TEAMS).contains(t));
+        self.edit_cpus(conn, |room| {
+            let Some(member) = room.cpu_member(slot) else {
+                return false;
+            };
+            member.set_cpu(difficulty, style);
+            member.team = team;
+            true
+        });
+    }
+
+    pub(super) fn remove_cpu(&mut self, conn: ConnId, slot: u8) {
+        self.edit_cpus(conn, |room| {
+            if room.cpu_member(slot).is_none() {
+                return false;
+            }
+            room.members.remove(usize::from(slot) - 1);
+            true
+        });
+    }
+
     pub(super) fn set_targeting(&mut self, conn: ConnId, targeting: Targeting) {
         let Some(id) = self.room_of(conn) else { return };
         let targeting = match targeting {
