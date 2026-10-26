@@ -26,6 +26,8 @@ pub enum Icon {
     Previous,
     Next,
     Last,
+    Up,
+    Down,
     Play,
     Pause,
     Close,
@@ -61,6 +63,8 @@ impl<'a> Label<'a> {
             Self::Icon(Icon::Previous) => "icon:previous",
             Self::Icon(Icon::Next) => "icon:next",
             Self::Icon(Icon::Last) => "icon:last",
+            Self::Icon(Icon::Up) => "icon:up",
+            Self::Icon(Icon::Down) => "icon:down",
             Self::Icon(Icon::Play) => "icon:play",
             Self::Icon(Icon::Pause) => "icon:pause",
             Self::Icon(Icon::Close) => "icon:close",
@@ -173,6 +177,19 @@ fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, colo
             .color(color);
     };
     let half = long / 2.0;
+    // Pointing along `(dx, dy)`, a unit step on one axis.
+    let chevron = |draw: &mut Draw, (x, y): (f32, f32), (dx, dy): (f32, f32)| {
+        let (tx, ty) = (dx * half / 2.0, dy * half / 2.0);
+        let (ax, ay) = (-dy * half, dx * half);
+        draw.path()
+            .move_to(x - tx - ax, y - ty - ay)
+            .line_to(x + tx, y + ty)
+            .line_to(x - tx + ax, y - ty + ay)
+            .stroke(thick)
+            .round_cap()
+            .round_join()
+            .color(color);
+    };
     match icon {
         Icon::Minus => bar(draw, cx, long, thick),
         Icon::Plus => {
@@ -180,23 +197,21 @@ fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, colo
             bar(draw, cx, thick, long);
         }
         Icon::Previous | Icon::Next | Icon::First | Icon::Last => {
-            let forward = matches!(icon, Icon::Next | Icon::Last);
-            let tip = if forward { half / 2.0 } else { -half / 2.0 };
-            let edge = icon == Icon::First || icon == Icon::Last;
-            let to_bar = if edge { tip + 2.0 * thick * tip.signum() } else { 0.0 };
+            let dir = if matches!(icon, Icon::Next | Icon::Last) {
+                1.0
+            } else {
+                -1.0
+            };
+            let edge = matches!(icon, Icon::First | Icon::Last);
+            let tip = dir * half / 2.0;
+            let to_bar = if edge { tip + 2.0 * thick * dir } else { 0.0 };
             let x = if edge { cx - (to_bar - tip) / 2.0 } else { cx };
-            draw.path()
-                .move_to(x - tip, cy - half)
-                .line_to(x + tip, cy)
-                .line_to(x - tip, cy + half)
-                .stroke(thick)
-                .round_cap()
-                .round_join()
-                .color(color);
+            chevron(draw, (x, cy), (dir, 0.0));
             if edge {
                 bar(draw, x + to_bar, thick, long);
             }
         }
+        Icon::Up | Icon::Down => chevron(draw, (cx, cy), (0.0, if icon == Icon::Down { 1.0 } else { -1.0 })),
         Icon::Play => {
             let left = cx - half * 0.7;
             draw.triangle((left, cy - half), (left, cy + half), (cx + half, cy))

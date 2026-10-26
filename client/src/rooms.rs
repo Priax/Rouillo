@@ -7,7 +7,7 @@ use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSettin
 use crate::cpu_seat::{self, CpuSeat};
 use crate::state::{ApiFriendsResponse, Invite, Screen, State};
 use crate::ui::{
-    self, field_clicked, list_row, text_field, Face, Field, Frame, ListCard, Modal, Pill, Rect, SettingsGrid,
+    self, field_clicked, list_row, text_field, Face, Field, Frame, Icon, ListCard, Modal, Pill, Rect, SettingsGrid,
     SharpText, Size, Stepper, TextInput, View, FILL, PAGER_H,
 };
 use crate::{board_size, http, theme};
@@ -436,13 +436,68 @@ fn lobby_players(view: View) -> Rect {
 
 const PLAYERS_TITLE_H: f32 = 56.0;
 const PLAYER_ROW_H: f32 = 44.0;
+const MIN_PLAYER_ROW_H: f32 = 34.0;
+const PLAYER_ROW_GAP: f32 = 4.0;
 const ADD_CPU_H: f32 = 40.0;
-fn lobby_player_row(view: View, i: usize, players: usize) -> Rect {
-    let list = lobby_players(view)
-        .below(PLAYERS_TITLE_H)
-        .pad(0.0, 12.0, ADD_CPU_H + 24.0, 12.0);
-    let h = (list.h / players.max(1) as f32).min(PLAYER_ROW_H);
-    list.nth_row(i, h - 4.0, 4.0)
+const SCROLL_BUTTON: f32 = 32.0;
+
+/// The players' rows: as many as fit, the others reached by scrolling.
+struct PlayerList {
+    area: Rect,
+    step: f32,
+    first: usize,
+    shown: usize,
+    count: usize,
+    title: Rect,
+}
+
+impl PlayerList {
+    fn new(view: View, info: &LobbyInfo, first: usize) -> Self {
+        let card = lobby_players(view);
+        let below = if may_add_cpu(info) { ADD_CPU_H + 24.0 } else { 12.0 };
+        let area = card.below(PLAYERS_TITLE_H).pad(0.0, 12.0, below, 12.0);
+        let count = info.names.len();
+        let step = (area.h / count.max(1) as f32).clamp(MIN_PLAYER_ROW_H, PLAYER_ROW_H);
+        let shown = area
+            .rows_fitting(step - PLAYER_ROW_GAP, PLAYER_ROW_GAP)
+            .clamp(1, count.max(1));
+        Self {
+            area,
+            step,
+            first: first.min(count.saturating_sub(shown)),
+            shown,
+            count,
+            title: card.top(PLAYERS_TITLE_H),
+        }
+    }
+
+    /// Row `i`, if it is in sight.
+    fn row(&self, i: usize) -> Option<Rect> {
+        (self.first..self.first + self.shown).contains(&i).then(|| {
+            self.area
+                .nth_row(i - self.first, self.step - PLAYER_ROW_GAP, PLAYER_ROW_GAP)
+        })
+    }
+
+    fn scrolls(&self) -> bool {
+        self.count > self.shown
+    }
+
+    /// The buttons that scroll up and down, right of the title.
+    fn scroll_buttons(&self) -> [Rect; 2] {
+        let band = self.title.pad(0.0, 12.0, 0.0, 0.0).middle(SCROLL_BUTTON);
+        let down = band.right(SCROLL_BUTTON);
+        [
+            Rect::at(down.x - SCROLL_BUTTON - 6.0, down.y, SCROLL_BUTTON, SCROLL_BUTTON),
+            down,
+        ]
+    }
+
+    /// The first row after scrolling by `dir` rows.
+    fn scrolled(&self, dir: i32) -> usize {
+        let last = self.count.saturating_sub(self.shown);
+        self.first.saturating_add_signed(dir as isize).min(last)
+    }
 }
 
 fn add_cpu_button(view: View) -> Rect {
@@ -510,10 +565,18 @@ fn draw_lobby_players(draw: &mut Draw, state: &State, info: &LobbyInfo) {
         .v_align_middle()
         .color(pal.text_dim);
     ui::divider(draw, &pal, card.x + 16.0, card.y + PLAYERS_TITLE_H, card.w - 32.0);
+    let list = PlayerList::new(view, info, state.room.as_ref().map_or(0, |r| r.players_first));
+    if list.scrolls() {
+        let [up, down] = list.scroll_buttons();
+        state.ui.button_enabled(draw, fonts, up, Icon::Up, list.first > 0);
+        state
+            .ui
+            .button_enabled(draw, fonts, down, Icon::Down, list.first + list.shown < list.count);
+    }
     let own = usize::from(info.your_slot).checked_sub(1);
     let picker = team_picker(info);
     for (i, name) in info.names.iter().enumerate() {
-        let row = lobby_player_row(view, i, info.names.len());
+        let Some(row) = list.row(i) else { continue };
         let mine = own == Some(i);
         if picker == Some(i) {
             state.ui.row(draw, row, i, &format!("team:{i}"));
@@ -650,7 +713,25 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         return;
     }
 
-    let clicked_row = |i: usize| ui.clicked(lobby_player_row(view, i, info.names.len()));
+    let list = PlayerList::new(view, info, room.players_first);
+    room.players_first = list.first;
+    if list.scrolls() {
+        let [up, down] = list.scroll_buttons();
+        let wheel = app.mouse.wheel_delta.y;
+        let over = lobby_players(view).contains(ui.mouse().x, ui.mouse().y);
+        let dir = if ui.clicked(up) || (over && wheel > 0.0) {
+            -1
+        } else if ui.clicked(down) || (over && wheel < 0.0) {
+            1
+        } else {
+            0
+        };
+        if dir != 0 {
+            room.players_first = list.scrolled(dir);
+            return;
+        }
+    }
+    let clicked_row = |i: usize| list.row(i).is_some_and(|row| ui.clicked(row));
 
     if edits_cpus(info) {
         let seats = info.names.len();
@@ -959,6 +1040,38 @@ mod team_tests {
         assert!(has_sides(&lobby(vec![Some(1), Some(2)])));
         assert!(!has_sides(&lobby(vec![Some(3), Some(3), Some(3)])));
         assert!(has_sides(&lobby(vec![Some(3), Some(3), None])));
+    }
+
+    #[test]
+    fn a_full_room_scrolls_its_players_instead_of_squeezing_them() {
+        let info = lobby(vec![None; usize::from(shared::MAX_ROOM_PLAYERS)]);
+        let view = View::default();
+        let card = lobby_players(view);
+        let mut list = PlayerList::new(view, &info, 0);
+        assert!(list.scrolls() && list.shown >= 3, "{} rows in sight", list.shown);
+        let mut seen = std::collections::HashSet::new();
+        while seen.len() < info.names.len() {
+            for i in 0..info.names.len() {
+                let Some(row) = list.row(i) else { continue };
+                assert!(
+                    row.h >= MIN_PLAYER_ROW_H - PLAYER_ROW_GAP,
+                    "row {i} squeezed to {}",
+                    row.h
+                );
+                assert!(
+                    row.y >= card.y && row.bottom() <= card.bottom(),
+                    "row {i} out of the card"
+                );
+                seen.insert(i);
+            }
+            let next = list.scrolled(1);
+            assert!(
+                next > list.first || seen.len() == info.names.len(),
+                "stuck at {}",
+                list.first
+            );
+            list = PlayerList::new(view, &info, next);
+        }
     }
 
     #[test]

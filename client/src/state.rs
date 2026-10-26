@@ -407,6 +407,8 @@ pub struct Room {
     /// The lobby seat whose CPU the host is changing, and how many seats
     /// were taken then: one coming or going shifts the seats.
     pub cpu_edit: Option<(usize, usize)>,
+    /// The first row in sight of the lobby's players list.
+    pub players_first: usize,
 }
 
 impl Room {
@@ -419,6 +421,7 @@ impl Room {
             invite: Invite::default(),
             sizing: false,
             cpu_edit: None,
+            players_first: 0,
         }
     }
 }
