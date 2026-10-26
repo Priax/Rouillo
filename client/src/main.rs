@@ -13,7 +13,6 @@ mod chat;
 mod connection;
 mod controls;
 
-mod cpu;
 mod demo;
 mod draw;
 mod friends;

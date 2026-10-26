@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use notan::prelude::*;
+use shared::cpu::{Cpu, Difficulty, Style};
 use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings};
 
-use crate::cpu::{Cpu, Difficulty, Style};
 use crate::draw::Hud;
 use crate::state::{GameSession, Rival, Screen, State};
 use crate::ui::{self, Pill, Rect, SettingsPanel, SharpText, View};

@@ -8,6 +8,7 @@
 mod board;
 mod codec;
 pub mod config;
+pub mod cpu;
 mod hash;
 mod protocol;
 mod replay;

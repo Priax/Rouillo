@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
+use shared::cpu::{Cpu, Difficulty, Style};
 use shared::{config, ActivePuyo, Board, Events, GameState, InputKind, PuyoType, Rules};
 
-use crate::cpu::{Cpu, Difficulty, Style};
 use crate::state::TurnAnim;
 
 const STEP: f32 = 1.0 / config::SERVER_TICK_HZ as f32;
@@ -16,7 +16,7 @@ const OUTRO_SECS: f32 = 4.0;
 const CPU_SEED: u64 = 6;
 /// The pairs of the match between two CPUs, chosen because the GTR wins it
 /// with a 6-chain after a long fight.
-const VERSUS_SEED: u64 = 38;
+const VERSUS_SEED: u64 = 33;
 /// Makes the architect build a GTR, the third of its shapes.
 const ARCHITECT_SEED: u64 = 2;
 
