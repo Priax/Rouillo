@@ -1,7 +1,4 @@
 #!/bin/sh
-# Prepares the server VM for WebTransport, once. Running it again changes
-# nothing that is already in place.
-#
 #   scripts/setup-webtransport.sh
 #
 #   PUYO_HOST=user@host   the VM (default ubuntu@puyo.priax.org)

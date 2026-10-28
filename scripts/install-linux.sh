@@ -1,5 +1,4 @@
 #!/bin/sh
-# Installs Rouillo the way a desktop application is expected to be on Linux:
 # the binary in $PREFIX/bin, its launcher entry and icons under $PREFIX/share
 # (the freedesktop.org layout). The window's app id is the entry's file name,
 # which is how the desktop finds the icon to show in its taskbar and menus.
@@ -30,7 +29,6 @@ else
 fi
 
 refresh_caches() {
-    # A package manager refreshes these itself.
     [ -z "${DESTDIR:-}" ] || return 0
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database -q "$prefix/share/applications" || true

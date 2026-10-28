@@ -1,21 +1,11 @@
 #!/bin/sh
-# Deploys Rouillo to its server: the game server, the web client, or both.
-#
-#   scripts/deploy.sh             both, in an order that keeps them compatible
+#   scripts/deploy.sh
 #   scripts/deploy.sh server      the game server only
 #   scripts/deploy.sh web         the web client only
 #   scripts/deploy.sh rollback    put the previous server binary back
 #
 #   PUYO_HOST=user@host           where to deploy (default ubuntu@puyo.priax.org)
 #   PUYO_SITE=https://host        where it is served (default: that host, over https)
-#
-# What gets deployed is the commit checked out here, which must be pushed: the
-# server is built on the VM from the repository, the web client here, and the
-# two must come from the same source or their protocols may differ.
-#
-# Restarting does not cut games: on SIGTERM the server stops starting new ones,
-# lets the running ones finish and only then exits (see SHUTDOWN_DEADLINE in
-# server/src/main.rs), so the restart below can take a few minutes.
 set -eu
 
 HOST=${PUYO_HOST:-ubuntu@puyo.priax.org}

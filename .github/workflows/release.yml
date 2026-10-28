@@ -4,11 +4,11 @@ on:
   push:
     tags:
       - 'v*'
-  # Builds everything without publishing, to try the installer on a branch.
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
@@ -66,7 +66,6 @@ jobs:
       - name: Package Linux archive
         if: runner.os == 'Linux'
         run: |
-          # Built aside: the bare binary already holds this name here.
           dir=rouillo-linux-x86_64
           mkdir -p "pkg/$dir"
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "pkg/$dir/rouillo"
@@ -99,11 +98,29 @@ jobs:
             rouillo-windows-x86_64-setup.exe
           if-no-files-found: ignore
 
-  # The game updates itself from the latest release, so only a signed and
-  # complete set of files is published, all at once.
+  ci:
+    name: Wait for CI
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 80); do
+            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --event push --commit "$GITHUB_SHA" \
+              --json status,conclusion --jq '.[0] // empty | "\(.status) \(.conclusion)"')
+            case $run in
+              "completed success") exit 0 ;;
+              completed*) echo "CI did not pass on $GITHUB_SHA: $run" >&2; exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo "no finished CI run on $GITHUB_SHA after 40 min" >&2
+          exit 1
+
   publish:
     name: Sign and publish
-    needs: build
+    needs: [build, ci]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:

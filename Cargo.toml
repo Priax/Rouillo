@@ -19,7 +19,7 @@ opt-level = 3
 opt-level = 2
 
 # The CPU's search and the board's rules run every tick: unoptimised they
-# are 15 to 25 times slower, too slow for a room of CPUs even in a debug build.
+# are 15 to 25 times slower
 [profile.dev.package.shared]
 opt-level = 2
 

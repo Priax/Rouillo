@@ -8,21 +8,21 @@
 echo "rustfmt (nightly, check)..."
 if ! cargo +nightly fmt --all --check; then
     echo
-    echo "Code mal formaté : lance 'cargo +nightly fmt --all', puis 'git add', puis recommite."
+    echo "Code mal formaté: lance 'cargo +nightly fmt --all', puis 'git add', puis recommite."
     exit 1
 fi
 
 echo "Cargo.lock..."
 if ! cargo metadata --locked --format-version 1 >/dev/null 2>&1; then
     echo
-    echo "Cargo.lock n'est pas à jour : lance 'cargo update --workspace', puis 'git add Cargo.lock', puis recommite."
+    echo "Cargo.lock n'est pas à jour: lance 'cargo update --workspace', puis 'git add Cargo.lock', puis recommite."
     echo "(Pour une nouvelle version, scripts/release.sh X.Y.Z fait tout.)"
     exit 1
 fi
 
-echo "clippy (stable, comme la CI)..."
+echo "clippy..."
 if ! cargo +stable clippy --locked --workspace --all-targets -- -D warnings; then
     echo
-    echo "clippy a trouvé des problèmes : corrige-les, puis recommite."
+    echo "clippy a trouvé des problèmes: corrige-les, puis recommite."
     exit 1
 fi
