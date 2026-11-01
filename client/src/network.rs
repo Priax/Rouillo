@@ -11,23 +11,23 @@ const LINK_PAUSE_SECS: f64 = 30.0;
 /// invitation to reach them, with the room list only on the screen showing it.
 pub fn keep_linked(state: &mut State) {
     let now = crate::connection::now_secs();
-    let wanted = state.auth.is_some() && !state.too_old && !state.opened_elsewhere;
-    if wanted && state.conn.is_offline() && now >= state.next_link_at {
-        state.conn.connect(now);
+    let wanted = state.auth.is_some() && !state.net.too_old && !state.net.opened_elsewhere;
+    if wanted && state.net.conn.is_offline() && now >= state.net.next_link_at {
+        state.net.conn.connect(now);
     }
-    if state.auth.is_none() && !state.screen.needs_connection() && !state.conn.is_offline() {
-        state.conn.disconnect();
+    if state.auth.is_none() && !state.screen.needs_connection() && !state.net.conn.is_offline() {
+        state.net.conn.disconnect();
     }
     let on = state.screen == Screen::RoomBrowser;
-    if state.conn.is_live() && state.rooms_listed != on {
-        state.conn.send(&ClientMessage::ListRooms { on });
-        state.rooms_listed = on;
+    if state.net.conn.is_live() && state.net.rooms_listed != on {
+        state.net.conn.send(&ClientMessage::ListRooms { on });
+        state.net.rooms_listed = on;
     }
 }
 
 pub fn handle_server_messages(state: &mut State) {
     let now = crate::connection::now_secs();
-    for event in state.conn.poll(now) {
+    for event in state.net.conn.poll(now) {
         match event {
             ConnEvent::Opened { recovered } => on_opened(state, recovered),
             ConnEvent::Message(msg) => process_message(state, *msg),
@@ -37,14 +37,14 @@ pub fn handle_server_messages(state: &mut State) {
                 }
             }
             ConnEvent::GaveUp => {
-                state.next_link_at = now + LINK_PAUSE_SECS;
+                state.net.next_link_at = now + LINK_PAUSE_SECS;
                 if state.screen.needs_connection() {
                     reset_to_menu(state, Status::error("Connexion au serveur perdue."));
                 }
             }
             ConnEvent::Outdated => {
                 state.outdated = true;
-                state.too_old = true;
+                state.net.too_old = true;
                 #[cfg(not(target_arch = "wasm32"))]
                 crate::updater::check();
                 if state.screen.needs_connection() {
@@ -57,24 +57,24 @@ pub fn handle_server_messages(state: &mut State) {
 
 fn on_opened(state: &mut State, recovered: bool) {
     let background = !state.screen.needs_connection();
-    state.opened_elsewhere &= background;
+    state.net.opened_elsewhere &= background;
     let hello = ClientMessage::Hello {
-        player_id: state.player_id.clone(),
+        player_id: state.net.player_id.clone(),
         auth_token: state.auth.as_ref().map(|a| a.token.clone()),
-        last_disconnect_reason: state.conn.take_unreported_drop(),
+        last_disconnect_reason: state.net.conn.take_unreported_drop(),
         background,
     };
-    state.conn.send(&hello);
-    state.rooms_listed = true;
-    state.maintenance = false;
-    if let Some(id) = state.pending_join.take() {
-        state.conn.send(&ClientMessage::JoinRoom { id });
+    state.net.conn.send(&hello);
+    state.net.rooms_listed = true;
+    state.net.maintenance = false;
+    if let Some(id) = state.net.pending_join.take() {
+        state.net.conn.send(&ClientMessage::JoinRoom { id });
     }
-    if let Some(user_id) = state.pending_watch.take() {
-        state.conn.send(&ClientMessage::WatchFriend { user_id });
+    if let Some(user_id) = state.net.pending_watch.take() {
+        state.net.conn.send(&ClientMessage::WatchFriend { user_id });
     }
     if state.screen == Screen::Ranked && state.ranked.resume_search() {
-        state.conn.send(&ClientMessage::JoinQueue);
+        state.net.conn.send(&ClientMessage::JoinQueue);
     }
     if recovered && state.screen.needs_connection() {
         state.notice.clear();
@@ -389,12 +389,12 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             }
         }
         ServerMessage::OpenedElsewhere => {
-            state.opened_elsewhere = true;
-            state.conn.disconnect();
+            state.net.opened_elsewhere = true;
+            state.net.conn.disconnect();
             reset_to_menu(state, Status::info("Le jeu a été ouvert dans un autre onglet."));
         }
         ServerMessage::Pong { .. } => {}
-        ServerMessage::Maintenance => state.maintenance = true,
+        ServerMessage::Maintenance => state.net.maintenance = true,
         ServerMessage::MatchSaved { id } => {
             if let Some(room) = state.room.as_mut() {
                 let game = room.session.as_ref().map(|s| s.game);

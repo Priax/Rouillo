@@ -125,22 +125,22 @@ pub fn enter(state: &mut State) {
 }
 
 fn exit(state: &mut State) {
-    state.conn.disconnect();
+    state.net.conn.disconnect();
     state.screen = Screen::PlayMenu;
 }
 
 fn start_search(state: &mut State) {
     state.notice.clear();
     state.ranked.search = Search::Searching { since: now_secs() };
-    if state.conn.is_live() {
-        state.conn.send(&ClientMessage::JoinQueue);
+    if state.net.conn.is_live() {
+        state.net.conn.send(&ClientMessage::JoinQueue);
     } else {
-        state.conn.connect(now_secs());
+        state.net.conn.connect(now_secs());
     }
 }
 
 fn stop_search(state: &mut State) {
-    state.conn.send(&ClientMessage::LeaveQueue);
+    state.net.conn.send(&ClientMessage::LeaveQueue);
     state.ranked.search = Search::Idle;
 }
 
@@ -183,7 +183,7 @@ pub fn update(app: &App, state: &mut State) {
                 if let Search::Found { accepted, .. } = &mut state.ranked.search {
                     *accepted = true;
                 }
-                state.conn.send(&ClientMessage::AcceptMatch);
+                state.net.conn.send(&ClientMessage::AcceptMatch);
             } else if state.ui.clicked(decline) || escape {
                 stop_search(state);
             }

@@ -5,7 +5,7 @@ use notan::prelude::*;
 
 use crate::http::{self, HttpSlot};
 use crate::picker::{self, Picked};
-use crate::state::{ApiUserProfile, State};
+use crate::state::{ApiUserProfile, Input, State};
 use crate::theme;
 use crate::ui::{
     area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field, Fonts, Rect, SharpText, Status,
@@ -257,7 +257,7 @@ pub fn update(app: &mut App, state: &mut State) {
         profile,
         ui,
         fonts,
-        keys,
+        input: Input { keys, .. },
         ..
     } = state;
     let Some(profile) = profile.as_mut() else { return };

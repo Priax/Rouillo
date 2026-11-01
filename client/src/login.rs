@@ -143,8 +143,8 @@ pub fn update_auth(app: &mut App, state: &mut State) {
     let layout = auth_layout(state.ui.view(), state.auth_form.focused);
 
     match state.auth_form.focused {
-        AuthField::Username => state.auth_form.username.edit(&state.keys),
-        AuthField::Password => state.auth_form.password.edit(&state.keys),
+        AuthField::Username => state.auth_form.username.edit(&state.input.keys),
+        AuthField::Password => state.auth_form.password.edit(&state.input.keys),
     }
 
     if app.keyboard.was_pressed(KeyCode::Tab) {

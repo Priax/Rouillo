@@ -733,12 +733,35 @@ pub struct Startup {
     pub title_seen: bool,
 }
 
+/// All that reaches the game from the player's hands.
+pub struct Input {
+    pub keys: crate::ui::EditKeys,
+    pub controls: crate::controls::Controls,
+    pub pads: crate::pads::Pads,
+    pub touch: crate::touch::TouchPad,
+}
+
+/// The link to the server, and what waits for it to open.
+pub struct Network {
+    pub player_id: String,
+    pub conn: Connection,
+    pub pending_join: Option<RoomId>,
+    pub pending_watch: Option<String>,
+    /// The time before which no background connection is tried.
+    pub next_link_at: f64,
+    /// Whether the server pushes the room list on this connection.
+    pub rooms_listed: bool,
+    /// Another tab took over: this one stays off, or they would take turns.
+    pub opened_elsewhere: bool,
+    /// The server refused this version: online play waits for an update.
+    pub too_old: bool,
+    pub maintenance: bool,
+}
+
 #[derive(AppState)]
 pub struct State {
     pub screen: Screen,
     pub settings: Settings,
-    pub player_id: String,
-    pub conn: Connection,
     pub rooms: Vec<RoomInfo>,
     /// The room this player is in: dropped as a whole on leaving it.
     pub room: Option<Room>,
@@ -754,27 +777,14 @@ pub struct State {
     pub other_profile: Option<OtherProfileData>,
     pub startup: Startup,
     pub pending_invitation: Option<(String, RoomId, String)>,
-    pub pending_join: Option<RoomId>,
-    /// The time before which no background connection is tried.
-    pub next_link_at: f64,
-    /// Whether the server pushes the room list on this connection.
-    pub rooms_listed: bool,
-    /// Another tab took over: this one stays off, or they would take turns.
-    pub opened_elsewhere: bool,
-    pub pending_watch: Option<String>,
     pub ranked: crate::ranked::RankedView,
     pub help: Option<crate::help::HelpView>,
     pub leaderboard: Option<crate::leaderboard::Leaderboard>,
     pub outdated: bool,
-    /// The server refused this version: online play waits for an update.
-    pub too_old: bool,
-    pub maintenance: bool,
     pub ui: crate::ui::Ui,
-    pub keys: crate::ui::EditKeys,
-    pub controls: crate::controls::Controls,
+    pub input: Input,
+    pub net: Network,
     pub bindings_panel: crate::bindings_panel::BindingsPanel,
-    pub pads: crate::pads::Pads,
-    pub touch: crate::touch::TouchPad,
     pub solo: crate::solo::Solo,
     pub replay: crate::replay::Replays,
 }
@@ -785,8 +795,6 @@ impl State {
         Self {
             screen: Screen::Auth,
             settings: Settings::load(),
-            player_id: player_id.clone(),
-            conn: Connection::new(&player_id),
             rooms: Vec::new(),
             room: None,
             room_pager: crate::ui::Pager::default(),
@@ -801,23 +809,29 @@ impl State {
             other_profile: None,
             startup: Startup::default(),
             pending_invitation: None,
-            pending_join: None,
-            next_link_at: 0.0,
-            rooms_listed: true,
-            opened_elsewhere: false,
-            pending_watch: None,
             ranked: crate::ranked::RankedView::default(),
             help: None,
             leaderboard: None,
             outdated: false,
-            too_old: false,
-            maintenance: false,
             ui: crate::ui::Ui::default(),
-            keys: crate::ui::EditKeys::default(),
-            controls: crate::controls::Controls::load(),
+            input: Input {
+                keys: crate::ui::EditKeys::default(),
+                controls: crate::controls::Controls::load(),
+                pads: crate::pads::Pads::new(),
+                touch: crate::touch::TouchPad::default(),
+            },
+            net: Network {
+                conn: Connection::new(&player_id),
+                player_id,
+                pending_join: None,
+                pending_watch: None,
+                next_link_at: 0.0,
+                rooms_listed: true,
+                opened_elsewhere: false,
+                too_old: false,
+                maintenance: false,
+            },
             bindings_panel: crate::bindings_panel::BindingsPanel::default(),
-            pads: crate::pads::Pads::new(),
-            touch: crate::touch::TouchPad::default(),
             solo: crate::solo::Solo::new(),
             replay: crate::replay::Replays::default(),
         }

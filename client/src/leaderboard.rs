@@ -110,7 +110,7 @@ pub fn update(app: &App, state: &mut State) {
     board.pager.clamp(pages);
     board
         .pager
-        .update(app, &state.ui, &state.fonts, &state.keys, pager_area(view), pages);
+        .update(app, &state.ui, &state.fonts, &state.input.keys, pager_area(view), pages);
 
     let clicked = board
         .pager

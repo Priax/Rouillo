@@ -109,7 +109,7 @@ pub fn update_menu(app: &App, state: &mut State) {
             state.notice.clear();
             state.screen = Screen::PlayMenu;
         }
-        Some(MenuItem::Multiplayer | MenuItem::Ranked) if state.too_old => {
+        Some(MenuItem::Multiplayer | MenuItem::Ranked) if state.net.too_old => {
             state.notice = Status::error("Mettez d'abord le jeu à jour, avec le bouton en haut à droite.");
         }
         Some(MenuItem::Multiplayer) => start_play(state),
@@ -138,7 +138,7 @@ pub fn update_menu(app: &App, state: &mut State) {
         crate::update::apply();
     }
 
-    let profile_pad = state.pads.pressed(crate::pads::Pad::North);
+    let profile_pad = state.input.pads.pressed(crate::pads::Pad::North);
     if logged_in && (state.ui.clicked(avatar_rect(ww)) || profile_pad) {
         crate::profile::enter_profile(state, Screen::Menu);
         state.screen = Screen::Profile;
@@ -153,7 +153,7 @@ pub fn do_logout(state: &mut State) {
 }
 
 pub fn forget_session(state: &mut State) {
-    state.conn.disconnect();
+    state.net.conn.disconnect();
     state.room = None;
     state.pending_invitation = None;
     clear_auth(state);
@@ -266,9 +266,9 @@ pub fn update_settings(app: &mut App, state: &mut State) {
     let capturing = state.bindings_panel.capturing();
     if state
         .bindings_panel
-        .update(app, &state.ui, &state.pads, &mut state.controls.bindings)
+        .update(app, &state.ui, &state.input.pads, &mut state.input.controls.bindings)
     {
-        state.controls.bindings.save();
+        state.input.controls.bindings.save();
     }
     if capturing {
         return;
@@ -321,13 +321,13 @@ pub fn draw_settings(gfx: &mut Graphics, state: &State) {
 
     state
         .bindings_panel
-        .draw(&mut draw, &state.ui, &state.fonts, &state.controls.bindings);
+        .draw(&mut draw, &state.ui, &state.fonts, &state.input.controls.bindings);
     state.ui.button(&mut draw, &state.fonts, settings_back(view), "Retour");
     state.ui.render(gfx, &draw);
 }
 
 fn start_play(state: &mut State) {
-    state.conn.connect(crate::connection::now_secs());
+    state.net.conn.connect(crate::connection::now_secs());
     state.rooms.clear();
     state.notice.clear();
     state.screen = Screen::RoomBrowser;

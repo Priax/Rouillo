@@ -371,12 +371,19 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         }
         searching = f.search_focused && !paging;
         if searching {
-            f.search_input.edit(&state.keys);
+            f.search_input.edit(&state.input.keys);
         }
         for col in 0..3 {
             let pages = page_count(lists(f)[col].len(), rows_for(view));
             f.pages[col].clamp(pages);
-            f.pages[col].update(app, &state.ui, &state.fonts, &state.keys, pager_area(view, col), pages);
+            f.pages[col].update(
+                app,
+                &state.ui,
+                &state.fonts,
+                &state.input.keys,
+                pager_area(view, col),
+                pages,
+            );
         }
     }
 
@@ -502,11 +509,11 @@ fn clicked_action(f: &FriendsData, ui: &Ui, view: View) -> Option<FriendAction> 
 /// Watches a friend's game: the server says where it is, or that there is none.
 fn watch(state: &mut State, user_id: String) {
     state.notice.clear();
-    if state.conn.is_live() {
-        state.conn.send(&shared::ClientMessage::WatchFriend { user_id });
+    if state.net.conn.is_live() {
+        state.net.conn.send(&shared::ClientMessage::WatchFriend { user_id });
     } else {
-        state.pending_watch = Some(user_id);
-        state.conn.connect(crate::connection::now_secs());
+        state.net.pending_watch = Some(user_id);
+        state.net.conn.connect(crate::connection::now_secs());
         state.rooms.clear();
     }
     state.screen = Screen::RoomBrowser;

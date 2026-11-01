@@ -7,8 +7,8 @@ use crate::account::{self, AccountForm, Outcome};
 use crate::history::History;
 use crate::profile_edit::{self, EditForm};
 use crate::state::{
-    ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, OtherProfileData, ProfileCore,
-    ProfileData, Screen, State,
+    ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, Input, OtherProfileData,
+    ProfileCore, ProfileData, Screen, State,
 };
 use crate::theme::{self, Palette};
 use crate::ui::{
@@ -84,8 +84,8 @@ fn update_history(app: &App, state: &mut State, other: bool) {
         other_profile,
         ui,
         fonts,
-        keys,
         auth,
+        input: Input { keys, .. },
         ..
     } = state;
     let core = if other {
@@ -608,7 +608,7 @@ fn update_account(app: &App, state: &mut State) {
         profile,
         ui,
         fonts,
-        keys,
+        input: Input { keys, .. },
         ..
     } = state;
     let Some(form) = profile.as_mut().and_then(|p| p.account.as_mut()) else {

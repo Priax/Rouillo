@@ -303,7 +303,7 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
     if rules {
         draw_rules(&mut draw, &state.ui, &state.fonts, info);
     } else {
-        draw_controls(&mut draw, &state.ui, &state.fonts, info, &state.controls.bindings);
+        draw_controls(&mut draw, &state.ui, &state.fonts, info, &state.input.controls.bindings);
     }
     if let Some(help) = &state.help {
         draw_demo(

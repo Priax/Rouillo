@@ -5,7 +5,7 @@ use shared::cpu::{Cpu, Difficulty, Style};
 use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings, Targeting};
 
 use crate::draw::Hud;
-use crate::state::{GameSession, Rival, Screen, State};
+use crate::state::{GameSession, Input, Rival, Screen, State};
 use crate::ui::{self, Frame, Icon, Pill, Rect, SharpText, Size, Stepper, View, FILL};
 use crate::{board_size, http, logic, rooms, theme};
 
@@ -341,7 +341,7 @@ pub fn update_game(app: &mut App, state: &mut State) {
         settings,
         ui,
         screen,
-        controls,
+        input: Input { controls, .. },
         ..
     } = state;
     let input = controls.frame;

@@ -5,7 +5,7 @@ use notan::prelude::*;
 use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSetting, RoomSettings};
 
 use crate::cpu_seat::{self, CpuSeat};
-use crate::state::{ApiFriendsResponse, Invite, Screen, State};
+use crate::state::{ApiFriendsResponse, Input, Invite, Network, Screen, State};
 use crate::ui::{
     self, field_clicked, list_row, text_field, Face, Field, Frame, Icon, ListCard, Modal, Pill, Rect, SettingsGrid,
     SharpText, Size, Stepper, TextInput, View, FILL, PAGER_H,
@@ -13,7 +13,7 @@ use crate::ui::{
 use crate::{board_size, http, theme};
 
 fn send(state: &mut State, msg: &ClientMessage) {
-    state.conn.send(msg);
+    state.net.conn.send(msg);
 }
 
 const ROOM_ROW_H: f32 = 56.0;
@@ -77,7 +77,7 @@ pub fn update_browser(app: &App, state: &mut State) {
     state.room_pager.clamp(pages);
     state
         .room_pager
-        .update(app, &state.ui, &state.fonts, &state.keys, pager_area(view), pages);
+        .update(app, &state.ui, &state.fonts, &state.input.keys, pager_area(view), pages);
 
     let clicked = shown_rooms(state)
         .find(|&(i, _)| state.ui.clicked(room_row(view, i)))
@@ -104,7 +104,7 @@ pub fn update_browser(app: &App, state: &mut State) {
     } else if state.ui.clicked(b.refresh) {
         send(state, &ClientMessage::RequestRoomList);
     } else if state.ui.clicked(b.back) || app.keyboard.was_pressed(KeyCode::Escape) {
-        state.conn.disconnect();
+        state.net.conn.disconnect();
         state.rooms.clear();
         state.screen = Screen::PlayMenu;
     }
@@ -253,7 +253,7 @@ fn entry_buttons(w: f32, h: f32) -> (Rect, Rect) {
 }
 
 fn update_entry(app: &mut App, state: &mut State) -> Option<String> {
-    state.text_input.edit(&state.keys);
+    state.text_input.edit(&state.input.keys);
     let (w, h) = state.ui.view().size();
     field_clicked(&state.ui, &state.fonts, entry_box(w, h), &mut state.text_input);
     let (confirm, back) = entry_buttons(w, h);
@@ -641,10 +641,9 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         room,
         ui,
         fonts,
-        keys,
-        conn,
         auth,
-        maintenance,
+        input: Input { keys, .. },
+        net: Network { conn, maintenance, .. },
         ..
     } = state;
     let Some(room) = room.as_mut() else { return };
@@ -856,7 +855,7 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
         }
     }
 
-    let (label, color, enabled) = launch_bar(info, state.maintenance);
+    let (label, color, enabled) = launch_bar(info, state.net.maintenance);
     state
         .ui
         .menu_bar_enabled(&mut draw, fonts, lobby_launch(view), label, color, enabled);
