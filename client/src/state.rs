@@ -725,6 +725,14 @@ pub fn load_or_create_player_id() -> String {
     })
 }
 
+/// The check of a stored session when the game opens, and the title screen.
+#[derive(Default)]
+pub struct Startup {
+    pub check: Option<HttpSlot>,
+    pub retry_at: Option<f64>,
+    pub title_seen: bool,
+}
+
 #[derive(AppState)]
 pub struct State {
     pub screen: Screen,
@@ -744,9 +752,7 @@ pub struct State {
     pub profile: Option<ProfileData>,
     pub friends: Option<FriendsData>,
     pub other_profile: Option<OtherProfileData>,
-    pub startup_check: Option<HttpSlot>,
-    pub startup_retry_at: Option<f64>,
-    pub title_seen: bool,
+    pub startup: Startup,
     pub pending_invitation: Option<(String, RoomId, String)>,
     pub pending_join: Option<RoomId>,
     /// The time before which no background connection is tried.
@@ -793,9 +799,7 @@ impl State {
             profile: None,
             friends: None,
             other_profile: None,
-            startup_check: None,
-            startup_retry_at: None,
-            title_seen: false,
+            startup: Startup::default(),
             pending_invitation: None,
             pending_join: None,
             next_link_at: 0.0,

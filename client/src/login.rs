@@ -91,21 +91,21 @@ fn poll_auth(state: &mut State) {
 const STARTUP_RETRY_SECS: f64 = 5.0;
 
 pub fn check_stored_session(state: &mut State) {
-    state.startup_retry_at = None;
+    state.startup.retry_at = None;
     let Some(token) = crate::state::load_stored_token() else {
         return;
     };
     let slot = http::new_slot();
     http::get(http::api_url("me"), Some(token), Arc::clone(&slot));
-    state.startup_check = Some(slot);
+    state.startup.check = Some(slot);
 }
 
 pub fn poll_startup_check(state: &mut State) {
     let waiting = state.auth.is_none() && matches!(state.screen, Screen::Title | Screen::Auth);
-    if waiting && state.startup_retry_at.is_some_and(|t| now_secs() >= t) {
+    if waiting && state.startup.retry_at.is_some_and(|t| now_secs() >= t) {
         check_stored_session(state);
     }
-    let Some(result) = http::take(&mut state.startup_check) else {
+    let Some(result) = http::take(&mut state.startup.check) else {
         return;
     };
     match result {
@@ -131,7 +131,7 @@ pub fn poll_startup_check(state: &mut State) {
             }
         }
         _ => {
-            state.startup_retry_at = Some(now_secs() + STARTUP_RETRY_SECS);
+            state.startup.retry_at = Some(now_secs() + STARTUP_RETRY_SECS);
             state.auth_form.status = Status::info("Serveur injoignable, nouvel essai dans quelques secondes...");
         }
     }

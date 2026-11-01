@@ -407,7 +407,7 @@ fn update(app: &mut App, state: &mut State) {
             replay::update_keep(state);
         }
     }
-    if state.screen == Screen::Menu && !state.title_seen {
+    if state.screen == Screen::Menu && !state.startup.title_seen {
         state.screen = Screen::Title;
     }
     let fade = if was_title { title::FADE } else { ui::TRANSITION };
