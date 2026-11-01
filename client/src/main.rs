@@ -249,7 +249,7 @@ fn update_invitation(state: &mut State) {
                 state.pending_join = Some(room_id);
             }
             state.solo.game = None;
-            state.replay = None;
+            state.replay.viewer = None;
             state.ranked.stop();
             state.screen = Screen::RoomBrowser;
         }

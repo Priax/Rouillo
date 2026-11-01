@@ -14,6 +14,13 @@ const MAX_REPLAY_SIZE: usize = 64 << 20;
 const SPEEDS: [f32; 3] = [1.0, 2.0, 4.0];
 const MAX_STEPS_PER_FRAME: u32 = 40;
 
+/// The replay on screen, and the one asked for.
+#[derive(Default)]
+pub struct Replays {
+    pub viewer: Option<ReplayViewer>,
+    pub loading: Option<Loading>,
+}
+
 /// A replay on its way from the server: whose board to show large, and
 /// where to go back to.
 pub struct Loading {
@@ -238,19 +245,19 @@ pub fn open(state: &mut State, match_id: &str, focus: u8, back: Screen) {
     let slot = http::new_slot();
     let url = http::api_url(&format!("matches/{match_id}/replay"));
     http::get(url, None, Arc::clone(&slot));
-    state.replay_loading = Some(Loading { slot, focus, back });
+    state.replay.loading = Some(Loading { slot, focus, back });
 }
 
 /// Starts the replay once it has come: an error stays on the screen it was
 /// asked from.
 pub fn poll(state: &mut State) {
-    let Some(loading) = state.replay_loading.as_mut() else {
+    let Some(loading) = state.replay.loading.as_mut() else {
         return;
     };
     let Some(result) = http::poll(&loading.slot) else {
         return;
     };
-    let Some(Loading { focus, back, .. }) = state.replay_loading.take() else {
+    let Some(Loading { focus, back, .. }) = state.replay.loading.take() else {
         return;
     };
     let replay = match result {
@@ -259,7 +266,7 @@ pub fn poll(state: &mut State) {
     };
     match replay {
         Some(replay) => {
-            state.replay = Some(ReplayViewer::new(replay, focus, back));
+            state.replay.viewer = Some(ReplayViewer::new(replay, focus, back));
             state.screen = Screen::Replay;
         }
         None => {
@@ -292,7 +299,7 @@ fn controls(view: View) -> [Rect; 4] {
 pub fn update(app: &mut App, state: &mut State) {
     let dt = app.timer.delta_f32();
     let view = state.ui.view();
-    let Some(viewer) = state.replay.as_mut() else {
+    let Some(viewer) = state.replay.viewer.as_mut() else {
         state.screen = Screen::Menu;
         return;
     };
@@ -312,14 +319,14 @@ pub fn update(app: &mut App, state: &mut State) {
     let leave = state.ui.clicked(quit) || (over && state.ui.bar_clicked(leave_row));
     if leave || keys.was_pressed(KeyCode::Escape) {
         state.screen = viewer.back;
-        state.replay = None;
+        state.replay.viewer = None;
         return;
     }
     viewer.step(dt);
 }
 
 pub fn draw(app: &mut App, gfx: &mut Graphics, state: &State) {
-    let Some(viewer) = state.replay.as_ref() else {
+    let Some(viewer) = state.replay.viewer.as_ref() else {
         return;
     };
     draw::draw_game(app, gfx, &viewer.session, &state.ui, &state.fonts, Hud::Replay);

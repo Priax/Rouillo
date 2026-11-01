@@ -770,8 +770,7 @@ pub struct State {
     pub pads: crate::pads::Pads,
     pub touch: crate::touch::TouchPad,
     pub solo: crate::solo::Solo,
-    pub replay: Option<crate::replay::ReplayViewer>,
-    pub replay_loading: Option<crate::replay::Loading>,
+    pub replay: crate::replay::Replays,
 }
 
 impl State {
@@ -816,8 +815,7 @@ impl State {
             pads: crate::pads::Pads::new(),
             touch: crate::touch::TouchPad::default(),
             solo: crate::solo::Solo::new(),
-            replay: None,
-            replay_loading: None,
+            replay: crate::replay::Replays::default(),
         }
     }
 }
