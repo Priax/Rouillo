@@ -37,17 +37,14 @@ pub struct Leaderboard {
     pager: Pager,
 }
 
-pub fn enter(state: &mut State) -> Transition {
-    state.leaderboard = Some(Leaderboard::default());
-    refresh(state);
-    Transition::To(Screen::Leaderboard)
+pub fn enter(state: &State) -> Transition {
+    let mut board = Box::<Leaderboard>::default();
+    refresh(&mut board, state);
+    Transition::To(Screen::Leaderboard(board))
 }
 
-fn refresh(state: &mut State) {
+fn refresh(board: &mut Leaderboard, state: &State) {
     let me = state.auth.as_ref().map(|a| a.user_id.clone());
-    let Some(board) = state.leaderboard.as_mut() else {
-        return;
-    };
     let url = match me {
         Some(id) => http::api_url(&format!("leaderboard?me={id}")),
         None => http::api_url("leaderboard"),
@@ -99,12 +96,9 @@ fn refresh_btn(view: View) -> Rect {
     Frame::of(view).header_tools(0.0).right(190.0).middle(44.0)
 }
 
-pub fn update(app: &App, state: &mut State) -> Transition {
+pub fn update(app: &App, state: &mut State, board: &mut Leaderboard) -> Transition {
     let me = state.auth.as_ref().map(|a| a.user_id.clone());
     let view = state.ui.view();
-    let Some(board) = state.leaderboard.as_mut() else {
-        return Transition::To(Screen::Menu);
-    };
     poll(board, me.as_deref());
     let pages = ui::page_count(board.top.len(), per_page(view));
     board.pager.clamp(pages);
@@ -119,19 +113,15 @@ pub fn update(app: &App, state: &mut State) -> Transition {
         .map(|(_, e)| (e.user_id.clone(), e.username.clone()));
     if let Some((user_id, username)) = clicked {
         if Some(&user_id) == me.as_ref() {
-            crate::profile::enter_profile(state, Screen::Leaderboard);
-            return Transition::To(Screen::Profile);
-        } else {
-            crate::profile::enter_other_profile(state, user_id, username, Screen::Leaderboard);
-            return Transition::To(Screen::OtherProfile);
+            return crate::profile::enter_profile(state);
         }
+        return crate::profile::enter_other_profile(state, user_id, username);
     }
 
     let loading = board.slot.is_some();
     if !loading && state.ui.clicked(refresh_btn(view)) {
-        refresh(state);
+        refresh(board, state);
     } else if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
-        state.leaderboard = None;
         return Transition::To(Screen::Menu);
     }
     Transition::Stay
@@ -198,7 +188,7 @@ fn draw_row(draw: &mut Draw, state: &State, (row, i): (Rect, usize), e: &Entry, 
         .color(pal.text);
 }
 
-pub fn draw(gfx: &mut Graphics, state: &State) {
+pub fn draw(gfx: &mut Graphics, state: &State, board: &Leaderboard) {
     let pal = state.ui.palette();
     let view = state.ui.view();
     let mut draw = state.ui.screen_canvas(gfx);
@@ -213,10 +203,6 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
 
     let card = list_card(view);
     ui::card(&mut draw, &pal, card);
-    let Some(board) = &state.leaderboard else {
-        state.ui.render(gfx, &draw);
-        return;
-    };
     let me = state.auth.as_ref().map(|a| a.user_id.as_str());
     let empty = if board.slot.is_some() {
         Some("Chargement...")

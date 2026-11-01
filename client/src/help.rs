@@ -88,34 +88,30 @@ fn back_btn(view: View) -> Rect {
     Frame::of(view).back
 }
 
-pub fn enter(state: &mut State) -> Transition {
-    state.help = Some(HelpView {
+pub fn enter() -> Transition {
+    Transition::To(Screen::Help(Box::new(HelpView {
         demo: Demo::new(),
         rules: false,
-    });
-    Transition::To(Screen::Help)
+    })))
 }
 
-pub fn update(app: &App, state: &mut State) -> Transition {
+pub fn update(app: &App, state: &State, help: &mut HelpView) -> Transition {
     let view = state.ui.view();
-    if let Some(help) = state.help.as_mut() {
-        help.demo.update(app.timer.delta_f32());
-        let (info, demo_card) = cards(view);
-        let [previous, next] = lesson_arrows(demo_card);
-        if state.ui.clicked(previous) || app.keyboard.was_pressed(KeyCode::ArrowLeft) {
-            help.demo.previous();
-        } else if state.ui.clicked(next) || app.keyboard.was_pressed(KeyCode::ArrowRight) {
-            help.demo.next();
-        }
-        let [controls, rules] = tabs(info);
-        if state.ui.clicked(controls) {
-            help.rules = false;
-        } else if state.ui.clicked(rules) {
-            help.rules = true;
-        }
+    help.demo.update(app.timer.delta_f32());
+    let (info, demo_card) = cards(view);
+    let [previous, next] = lesson_arrows(demo_card);
+    if state.ui.clicked(previous) || app.keyboard.was_pressed(KeyCode::ArrowLeft) {
+        help.demo.previous();
+    } else if state.ui.clicked(next) || app.keyboard.was_pressed(KeyCode::ArrowRight) {
+        help.demo.next();
+    }
+    let [controls, rules] = tabs(info);
+    if state.ui.clicked(controls) {
+        help.rules = false;
+    } else if state.ui.clicked(rules) {
+        help.rules = true;
     }
     if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
-        state.help = None;
         return Transition::To(Screen::Menu);
     }
     Transition::Stay
@@ -284,7 +280,7 @@ fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, t
     }
 }
 
-pub fn draw(gfx: &mut Graphics, state: &State) {
+pub fn draw(gfx: &mut Graphics, state: &State, help: &HelpView) {
     let pal = state.ui.palette();
     let view = state.ui.view();
     let mut draw = state.ui.screen_canvas(gfx);
@@ -298,7 +294,7 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
         .color(pal.text);
     let (info, demo_card) = cards(view);
     ui::card(&mut draw, &pal, info);
-    let rules = state.help.as_ref().is_some_and(|h| h.rules);
+    let rules = help.rules;
     let [controls_tab, rules_tab] = tabs(info);
     state.ui.tab(&mut draw, &state.fonts, controls_tab, "Contrôles", !rules);
     state.ui.tab(&mut draw, &state.fonts, rules_tab, "Règles", rules);
@@ -307,16 +303,14 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
     } else {
         draw_controls(&mut draw, &state.ui, &state.fonts, info, &state.input.controls.bindings);
     }
-    if let Some(help) = &state.help {
-        draw_demo(
-            &mut draw,
-            &state.ui,
-            &state.fonts,
-            demo_card,
-            &help.demo,
-            state.ui.time() as f32,
-        );
-    }
+    draw_demo(
+        &mut draw,
+        &state.ui,
+        &state.fonts,
+        demo_card,
+        &help.demo,
+        state.ui.time() as f32,
+    );
     state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
     state.ui.render(gfx, &draw);
 }

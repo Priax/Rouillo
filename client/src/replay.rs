@@ -15,19 +15,10 @@ const MAX_REPLAY_SIZE: usize = 64 << 20;
 const SPEEDS: [f32; 3] = [1.0, 2.0, 4.0];
 const MAX_STEPS_PER_FRAME: u32 = 40;
 
-/// The replay on screen, and the one asked for.
-#[derive(Default)]
-pub struct Replays {
-    pub viewer: Option<ReplayViewer>,
-    pub loading: Option<Loading>,
-}
-
-/// A replay on its way from the server: whose board to show large, and
-/// where to go back to.
+/// A replay on its way from the server, and whose board to show large.
 pub struct Loading {
     slot: HttpSlot,
     focus: u8,
-    back: Screen,
 }
 
 /// Once a game is saved, the choice of keeping its replay.
@@ -128,11 +119,10 @@ pub struct ReplayViewer {
     speed: usize,
     /// Time not played yet, in seconds of the game.
     behind: f32,
-    back: Screen,
 }
 
 impl ReplayViewer {
-    pub fn new(replay: Replay, focus: u8, back: Screen) -> Self {
+    pub fn new(replay: Replay, focus: u8) -> Self {
         let start = replay.play();
         let mut viewer = Self {
             session: GameSession::new(0, Vec::new()),
@@ -141,7 +131,6 @@ impl ReplayViewer {
             paused: false,
             speed: 0,
             behind: 0.0,
-            back,
         };
         viewer.watch(focus);
         viewer
@@ -235,50 +224,46 @@ impl ReplayViewer {
 }
 
 /// Asks the server for a match's replay, to show `focus`'s board large.
-pub fn open(state: &mut State, match_id: &str, focus: u8, back: Screen) {
-    if let Some(core) = asked_from(state, back) {
-        core.replay_status.clear();
-    }
+pub fn open(state: &mut State, match_id: &str, focus: u8) {
     let slot = http::new_slot();
     let url = http::api_url(&format!("matches/{match_id}/replay"));
     http::get(url, None, Arc::clone(&slot));
-    state.replay.loading = Some(Loading { slot, focus, back });
+    state.replay_loading = Some(Loading { slot, focus });
 }
 
-/// Starts the replay once it has come: an error stays on the screen it was
-/// asked from.
+/// Opens the replay once it has come, over the history it was asked from.
+/// An error stays there. A player who left it no longer wants the replay.
 pub fn poll(state: &mut State, nav: &mut Nav) {
-    let Some(loading) = state.replay.loading.as_mut() else {
+    let Some(loading) = state.replay_loading.as_mut() else {
         return;
     };
     let Some(result) = http::poll(&loading.slot) else {
         return;
     };
-    let Some(Loading { focus, back, .. }) = state.replay.loading.take() else {
+    let Some(Loading { focus, .. }) = state.replay_loading.take() else {
         return;
     };
     let replay = match result {
         Ok(resp) if resp.ok => shared::decode_bounded::<Replay>(&resp.bytes, MAX_REPLAY_SIZE),
         _ => None,
     };
+    let Some(core) = asked_from(state, &nav.current) else {
+        return;
+    };
     match replay {
-        Some(replay) => {
-            state.replay.viewer = Some(ReplayViewer::new(replay, focus, back));
-            nav.current = Screen::Replay;
-        }
-        None => {
-            if let Some(core) = asked_from(state, back) {
-                core.replay_status = Status::error("Impossible de charger ce replay.");
-            }
-        }
+        Some(replay) => nav.apply(Transition::Push(Screen::Replay(Box::new(ReplayViewer::new(
+            replay, focus,
+        ))))),
+        None => core.replay_status = Status::error("Impossible de charger ce replay."),
     }
 }
 
-/// The profile whose history a replay was asked from.
-fn asked_from(state: &mut State, back: Screen) -> Option<&mut ProfileCore> {
-    match back {
+/// The profile whose history is on screen.
+fn asked_from<'a>(state: &'a mut State, screen: &Screen) -> Option<&'a mut ProfileCore> {
+    match screen {
         Screen::OtherProfile => state.other_profile.as_mut().map(|p| &mut p.core),
-        _ => state.profile.as_mut().map(|p| &mut p.core),
+        Screen::Profile => state.profile.as_mut().map(|p| &mut p.core),
+        _ => None,
     }
 }
 
@@ -293,12 +278,9 @@ fn controls(view: View) -> [Rect; 4] {
     std::array::from_fn(|i| Rect::at(x + i as f32 * (W + GAP), y, W, H))
 }
 
-pub fn update(app: &mut App, state: &mut State) -> Transition {
+pub fn update(app: &App, state: &State, viewer: &mut ReplayViewer) -> Transition {
     let dt = app.timer.delta_f32();
     let view = state.ui.view();
-    let Some(viewer) = state.replay.viewer.as_mut() else {
-        return Transition::To(Screen::Menu);
-    };
     let [play, speed, player, quit] = controls(view);
     let (leave_row, again_row) = draw::exit_rows(view, true);
     let over = viewer.over();
@@ -314,18 +296,13 @@ pub fn update(app: &mut App, state: &mut State) -> Transition {
     }
     let leave = state.ui.clicked(quit) || (over && state.ui.bar_clicked(leave_row));
     if leave || keys.was_pressed(KeyCode::Escape) {
-        let back = viewer.back;
-        state.replay.viewer = None;
-        return Transition::To(back);
+        return Transition::Pop;
     }
     viewer.step(dt);
     Transition::Stay
 }
 
-pub fn draw(app: &mut App, gfx: &mut Graphics, state: &State) {
-    let Some(viewer) = state.replay.viewer.as_ref() else {
-        return;
-    };
+pub fn draw(app: &mut App, gfx: &mut Graphics, state: &State, viewer: &ReplayViewer) {
     draw::draw_game(app, gfx, &viewer.session, &state.ui, &state.fonts, Hud::Replay);
     let view = state.ui.view();
     let mut d = state.ui.canvas(gfx);

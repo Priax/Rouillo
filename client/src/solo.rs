@@ -18,7 +18,6 @@ pub struct Solo {
     pub settings: SoloSettings,
     /// The board size view is open over the settings.
     pub sizing: bool,
-    pub game: Option<SoloGame>,
     /// A guest's best lives on the device, an account's on the server.
     pub best: u32,
     pub best_slot: Option<crate::state::HttpSlot>,
@@ -29,7 +28,6 @@ impl Solo {
         Self {
             settings: SoloSettings::default(),
             sizing: false,
-            game: None,
             best: crate::state::load_best_score(),
             best_slot: None,
         }
@@ -334,7 +332,7 @@ pub fn poll_best(solo: &mut Solo, signed_in: bool) {
     }
 }
 
-pub fn update_game(app: &mut App, state: &mut State) -> Transition {
+pub fn update_game(app: &mut App, state: &mut State, game: &mut SoloGame) -> Transition {
     let signed_in = state.auth.is_some();
     let mut record = None;
     let State {
@@ -345,15 +343,9 @@ pub fn update_game(app: &mut App, state: &mut State) -> Transition {
         ..
     } = state;
     let input = controls.frame;
-    let Solo {
-        game: current, best, ..
-    } = solo;
-    let Some(game) = current.as_mut() else {
-        return Transition::To(Screen::SoloSetup);
-    };
+    let best = &mut solo.best;
 
     if game.knocked_out() && (input.pause || ui.bar_clicked(crate::draw::out_row(ui.view()))) {
-        *current = None;
         return Transition::To(Screen::SoloSetup);
     }
     if !game.over() && input.pause {
@@ -363,7 +355,6 @@ pub fn update_game(app: &mut App, state: &mut State) -> Transition {
     if over || paused {
         let (quit, again) = crate::draw::exit_rows(ui.view(), true);
         if ui.bar_clicked(quit) {
-            *current = None;
             return Transition::To(Screen::SoloSetup);
         }
         if ui.bar_clicked(again) || (over && input.restart) {
@@ -534,8 +525,7 @@ pub fn update_setup(app: &mut App, state: &mut State) -> Transition {
     }
 
     if ui.bar_clicked(setup.action_row(0)) || app.keyboard.was_pressed(KeyCode::Enter) {
-        state.solo.game = Some(SoloGame::new(state.solo.settings.clone()));
-        return Transition::To(Screen::Solo);
+        return Transition::To(Screen::Solo(Box::new(SoloGame::new(state.solo.settings.clone()))));
     } else if ui.bar_clicked(setup.action_row(1)) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Transition::To(Screen::PlayMenu);
     }

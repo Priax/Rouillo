@@ -46,8 +46,8 @@ fn poll_core_profile(core: &mut ProfileCore) -> Option<ProfileLoad> {
 
 /// The field the keyboard types into: an open form's, or the match list's
 /// page field.
-pub fn typing(state: &mut State, screen: Screen) -> Option<&mut TextInput> {
-    if screen == Screen::OtherProfile {
+pub fn typing<'a>(state: &'a mut State, screen: &Screen) -> Option<&'a mut TextInput> {
+    if matches!(screen, Screen::OtherProfile) {
         return state.other_profile.as_mut()?.core.history.typing();
     }
     let p = state.profile.as_mut()?;
@@ -121,8 +121,8 @@ fn update_history(app: &App, state: &mut State, other: bool) {
         core.favorite_slot = Some(crate::replay::set_favorite(&id, on, auth.token.clone()));
     }
     if let Some((id, slot)) = hit {
-        let back = if other { Screen::OtherProfile } else { Screen::Profile };
-        crate::replay::open(state, &id, u8::try_from(slot).unwrap_or(1), back);
+        core.replay_status.clear();
+        crate::replay::open(state, &id, u8::try_from(slot).unwrap_or(1));
     }
 }
 
@@ -512,9 +512,9 @@ fn draw_match_row(
     }
 }
 
-pub fn enter_profile(state: &mut State, prev: Screen) {
+pub fn enter_profile(state: &mut State) -> Transition {
     let Some(auth) = &state.auth else {
-        return;
+        return Transition::Stay;
     };
     let core = load_core(
         auth.user_id.clone(),
@@ -524,10 +524,10 @@ pub fn enter_profile(state: &mut State, prev: Screen) {
     );
     state.profile = Some(ProfileData {
         core,
-        prev_screen: prev,
         edit: None,
         account: None,
     });
+    Transition::Push(Screen::Profile)
 }
 
 fn own_buttons(view: View) -> [Rect; 4] {
@@ -555,8 +555,8 @@ pub fn update_profile(app: &mut App, state: &mut State) -> Transition {
         let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(state.ui.view());
 
         if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
-            let prev = state.profile.take().map_or(Screen::Menu, |p| p.prev_screen);
-            return Transition::To(prev);
+            state.profile = None;
+            return Transition::Pop;
         }
         if state.ui.clicked(edit_btn) {
             if let Some(p) = state.profile.as_mut() {
@@ -595,8 +595,7 @@ pub fn update_profile(app: &mut App, state: &mut State) -> Transition {
             None
         };
         if let Some((uid, uname)) = opp_target {
-            enter_other_profile(state, uid, uname, Screen::Profile);
-            return Transition::To(Screen::OtherProfile);
+            return enter_other_profile(state, uid, uname);
         }
     }
     Transition::Stay
@@ -669,7 +668,7 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &draw);
 }
 
-pub fn enter_other_profile(state: &mut State, user_id: String, username: String, prev: Screen) {
+pub fn enter_other_profile(state: &mut State, user_id: String, username: String) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let core = load_core(user_id, username, 0, token.clone());
 
@@ -690,8 +689,8 @@ pub fn enter_other_profile(state: &mut State, user_id: String, username: String,
         friendship,
         friend_slot: None,
         friend_status: Status::Empty,
-        prev_screen: prev,
     });
+    Transition::Push(Screen::OtherProfile)
 }
 
 fn poll_friendship_check(p: &mut OtherProfileData) {
@@ -773,9 +772,8 @@ pub fn update_other_profile(app: &mut App, state: &mut State) -> Transition {
     }
 
     if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
-        let prev = state.other_profile.as_ref().map_or(Screen::Menu, |p| p.prev_screen);
         state.other_profile = None;
-        return Transition::To(prev);
+        return Transition::Pop;
     }
     Transition::Stay
 }

@@ -391,8 +391,7 @@ pub fn update_friends(app: &mut App, state: &mut State) -> Transition {
     if state.ui.clicked(search_submit_btn(view)) || (searching && app.keyboard.was_pressed(KeyCode::Enter)) {
         let q = search_query(state);
         if looks_like_uuid(&q) {
-            crate::profile::enter_other_profile(state, q, "...".to_owned(), Screen::Friends);
-            return Transition::To(Screen::OtherProfile);
+            return crate::profile::enter_other_profile(state, q, "...".to_owned());
         }
         try_search(state);
     }
@@ -410,8 +409,7 @@ pub fn update_friends(app: &mut App, state: &mut State) -> Transition {
         return Transition::Stay;
     };
     if let Some((uid, uname)) = clicked_profile(f, &state.ui, view).or_else(|| clicked_listed(f, &state.ui, view)) {
-        crate::profile::enter_other_profile(state, uid, uname, Screen::Friends);
-        return Transition::To(Screen::OtherProfile);
+        return crate::profile::enter_other_profile(state, uid, uname);
     }
     let add = clicked_add(f, &state.ui, view);
     let action = clicked_action(f, &state.ui, view);

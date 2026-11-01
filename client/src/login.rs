@@ -122,14 +122,14 @@ pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
                     avatar_url: me.avatar_url,
                 });
                 state.auth_form.status.clear();
-                nav.current = Screen::Menu;
+                nav.apply(Transition::To(Screen::Menu));
                 crate::solo::signed_in(state);
             }
         }
         Ok(resp) if resp.status == 401 => {
             crate::state::clear_stored_token();
-            if nav.current == Screen::Title {
-                nav.current = Screen::Auth;
+            if matches!(nav.current, Screen::Title) {
+                nav.apply(Transition::To(Screen::Auth));
             }
         }
         _ => {

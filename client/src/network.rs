@@ -1,7 +1,7 @@
 use shared::{config, Board, ClientMessage, IncomingGarbage, PlayerUpdate, Rules, ServerMessage, StampedInput, Thumb};
 
 use crate::connection::ConnEvent;
-use crate::nav::Nav;
+use crate::nav::{Nav, Transition};
 use crate::state::{GameSession, Network, Rival, Room, Screen, State};
 use crate::ui::Status;
 
@@ -10,7 +10,7 @@ const LINK_PAUSE_SECS: f64 = 30.0;
 
 /// Keeps a signed-in player connected on every screen, for a friend's
 /// invitation to reach them, with the room list only on the screen showing it.
-pub fn keep_linked(net: &mut Network, signed_in: bool, screen: Screen) {
+pub fn keep_linked(net: &mut Network, signed_in: bool, screen: &Screen) {
     let now = crate::connection::now_secs();
     let wanted = signed_in && !net.too_old && !net.opened_elsewhere;
     if wanted && net.conn.is_offline() && now >= net.next_link_at {
@@ -19,7 +19,7 @@ pub fn keep_linked(net: &mut Network, signed_in: bool, screen: Screen) {
     if !signed_in && !screen.needs_connection() && !net.conn.is_offline() {
         net.conn.disconnect();
     }
-    let on = screen == Screen::RoomBrowser;
+    let on = matches!(screen, Screen::RoomBrowser);
     if net.conn.is_live() && net.rooms_listed != on {
         net.conn.send(&ClientMessage::ListRooms { on });
         net.rooms_listed = on;
@@ -74,7 +74,7 @@ fn on_opened(state: &mut State, nav: &Nav, recovered: bool) {
     if let Some(user_id) = state.net.pending_watch.take() {
         state.net.conn.send(&ClientMessage::WatchFriend { user_id });
     }
-    if nav.current == Screen::Ranked && state.ranked.resume_search() {
+    if matches!(nav.current, Screen::Ranked) && state.ranked.resume_search() {
         state.net.conn.send(&ClientMessage::JoinQueue);
     }
     if recovered && nav.current.needs_connection() {
@@ -85,7 +85,7 @@ fn on_opened(state: &mut State, nav: &Nav, recovered: bool) {
 fn reset_to_menu(state: &mut State, nav: &mut Nav, notice: Status) {
     state.room = None;
     state.rooms.clear();
-    nav.current = Screen::Menu;
+    nav.apply(Transition::To(Screen::Menu));
     state.notice = notice;
 }
 
@@ -276,17 +276,17 @@ fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
         ServerMessage::RoomList { rooms } => {
             state.rooms = rooms;
             if matches!(nav.current, Screen::RoomLobby | Screen::Game) {
-                nav.current = Screen::RoomBrowser;
+                nav.apply(Transition::To(Screen::RoomBrowser));
                 state.room = None;
             }
         }
         ServerMessage::Lobby { info } => {
-            nav.current = if info.ranked.is_some() {
+            nav.apply(Transition::To(if info.ranked.is_some() {
                 state.ranked.stop();
                 Screen::Ranked
             } else {
                 Screen::RoomLobby
-            };
+            }));
             match state.room.as_mut().filter(|r| r.info.id == info.id) {
                 Some(room) => {
                     room.info = info;
@@ -307,7 +307,7 @@ fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
                 session.last_server_msg = "GameStart".to_string();
                 room.info.your_slot = your_slot;
                 room.session = Some(session);
-                nav.current = Screen::Game;
+                nav.apply(Transition::To(Screen::Game));
             }
         }
         ServerMessage::StateUpdate { game, tick, players } => {
@@ -384,7 +384,7 @@ fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
                     nav.current,
                     Screen::Profile | Screen::Friends | Screen::OtherProfile | Screen::Ranked
                 ) {
-                    nav.current = Screen::Menu;
+                    nav.apply(Transition::To(Screen::Menu));
                 }
                 state.notice = Status::info("Votre session a été fermée depuis un autre appareil.");
             }

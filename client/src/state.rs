@@ -11,7 +11,7 @@ use crate::ui::{Status, TextInput};
 
 pub const MAX_PASSWORD_CHARS: usize = 64;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// A screen, with what it holds for as long as it lasts.
 pub enum Screen {
     Title,
     Auth,
@@ -27,33 +27,41 @@ pub enum Screen {
     Friends,
     OtherProfile,
     SoloSetup,
-    Solo,
+    Solo(Box<crate::solo::SoloGame>),
     Ranked,
-    Leaderboard,
-    Help,
-    Replay,
+    Leaderboard(Box<crate::leaderboard::Leaderboard>),
+    Help(Box<crate::help::HelpView>),
+    Replay(Box<crate::replay::ReplayViewer>),
 }
 
 impl Screen {
-    pub fn hue(self) -> f32 {
+    /// Tells screens of different kinds apart.
+    pub fn id(&self) -> usize {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::mem::discriminant(self).hash(&mut hasher);
+        hasher.finish() as usize
+    }
+
+    pub fn hue(&self) -> f32 {
         match self {
-            Self::Title | Self::Auth | Self::Menu | Self::PlayMenu | Self::Help => hue::PURPLE,
+            Self::Title | Self::Auth | Self::Menu | Self::PlayMenu | Self::Help(_) => hue::PURPLE,
             Self::RoomBrowser
             | Self::CreateRoom
             | Self::JoinById
             | Self::RoomLobby
             | Self::Game
             | Self::SoloSetup
-            | Self::Solo
+            | Self::Solo(_)
             | Self::Ranked
-            | Self::Replay => hue::BLUE,
+            | Self::Replay(_) => hue::BLUE,
             Self::Friends => hue::GREEN,
             Self::Profile | Self::OtherProfile => hue::PINK,
-            Self::Settings | Self::Leaderboard => hue::ORANGE,
+            Self::Settings | Self::Leaderboard(_) => hue::ORANGE,
         }
     }
 
-    pub fn needs_connection(self) -> bool {
+    pub fn needs_connection(&self) -> bool {
         matches!(
             self,
             Self::RoomBrowser | Self::CreateRoom | Self::JoinById | Self::RoomLobby | Self::Game | Self::Ranked
@@ -212,7 +220,6 @@ pub struct OtherProfileData {
     pub friendship: FriendshipStatus,
     pub friend_slot: Option<HttpSlot>,
     pub friend_status: Status,
-    pub prev_screen: Screen,
 }
 
 #[derive(serde::Deserialize)]
@@ -272,7 +279,6 @@ pub struct ProfileCore {
 
 pub struct ProfileData {
     pub core: ProfileCore,
-    pub prev_screen: Screen,
     pub edit: Option<crate::profile_edit::EditForm>,
     pub account: Option<crate::account::AccountForm>,
 }
@@ -781,15 +787,13 @@ pub struct State {
     pub startup: Startup,
     pub pending_invitation: Option<(String, RoomId, String)>,
     pub ranked: crate::ranked::RankedView,
-    pub help: Option<crate::help::HelpView>,
-    pub leaderboard: Option<crate::leaderboard::Leaderboard>,
     pub outdated: bool,
     pub ui: crate::ui::Ui,
     pub input: Input,
     pub net: Network,
     pub bindings_panel: crate::bindings_panel::BindingsPanel,
     pub solo: crate::solo::Solo,
-    pub replay: crate::replay::Replays,
+    pub replay_loading: Option<crate::replay::Loading>,
 }
 
 impl State {
@@ -812,8 +816,6 @@ impl State {
             startup: Startup::default(),
             pending_invitation: None,
             ranked: crate::ranked::RankedView::default(),
-            help: None,
-            leaderboard: None,
             outdated: false,
             ui: crate::ui::Ui::default(),
             input: Input {
@@ -835,7 +837,7 @@ impl State {
             },
             bindings_panel: crate::bindings_panel::BindingsPanel::default(),
             solo: crate::solo::Solo::new(),
-            replay: crate::replay::Replays::default(),
+            replay_loading: None,
         }
     }
 }
