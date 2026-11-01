@@ -247,7 +247,7 @@ pub fn poll(state: &mut State, nav: &mut Nav) {
         Ok(resp) if resp.ok => shared::decode_bounded::<Replay>(&resp.bytes, MAX_REPLAY_SIZE),
         _ => None,
     };
-    match (replay, nav.current.history_mut()) {
+    match (replay, nav.current_mut().history_mut()) {
         (Some(replay), Some(_)) => {
             let viewer = Box::new(ReplayViewer::new(replay, focus));
             nav.apply(Transition::Push(Screen::Replay(viewer)));

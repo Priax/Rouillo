@@ -118,7 +118,7 @@ fn event(root: &mut Root, evt: Event) {
 }
 
 fn type_char(state: &mut State, nav: &mut Nav, c: char) {
-    if matches!(nav.current, Screen::Settings) {
+    if matches!(nav.current(), Screen::Settings) {
         state.bindings_panel.type_char(c);
     } else if let Some(input) = typing(state, nav) {
         input.type_char(c);
@@ -128,7 +128,7 @@ fn type_char(state: &mut State, nav: &mut Nav, c: char) {
 /// The field the keyboard types into on this screen, if any. Each field
 /// carries its own limits.
 fn typing<'a>(state: &'a mut State, nav: &'a mut Nav) -> Option<&'a mut ui::TextInput> {
-    match &mut nav.current {
+    match nav.current_mut() {
         Screen::Auth => Some(state.auth_form.focused_input()),
         Screen::CreateRoom | Screen::JoinById => Some(&mut state.text_input),
         Screen::RoomBrowser => state.room_pager.typing(),
@@ -334,7 +334,7 @@ fn update(app: &mut App, root: &mut Root) {
     let dt = app.timer.delta_f32();
     let view = ui::View::of(app);
     state.input.pads.update();
-    let pad_nav = pad_menus(state, &nav.current);
+    let pad_nav = pad_menus(state, nav.current());
     let real = ui::Mouse::of(app, view);
     state.ui.note_pointer(real);
     let mouse = if pad_nav && state.input.pads.pressed(Pad::South) {
@@ -353,7 +353,7 @@ fn update(app: &mut App, root: &mut Root) {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        web::set_at_root(matches!(nav.current, Screen::Title | Screen::Auth | Screen::Menu));
+        web::set_at_root(matches!(nav.current(), Screen::Title | Screen::Auth | Screen::Menu));
         if web::take_back() {
             app.keyboard.pressed.insert(KeyCode::Escape);
         }
@@ -370,7 +370,7 @@ fn update(app: &mut App, root: &mut Root) {
         updater::Status::Done => std::process::exit(0),
         _ => {}
     }
-    let in_game = matches!(nav.current, Screen::Game | Screen::Solo(_));
+    let in_game = matches!(nav.current(), Screen::Game | Screen::Solo(_));
     let (touch_held, touch_pause) = state.input.touch.read(app, view, in_game);
     state
         .input
@@ -382,7 +382,7 @@ fn update(app: &mut App, root: &mut Root) {
     for c in web::take_typed().chars() {
         type_char(state, nav, c);
     }
-    let was_title = matches!(nav.current, Screen::Title);
+    let was_title = matches!(nav.current(), Screen::Title);
     let (rtt, via) = (state.net.conn.rtt_ms(), state.net.conn.via());
     if let Some(session) = state.session_mut() {
         session.clock += app.timer.delta_f32() as f64;
@@ -394,11 +394,11 @@ fn update(app: &mut App, root: &mut Root) {
     solo::poll_best(&mut state.solo, state.auth.is_some());
     replay::poll(state, nav);
 
-    network::keep_linked(&mut state.net, state.auth.is_some(), &nav.current);
+    network::keep_linked(&mut state.net, state.auth.is_some(), nav.current());
     update_invitation(state, nav);
     network::handle_server_messages(state, nav);
 
-    let transition = match &mut nav.current {
+    let transition = match nav.current_mut() {
         Screen::Title => title::update_title(app, state),
         Screen::Auth => login::update_auth(app, state),
         Screen::Menu => menu::update_menu(app, state, false),
@@ -423,11 +423,11 @@ fn update(app: &mut App, root: &mut Root) {
         Screen::Game => update_online_game(app, state),
     };
     nav.apply(transition);
-    if matches!(nav.current, Screen::Menu) && !state.startup.title_seen {
+    if matches!(nav.current(), Screen::Menu) && !state.startup.title_seen {
         nav.apply(Transition::To(Screen::Title));
     }
     let fade = if was_title { title::FADE } else { ui::TRANSITION };
-    state.ui.set_screen(nav.current.id(), nav.current.hue(), fade);
+    state.ui.set_screen(nav.current().id(), nav.current().hue(), fade);
 }
 
 fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
@@ -459,7 +459,7 @@ fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
 
 fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
     let Root { nav, state } = root;
-    let screen = &nav.current;
+    let screen = nav.current();
     match screen {
         Screen::Title => title::draw_title(gfx, state),
         Screen::Auth => login::draw_auth(gfx, state),

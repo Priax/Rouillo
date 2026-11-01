@@ -67,9 +67,10 @@ fn submit(form: &mut AuthForm) {
     form.pending = Some(slot);
 }
 
-fn poll_auth(state: &mut State) -> Transition {
+/// Whether the answer to the form just signed the player in.
+fn poll_auth(state: &mut State) -> bool {
     let Some(result) = http::take_json::<ApiAuthResponse>(&mut state.auth_form.pending) else {
-        return Transition::Stay;
+        return false;
     };
     match result {
         Ok(r) => {
@@ -83,11 +84,11 @@ fn poll_auth(state: &mut State) -> Transition {
             });
             state.auth_form = AuthForm::default();
             crate::solo::signed_in(state);
-            return Transition::To(Screen::Menu);
+            return true;
         }
         Err(msg) => state.auth_form.status = Status::error(msg),
     }
-    Transition::Stay
+    false
 }
 
 const STARTUP_RETRY_SECS: f64 = 5.0;
@@ -103,7 +104,7 @@ pub fn check_stored_session(startup: &mut Startup) {
 }
 
 pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
-    let waiting = state.auth.is_none() && matches!(nav.current, Screen::Title | Screen::Auth);
+    let waiting = state.auth.is_none() && matches!(nav.current(), Screen::Title | Screen::Auth);
     if waiting && state.startup.retry_at.is_some_and(|t| now_secs() >= t) {
         check_stored_session(&mut state.startup);
     }
@@ -128,7 +129,7 @@ pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
         }
         Ok(resp) if resp.status == 401 => {
             crate::state::clear_stored_token();
-            if matches!(nav.current, Screen::Title) {
+            if matches!(nav.current(), Screen::Title) {
                 nav.apply(Transition::To(Screen::Auth));
             }
         }
@@ -140,9 +141,8 @@ pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
 }
 
 pub fn update_auth(app: &mut App, state: &mut State) -> Transition {
-    let polled = poll_auth(state);
-    if !matches!(polled, Transition::Stay) {
-        return polled;
+    if poll_auth(state) {
+        return Transition::To(Screen::Menu);
     }
 
     let layout = auth_layout(state.ui.view(), state.auth_form.focused);

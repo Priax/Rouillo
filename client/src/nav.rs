@@ -15,7 +15,7 @@ pub enum Transition {
 
 /// The screen on display, over the ones it was opened from.
 pub struct Nav {
-    pub current: Screen,
+    current: Screen,
     below: Vec<Screen>,
 }
 
@@ -25,6 +25,14 @@ impl Nav {
             current,
             below: Vec::new(),
         }
+    }
+
+    pub const fn current(&self) -> &Screen {
+        &self.current
+    }
+
+    pub const fn current_mut(&mut self) -> &mut Screen {
+        &mut self.current
     }
 
     pub fn apply(&mut self, transition: Transition) {

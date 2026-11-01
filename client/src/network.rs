@@ -33,13 +33,13 @@ pub fn handle_server_messages(state: &mut State, nav: &mut Nav) {
             ConnEvent::Opened { recovered } => on_opened(state, nav, recovered),
             ConnEvent::Message(msg) => process_message(state, nav, *msg),
             ConnEvent::Retrying => {
-                if nav.current.needs_connection() {
+                if nav.current().needs_connection() {
                     state.notice = Status::info("Connexion perdue, reconnexion…");
                 }
             }
             ConnEvent::GaveUp => {
                 state.net.next_link_at = now + LINK_PAUSE_SECS;
-                if nav.current.needs_connection() {
+                if nav.current().needs_connection() {
                     reset_to_menu(state, nav, Status::error("Connexion au serveur perdue."));
                 }
             }
@@ -48,7 +48,7 @@ pub fn handle_server_messages(state: &mut State, nav: &mut Nav) {
                 state.net.too_old = true;
                 #[cfg(not(target_arch = "wasm32"))]
                 crate::updater::check();
-                if nav.current.needs_connection() {
+                if nav.current().needs_connection() {
                     reset_to_menu(state, nav, Status::Empty);
                 }
             }
@@ -57,7 +57,7 @@ pub fn handle_server_messages(state: &mut State, nav: &mut Nav) {
 }
 
 fn on_opened(state: &mut State, nav: &Nav, recovered: bool) {
-    let background = !nav.current.needs_connection();
+    let background = !nav.current().needs_connection();
     state.net.opened_elsewhere &= background;
     let hello = ClientMessage::Hello {
         player_id: state.net.player_id.clone(),
@@ -74,10 +74,10 @@ fn on_opened(state: &mut State, nav: &Nav, recovered: bool) {
     if let Some(user_id) = state.net.pending_watch.take() {
         state.net.conn.send(&ClientMessage::WatchFriend { user_id });
     }
-    if matches!(nav.current, Screen::Ranked) && state.ranked.resume_search() {
+    if matches!(nav.current(), Screen::Ranked) && state.ranked.resume_search() {
         state.net.conn.send(&ClientMessage::JoinQueue);
     }
-    if recovered && nav.current.needs_connection() {
+    if recovered && nav.current().needs_connection() {
         state.notice.clear();
     }
 }
@@ -275,7 +275,7 @@ fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
     match msg {
         ServerMessage::RoomList { rooms } => {
             state.rooms = rooms;
-            if matches!(nav.current, Screen::RoomLobby | Screen::Game) {
+            if matches!(nav.current(), Screen::RoomLobby | Screen::Game) {
                 nav.apply(Transition::To(Screen::RoomBrowser));
                 state.room = None;
             }

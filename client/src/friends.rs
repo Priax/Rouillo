@@ -249,7 +249,6 @@ fn try_search(state: &State, f: &mut FriendsData) {
     if q.len() < 2 {
         f.search_status = Status::info("Saisir au moins 2 caractères.");
         f.search_results.clear();
-
         return;
     }
     let token = state.auth.as_ref().map(|a| a.token.clone());
@@ -337,7 +336,6 @@ enum FriendAction {
 pub fn update_friends(app: &mut App, state: &mut State, f: &mut FriendsData) -> Transition {
     poll_list(f);
     poll_search(f);
-
     poll_add(state, f);
     poll_action(state, f);
 

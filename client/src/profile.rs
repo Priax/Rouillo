@@ -500,7 +500,7 @@ fn draw_match_row(
     }
 }
 
-pub fn enter_profile(state: &mut State) -> Transition {
+pub fn enter_profile(state: &State) -> Transition {
     let Some(auth) = &state.auth else {
         return Transition::Stay;
     };
