@@ -526,6 +526,49 @@ pub struct Effects {
     pub announced_all_clear: u32,
 }
 
+/// An input the server has not acknowledged yet.
+pub struct PendingInput {
+    pub seq: u32,
+    pub input: StampedInput,
+    /// When it left, on the session's clock.
+    pub sent: f64,
+}
+
+/// How this client stays on the server's time, with its inputs on the way.
+#[derive(Default)]
+pub struct Netcode {
+    pub input_seq: u32,
+    pub my_ack: u32,
+    pub pending_inputs: Vec<PendingInput>,
+    pub clock: f64,
+    pub ping_rtt_ms: Option<f32>,
+    pub sim_accumulator: f32,
+    pub server_tick: u32,
+    pub local_tick: u32,
+    pub synced: bool,
+    pub clock_correction: i32,
+    pub drift_min: Option<i32>,
+    pub drift_samples: u32,
+}
+
+/// What the debug display shows of the connection.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+pub struct NetDebug {
+    pub last_server_msg: String,
+    pub last_rtt_ms: f32,
+    pub via: &'static str,
+}
+
+impl Default for NetDebug {
+    fn default() -> Self {
+        Self {
+            last_server_msg: String::new(),
+            last_rtt_ms: 0.0,
+            via: "-",
+        }
+    }
+}
+
 pub struct GameSession {
     pub board: Board,
     pub predicted_board: Board,
@@ -553,34 +596,10 @@ pub struct GameSession {
 
     pub keys: HeldKeys,
     pub fx: Effects,
-
-    pub input_seq: u32,
-    pub my_ack: u32,
-    pub pending_inputs: Vec<(u32, StampedInput)>,
-
-    pub clock: f64,
-    pub sent_at: Vec<(u32, f64)>,
-
-    pub sim_accumulator: f32,
-
-    pub server_tick: u32,
-
-    pub local_tick: u32,
-    pub synced: bool,
-    pub clock_correction: i32,
-    pub drift_min: Option<i32>,
-    pub drift_samples: u32,
+    pub net: Netcode,
+    pub debug: NetDebug,
 
     pub incoming: Vec<IncomingGarbage>,
-
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub last_server_msg: String,
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub last_rtt_ms: f32,
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub ping_rtt_ms: Option<f32>,
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub via: &'static str,
 }
 
 impl GameSession {
@@ -604,23 +623,9 @@ impl GameSession {
             quit_menu: false,
             keys: HeldKeys::default(),
             fx: Effects::default(),
-            input_seq: 0,
-            my_ack: 0,
-            pending_inputs: Vec::new(),
-            clock: 0.0,
-            sent_at: Vec::new(),
-            sim_accumulator: 0.0,
-            server_tick: 0,
-            local_tick: 0,
-            synced: false,
-            clock_correction: 0,
-            drift_min: None,
-            drift_samples: 0,
+            net: Netcode::default(),
+            debug: NetDebug::default(),
             incoming: Vec::new(),
-            last_server_msg: String::new(),
-            last_rtt_ms: 0.0,
-            ping_rtt_ms: None,
-            via: "-",
         }
     }
 }
@@ -750,7 +755,7 @@ impl GameSession {
         let travelling: u32 = self
             .incoming
             .iter()
-            .filter(|g| g.at > self.local_tick)
+            .filter(|g| g.at > self.net.local_tick)
             .map(|g| g.amount)
             .sum();
         self.predicted_board.pending_garbage + travelling

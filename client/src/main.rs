@@ -385,9 +385,9 @@ fn update(app: &mut App, root: &mut Root) {
     let was_title = matches!(nav.current(), Screen::Title);
     let (rtt, via) = (state.net.conn.rtt_ms(), state.net.conn.via());
     if let Some(session) = state.session_mut() {
-        session.clock += app.timer.delta_f32() as f64;
-        session.ping_rtt_ms = rtt;
-        session.via = via;
+        session.net.clock += app.timer.delta_f32() as f64;
+        session.net.ping_rtt_ms = rtt;
+        session.debug.via = via;
     }
 
     login::poll_startup_check(state, nav);

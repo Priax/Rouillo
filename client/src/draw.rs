@@ -906,6 +906,7 @@ fn draw_overlay(
 #[cfg(debug_assertions)]
 fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32) {
     let ping = session
+        .net
         .ping_rtt_ms
         .map_or_else(|| "--".to_string(), |ms| format!("{ms:.0} ms"));
     let board = |label: &str, b: &Board| {
@@ -921,16 +922,16 @@ fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32)
         (
             format!(
                 "DEBUG NET: srv tick={} (+{}) {}",
-                session.server_tick,
-                i64::from(session.local_tick) - i64::from(session.server_tick),
-                session.last_server_msg
+                session.net.server_tick,
+                i64::from(session.net.local_tick) - i64::from(session.net.server_tick),
+                session.debug.last_server_msg
             ),
             game::DEBUG_NET,
         ),
         (
             format!(
                 "RTT ping: {ping} | input->ack: {:.0} ms | {}",
-                session.last_rtt_ms, session.via
+                session.debug.last_rtt_ms, session.debug.via
             ),
             game::DEBUG_NET,
         ),

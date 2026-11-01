@@ -227,7 +227,7 @@ impl SoloGame {
         let alive: Vec<usize> = (0..self.targets.len())
             .filter(|&i| self.board(i).state() != GameState::GameOver)
             .collect();
-        let now = self.session.local_tick;
+        let now = self.session.net.local_tick;
         for i in 0..self.targets.len() {
             let opponents: Vec<usize> = alive.iter().copied().filter(|&o| o != i).collect();
             if !alive.contains(&i) || opponents.is_empty() {
@@ -265,7 +265,7 @@ impl SoloGame {
             }
         }
         let mut sent = vec![logic::advance_one(&mut self.session)];
-        let now = self.session.local_tick;
+        let now = self.session.net.local_tick;
         self.session.incoming.retain(|g| g.at > now);
         for (cpu, rival) in self.cpus.iter_mut().zip(&mut self.session.rivals) {
             let landed: u32 = rival.incoming.iter().filter(|g| g.at <= now).map(|g| g.amount).sum();
@@ -645,7 +645,7 @@ mod tests {
         let mut expected = None;
         for _ in 0..3 * 60 * 60 {
             game.advance();
-            let now = game.session.local_tick;
+            let now = game.session.net.local_tick;
             if let Some(g) = game.session.incoming.first().copied() {
                 if expected.is_none() {
                     assert_eq!(g.at, now + config::GARBAGE_TRAVEL_TICKS);
@@ -668,7 +668,7 @@ mod tests {
     #[test]
     fn nuisance_sent_by_the_player_reaches_the_cpu() {
         let mut game = game(Some(Difficulty::Easy), 4);
-        let now = game.session.local_tick;
+        let now = game.session.net.local_tick;
         game.session.rivals[0]
             .incoming
             .push(IncomingGarbage { at: now + 3, amount: 7 });
@@ -689,7 +689,7 @@ mod tests {
         for _ in 0..600 {
             game.advance();
         }
-        assert_eq!(game.session.local_tick, 600);
+        assert_eq!(game.session.net.local_tick, 600);
         assert!(game.session.incoming.is_empty());
     }
 

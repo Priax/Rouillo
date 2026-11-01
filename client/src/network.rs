@@ -99,24 +99,24 @@ const DRIFT_WINDOW: u32 = 30;
 const DRIFT_DEADBAND: i32 = 1;
 
 fn sync_clock(session: &mut GameSession, server_tick: u32) {
-    let target = server_tick.saturating_add(lead_ticks(session.ping_rtt_ms));
-    let drift = session.local_tick as i64 - target as i64;
-    if !session.synced || drift.unsigned_abs() > config::MAX_INPUT_LEAD_TICKS as u64 {
-        session.local_tick = target;
-        session.synced = true;
-        session.clock_correction = 0;
-        session.drift_min = None;
-        session.drift_samples = 0;
+    let target = server_tick.saturating_add(lead_ticks(session.net.ping_rtt_ms));
+    let drift = session.net.local_tick as i64 - target as i64;
+    if !session.net.synced || drift.unsigned_abs() > config::MAX_INPUT_LEAD_TICKS as u64 {
+        session.net.local_tick = target;
+        session.net.synced = true;
+        session.net.clock_correction = 0;
+        session.net.drift_min = None;
+        session.net.drift_samples = 0;
         return;
     }
     let drift = drift as i32;
-    let min = session.drift_min.map_or(drift, |m| m.min(drift));
-    session.drift_min = Some(min);
-    session.drift_samples += 1;
-    if session.drift_samples >= DRIFT_WINDOW {
-        session.clock_correction = if min.abs() > DRIFT_DEADBAND { -min } else { 0 };
-        session.drift_min = None;
-        session.drift_samples = 0;
+    let min = session.net.drift_min.map_or(drift, |m| m.min(drift));
+    session.net.drift_min = Some(min);
+    session.net.drift_samples += 1;
+    if session.net.drift_samples >= DRIFT_WINDOW {
+        session.net.clock_correction = if min.abs() > DRIFT_DEADBAND { -min } else { 0 };
+        session.net.drift_min = None;
+        session.net.drift_samples = 0;
     }
 }
 
@@ -133,27 +133,21 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
     let nuisance_before = session.my_nuisance();
 
     session.board = update.board;
-    session.my_ack = update.ack;
-    session.server_tick = update.tick;
+    session.net.my_ack = update.ack;
+    session.net.server_tick = update.tick;
     session.incoming = update.incoming;
-    session.pending_inputs.retain(|(seq, _)| *seq > update.ack);
-
-    if let Some(&(_, sent)) = session
-        .sent_at
-        .iter()
-        .filter(|(seq, _)| *seq <= update.ack)
-        .max_by_key(|(seq, _)| *seq)
-    {
-        session.last_rtt_ms = ((session.clock - sent) * 1000.0) as f32;
+    let acked = session.net.pending_inputs.iter().filter(|p| p.seq <= update.ack);
+    if let Some(newest) = acked.max_by_key(|p| p.seq) {
+        session.debug.last_rtt_ms = ((session.net.clock - newest.sent) * 1000.0) as f32;
     }
-    session.sent_at.retain(|(seq, _)| *seq > update.ack);
+    session.net.pending_inputs.retain(|p| p.seq > update.ack);
 
     sync_clock(session, update.tick);
 
-    let pending: Vec<StampedInput> = session.pending_inputs.iter().map(|(_, input)| *input).collect();
+    let pending: Vec<StampedInput> = session.net.pending_inputs.iter().map(|p| p.input).collect();
     let predicted = session
         .board
-        .replay(update.tick, session.local_tick, &pending, &session.incoming);
+        .replay(update.tick, session.net.local_tick, &pending, &session.incoming);
 
     if predicted.piece_id == prev_piece_id {
         if let (Some(prev), Some(cur)) = (&prev_piece, predicted.piece()) {
@@ -172,11 +166,11 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
     }
 
     if cfg!(debug_assertions) {
-        session.last_server_msg = format!(
+        session.debug.last_server_msg = format!(
             "StateUpdate ack={} pending={} seq={}",
             update.ack,
-            session.pending_inputs.len(),
-            session.input_seq,
+            session.net.pending_inputs.len(),
+            session.net.input_seq,
         );
     }
 }
@@ -184,8 +178,8 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
 fn watch(session: &mut GameSession, board: Board, tick: u32, incoming: Vec<IncomingGarbage>) {
     session.predicted_board = board.clone();
     session.board = board;
-    session.server_tick = tick;
-    session.local_tick = tick;
+    session.net.server_tick = tick;
+    session.net.local_tick = tick;
     session.incoming = incoming;
     crate::logic::announce_events(session);
 }
@@ -303,8 +297,8 @@ fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
                 let mut session = GameSession::new(your_slot, names);
                 session.game = game;
                 room.keep.take_if(|offer| !offer.is_for(game));
-                session.ping_rtt_ms = room.session.as_ref().and_then(|s| s.ping_rtt_ms);
-                session.last_server_msg = "GameStart".to_string();
+                session.net.ping_rtt_ms = room.session.as_ref().and_then(|s| s.net.ping_rtt_ms);
+                session.debug.last_server_msg = "GameStart".to_string();
                 room.info.your_slot = your_slot;
                 room.session = Some(session);
                 nav.apply(Transition::To(Screen::Game));
@@ -323,7 +317,7 @@ fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
         ServerMessage::OpponentDisconnected => {
             if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
                 session.opponent_disconnected = true;
-                session.last_server_msg = "OpponentDisconnected".to_string();
+                session.debug.last_server_msg = "OpponentDisconnected".to_string();
             }
         }
         ServerMessage::QueueRefused { reason } => {
@@ -412,6 +406,7 @@ mod tests {
     use shared::{GameState, InputKind};
 
     use super::*;
+    use crate::state::PendingInput;
 
     #[test]
     fn lead_without_a_measurement_is_just_the_margin() {
@@ -441,7 +436,7 @@ mod tests {
 
     fn session_with_rtt(rtt_ms: f32) -> GameSession {
         let mut session = GameSession::new(1, Vec::new());
-        session.ping_rtt_ms = Some(rtt_ms);
+        session.net.ping_rtt_ms = Some(rtt_ms);
         session
     }
 
@@ -449,16 +444,16 @@ mod tests {
     fn the_first_update_places_the_clock() {
         let mut session = session_with_rtt(100.0);
         sync_clock(&mut session, 500);
-        assert!(session.synced);
-        assert_eq!(session.local_tick, 500 + lead_ticks(Some(100.0)));
+        assert!(session.net.synced);
+        assert_eq!(session.net.local_tick, 500 + lead_ticks(Some(100.0)));
     }
 
     fn feed_window(session: &mut GameSession, drifts: impl Fn(u32) -> i32) {
-        let lead = lead_ticks(session.ping_rtt_ms) as i64;
+        let lead = lead_ticks(session.net.ping_rtt_ms) as i64;
         for i in 0..DRIFT_WINDOW {
-            let server_tick = session.local_tick as i64 - lead - drifts(i) as i64;
+            let server_tick = session.net.local_tick as i64 - lead - drifts(i) as i64;
             sync_clock(session, server_tick as u32);
-            session.local_tick += 1;
+            session.net.local_tick += 1;
         }
     }
 
@@ -467,12 +462,12 @@ mod tests {
         let mut session = session_with_rtt(60.0);
         sync_clock(&mut session, 1_000);
         feed_window(&mut session, |_| -4);
-        assert_eq!(session.clock_correction, 4);
+        assert_eq!(session.net.clock_correction, 4);
 
         let mut session = session_with_rtt(60.0);
         sync_clock(&mut session, 1_000);
         feed_window(&mut session, |_| 4);
-        assert_eq!(session.clock_correction, -4);
+        assert_eq!(session.net.clock_correction, -4);
     }
 
     #[test]
@@ -480,7 +475,7 @@ mod tests {
         let mut session = session_with_rtt(60.0);
         sync_clock(&mut session, 1_000);
         feed_window(&mut session, |i| if i % 10 == 0 { 0 } else { (i % 7) as i32 });
-        assert_eq!(session.clock_correction, 0);
+        assert_eq!(session.net.clock_correction, 0);
     }
 
     #[test]
@@ -488,16 +483,16 @@ mod tests {
         let mut session = session_with_rtt(60.0);
         sync_clock(&mut session, 1_000);
         feed_window(&mut session, |_| DRIFT_DEADBAND);
-        assert_eq!(session.clock_correction, 0);
+        assert_eq!(session.net.clock_correction, 0);
     }
 
     #[test]
     fn a_clock_far_off_is_placed_at_once() {
         let mut session = session_with_rtt(60.0);
         sync_clock(&mut session, 1_000);
-        session.local_tick -= 200;
+        session.net.local_tick -= 200;
         sync_clock(&mut session, 1_000);
-        assert_eq!(session.local_tick, 1_000 + lead_ticks(Some(60.0)));
+        assert_eq!(session.net.local_tick, 1_000 + lead_ticks(Some(60.0)));
     }
 
     #[test]
@@ -510,10 +505,10 @@ mod tests {
         let mut queue: Vec<(u32, StampedInput)> = Vec::new();
 
         let mut session = session_with_rtt((2 * latency) as f32 * 1000.0 * config::CLIENT_SIM_DT - 0.5);
-        assert_eq!(lead_ticks(session.ping_rtt_ms), 2 * latency + margin, "setup");
+        assert_eq!(lead_ticks(session.net.ping_rtt_ms), 2 * latency + margin, "setup");
         session.board = server.clone();
         session.predicted_board = server.clone();
-        session.synced = true;
+        session.net.synced = true;
 
         let script = [
             InputKind::MoveLeft,
@@ -533,17 +528,21 @@ mod tests {
 
             if step % 9 == 0 && session.predicted_board.state() == GameState::Playing {
                 let kind = script[(step / 9) as usize % script.len()];
-                session.input_seq += 1;
+                session.net.input_seq += 1;
                 let input = StampedInput {
-                    tick: session.local_tick + 1,
+                    tick: session.net.local_tick + 1,
                     kind,
                 };
                 session.predicted_board.apply_input(kind);
-                session.pending_inputs.push((session.input_seq, input));
-                queue.push((session.input_seq, input));
+                session.net.pending_inputs.push(PendingInput {
+                    seq: session.net.input_seq,
+                    input,
+                    sent: 0.0,
+                });
+                queue.push((session.net.input_seq, input));
             }
 
-            while server_tick + latency + margin < session.local_tick {
+            while server_tick + latency + margin < session.net.local_tick {
                 server_tick += 1;
                 let due = queue
                     .iter()
@@ -562,7 +561,7 @@ mod tests {
                 let at = server_tick - latency;
                 let ack = acked_by(&session, at);
                 let before = session.predicted_board.state_hash();
-                let local = session.local_tick;
+                let local = session.net.local_tick;
                 reconcile(
                     &mut session,
                     Update {
@@ -572,7 +571,7 @@ mod tests {
                         incoming: Vec::new(),
                     },
                 );
-                assert_eq!(session.local_tick, local, "the clock moved on a steady link");
+                assert_eq!(session.net.local_tick, local, "the clock moved on a steady link");
                 if session.predicted_board.state_hash() != before {
                     corrections += 1;
                 }
@@ -590,11 +589,12 @@ mod tests {
 
     fn acked_by(session: &GameSession, at: u32) -> u32 {
         session
+            .net
             .pending_inputs
             .iter()
-            .filter(|(_, i)| i.tick <= at)
-            .map(|(seq, _)| *seq)
-            .fold(session.my_ack, u32::max)
+            .filter(|p| p.input.tick <= at)
+            .map(|p| p.seq)
+            .fold(session.net.my_ack, u32::max)
     }
 
     fn update(slot: u8, team: u8, out: bool) -> PlayerUpdate {

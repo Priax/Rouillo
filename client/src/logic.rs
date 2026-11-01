@@ -3,7 +3,7 @@ use shared::{config, ClientMessage, GameState, InputKind, SentInput, StampedInpu
 
 use crate::connection::Connection;
 use crate::controls::{Action, Frame};
-use crate::state::{GameSession, Settings};
+use crate::state::{GameSession, PendingInput, Settings};
 use crate::ui::Ui;
 
 #[derive(Clone, Copy, Default)]
@@ -137,7 +137,7 @@ pub fn read_controls(
 }
 
 pub fn hold(session: &mut GameSession) {
-    session.sim_accumulator = 0.0;
+    session.net.sim_accumulator = 0.0;
     release_keys(session);
 }
 
@@ -147,17 +147,17 @@ fn release_keys(session: &mut GameSession) {
 }
 
 fn step_simulation(session: &mut GameSession, dt: f32) {
-    if !session.synced {
+    if !session.net.synced {
         return;
     }
     for _ in 0..take_steps(session, dt) {
-        match session.clock_correction.signum() {
+        match session.net.clock_correction.signum() {
             -1 => {
-                session.clock_correction += 1;
+                session.net.clock_correction += 1;
                 continue;
             }
             1 => {
-                session.clock_correction -= 1;
+                session.net.clock_correction -= 1;
                 advance_one(session);
             }
             _ => {}
@@ -167,21 +167,21 @@ fn step_simulation(session: &mut GameSession, dt: f32) {
 }
 
 pub fn take_steps(session: &mut GameSession, dt: f32) -> u32 {
-    session.sim_accumulator += dt;
+    session.net.sim_accumulator += dt;
     let mut steps = 0;
-    while session.sim_accumulator >= config::CLIENT_SIM_DT && steps < config::MAX_SIM_STEPS_PER_FRAME {
-        session.sim_accumulator -= config::CLIENT_SIM_DT;
+    while session.net.sim_accumulator >= config::CLIENT_SIM_DT && steps < config::MAX_SIM_STEPS_PER_FRAME {
+        session.net.sim_accumulator -= config::CLIENT_SIM_DT;
         steps += 1;
     }
     if steps == config::MAX_SIM_STEPS_PER_FRAME {
-        session.sim_accumulator = 0.0;
+        session.net.sim_accumulator = 0.0;
     }
     steps
 }
 
 pub(crate) fn advance_one(session: &mut GameSession) -> u32 {
-    session.local_tick = session.local_tick.wrapping_add(1);
-    let now = session.local_tick;
+    session.net.local_tick = session.net.local_tick.wrapping_add(1);
+    let now = session.net.local_tick;
     let landed = session.incoming.iter().filter(|g| g.at == now).map(|g| g.amount).sum();
     let events = session.predicted_board.step([], landed);
     if events.locked {
@@ -211,9 +211,13 @@ pub fn announce_events(session: &mut GameSession) {
 /// it takes an input only if newer than all it took: one sent again must
 /// not overtake an older one still on its way.
 fn unacknowledged(session: &GameSession) -> Vec<SentInput> {
-    let pending = session.pending_inputs.iter().take(shared::MAX_RESENT_INPUTS);
+    let pending = session.net.pending_inputs.iter().take(shared::MAX_RESENT_INPUTS);
     pending
-        .map(|&(seq, StampedInput { tick, kind })| SentInput { seq, tick, kind })
+        .map(|p| SentInput {
+            seq: p.seq,
+            tick: p.input.tick,
+            kind: p.input.kind,
+        })
         .collect()
 }
 
@@ -227,11 +231,14 @@ fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: In
         crate::audio::play_rotate();
     }
     if let Some(conn) = conn {
-        session.input_seq += 1;
-        let seq = session.input_seq;
-        let tick = session.local_tick.wrapping_add(1);
-        session.pending_inputs.push((seq, StampedInput { tick, kind }));
-        session.sent_at.push((seq, session.clock));
+        session.net.input_seq += 1;
+        let seq = session.net.input_seq;
+        let tick = session.net.local_tick.wrapping_add(1);
+        session.net.pending_inputs.push(PendingInput {
+            seq,
+            input: StampedInput { tick, kind },
+            sent: session.net.clock,
+        });
         conn.send(&ClientMessage::Input { kind, seq, tick });
         conn.send_datagram(&ClientMessage::Inputs {
             inputs: unacknowledged(session),
@@ -382,7 +389,7 @@ mod tests {
     fn synced_session() -> GameSession {
         let mut session = GameSession::new(1, Vec::new());
         session.predicted_board.spawn_piece();
-        session.synced = true;
+        session.net.synced = true;
         session
     }
 
@@ -433,7 +440,7 @@ mod tests {
             "{fell} rows in one frame, at most {} allowed",
             config::MAX_SIM_STEPS_PER_FRAME
         );
-        assert_eq!(session.sim_accumulator, 0.0, "the backlog was kept to be replayed");
+        assert_eq!(session.net.sim_accumulator, 0.0, "the backlog was kept to be replayed");
     }
 
     fn run_steps(session: &mut GameSession, n: u32) {
@@ -446,29 +453,29 @@ mod tests {
     fn the_board_waits_for_the_first_update() {
         let mut session = GameSession::new(1, Vec::new());
         run_steps(&mut session, 10);
-        assert_eq!(session.local_tick, 0);
+        assert_eq!(session.net.local_tick, 0);
     }
 
     #[test]
     fn each_step_advances_the_local_clock_by_one_tick() {
         let mut session = synced_session();
         run_steps(&mut session, 10);
-        assert_eq!(session.local_tick, 10);
+        assert_eq!(session.net.local_tick, 10);
     }
 
     #[test]
     fn a_correction_is_spent_one_tick_per_step() {
         let mut session = synced_session();
-        session.clock_correction = -3;
+        session.net.clock_correction = -3;
         run_steps(&mut session, 10);
-        assert_eq!(session.local_tick, 7, "held back");
-        assert_eq!(session.clock_correction, 0);
+        assert_eq!(session.net.local_tick, 7, "held back");
+        assert_eq!(session.net.clock_correction, 0);
 
         let mut session = synced_session();
-        session.clock_correction = 3;
+        session.net.clock_correction = 3;
         run_steps(&mut session, 10);
-        assert_eq!(session.local_tick, 13, "caught up");
-        assert_eq!(session.clock_correction, 0);
+        assert_eq!(session.net.local_tick, 13, "caught up");
+        assert_eq!(session.net.clock_correction, 0);
     }
 
     #[test]
@@ -626,18 +633,17 @@ mod tests {
     #[test]
     fn inputs_sent_again_start_from_the_oldest_unacknowledged() {
         let mut session = synced_session();
-        session.pending_inputs = (1..=20)
-            .map(|seq| {
-                (
-                    seq,
-                    StampedInput {
-                        tick: seq,
-                        kind: InputKind::RotateCW,
-                    },
-                )
+        session.net.pending_inputs = (1..=20)
+            .map(|seq| PendingInput {
+                seq,
+                input: StampedInput {
+                    tick: seq,
+                    kind: InputKind::RotateCW,
+                },
+                sent: 0.0,
             })
             .collect();
-        session.pending_inputs.retain(|(seq, _)| *seq > 3);
+        session.net.pending_inputs.retain(|p| p.seq > 3);
         let seqs: Vec<u32> = unacknowledged(&session).iter().map(|i| i.seq).collect();
         assert_eq!(
             seqs,
