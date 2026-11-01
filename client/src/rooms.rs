@@ -12,10 +12,6 @@ use crate::ui::{
 };
 use crate::{board_size, http, theme};
 
-fn send(state: &mut State, msg: &ClientMessage) {
-    state.net.conn.send(msg);
-}
-
 const ROOM_ROW_H: f32 = 56.0;
 
 fn room_list(view: View) -> ListCard {
@@ -34,8 +30,8 @@ fn pager_area(view: View) -> Rect {
     room_list(view).pager()
 }
 
-fn room_pages(state: &State) -> usize {
-    ui::page_count(state.rooms.len(), visible_rooms(state.ui.view()))
+fn room_pages(rooms: &[RoomInfo], view: View) -> usize {
+    ui::page_count(rooms.len(), visible_rooms(view))
 }
 
 /// The rooms on the current page, with their row on screen.
@@ -73,7 +69,7 @@ pub fn update_browser(app: &App, state: &mut State) {
     let view = state.ui.view();
     let b = browser_buttons(view);
 
-    let pages = room_pages(state);
+    let pages = room_pages(&state.rooms, state.ui.view());
     state.room_pager.clamp(pages);
     state
         .room_pager
@@ -89,7 +85,7 @@ pub fn update_browser(app: &App, state: &mut State) {
         } else {
             ClientMessage::JoinRoom { id }
         };
-        send(state, &msg);
+        state.net.conn.send(&msg);
         return;
     }
 
@@ -102,7 +98,7 @@ pub fn update_browser(app: &App, state: &mut State) {
         state.notice.clear();
         state.screen = Screen::JoinById;
     } else if state.ui.clicked(b.refresh) {
-        send(state, &ClientMessage::RequestRoomList);
+        state.net.conn.send(&ClientMessage::RequestRoomList);
     } else if state.ui.clicked(b.back) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.net.conn.disconnect();
         state.rooms.clear();
@@ -137,7 +133,7 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
     for (i, room) in shown_rooms(state) {
         draw_room_row(&mut draw, state, room_row(view, i), i, room);
     }
-    let pages = room_pages(state);
+    let pages = room_pages(&state.rooms, state.ui.view());
     if pages > 1 {
         state
             .room_pager
@@ -269,7 +265,7 @@ fn update_entry(app: &mut App, state: &mut State) -> Option<String> {
 pub fn update_create_room(app: &mut App, state: &mut State) {
     if let Some(name) = update_entry(app, state).filter(|name| !name.is_empty()) {
         state.notice.clear();
-        send(state, &ClientMessage::CreateRoom { name });
+        state.net.conn.send(&ClientMessage::CreateRoom { name });
         state.text_input.clear();
     }
 }
@@ -277,7 +273,7 @@ pub fn update_create_room(app: &mut App, state: &mut State) {
 pub fn update_join_by_id(app: &mut App, state: &mut State) {
     if let Some(id) = update_entry(app, state).and_then(|text| text.parse::<u32>().ok()) {
         state.notice.clear();
-        send(state, &ClientMessage::JoinRoom { id });
+        state.net.conn.send(&ClientMessage::JoinRoom { id });
         state.text_input.clear();
     }
 }

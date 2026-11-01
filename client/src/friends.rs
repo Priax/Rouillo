@@ -4,6 +4,7 @@ use std::sync::Arc;
 use notan::draw::Draw;
 use notan::prelude::*;
 
+use crate::images::Images;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
 use crate::ui::{
     self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Icon, Label, Pager,
@@ -120,9 +121,9 @@ fn watch_btn(view: View, row: usize) -> Rect {
 
 type Pictures = HashMap<String, Texture>;
 
-fn pictures<'a>(gfx: &mut Graphics, state: &State, urls: impl Iterator<Item = &'a Option<String>>) -> Pictures {
+fn pictures<'a>(gfx: &mut Graphics, images: &Images, urls: impl Iterator<Item = &'a Option<String>>) -> Pictures {
     urls.flatten()
-        .filter_map(|url| Some((url.clone(), state.images.get(gfx, url)?)))
+        .filter_map(|url| Some((url.clone(), images.get(gfx, url)?)))
         .collect()
 }
 
@@ -184,8 +185,7 @@ fn refresh_btn(view: View) -> Rect {
 }
 
 /// The focused page field, or else the search field when it has the focus.
-pub fn typing(state: &mut State) -> Option<&mut TextInput> {
-    let f = state.friends.as_mut()?;
+pub fn typing(f: &mut FriendsData) -> Option<&mut TextInput> {
     if let Some(pager) = f.pages.iter_mut().find(|p| p.focused()) {
         return pager.typing();
     }
@@ -288,8 +288,7 @@ fn send_add_request(state: &mut State, user_id: &str) {
     }
 }
 
-fn poll_list(state: &mut State) {
-    let Some(f) = state.friends.as_mut() else { return };
+fn poll_list(f: &mut FriendsData) {
     let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut f.list_slot) else {
         return;
     };
@@ -298,8 +297,7 @@ fn poll_list(state: &mut State) {
     f.received = data.received;
 }
 
-fn poll_search(state: &mut State) {
-    let Some(f) = state.friends.as_mut() else { return };
+fn poll_search(f: &mut FriendsData) {
     let Some(result) = http::take_json::<Vec<UserSearchEntry>>(&mut f.search_slot) else {
         return;
     };
@@ -351,8 +349,10 @@ enum FriendAction {
 }
 
 pub fn update_friends(app: &mut App, state: &mut State) {
-    poll_list(state);
-    poll_search(state);
+    if let Some(f) = state.friends.as_mut() {
+        poll_list(f);
+        poll_search(f);
+    }
     poll_add(state);
     poll_action(state);
 
@@ -560,7 +560,11 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
 
     if let Some(f) = &state.friends {
         let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
-        let pics = pictures(gfx, state, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
+        let pics = pictures(
+            gfx,
+            &state.images,
+            urls.chain(f.search_results.iter().map(|e| &e.avatar_url)),
+        );
         draw_search(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
         draw_lists(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
 

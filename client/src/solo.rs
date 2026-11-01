@@ -5,7 +5,7 @@ use shared::cpu::{Cpu, Difficulty, Style};
 use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings, Targeting};
 
 use crate::draw::Hud;
-use crate::state::{GameSession, Input, Rival, Screen, State};
+use crate::state::{AuthInfo, GameSession, Input, Rival, Screen, State};
 use crate::ui::{self, Frame, Icon, Pill, Rect, SharpText, Size, Stepper, View, FILL};
 use crate::{board_size, http, logic, rooms, theme};
 
@@ -295,8 +295,8 @@ impl SoloGame {
 
 /// Sends a score to the account, which keeps its best. At sign-in this is the
 /// device's best, so a guest's record follows them into their account.
-pub fn send_best(state: &mut State, score: u32) {
-    let Some(auth) = &state.auth else { return };
+fn send_best(solo: &mut Solo, auth: Option<&AuthInfo>, score: u32) {
+    let Some(auth) = auth else { return };
     let slot = http::new_slot();
     let body = serde_json::json!({ "score": score }).to_string();
     http::post_json(
@@ -305,31 +305,31 @@ pub fn send_best(state: &mut State, score: u32) {
         Some(auth.token.clone()),
         Arc::clone(&slot),
     );
-    state.solo.best_slot = Some(slot);
+    solo.best_slot = Some(slot);
 }
 
 pub fn signed_in(state: &mut State) {
-    send_best(state, crate::state::load_best_score());
+    send_best(&mut state.solo, state.auth.as_ref(), crate::state::load_best_score());
 }
 
-pub fn poll_best(state: &mut State) {
+pub fn poll_best(solo: &mut Solo, signed_in: bool) {
     #[derive(serde::Deserialize)]
     struct Best {
         solo_best: u32,
     }
-    let Some(result) = http::take_json::<Best>(&mut state.solo.best_slot) else {
+    let Some(result) = http::take_json::<Best>(&mut solo.best_slot) else {
         return;
     };
-    if state.auth.is_none() {
+    if !signed_in {
         return;
     }
     match result {
         Ok(best) => {
-            state.solo.best = state.solo.best.max(best.solo_best);
+            solo.best = solo.best.max(best.solo_best);
             crate::state::clear_best_score();
         }
         // Kept on the device until the next sign-in sends it again.
-        Err(_) => crate::state::save_best_score(state.solo.best),
+        Err(_) => crate::state::save_best_score(solo.best),
     }
 }
 
@@ -398,7 +398,7 @@ pub fn update_game(app: &mut App, state: &mut State) {
     }
     logic::animate(&mut game.session, dt);
     if let Some(score) = record {
-        send_best(state, score);
+        send_best(&mut state.solo, state.auth.as_ref(), score);
     }
 }
 

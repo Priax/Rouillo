@@ -248,7 +248,7 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
             .color(color);
     }
 
-    crate::title::draw_version(&mut draw, state);
+    crate::title::draw_version(&mut draw, &state.ui, &state.fonts);
 
     state.ui.render(gfx, &draw);
 }

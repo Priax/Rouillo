@@ -92,7 +92,7 @@ fn setup(gfx: &mut Graphics) -> State {
     updater::check();
 
     if state::load_stored_token().is_some() {
-        login::check_stored_session(&mut state);
+        login::check_stored_session(&mut state.startup);
         state.screen = Screen::Title;
     }
 
@@ -138,20 +138,15 @@ fn typing(state: &mut State) -> Option<&mut ui::TextInput> {
             let chat = &mut state.room.as_mut()?.chat;
             chat.open.then_some(&mut chat.input)
         }
-        Screen::Friends => friends::typing(state),
+        Screen::Friends => state.friends.as_mut().and_then(friends::typing),
         Screen::Profile | Screen::OtherProfile => profile::typing(state),
         _ => None,
     }
 }
 
-fn game_chat_area(state: &State) -> Rect {
-    let view = state.ui.view();
+fn game_chat_area(view: ui::View, touch: bool) -> Rect {
     let (w, h) = (380.0, 230.0);
-    let y = if state.input.touch.active {
-        110.0
-    } else {
-        view.h - h - 20.0
-    };
+    let y = if touch { 110.0 } else { view.h - h - 20.0 };
     Rect::at(20.0, y, w, h)
 }
 
@@ -172,7 +167,7 @@ fn can_chat(state: &State) -> bool {
 fn game_chat(app: &App, state: &mut State) -> controls::Frame {
     let mut input = state.input.controls.frame;
     let allowed = can_chat(state);
-    let area = game_chat_area(state);
+    let area = game_chat_area(state.ui.view(), state.input.touch.active);
     let State {
         room,
         ui,
@@ -360,10 +355,10 @@ fn update(app: &mut App, state: &mut State) {
     }
 
     login::poll_startup_check(state);
-    solo::poll_best(state);
+    solo::poll_best(&mut state.solo, state.auth.is_some());
     replay::poll(state);
 
-    network::keep_linked(state);
+    network::keep_linked(&mut state.net, state.auth.is_some(), state.screen);
     update_invitation(state);
     network::handle_server_messages(state);
 
@@ -497,8 +492,13 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         let mut d = state.ui.canvas(gfx);
         if let Some(room) = state.room.as_ref().filter(|_| state.screen == Screen::Game) {
             let hint = can_chat(state).then_some("Entrée pour écrire");
-            room.chat
-                .draw_overlay(&mut d, &state.ui, &state.fonts, game_chat_area(state), hint);
+            room.chat.draw_overlay(
+                &mut d,
+                &state.ui,
+                &state.fonts,
+                game_chat_area(state.ui.view(), state.input.touch.active),
+                hint,
+            );
             replay::draw_keep(&mut d, state);
         }
         state.input.touch.draw(&mut d, &state.fonts, state.ui.view());
@@ -530,7 +530,8 @@ fn draw_maintenance_banner(gfx: &mut Graphics, state: &State) {
     if state.net.maintenance && state.net.conn.is_live() && state.screen.needs_connection() && !playing {
         draw_warning_banner(
             gfx,
-            state,
+            &state.ui,
+            &state.fonts,
             "Le serveur redémarre: les parties en cours se terminent, aucune autre ne démarre.",
         );
     }
@@ -539,13 +540,13 @@ fn draw_maintenance_banner(gfx: &mut Graphics, state: &State) {
 /// Says why online play is closed while the server refuses this version.
 fn draw_too_old_banner(gfx: &mut Graphics, state: &State) {
     if state.net.too_old && matches!(state.screen, Screen::Menu | Screen::PlayMenu) {
-        draw_warning_banner(gfx, state, crate::update::TOO_OLD);
+        draw_warning_banner(gfx, &state.ui, &state.fonts, crate::update::TOO_OLD);
     }
 }
 
-fn draw_warning_banner(gfx: &mut Graphics, state: &State, text: &str) {
-    let ww = state.ui.view().w;
-    let mut d = state.ui.canvas(gfx);
+fn draw_warning_banner(gfx: &mut Graphics, ui: &ui::Ui, fonts: &ui::Fonts, text: &str) {
+    let ww = ui.view().w;
+    let mut d = ui.canvas(gfx);
     ui::banner(
         &mut d,
         Rect::at(0.0, 0.0, ww, MAINTENANCE_H),
@@ -553,13 +554,13 @@ fn draw_warning_banner(gfx: &mut Graphics, state: &State, text: &str) {
         theme::WARNING,
         ui::Edge::Bottom,
     );
-    d.sharp_text(&state.fonts.text, text)
+    d.sharp_text(&fonts.text, text)
         .position(ww / 2.0, MAINTENANCE_H / 2.0)
         .size(theme::size::SMALL)
         .h_align_center()
         .v_align_middle()
         .color(theme::WARNING_TEXT);
-    state.ui.render(gfx, &d);
+    ui.render(gfx, &d);
 }
 
 fn draw_reconnect_banner(gfx: &mut Graphics, state: &State) {

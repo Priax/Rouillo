@@ -3,7 +3,7 @@ use notan::prelude::*;
 
 use crate::state::{Screen, State};
 use crate::theme;
-use crate::ui::SharpText;
+use crate::ui::{Fonts, SharpText, Ui};
 
 const PROMPT: &str = "Appuyez sur une touche !!";
 const PULSE_SPEED: f64 = 3.0;
@@ -59,17 +59,17 @@ pub fn draw_title(gfx: &mut Graphics, state: &State) {
         .v_align_middle()
         .color(pal.text_dim.with_alpha(pulse));
 
-    draw_version(&mut draw, state);
+    draw_version(&mut draw, &state.ui, &state.fonts);
 
     state.ui.render(gfx, &draw);
 }
 
-pub fn draw_version(draw: &mut Draw, state: &State) {
-    let (ww, wh) = state.ui.view().size();
-    draw.sharp_text(&state.fonts.text, concat!("v", env!("CARGO_PKG_VERSION")))
+pub fn draw_version(draw: &mut Draw, ui: &Ui, fonts: &Fonts) {
+    let (ww, wh) = ui.view().size();
+    draw.sharp_text(&fonts.text, concat!("v", env!("CARGO_PKG_VERSION")))
         .position(ww - 20.0, wh - 24.0)
         .size(theme::size::SMALL)
         .h_align_right()
         .v_align_middle()
-        .color(state.ui.palette().text_dim);
+        .color(ui.palette().text_dim);
 }

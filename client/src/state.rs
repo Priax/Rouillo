@@ -428,6 +428,11 @@ impl Room {
             players_first: 0,
         }
     }
+
+    /// Whether the game on screen is over, or the whole series.
+    pub fn finished(&self) -> bool {
+        self.session.as_ref().is_some_and(GameSession::decided) || self.series_over.is_some()
+    }
 }
 
 /// The lobby's list of friends to invite.

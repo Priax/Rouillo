@@ -2,9 +2,9 @@ use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 use shared::{config, ClientMessage};
 
-use crate::connection::now_secs;
+use crate::connection::{now_secs, Connection};
 use crate::http::{self, HttpSlot};
-use crate::state::{ApiUserProfile, Screen, State};
+use crate::state::{ApiUserProfile, Room, Screen, State};
 use crate::theme;
 use crate::ui::{self, Fonts, Persona, Pill, Rect, SharpText, Ui, View, FILL};
 
@@ -139,24 +139,24 @@ fn start_search(state: &mut State) {
     }
 }
 
-fn stop_search(state: &mut State) {
-    state.net.conn.send(&ClientMessage::LeaveQueue);
-    state.ranked.search = Search::Idle;
+fn stop_search(conn: &mut Connection, ranked: &mut RankedView) {
+    conn.send(&ClientMessage::LeaveQueue);
+    ranked.search = Search::Idle;
 }
 
-fn matched(state: &State) -> bool {
-    state.room.as_ref().is_some_and(|r| r.info.ranked.is_some())
+fn matched(room: Option<&Room>) -> bool {
+    room.is_some_and(|r| r.info.ranked.is_some())
 }
 
-fn poll_stats(state: &mut State) {
-    if let Some(Ok(stats)) = http::take_json(&mut state.ranked.stats_slot) {
-        state.ranked.stats = Some(stats);
+fn poll_stats(ranked: &mut RankedView) {
+    if let Some(Ok(stats)) = http::take_json(&mut ranked.stats_slot) {
+        ranked.stats = Some(stats);
     }
 }
 
 pub fn update(app: &App, state: &mut State) {
-    poll_stats(state);
-    if matched(state) {
+    poll_stats(&mut state.ranked);
+    if matched(state.room.as_ref()) {
         return;
     }
     let view = state.ui.view();
@@ -173,7 +173,7 @@ pub fn update(app: &App, state: &mut State) {
         }
         Search::Searching { .. } => {
             if state.ui.clicked(single_button(view)) || escape {
-                stop_search(state);
+                stop_search(&mut state.net.conn, &mut state.ranked);
             }
         }
         Search::Found { accepted, .. } => {
@@ -185,7 +185,7 @@ pub fn update(app: &App, state: &mut State) {
                 }
                 state.net.conn.send(&ClientMessage::AcceptMatch);
             } else if state.ui.clicked(decline) || escape {
-                stop_search(state);
+                stop_search(&mut state.net.conn, &mut state.ranked);
             }
         }
     }
@@ -226,9 +226,9 @@ fn draw_opponent(
     pill.draw(draw, fonts, (cx - pill.width(fonts) / 2.0, cy + 15.0));
 }
 
-fn opponent_avatar(state: &State) -> Option<&str> {
-    let in_series = state.room.as_ref().and_then(|r| r.info.ranked.as_ref());
-    match (in_series, &state.ranked.search) {
+fn opponent_avatar<'a>(room: Option<&'a Room>, ranked: &'a RankedView) -> Option<&'a str> {
+    let in_series = room.and_then(|r| r.info.ranked.as_ref());
+    match (in_series, &ranked.search) {
         (Some(ranked), _) => ranked.opponent_avatar.as_deref(),
         (None, Search::Found { opponent_avatar, .. }) => opponent_avatar.as_deref(),
         _ => None,
@@ -244,7 +244,9 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
     let view = state.ui.view();
     let (cx, cy) = (view.w / 2.0, view.h / 2.0);
     let fonts = &state.fonts;
-    let picture = state.images.get_opt(gfx, opponent_avatar(state));
+    let picture = state
+        .images
+        .get_opt(gfx, opponent_avatar(state.room.as_ref(), &state.ranked));
     let mut draw = state.ui.screen_canvas(gfx);
 
     state

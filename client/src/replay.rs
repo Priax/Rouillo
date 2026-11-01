@@ -6,8 +6,8 @@ use shared::{Board, Playback, Replay};
 
 use crate::draw::{self, Hud};
 use crate::http::{self, HttpSlot};
-use crate::state::{GameSession, ProfileCore, Rival, Screen, State};
-use crate::ui::{Icon, Rect, Status, View};
+use crate::state::{GameSession, ProfileCore, Rival, Room, Screen, State};
+use crate::ui::{Fonts, Icon, Rect, Status, Ui, View};
 use crate::{logic, theme};
 
 const MAX_REPLAY_SIZE: usize = 64 << 20;
@@ -73,12 +73,8 @@ fn keep_button(view: View) -> Rect {
     Rect::at(view.w - 236.0, 56.0, 220.0, 44.0)
 }
 
-fn game_finished(state: &State) -> bool {
-    state.session().is_some_and(GameSession::decided) || state.room.as_ref().is_some_and(|r| r.series_over.is_some())
-}
-
 pub fn update_keep(state: &mut State) {
-    let finished = game_finished(state);
+    let finished = state.room.as_ref().is_some_and(Room::finished);
     let view = state.ui.view();
     let Some(offer) = state.room.as_mut().and_then(|r| r.keep.as_mut()) else {
         return;
@@ -101,7 +97,7 @@ pub fn draw_keep(d: &mut notan::draw::Draw, state: &State) {
     let Some(offer) = state.room.as_ref().and_then(|r| r.keep.as_ref()) else {
         return;
     };
-    if !game_finished(state) || state.auth.is_none() {
+    if !state.room.as_ref().is_some_and(Room::finished) || state.auth.is_none() {
         return;
     }
     let rect = keep_button(state.ui.view());
@@ -342,17 +338,17 @@ pub fn draw(app: &mut App, gfx: &mut Graphics, state: &State) {
         let multi = viewer.playback.replay().players.len() > 1;
         state.ui.button_enabled(&mut d, fonts, player, "Joueur suivant", multi);
         state.ui.button(&mut d, fonts, quit, "Quitter");
-        draw_clock(&mut d, state, &viewer.clock(), play);
+        draw_clock(&mut d, &state.ui, fonts, &viewer.clock(), play);
     }
     state.ui.render(gfx, &d);
 }
 
-fn draw_clock(d: &mut notan::draw::Draw, state: &State, clock: &str, play: Rect) {
+fn draw_clock(d: &mut notan::draw::Draw, ui: &Ui, fonts: &Fonts, clock: &str, play: Rect) {
     use crate::ui::SharpText;
-    d.sharp_text(&state.fonts.display, clock)
+    d.sharp_text(&fonts.display, clock)
         .position(play.x - 20.0, play.y + play.h / 2.0)
         .size(theme::size::LABEL)
         .h_align_right()
         .v_align_middle()
-        .color(state.ui.palette().text_dim);
+        .color(ui.palette().text_dim);
 }

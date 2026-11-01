@@ -692,15 +692,13 @@ pub fn enter_other_profile(state: &mut State, user_id: String, username: String,
     });
 }
 
-fn poll_friendship_check(state: &mut State) {
-    let Some(p) = state.other_profile.as_mut() else { return };
+fn poll_friendship_check(p: &mut OtherProfileData) {
     if let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut p.friendship_check_slot) {
         p.friendship = friendship_with(&data.friends, &data.sent, &data.received, &p.core.user_id);
     }
 }
 
-fn poll_friend(state: &mut State) {
-    let Some(p) = state.other_profile.as_mut() else { return };
+fn poll_friend(p: &mut OtherProfileData) {
     let Some(result) = http::take_done(&mut p.friend_slot) else {
         return;
     };
@@ -740,8 +738,8 @@ fn other_buttons(view: View) -> (Rect, Rect) {
 }
 
 pub fn update_other_profile(app: &mut App, state: &mut State) {
-    poll_friendship_check(state);
     if let Some(p) = state.other_profile.as_mut() {
+        poll_friendship_check(p);
         match poll_core_profile(&mut p.core) {
             Some(ProfileLoad::HttpError) => {
                 p.load_failed = true;
@@ -754,9 +752,7 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
             _ => {}
         }
         p.core.history.poll();
-    }
-    poll_friend(state);
-    if let Some(p) = state.other_profile.as_mut() {
+        poll_friend(p);
         if update_about(app, &state.ui, &mut p.core) {
             return;
         }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use notan::prelude::*;
 
 use crate::connection::now_secs;
-use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, State};
+use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State};
 use crate::ui::{self, field_clicked, text_field, Field, Rect, SharpText, Status, View, FILL};
 use crate::{http, theme};
 
@@ -90,20 +90,20 @@ fn poll_auth(state: &mut State) {
 
 const STARTUP_RETRY_SECS: f64 = 5.0;
 
-pub fn check_stored_session(state: &mut State) {
-    state.startup.retry_at = None;
+pub fn check_stored_session(startup: &mut Startup) {
+    startup.retry_at = None;
     let Some(token) = crate::state::load_stored_token() else {
         return;
     };
     let slot = http::new_slot();
     http::get(http::api_url("me"), Some(token), Arc::clone(&slot));
-    state.startup.check = Some(slot);
+    startup.check = Some(slot);
 }
 
 pub fn poll_startup_check(state: &mut State) {
     let waiting = state.auth.is_none() && matches!(state.screen, Screen::Title | Screen::Auth);
     if waiting && state.startup.retry_at.is_some_and(|t| now_secs() >= t) {
-        check_stored_session(state);
+        check_stored_session(&mut state.startup);
     }
     let Some(result) = http::take(&mut state.startup.check) else {
         return;

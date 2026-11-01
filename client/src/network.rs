@@ -1,7 +1,7 @@
 use shared::{config, Board, ClientMessage, IncomingGarbage, PlayerUpdate, Rules, ServerMessage, StampedInput, Thumb};
 
 use crate::connection::ConnEvent;
-use crate::state::{GameSession, Rival, Room, Screen, State};
+use crate::state::{GameSession, Network, Rival, Room, Screen, State};
 use crate::ui::Status;
 
 /// After the connection gave up, how long before a background one is tried.
@@ -9,19 +9,19 @@ const LINK_PAUSE_SECS: f64 = 30.0;
 
 /// Keeps a signed-in player connected on every screen, for a friend's
 /// invitation to reach them, with the room list only on the screen showing it.
-pub fn keep_linked(state: &mut State) {
+pub fn keep_linked(net: &mut Network, signed_in: bool, screen: Screen) {
     let now = crate::connection::now_secs();
-    let wanted = state.auth.is_some() && !state.net.too_old && !state.net.opened_elsewhere;
-    if wanted && state.net.conn.is_offline() && now >= state.net.next_link_at {
-        state.net.conn.connect(now);
+    let wanted = signed_in && !net.too_old && !net.opened_elsewhere;
+    if wanted && net.conn.is_offline() && now >= net.next_link_at {
+        net.conn.connect(now);
     }
-    if state.auth.is_none() && !state.screen.needs_connection() && !state.net.conn.is_offline() {
-        state.net.conn.disconnect();
+    if !signed_in && !screen.needs_connection() && !net.conn.is_offline() {
+        net.conn.disconnect();
     }
-    let on = state.screen == Screen::RoomBrowser;
-    if state.net.conn.is_live() && state.net.rooms_listed != on {
-        state.net.conn.send(&ClientMessage::ListRooms { on });
-        state.net.rooms_listed = on;
+    let on = screen == Screen::RoomBrowser;
+    if net.conn.is_live() && net.rooms_listed != on {
+        net.conn.send(&ClientMessage::ListRooms { on });
+        net.rooms_listed = on;
     }
 }
 
