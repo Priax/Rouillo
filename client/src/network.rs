@@ -380,12 +380,7 @@ fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
         ServerMessage::SessionRevoked => {
             if state.auth.is_some() {
                 crate::menu::clear_auth(state);
-                if matches!(
-                    nav.current,
-                    Screen::Profile | Screen::Friends | Screen::OtherProfile | Screen::Ranked
-                ) {
-                    nav.apply(Transition::To(Screen::Menu));
-                }
+                nav.forget_account();
                 state.notice = Status::info("Votre session a été fermée depuis un autre appareil.");
             }
         }

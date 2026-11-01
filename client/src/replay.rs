@@ -7,7 +7,7 @@ use shared::{Board, Playback, Replay};
 use crate::draw::{self, Hud};
 use crate::http::{self, HttpSlot};
 use crate::nav::{Nav, Transition};
-use crate::state::{GameSession, ProfileCore, Rival, Room, Screen, State};
+use crate::state::{GameSession, Rival, Room, Screen, State};
 use crate::ui::{Fonts, Icon, Rect, Status, Ui, View};
 use crate::{logic, theme};
 
@@ -247,23 +247,13 @@ pub fn poll(state: &mut State, nav: &mut Nav) {
         Ok(resp) if resp.ok => shared::decode_bounded::<Replay>(&resp.bytes, MAX_REPLAY_SIZE),
         _ => None,
     };
-    let Some(core) = asked_from(state, &nav.current) else {
-        return;
-    };
-    match replay {
-        Some(replay) => nav.apply(Transition::Push(Screen::Replay(Box::new(ReplayViewer::new(
-            replay, focus,
-        ))))),
-        None => core.replay_status = Status::error("Impossible de charger ce replay."),
-    }
-}
-
-/// The profile whose history is on screen.
-fn asked_from<'a>(state: &'a mut State, screen: &Screen) -> Option<&'a mut ProfileCore> {
-    match screen {
-        Screen::OtherProfile => state.other_profile.as_mut().map(|p| &mut p.core),
-        Screen::Profile => state.profile.as_mut().map(|p| &mut p.core),
-        _ => None,
+    match (replay, nav.current.history_mut()) {
+        (Some(replay), Some(_)) => {
+            let viewer = Box::new(ReplayViewer::new(replay, focus));
+            nav.apply(Transition::Push(Screen::Replay(viewer)));
+        }
+        (None, Some(core)) => core.replay_status = Status::error("Impossible de charger ce replay."),
+        (_, None) => {}
     }
 }
 

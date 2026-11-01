@@ -128,7 +128,7 @@ fn type_char(state: &mut State, nav: &mut Nav, c: char) {
 /// The field the keyboard types into on this screen, if any. Each field
 /// carries its own limits.
 fn typing<'a>(state: &'a mut State, nav: &'a mut Nav) -> Option<&'a mut ui::TextInput> {
-    match &nav.current {
+    match &mut nav.current {
         Screen::Auth => Some(state.auth_form.focused_input()),
         Screen::CreateRoom | Screen::JoinById => Some(&mut state.text_input),
         Screen::RoomBrowser => state.room_pager.typing(),
@@ -144,8 +144,9 @@ fn typing<'a>(state: &'a mut State, nav: &'a mut Nav) -> Option<&'a mut ui::Text
             let chat = &mut state.room.as_mut()?.chat;
             chat.open.then_some(&mut chat.input)
         }
-        Screen::Friends => state.friends.as_mut().and_then(friends::typing),
-        Screen::Profile | Screen::OtherProfile => profile::typing(state, &nav.current),
+        Screen::Friends(f) => friends::typing(f),
+        Screen::Profile(p) => profile::typing(p),
+        Screen::OtherProfile(p) => p.core.history.typing(),
         _ => None,
     }
 }
@@ -410,9 +411,9 @@ fn update(app: &mut App, root: &mut Root) {
             rooms::update_lobby(app, state);
             Transition::Stay
         }
-        Screen::Profile => profile::update_profile(app, state),
-        Screen::Friends => friends::update_friends(app, state),
-        Screen::OtherProfile => profile::update_other_profile(app, state),
+        Screen::Profile(p) => profile::update_profile(app, state, p),
+        Screen::Friends(f) => friends::update_friends(app, state, f),
+        Screen::OtherProfile(p) => profile::update_other_profile(app, state, p),
         Screen::SoloSetup => solo::update_setup(app, state),
         Screen::Ranked => ranked::update(app, state),
         Screen::Leaderboard(board) => leaderboard::update(app, state, board),
@@ -469,9 +470,9 @@ fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
         Screen::CreateRoom => rooms::draw_create_room(gfx, state),
         Screen::JoinById => rooms::draw_join_by_id(gfx, state),
         Screen::RoomLobby => rooms::draw_lobby(gfx, state),
-        Screen::Profile => profile::draw_profile(gfx, state),
-        Screen::Friends => friends::draw_friends(gfx, state),
-        Screen::OtherProfile => profile::draw_other_profile(gfx, state),
+        Screen::Profile(p) => profile::draw_profile(gfx, state, p),
+        Screen::Friends(f) => friends::draw_friends(gfx, state, f),
+        Screen::OtherProfile(p) => profile::draw_other_profile(gfx, state, p),
         Screen::SoloSetup => solo::draw_setup(gfx, state),
         Screen::Ranked => ranked::draw(gfx, state),
         Screen::Leaderboard(board) => leaderboard::draw(gfx, state, board),

@@ -115,7 +115,7 @@ pub fn update(app: &App, state: &mut State, board: &mut Leaderboard) -> Transiti
         if Some(&user_id) == me.as_ref() {
             return crate::profile::enter_profile(state);
         }
-        return crate::profile::enter_other_profile(state, user_id, username);
+        return crate::profile::enter_other_profile(state, user_id, username, None);
     }
 
     let loading = board.slot.is_some();

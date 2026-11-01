@@ -122,8 +122,7 @@ pub fn update_menu(app: &App, state: &mut State, play: bool) -> Transition {
             return Transition::To(Screen::SoloSetup);
         }
         Some(MenuItem::Friends) => {
-            crate::friends::enter_friends(state);
-            return Transition::To(Screen::Friends);
+            return crate::friends::enter_friends(state);
         }
         Some(MenuItem::Settings) => return Transition::To(Screen::Settings),
         Some(MenuItem::Logout) => return do_logout(state),
@@ -167,9 +166,6 @@ pub fn clear_auth(state: &mut State) {
     state.auth = None;
     state.solo.best = crate::state::load_best_score();
     state.solo.best_slot = None;
-    state.friends = None;
-    state.profile = None;
-    state.other_profile = None;
 }
 
 pub fn draw_menu(gfx: &mut Graphics, state: &State, play: bool) {

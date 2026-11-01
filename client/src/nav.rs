@@ -38,6 +38,14 @@ impl Nav {
             Transition::Pop => self.current = self.below.pop().unwrap_or(Screen::Menu),
         }
     }
+
+    /// Drops what belonged to an account that is gone.
+    pub fn forget_account(&mut self) {
+        self.below.retain(|screen| !screen.needs_account());
+        if self.current.needs_account() {
+            self.apply(Transition::To(Screen::Menu));
+        }
+    }
 }
 
 /// The application: where the player is, and everything screens share.
@@ -62,6 +70,20 @@ mod tests {
         nav.apply(Transition::Push(Screen::Settings));
         assert!(matches!(nav.current, Screen::Settings));
         nav.apply(Transition::Pop);
+        assert!(is_menu(&nav));
+    }
+
+    #[test]
+    fn a_lost_account_leaves_no_screen_of_it_behind() {
+        let mut nav = Nav::new(Screen::Menu);
+        nav.apply(Transition::Push(Screen::Ranked));
+        nav.apply(Transition::Push(Screen::Settings));
+        nav.forget_account();
+        assert!(matches!(nav.current, Screen::Settings));
+        nav.apply(Transition::Pop);
+        assert!(is_menu(&nav));
+        nav.apply(Transition::Push(Screen::Ranked));
+        nav.forget_account();
         assert!(is_menu(&nav));
     }
 

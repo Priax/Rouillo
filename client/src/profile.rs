@@ -8,8 +8,8 @@ use crate::history::History;
 use crate::nav::Transition;
 use crate::profile_edit::{self, EditForm};
 use crate::state::{
-    ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, Input, OtherProfileData,
-    ProfileCore, ProfileData, Screen, State,
+    ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendsData, FriendshipStatus, Input,
+    OtherProfileData, ProfileCore, ProfileData, Screen, State,
 };
 use crate::theme::{self, Palette};
 use crate::ui::{
@@ -46,11 +46,7 @@ fn poll_core_profile(core: &mut ProfileCore) -> Option<ProfileLoad> {
 
 /// The field the keyboard types into: an open form's, or the match list's
 /// page field.
-pub fn typing<'a>(state: &'a mut State, screen: &Screen) -> Option<&'a mut TextInput> {
-    if matches!(screen, Screen::OtherProfile) {
-        return state.other_profile.as_mut()?.core.history.typing();
-    }
-    let p = state.profile.as_mut()?;
+pub fn typing(p: &mut ProfileData) -> Option<&mut TextInput> {
     if let Some(form) = p.edit.as_mut() {
         Some(form.typing())
     } else if let Some(form) = p.account.as_mut() {
@@ -77,24 +73,16 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
     }
 }
 
-fn update_history(app: &App, state: &mut State, other: bool) {
+fn update_history(app: &App, state: &mut State, core: &mut ProfileCore, other: bool) {
     let view = state.ui.view();
     let area = pager_area(view);
     let State {
-        profile,
-        other_profile,
         ui,
         fonts,
         auth,
         input: Input { keys, .. },
         ..
     } = state;
-    let core = if other {
-        other_profile.as_mut().map(|p| &mut p.core)
-    } else {
-        profile.as_mut().map(|p| &mut p.core)
-    };
-    let Some(core) = core else { return };
     let total = core.info.total_matches;
     core.history
         .update(app, ui, fonts, keys, area, total, history_rows(view));
@@ -522,113 +510,83 @@ pub fn enter_profile(state: &mut State) -> Transition {
         auth.elo,
         Some(auth.token.clone()),
     );
-    state.profile = Some(ProfileData {
+    Transition::Push(Screen::Profile(Box::new(ProfileData {
         core,
         edit: None,
         account: None,
-    });
-    Transition::Push(Screen::Profile)
+    })))
 }
 
 fn own_buttons(view: View) -> [Rect; 4] {
     bottom_buttons(view, [200.0; 4])
 }
 
-pub fn update_profile(app: &mut App, state: &mut State) -> Transition {
-    if let Some(p) = state.profile.as_mut() {
-        poll_core_profile(&mut p.core);
-        p.core.history.poll();
+pub fn update_profile(app: &mut App, state: &mut State, p: &mut ProfileData) -> Transition {
+    poll_core_profile(&mut p.core);
+    p.core.history.poll();
+    profile_edit::poll(state, p);
+
+    if p.edit.is_some() {
+        profile_edit::update(app, state, p);
+        return Transition::Stay;
     }
-    profile_edit::poll(state);
-
-    if state.profile.as_ref().is_some_and(|p| p.edit.is_some()) {
-        profile_edit::update(app, state);
-    } else if state.profile.as_ref().is_some_and(|p| p.account.is_some()) {
-        return update_account(app, state);
-    } else {
-        if let Some(p) = state.profile.as_mut() {
-            if update_about(app, &state.ui, &mut p.core) {
-                return Transition::Stay;
-            }
-        }
-        update_history(app, state, false);
-        let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(state.ui.view());
-
-        if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
-            state.profile = None;
-            return Transition::Pop;
-        }
-        if state.ui.clicked(edit_btn) {
-            if let Some(p) = state.profile.as_mut() {
-                p.edit = Some(EditForm::open(&p.core.info));
-            }
-        }
-        if state.ui.clicked(account_btn) {
-            if let Some(p) = state.profile.as_mut() {
-                p.account = Some(AccountForm::open());
-            }
-        }
-        if state.ui.clicked(logout_btn) {
-            return crate::menu::do_logout(state);
-        }
-
-        let opp_target: Option<(String, String)> = 'find: {
-            let Some(profile) = &state.profile else {
-                break 'find None;
-            };
-            let my_id = profile.core.user_id.as_str();
-            for (i, m) in profile
-                .core
-                .history
-                .entries
-                .iter()
-                .enumerate()
-                .take(profile.core.history.per_page)
-            {
-                let opp = m.opponent(my_id);
-                if let Some((Some(opp_id), Some(opp_name))) = opp.map(|o| (&o.user_id, &o.username)) {
-                    if state.ui.clicked(history_row_zone(state.ui.view(), i)) {
-                        break 'find Some((opp_id.clone(), opp_name.clone()));
-                    }
-                }
-            }
-            None
-        };
-        if let Some((uid, uname)) = opp_target {
-            return enter_other_profile(state, uid, uname);
-        }
+    if p.account.is_some() {
+        return update_account(app, state, p);
     }
-    Transition::Stay
+    if update_about(app, &state.ui, &mut p.core) {
+        return Transition::Stay;
+    }
+    update_history(app, state, &mut p.core, false);
+    let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(state.ui.view());
+
+    if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
+        return Transition::Pop;
+    }
+    if state.ui.clicked(edit_btn) {
+        p.edit = Some(EditForm::open(&p.core.info));
+    }
+    if state.ui.clicked(account_btn) {
+        p.account = Some(AccountForm::open());
+    }
+    if state.ui.clicked(logout_btn) {
+        return crate::menu::do_logout(state);
+    }
+
+    let my_id = p.core.user_id.as_str();
+    let shown = p.core.history.entries.iter().enumerate().take(p.core.history.per_page);
+    let opponent = shown
+        .filter(|&(i, _)| state.ui.clicked(history_row_zone(state.ui.view(), i)))
+        .find_map(|(_, m)| {
+            let opp = m.opponent(my_id)?;
+            Some((opp.user_id.clone()?, opp.username.clone()?))
+        });
+    match opponent {
+        Some((uid, uname)) => enter_other_profile(state, uid, uname, None),
+        None => Transition::Stay,
+    }
 }
 
-fn update_account(app: &App, state: &mut State) -> Transition {
+fn update_account(app: &App, state: &mut State, p: &mut ProfileData) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let State {
-        profile,
         ui,
         fonts,
         input: Input { keys, .. },
         ..
     } = state;
-    let Some(form) = profile.as_mut().and_then(|p| p.account.as_mut()) else {
+    let Some(form) = p.account.as_mut() else {
         return Transition::Stay;
     };
     match account::update(app, ui, fonts, keys, form, token) {
         Outcome::Stay => {}
-        Outcome::Close => {
-            if let Some(p) = profile.as_mut() {
-                p.account = None;
-            }
-        }
+        Outcome::Close => p.account = None,
         Outcome::LoggedOut(msg) => {
             let gone = crate::menu::forget_session(state);
             state.auth_form.status = Status::success(msg);
             return gone;
         }
         Outcome::Renamed(name) => {
-            if let Some(p) = profile.as_mut() {
-                p.core.info.username.clone_from(&name);
-            }
+            p.core.info.username.clone_from(&name);
             if let Some(auth) = state.auth.as_mut() {
                 auth.username = name;
             }
@@ -637,14 +595,9 @@ fn update_account(app: &App, state: &mut State) -> Transition {
     Transition::Stay
 }
 
-pub fn draw_profile(gfx: &mut Graphics, state: &State) {
+pub fn draw_profile(gfx: &mut Graphics, state: &State, profile: &ProfileData) {
     let cx = state.ui.view().w / 2.0;
     let mut draw = state.ui.screen_canvas(gfx);
-
-    let Some(profile) = &state.profile else {
-        state.ui.render(gfx, &draw);
-        return;
-    };
 
     draw_header(&mut draw, gfx, state, &profile.core);
 
@@ -668,11 +621,18 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &draw);
 }
 
-pub fn enter_other_profile(state: &mut State, user_id: String, username: String) -> Transition {
+/// Opens a player's profile. `friends`, when at hand, spares asking whether
+/// they are one.
+pub fn enter_other_profile(
+    state: &State,
+    user_id: String,
+    username: String,
+    friends: Option<&FriendsData>,
+) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let core = load_core(user_id, username, 0, token.clone());
 
-    let (friendship, friendship_check_slot) = if let Some(f) = state.friends.as_ref() {
+    let (friendship, friendship_check_slot) = if let Some(f) = friends {
         (friendship_with(&f.friends, &f.sent, &f.received, &core.user_id), None)
     } else if token.is_some() {
         let slot = http::new_slot();
@@ -682,15 +642,14 @@ pub fn enter_other_profile(state: &mut State, user_id: String, username: String)
         (FriendshipStatus::Unknown, None)
     };
 
-    state.other_profile = Some(OtherProfileData {
+    Transition::Push(Screen::OtherProfile(Box::new(OtherProfileData {
         core,
         friendship_check_slot,
         load_failed: false,
         friendship,
         friend_slot: None,
         friend_status: Status::Empty,
-    });
-    Transition::Push(Screen::OtherProfile)
+    })))
 }
 
 fn poll_friendship_check(p: &mut OtherProfileData) {
@@ -712,25 +671,16 @@ fn poll_friend(p: &mut OtherProfileData) {
     }
 }
 
-fn add_friend(state: &mut State) {
-    if state.other_profile.as_ref().is_none_or(|p| p.friend_slot.is_some()) {
+fn add_friend(state: &State, p: &mut OtherProfileData) {
+    if p.friend_slot.is_some() {
         return;
     }
-    let (user_id, token) = (
-        state
-            .other_profile
-            .as_ref()
-            .map(|p| p.core.user_id.clone())
-            .unwrap_or_default(),
-        state.auth.as_ref().map(|a| a.token.clone()),
-    );
-    let body = serde_json::json!({ "user_id": user_id }).to_string();
+    let token = state.auth.as_ref().map(|a| a.token.clone());
+    let body = serde_json::json!({ "user_id": p.core.user_id }).to_string();
     let slot = http::new_slot();
     http::post_json(http::api_url("friends"), body, token, Arc::clone(&slot));
-    if let Some(p) = state.other_profile.as_mut() {
-        p.friend_slot = Some(slot);
-        p.friend_status.clear();
-    }
+    p.friend_slot = Some(slot);
+    p.friend_status.clear();
 }
 
 fn other_buttons(view: View) -> (Rect, Rect) {
@@ -738,56 +688,44 @@ fn other_buttons(view: View) -> (Rect, Rect) {
     (add, back)
 }
 
-pub fn update_other_profile(app: &mut App, state: &mut State) -> Transition {
-    if let Some(p) = state.other_profile.as_mut() {
-        poll_friendship_check(p);
-        match poll_core_profile(&mut p.core) {
-            Some(ProfileLoad::HttpError) => {
-                p.load_failed = true;
-                p.core.info.username = "Inconnu".to_owned();
-            }
-            Some(ProfileLoad::NetworkError) => {
-                p.load_failed = true;
-                p.core.info.username = "Erreur réseau".to_owned();
-            }
-            _ => {}
+pub fn update_other_profile(app: &mut App, state: &mut State, p: &mut OtherProfileData) -> Transition {
+    poll_friendship_check(p);
+    match poll_core_profile(&mut p.core) {
+        Some(ProfileLoad::HttpError) => {
+            p.load_failed = true;
+            p.core.info.username = "Inconnu".to_owned();
         }
-        p.core.history.poll();
-        poll_friend(p);
-        if update_about(app, &state.ui, &mut p.core) {
-            return Transition::Stay;
+        Some(ProfileLoad::NetworkError) => {
+            p.load_failed = true;
+            p.core.info.username = "Erreur réseau".to_owned();
         }
+        _ => {}
+    }
+    p.core.history.poll();
+    poll_friend(p);
+    if update_about(app, &state.ui, &mut p.core) {
+        return Transition::Stay;
     }
 
-    update_history(app, state, true);
+    update_history(app, state, &mut p.core, true);
     let (add_btn, back_btn) = other_buttons(state.ui.view());
 
-    let sending = state.other_profile.as_ref().is_some_and(|p| p.friend_slot.is_some());
-    let can_add = matches!(
-        state.other_profile.as_ref().map(|p| (p.friendship, p.load_failed)),
-        Some((FriendshipStatus::Unknown | FriendshipStatus::NotFriends, false))
-    );
-    if state.ui.clicked(add_btn) && !sending && can_add {
-        add_friend(state);
+    let can_add = !p.load_failed && matches!(p.friendship, FriendshipStatus::Unknown | FriendshipStatus::NotFriends);
+    if state.ui.clicked(add_btn) && can_add {
+        add_friend(state, p);
     }
 
     if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
-        state.other_profile = None;
         return Transition::Pop;
     }
     Transition::Stay
 }
 
-pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {
+pub fn draw_other_profile(gfx: &mut Graphics, state: &State, p: &OtherProfileData) {
     let pal = state.ui.palette();
     let cx = state.ui.view().w / 2.0;
 
     let mut draw = state.ui.screen_canvas(gfx);
-
-    let Some(p) = &state.other_profile else {
-        state.ui.render(gfx, &draw);
-        return;
-    };
 
     draw_header(&mut draw, gfx, state, &p.core);
     state.ui.set_input(!p.core.about_open);

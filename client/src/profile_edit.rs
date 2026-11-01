@@ -5,7 +5,7 @@ use notan::prelude::*;
 
 use crate::http::{self, HttpSlot};
 use crate::picker::{self, Picked};
-use crate::state::{ApiUserProfile, Input, State};
+use crate::state::{ApiUserProfile, Input, ProfileData, State};
 use crate::theme;
 use crate::ui::{
     area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field, Fonts, Rect, SharpText, Status,
@@ -176,9 +176,8 @@ fn picture_url(info: &ApiUserProfile, picture: Picture) -> Option<&str> {
     }
 }
 
-fn poll_pictures(state: &mut State) {
+fn poll_pictures(state: &mut State, p: &mut ProfileData) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let Some(p) = state.profile.as_mut() else { return };
     let Some(form) = p.edit.as_mut() else { return };
     if let Some(picture) = form.picking {
         match picker::take() {
@@ -218,9 +217,8 @@ fn poll_pictures(state: &mut State) {
     }
 }
 
-pub fn poll(state: &mut State) {
-    poll_pictures(state);
-    let Some(p) = state.profile.as_mut() else { return };
+pub fn poll(state: &mut State, p: &mut ProfileData) {
+    poll_pictures(state, p);
     let Some(form) = p.edit.as_mut() else { return };
     #[derive(serde::Deserialize)]
     struct PatchResp {
@@ -250,17 +248,15 @@ fn save(form: &mut EditForm, token: Option<String>) {
     form.status.clear();
 }
 
-pub fn update(app: &mut App, state: &mut State) {
+pub fn update(app: &mut App, state: &mut State, profile: &mut ProfileData) {
     let cx = state.ui.view().w / 2.0;
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let State {
-        profile,
         ui,
         fonts,
         input: Input { keys, .. },
         ..
     } = state;
-    let Some(profile) = profile.as_mut() else { return };
     let Some(form) = profile.edit.as_mut() else { return };
 
     match form.focused {

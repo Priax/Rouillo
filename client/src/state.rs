@@ -23,9 +23,9 @@ pub enum Screen {
     JoinById,
     RoomLobby,
     Game,
-    Profile,
-    Friends,
-    OtherProfile,
+    Profile(Box<ProfileData>),
+    Friends(Box<FriendsData>),
+    OtherProfile(Box<OtherProfileData>),
     SoloSetup,
     Solo(Box<crate::solo::SoloGame>),
     Ranked,
@@ -55,10 +55,27 @@ impl Screen {
             | Self::Solo(_)
             | Self::Ranked
             | Self::Replay(_) => hue::BLUE,
-            Self::Friends => hue::GREEN,
-            Self::Profile | Self::OtherProfile => hue::PINK,
+            Self::Friends(_) => hue::GREEN,
+            Self::Profile(_) | Self::OtherProfile(_) => hue::PINK,
             Self::Settings | Self::Leaderboard(_) => hue::ORANGE,
         }
+    }
+
+    /// The history of the profile on screen.
+    pub fn history_mut(&mut self) -> Option<&mut ProfileCore> {
+        match self {
+            Self::Profile(p) => Some(&mut p.core),
+            Self::OtherProfile(p) => Some(&mut p.core),
+            _ => None,
+        }
+    }
+
+    /// Whether this screen means nothing without a signed-in account.
+    pub fn needs_account(&self) -> bool {
+        matches!(
+            self,
+            Self::Profile(_) | Self::Friends(_) | Self::OtherProfile(_) | Self::Ranked
+        )
     }
 
     pub fn needs_connection(&self) -> bool {
@@ -781,9 +798,6 @@ pub struct State {
     pub images: crate::images::Images,
     pub auth: Option<AuthInfo>,
     pub auth_form: AuthForm,
-    pub profile: Option<ProfileData>,
-    pub friends: Option<FriendsData>,
-    pub other_profile: Option<OtherProfileData>,
     pub startup: Startup,
     pub pending_invitation: Option<(String, RoomId, String)>,
     pub ranked: crate::ranked::RankedView,
@@ -810,9 +824,6 @@ impl State {
             images: crate::images::Images::default(),
             auth: None,
             auth_form: AuthForm::default(),
-            profile: None,
-            friends: None,
-            other_profile: None,
             startup: Startup::default(),
             pending_invitation: None,
             ranked: crate::ranked::RankedView::default(),

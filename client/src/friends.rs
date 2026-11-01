@@ -193,11 +193,11 @@ pub fn typing(f: &mut FriendsData) -> Option<&mut TextInput> {
     f.search_focused.then_some(&mut f.search_input)
 }
 
-pub fn enter_friends(state: &mut State) {
+pub fn enter_friends(state: &State) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let slot = http::new_slot();
     http::get(http::api_url("friends"), token, Arc::clone(&slot));
-    state.friends = Some(FriendsData {
+    Transition::To(Screen::Friends(Box::new(FriendsData {
         friends: Vec::new(),
         sent: Vec::new(),
         received: Vec::new(),
@@ -215,16 +215,14 @@ pub fn enter_friends(state: &mut State) {
         action_pending: None,
         action_status: Status::Empty,
         pages: Default::default(),
-    });
+    })))
 }
 
-fn refresh_list(state: &mut State) {
+fn refresh_list(state: &State, f: &mut FriendsData) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let slot = http::new_slot();
     http::get(http::api_url("friends"), token, Arc::clone(&slot));
-    if let Some(f) = state.friends.as_mut() {
-        f.list_slot = Some(slot);
-    }
+    f.list_slot = Some(slot);
 }
 
 fn looks_like_uuid(s: &str) -> bool {
@@ -239,25 +237,19 @@ fn looks_like_uuid(s: &str) -> bool {
         })
 }
 
-fn search_query(state: &State) -> String {
-    state
-        .friends
-        .as_ref()
-        .map(|f| f.search_input.trim().to_owned())
-        .unwrap_or_default()
+fn search_query(f: &FriendsData) -> String {
+    f.search_input.trim().to_owned()
 }
 
-fn try_search(state: &mut State) {
-    let busy = state.friends.as_ref().is_none_or(|f| f.search_slot.is_some());
-    if busy {
+fn try_search(state: &State, f: &mut FriendsData) {
+    if f.search_slot.is_some() {
         return;
     }
-    let q = search_query(state);
+    let q = search_query(f);
     if q.len() < 2 {
-        if let Some(f) = state.friends.as_mut() {
-            f.search_status = Status::info("Saisir au moins 2 caractères.");
-            f.search_results.clear();
-        }
+        f.search_status = Status::info("Saisir au moins 2 caractères.");
+        f.search_results.clear();
+
         return;
     }
     let token = state.auth.as_ref().map(|a| a.token.clone());
@@ -267,26 +259,21 @@ fn try_search(state: &mut State) {
         token,
         Arc::clone(&slot),
     );
-    if let Some(f) = state.friends.as_mut() {
-        f.search_slot = Some(slot);
-        f.search_status.clear();
-        f.search_results.clear();
-    }
+    f.search_slot = Some(slot);
+    f.search_status.clear();
+    f.search_results.clear();
 }
 
-fn send_add_request(state: &mut State, user_id: &str) {
-    let busy = state.friends.as_ref().is_none_or(|f| f.add_pending.is_some());
-    if busy {
+fn send_add_request(state: &State, f: &mut FriendsData, user_id: &str) {
+    if f.add_pending.is_some() {
         return;
     }
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let body = serde_json::json!({ "user_id": user_id }).to_string();
     let slot = http::new_slot();
     http::post_json(http::api_url("friends"), body, token, Arc::clone(&slot));
-    if let Some(f) = state.friends.as_mut() {
-        f.add_pending = Some(slot);
-        f.add_status.clear();
-    }
+    f.add_pending = Some(slot);
+    f.add_status.clear();
 }
 
 fn poll_list(f: &mut FriendsData) {
@@ -313,22 +300,20 @@ fn poll_search(f: &mut FriendsData) {
     }
 }
 
-fn poll_add(state: &mut State) {
-    let Some(f) = state.friends.as_mut() else { return };
+fn poll_add(state: &State, f: &mut FriendsData) {
     let Some(result) = http::take_done(&mut f.add_pending) else {
         return;
     };
     match result {
         Ok(()) => {
             f.add_status = Status::success("Demande envoyée !");
-            refresh_list(state);
+            refresh_list(state, f);
         }
         Err(msg) => f.add_status = Status::error(msg),
     }
 }
 
-fn poll_action(state: &mut State) {
-    let Some(f) = state.friends.as_mut() else { return };
+fn poll_action(state: &State, f: &mut FriendsData) {
     let Some(result) = http::take_done(&mut f.action_pending) else {
         return;
     };
@@ -336,7 +321,7 @@ fn poll_action(state: &mut State) {
         Ok(()) => f.action_status.clear(),
         Err(msg) => f.action_status = Status::error(msg),
     }
-    refresh_list(state);
+    refresh_list(state, f);
 }
 
 enum FriendAction {
@@ -349,76 +334,65 @@ enum FriendAction {
     Cancel(String),
 }
 
-pub fn update_friends(app: &mut App, state: &mut State) -> Transition {
-    if let Some(f) = state.friends.as_mut() {
-        poll_list(f);
-        poll_search(f);
-    }
-    poll_add(state);
-    poll_action(state);
+pub fn update_friends(app: &mut App, state: &mut State, f: &mut FriendsData) -> Transition {
+    poll_list(f);
+    poll_search(f);
+
+    poll_add(state, f);
+    poll_action(state, f);
 
     let view = state.ui.view();
 
-    let paging = state
-        .friends
-        .as_ref()
-        .is_some_and(|f| f.pages.iter().any(Pager::focused));
-    let mut searching = false;
-    if let Some(f) = state.friends.as_mut() {
-        if field_clicked(&state.ui, &state.fonts, search_box(view), &mut f.search_input) {
-            f.search_focused = true;
-        } else if state.ui.clicked(Rect::at(0.0, 0.0, view.w, view.h)) {
-            f.search_focused = false;
-        }
-        searching = f.search_focused && !paging;
-        if searching {
-            f.search_input.edit(&state.input.keys);
-        }
-        for col in 0..3 {
-            let pages = page_count(lists(f)[col].len(), rows_for(view));
-            f.pages[col].clamp(pages);
-            f.pages[col].update(
-                app,
-                &state.ui,
-                &state.fonts,
-                &state.input.keys,
-                pager_area(view, col),
-                pages,
-            );
-        }
+    let paging = f.pages.iter().any(Pager::focused);
+    if field_clicked(&state.ui, &state.fonts, search_box(view), &mut f.search_input) {
+        f.search_focused = true;
+    } else if state.ui.clicked(Rect::at(0.0, 0.0, view.w, view.h)) {
+        f.search_focused = false;
+    }
+    let searching = f.search_focused && !paging;
+    if searching {
+        f.search_input.edit(&state.input.keys);
+    }
+    for col in 0..3 {
+        let pages = page_count(lists(f)[col].len(), rows_for(view));
+        f.pages[col].clamp(pages);
+        f.pages[col].update(
+            app,
+            &state.ui,
+            &state.fonts,
+            &state.input.keys,
+            pager_area(view, col),
+            pages,
+        );
     }
 
     if state.ui.clicked(search_submit_btn(view)) || (searching && app.keyboard.was_pressed(KeyCode::Enter)) {
-        let q = search_query(state);
+        let q = search_query(f);
         if looks_like_uuid(&q) {
-            return crate::profile::enter_other_profile(state, q, "...".to_owned());
+            return crate::profile::enter_other_profile(state, q, "...".to_owned(), Some(f));
         }
-        try_search(state);
+        try_search(state, f);
     }
 
     if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
-        state.friends = None;
         return Transition::To(Screen::Menu);
     }
 
-    if state.friends.as_ref().is_some_and(can_refresh) && state.ui.clicked(refresh_btn(view)) {
-        refresh_list(state);
+    if can_refresh(f) && state.ui.clicked(refresh_btn(view)) {
+        refresh_list(state, f);
     }
 
-    let Some(f) = &state.friends else {
-        return Transition::Stay;
-    };
     if let Some((uid, uname)) = clicked_profile(f, &state.ui, view).or_else(|| clicked_listed(f, &state.ui, view)) {
-        return crate::profile::enter_other_profile(state, uid, uname);
+        return crate::profile::enter_other_profile(state, uid, uname, Some(f));
     }
     let add = clicked_add(f, &state.ui, view);
     let action = clicked_action(f, &state.ui, view);
     if let Some(uid) = add {
-        send_add_request(state, &uid);
+        send_add_request(state, f, &uid);
     }
     match action {
         Some(FriendAction::Watch(user_id)) => return watch(state, user_id),
-        Some(action) => apply_action(state, action),
+        Some(action) => apply_action(state, f, action),
         None => {}
     }
     Transition::Stay
@@ -516,11 +490,8 @@ fn watch(state: &mut State, user_id: String) -> Transition {
     Transition::To(Screen::RoomBrowser)
 }
 
-fn apply_action(state: &mut State, action: FriendAction) {
+fn apply_action(state: &State, f: &mut FriendsData, action: FriendAction) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let Some(f) = state.friends.as_mut() else {
-        return;
-    };
     match action {
         FriendAction::Watch(_) => {}
         FriendAction::StartRemove(id) => f.confirm_remove = Some(id),
@@ -541,7 +512,7 @@ fn apply_action(state: &mut State, action: FriendAction) {
     }
 }
 
-pub fn draw_friends(gfx: &mut Graphics, state: &State) {
+pub fn draw_friends(gfx: &mut Graphics, state: &State, f: &FriendsData) {
     let pal = state.ui.palette();
     let view = state.ui.view();
 
@@ -555,26 +526,25 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State) {
         .v_align_middle()
         .color(pal.text);
 
-    if let Some(f) = &state.friends {
-        let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
-        let pics = pictures(
-            gfx,
-            &state.images,
-            urls.chain(f.search_results.iter().map(|e| &e.avatar_url)),
-        );
-        draw_search(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
-        draw_lists(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
+    let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
+    let pics = pictures(
+        gfx,
+        &state.images,
+        urls.chain(f.search_results.iter().map(|e| &e.avatar_url)),
+    );
+    draw_search(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
+    draw_lists(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
 
-        state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
-        let label = if f.list_slot.is_some() {
-            Label::from(Icon::Busy)
-        } else {
-            Label::from("Rafraîchir")
-        };
-        state
-            .ui
-            .button_enabled(&mut draw, &state.fonts, refresh_btn(view), label, can_refresh(f));
-    }
+    state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
+    let label = if f.list_slot.is_some() {
+        Label::from(Icon::Busy)
+    } else {
+        Label::from("Rafraîchir")
+    };
+    state
+        .ui
+        .button_enabled(&mut draw, &state.fonts, refresh_btn(view), label, can_refresh(f));
+
     state.ui.render(gfx, &draw);
 }
 

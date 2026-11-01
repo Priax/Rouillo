@@ -13,7 +13,7 @@ use crate::{board_size, http, logic, rooms, theme};
 /// The most CPUs a solo game takes on: each one thinks on this device.
 pub const MAX_OPPONENTS: usize = 3;
 
-/// Solo play: what is being set up, the game under way, the best score.
+/// What lasts between solo games: the settings and the best score.
 pub struct Solo {
     pub settings: SoloSettings,
     /// The board size view is open over the settings.
