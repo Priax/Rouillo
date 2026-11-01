@@ -31,6 +31,8 @@ pub enum Icon {
     Play,
     Pause,
     Close,
+    Star,
+    StarOutline,
     /// Dots that pulse in turn, while something is on its way.
     Busy,
 }
@@ -68,6 +70,8 @@ impl<'a> Label<'a> {
             Self::Icon(Icon::Play) => "icon:play",
             Self::Icon(Icon::Pause) => "icon:pause",
             Self::Icon(Icon::Close) => "icon:close",
+            Self::Icon(Icon::Star) => "icon:star",
+            Self::Icon(Icon::StarOutline) => "icon:star-outline",
             Self::Icon(Icon::Busy) => "icon:busy",
         }
     }
@@ -227,6 +231,13 @@ fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, colo
                 draw.line((cx - arm, cy - dy), (cx + arm, cy + dy))
                     .width(thick)
                     .color(color);
+            }
+        }
+        Icon::Star | Icon::StarOutline => {
+            let mut star = draw.star(5, half * 1.2, half * 0.55);
+            star.position(cx, cy).color(color);
+            if icon == Icon::StarOutline {
+                star.stroke(thick * 0.7);
             }
         }
         Icon::Busy => {

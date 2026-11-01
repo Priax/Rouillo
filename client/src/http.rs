@@ -78,6 +78,7 @@ fn translate(code: &str) -> Option<&'static str> {
         "not_found" => "Introuvable.",
         "username_taken" => "Ce pseudo est déjà pris.",
         "friend_request_exists" => "Une demande d'ami existe déjà.",
+        "favorites_full" => "Vous gardez déjà le maximum de replays: retirez-en un.",
         "too_many_requests" => "Trop de tentatives, réessayez plus tard.",
         "bad_image" => "Image illisible: envoyez un PNG, JPEG, WebP ou GIF.",
         "image_too_large" => "Image trop grande (5 Mo et 6000 pixels au plus).",

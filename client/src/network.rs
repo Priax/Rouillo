@@ -301,6 +301,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             if let Some(room) = state.room.as_mut() {
                 let mut session = GameSession::new(your_slot, names);
                 session.game = game;
+                room.keep.take_if(|offer| !offer.is_for(game));
                 session.ping_rtt_ms = room.session.as_ref().and_then(|s| s.ping_rtt_ms);
                 session.last_server_msg = "GameStart".to_string();
                 room.info.your_slot = your_slot;
@@ -394,6 +395,12 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         }
         ServerMessage::Pong { .. } => {}
         ServerMessage::Maintenance => state.maintenance = true,
+        ServerMessage::MatchSaved { id } => {
+            if let Some(room) = state.room.as_mut() {
+                let game = room.session.as_ref().map(|s| s.game);
+                room.keep = game.map(|game| crate::replay::KeepOffer::new(id, game));
+            }
+        }
         ServerMessage::FriendInvitation {
             from_username,
             room_id,

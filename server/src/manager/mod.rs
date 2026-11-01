@@ -94,6 +94,10 @@ pub enum Command {
         conn: ConnId,
         on: bool,
     },
+    MatchSaved {
+        id: Uuid,
+        users: Vec<Uuid>,
+    },
     CreateRoom {
         conn: ConnId,
         name: String,
@@ -215,6 +219,7 @@ impl Command {
     fn client(&self) -> Option<ConnId> {
         match self {
             Self::Register { .. }
+            | Self::MatchSaved { .. }
             | Self::FriendCheckDone { .. }
             | Self::FriendsLoaded { .. }
             | Self::FriendshipChanged { .. }
@@ -489,6 +494,7 @@ impl Manager {
                     self.send_room_list_to(conn);
                 }
             }
+            Command::MatchSaved { id, users } => self.match_saved(id, &users),
             Command::CreateRoom { conn, name } => self.create_room(conn, &name),
             Command::JoinRoom { conn, id } => self.request_join(conn, id),
             Command::LeaveRoom { conn } => {

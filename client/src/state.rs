@@ -236,6 +236,8 @@ pub struct ApiMatchEntry {
     pub ranked: bool,
     #[serde(default)]
     pub has_replay: bool,
+    #[serde(default)]
+    pub favorite: bool,
     pub duration_secs: f64,
     pub players: Vec<ApiMatchPlayer>,
 }
@@ -264,8 +266,9 @@ pub struct ProfileCore {
     pub history: crate::history::History,
     pub about_open: bool,
     pub profile_slot: Option<HttpSlot>,
-    /// Why a replay asked from the history did not come.
+    /// Why a replay asked from the history did not come, or could not be kept.
     pub replay_status: Status,
+    pub favorite_slot: Option<HttpSlot>,
 }
 
 pub struct ProfileData {
@@ -401,6 +404,7 @@ pub struct Room {
     pub session: Option<GameSession>,
     pub chat: crate::chat::Chat,
     pub series_over: Option<(Option<u8>, i32)>,
+    pub keep: Option<crate::replay::KeepOffer>,
     pub invite: Invite,
     pub sizing: bool,
     /// The lobby seat whose CPU the host is changing, and how many seats
@@ -417,6 +421,7 @@ impl Room {
             session: None,
             chat: crate::chat::Chat::default(),
             series_over: None,
+            keep: None,
             invite: Invite::default(),
             sizing: false,
             cpu_edit: None,

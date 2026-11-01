@@ -603,3 +603,60 @@ async fn db_a_four_player_game_keeps_every_place(pool: PgPool) {
     let third = db::get_user_profile(&pool, ids[2]).await.unwrap().unwrap();
     assert_eq!((third.total_matches, third.wins), (1, 0));
 }
+
+async fn replayed_game(pool: &PgPool, a: Uuid, b: Uuid) -> Uuid {
+    let mut rec = game(false, Some(a), Some(b), 1);
+    rec.replay = Some(vec![1, 2, 3]);
+    db::record_match_result(pool, rec).await.unwrap()
+}
+
+#[sqlx::test]
+#[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
+async fn db_a_player_keeps_five_replays_and_only_of_their_games(pool: PgPool) {
+    let (a, b, c) = (
+        user(&pool, "alice").await,
+        user(&pool, "bobby").await,
+        user(&pool, "carol").await,
+    );
+    let mut games = Vec::new();
+    for _ in 0..6 {
+        games.push(replayed_game(&pool, a, b).await);
+    }
+    for &id in &games[..5] {
+        db::add_favorite(&pool, a, id).await.unwrap();
+    }
+    db::add_favorite(&pool, a, games[0])
+        .await
+        .expect("keeping one again costs nothing");
+    assert!(matches!(
+        db::add_favorite(&pool, a, games[5]).await,
+        Err(db::FavoriteError::Full)
+    ));
+    db::remove_favorite(&pool, a, games[0]).await.unwrap();
+    db::add_favorite(&pool, a, games[5]).await.unwrap();
+    assert!(matches!(
+        db::add_favorite(&pool, c, games[1]).await,
+        Err(db::FavoriteError::Unavailable)
+    ));
+    let history = db::get_match_history(&pool, a, 10, 0).await.unwrap();
+    assert_eq!(history.iter().filter(|m| m.favorite).count(), 5);
+    assert!(history[..5].iter().all(|m| m.favorite), "kept games come first");
+}
+
+#[sqlx::test]
+#[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
+async fn db_only_kept_or_recent_replays_stay(pool: PgPool) {
+    let (a, b) = (user(&pool, "alice").await, user(&pool, "bobby").await);
+    let kept = replayed_game(&pool, a, b).await;
+    let dropped = replayed_game(&pool, a, b).await;
+    db::add_favorite(&pool, a, kept).await.unwrap();
+    sqlx::query("UPDATE matches SET played_at = now() - interval '25 hours'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let recent = replayed_game(&pool, a, b).await;
+    assert_eq!(db::purge_replays(&pool).await.unwrap(), 1);
+    assert!(db::get_replay(&pool, kept).await.unwrap().is_some());
+    assert!(db::get_replay(&pool, recent).await.unwrap().is_some());
+    assert!(db::get_replay(&pool, dropped).await.unwrap().is_none());
+}

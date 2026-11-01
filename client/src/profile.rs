@@ -12,8 +12,8 @@ use crate::state::{
 };
 use crate::theme::{self, Palette};
 use crate::ui::{
-    self, divider, list_row, portrait, Face, Fonts, Pill, Rect, SharpText, Size, Status, TextInput, Ui, View, FILL,
-    PAGER_H,
+    self, divider, list_row, portrait, Face, Fonts, Icon, Pill, Rect, SharpText, Size, Status, TextInput, Ui, View,
+    FILL, PAGER_H,
 };
 use crate::{http, profile_about};
 
@@ -72,6 +72,7 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
         about_open: false,
         profile_slot: Some(profile_slot),
         replay_status: Status::Empty,
+        favorite_slot: None,
     }
 }
 
@@ -84,6 +85,7 @@ fn update_history(app: &App, state: &mut State, other: bool) {
         ui,
         fonts,
         keys,
+        auth,
         ..
     } = state;
     let core = if other {
@@ -96,16 +98,28 @@ fn update_history(app: &App, state: &mut State, other: bool) {
     core.history
         .update(app, ui, fonts, keys, area, total, history_rows(view));
     let (_, card) = cards(view);
-    let replay = core
-        .history
-        .entries
-        .iter()
-        .take(core.history.per_page)
-        .enumerate()
-        .filter(|(_, m)| m.has_replay)
-        .find(|&(i, _)| ui.clicked(replay_zone(history_row(card, i))))
-        .map(|(_, m)| (m.id.clone(), m.me(&core.user_id).map_or(1, |me| me.slot)));
-    if let Some((id, slot)) = replay {
+    match http::take_done(&mut core.favorite_slot) {
+        Some(Ok(())) => core.history.fetch(),
+        Some(Err(e)) => core.replay_status = Status::error(e),
+        None => {}
+    }
+    let shown = core.history.entries.iter().take(core.history.per_page).enumerate();
+    let mut hit = None;
+    let mut favorite = None;
+    for (i, m) in shown {
+        let row = history_row(card, i);
+        if m.has_replay && ui.clicked(replay_zone(row)) {
+            hit = Some((m.id.clone(), m.me(&core.user_id).map_or(1, |me| me.slot)));
+        }
+        if !other && (m.has_replay || m.favorite) && ui.clicked(favorite_zone(row)) {
+            favorite = Some((m.id.clone(), !m.favorite));
+        }
+    }
+    if let (Some((id, on)), Some(auth), None) = (favorite, auth.as_ref(), &core.favorite_slot) {
+        core.replay_status = Status::Empty;
+        core.favorite_slot = Some(crate::replay::set_favorite(&id, on, auth.token.clone()));
+    }
+    if let Some((id, slot)) = hit {
         let back = if other { Screen::OtherProfile } else { Screen::Profile };
         crate::replay::open(state, &id, u8::try_from(slot).unwrap_or(1), back);
     }
@@ -395,8 +409,17 @@ fn history_row(card: Rect, i: usize) -> Rect {
     )
 }
 
+/// Below this width, a row shows neither the statistics nor the length.
+const WIDE_ROW: f32 = 620.0;
+
+fn favorite_zone(row: Rect) -> Rect {
+    let margin = if row.w < WIDE_ROW { 4.0 } else { CARD_PAD + 44.0 };
+    Rect::at(row.x + row.w - margin - 38.0, row.y + 5.0, 38.0, row.h - 10.0)
+}
+
 fn replay_zone(row: Rect) -> Rect {
-    Rect::at(row.x + row.w * 0.78, row.y + 5.0, 96.0, row.h - 10.0)
+    let star = favorite_zone(row);
+    Rect::at(star.x - 6.0 - 96.0, star.y, 96.0, star.h)
 }
 
 fn opponent_zone(row: Rect) -> Rect {
@@ -456,27 +479,36 @@ fn draw_match_row(
     let linked = clickable && opp.is_some_and(|o| o.user_id.is_some());
     ui.link(draw, fonts, opponent_zone(row), &label, linked);
 
-    draw.sharp_text(
-        &fonts.text,
-        &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent),
-    )
-    .position(row.x + row.w * 0.68, mid)
-    .size(theme::size::SMALL)
-    .h_align_center()
-    .v_align_middle()
-    .color(theme::GOLD);
+    let wide = row.w >= WIDE_ROW;
+    if wide {
+        draw.sharp_text(
+            &fonts.text,
+            &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent),
+        )
+        .position(replay_zone(row).x - 14.0, mid)
+        .size(theme::size::SMALL)
+        .h_align_right()
+        .v_align_middle()
+        .color(theme::GOLD);
+    }
 
     if m.has_replay {
         ui.button(draw, fonts, replay_zone(row), "Revoir");
     }
+    if clickable && (m.has_replay || m.favorite) {
+        let star = if m.favorite { Icon::Star } else { Icon::StarOutline };
+        ui.button(draw, fonts, favorite_zone(row), star);
+    }
 
-    let secs = m.duration_secs as u32;
-    draw.sharp_text(&fonts.text, &format!("{}:{:02}", secs / 60, secs % 60))
-        .position(row.x + row.w - CARD_PAD, mid)
-        .size(theme::size::SMALL)
-        .h_align_right()
-        .v_align_middle()
-        .color(pal.text_muted);
+    if wide {
+        let secs = m.duration_secs as u32;
+        draw.sharp_text(&fonts.text, &format!("{}:{:02}", secs / 60, secs % 60))
+            .position(row.x + row.w - CARD_PAD, mid)
+            .size(theme::size::SMALL)
+            .h_align_right()
+            .v_align_middle()
+            .color(pal.text_muted);
+    }
 }
 
 pub fn enter_profile(state: &mut State, prev: Screen) {

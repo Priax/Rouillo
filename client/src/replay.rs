@@ -10,11 +10,8 @@ use crate::state::{GameSession, ProfileCore, Rival, Screen, State};
 use crate::ui::{Icon, Rect, Status, View};
 use crate::{logic, theme};
 
-/// The most a replay may take once decoded: a long game of many players.
 const MAX_REPLAY_SIZE: usize = 64 << 20;
-
 const SPEEDS: [f32; 3] = [1.0, 2.0, 4.0];
-/// The most ticks a frame plays, so that a slow frame does not stall it.
 const MAX_STEPS_PER_FRAME: u32 = 40;
 
 /// A replay on its way from the server: whose board to show large, and
@@ -23,6 +20,99 @@ pub struct Loading {
     slot: HttpSlot,
     focus: u8,
     back: Screen,
+}
+
+/// Once a game is saved, the choice of keeping its replay.
+pub struct KeepOffer {
+    id: String,
+    game: u32,
+    slot: Option<HttpSlot>,
+    status: Status,
+    kept: bool,
+}
+
+impl KeepOffer {
+    pub const fn new(id: String, game: u32) -> Self {
+        Self {
+            id,
+            game,
+            slot: None,
+            status: Status::Empty,
+            kept: false,
+        }
+    }
+
+    pub const fn is_for(&self, game: u32) -> bool {
+        self.game == game
+    }
+}
+
+fn favorite_url(match_id: &str) -> String {
+    http::api_url(&format!("matches/{match_id}/favorite"))
+}
+
+/// Asks the server to keep the replay of a match, or to let it go.
+pub fn set_favorite(match_id: &str, on: bool, token: String) -> HttpSlot {
+    let slot = http::new_slot();
+    if on {
+        http::post_empty(favorite_url(match_id), Some(token), Arc::clone(&slot));
+    } else {
+        http::delete_req(favorite_url(match_id), Some(token), Arc::clone(&slot));
+    }
+    slot
+}
+
+fn keep_button(view: View) -> Rect {
+    Rect::at(view.w - 236.0, 56.0, 220.0, 44.0)
+}
+
+fn game_finished(state: &State) -> bool {
+    state.session().is_some_and(GameSession::decided) || state.room.as_ref().is_some_and(|r| r.series_over.is_some())
+}
+
+pub fn update_keep(state: &mut State) {
+    let finished = game_finished(state);
+    let view = state.ui.view();
+    let Some(offer) = state.room.as_mut().and_then(|r| r.keep.as_mut()) else {
+        return;
+    };
+    match http::take_done(&mut offer.slot) {
+        Some(Ok(())) => offer.kept = true,
+        Some(Err(e)) => offer.status = Status::error(e),
+        None => {}
+    }
+    if finished && !offer.kept && offer.slot.is_none() && state.ui.clicked(keep_button(view)) {
+        if let Some(auth) = &state.auth {
+            offer.status = Status::Empty;
+            offer.slot = Some(set_favorite(&offer.id, true, auth.token.clone()));
+        }
+    }
+}
+
+pub fn draw_keep(d: &mut notan::draw::Draw, state: &State) {
+    use crate::ui::SharpText;
+    let Some(offer) = state.room.as_ref().and_then(|r| r.keep.as_ref()) else {
+        return;
+    };
+    if !game_finished(state) || state.auth.is_none() {
+        return;
+    }
+    let rect = keep_button(state.ui.view());
+    let label = if offer.kept {
+        "Replay gardé"
+    } else {
+        "Garder le replay"
+    };
+    let enabled = !offer.kept && offer.slot.is_none();
+    state.ui.button_enabled(d, &state.fonts, rect, label, enabled);
+    if let Some((msg, color)) = offer.status.shown(&state.ui.palette()) {
+        d.sharp_text(&state.fonts.text, msg)
+            .position(rect.x + rect.w, rect.y + rect.h + 16.0)
+            .size(theme::size::SMALL)
+            .h_align_right()
+            .v_align_middle()
+            .color(color);
+    }
 }
 
 /// A finished game played again, as a spectator sees it.

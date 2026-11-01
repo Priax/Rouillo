@@ -404,6 +404,7 @@ fn update(app: &mut App, state: &mut State) {
             if left && online.ranked {
                 ranked::enter(state);
             }
+            replay::update_keep(state);
         }
     }
     if state.screen == Screen::Menu && !state.title_seen {
@@ -493,6 +494,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
             let hint = can_chat(state).then_some("Entrée pour écrire");
             room.chat
                 .draw_overlay(&mut d, &state.ui, &state.fonts, game_chat_area(state), hint);
+            replay::draw_keep(&mut d, state);
         }
         state.touch.draw(&mut d, &state.fonts, state.ui.view());
         state.ui.render(gfx, &d);

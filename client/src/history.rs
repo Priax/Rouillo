@@ -36,7 +36,7 @@ impl History {
         page_count(usize::try_from(total).unwrap_or(0), self.per_page.max(1))
     }
 
-    fn fetch(&mut self) {
+    pub fn fetch(&mut self) {
         let slot = http::new_slot();
         let url = format!(
             "users/{}/matches?limit={}&offset={}",

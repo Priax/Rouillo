@@ -295,4 +295,8 @@ pub enum ServerMessage {
         tick: u32,
         thumbs: Vec<Thumb>,
     },
+    /// The game just played is in the database under this id.
+    MatchSaved {
+        id: String,
+    },
 }

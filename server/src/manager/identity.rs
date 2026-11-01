@@ -7,6 +7,19 @@ impl Manager {
         self.user_conns.get(&user).into_iter().flatten().copied().collect()
     }
 
+    /// Tells the players of a saved game, those still in a room, that its
+    /// replay can be kept.
+    pub(super) fn match_saved(&mut self, id: Uuid, users: &[Uuid]) {
+        let msg = ServerMessage::MatchSaved { id: id.to_string() };
+        for &user in users {
+            for conn in self.conns_of_user(user) {
+                if self.room_of(conn).is_some() {
+                    self.deliver_msg(conn, &msg);
+                }
+            }
+        }
+    }
+
     pub(super) fn display_name(&self, conn: ConnId) -> String {
         self.clients
             .get(&conn)

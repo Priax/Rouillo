@@ -96,6 +96,28 @@ pub(super) async fn handle_match_replay(
     Ok((headers, data))
 }
 
+pub(super) async fn handle_favorite_add(
+    State(Api { pool, .. }): State<Api>,
+    PathParam(match_id): PathParam<Uuid>,
+    Authed(me): Authed,
+) -> Result<impl IntoResponse, ApiError> {
+    db::add_favorite(&pool, me.id, match_id).await.map_err(|e| match e {
+        db::FavoriteError::Unavailable => ApiError::NotFound,
+        db::FavoriteError::Full => ApiError::FavoritesFull,
+        db::FavoriteError::Db(e) => internal(e),
+    })?;
+    Ok(done())
+}
+
+pub(super) async fn handle_favorite_remove(
+    State(Api { pool, .. }): State<Api>,
+    PathParam(match_id): PathParam<Uuid>,
+    Authed(me): Authed,
+) -> Result<impl IntoResponse, ApiError> {
+    db::remove_favorite(&pool, me.id, match_id).await.map_err(internal)?;
+    Ok(done())
+}
+
 pub(super) async fn handle_avatar_get(
     State(api): State<Api>,
     PathParam(user_id): PathParam<Uuid>,

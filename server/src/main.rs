@@ -110,10 +110,14 @@ impl Winddown {
 fn run_side_effects(mgr: &mut Manager, pool: &db::DbPool, cmd_tx: &mpsc::Sender<Command>, saves: &mut JoinSet<()>) {
     while saves.try_join_next().is_some() {}
     for rec in mgr.take_unsaved_matches() {
-        let pool = pool.clone();
+        let (pool, cmd_tx) = (pool.clone(), cmd_tx.clone());
+        let users: Vec<_> = rec.players.iter().filter_map(|p| p.user_id).collect();
         saves.spawn(async move {
-            if let Err(e) = db::record_match_result(&pool, rec).await {
-                error!("Match save: {e}");
+            match db::record_match_result(&pool, rec).await {
+                Ok(id) => {
+                    let _ = cmd_tx.try_send(Command::MatchSaved { id, users });
+                }
+                Err(e) => error!("Match save: {e}"),
             }
         });
     }
@@ -303,6 +307,11 @@ async fn main() {
                 Err(e) => error!("Session cleanup: {e}"),
                 _ => {}
             }
+            match db::purge_replays(&pool_cleanup).await {
+                Ok(n) if n > 0 => info!("Replays non gardés: {n} effacés"),
+                Err(e) => error!("Replay purge: {e}"),
+                _ => {}
+            }
         }
     });
 
@@ -317,7 +326,6 @@ async fn main() {
 
     let listener = bind_listener((bind, port).into());
     let server = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).into_future();
-    // The manager only returns once a shutdown has let the games finish.
     tokio::select! {
         res = server => if let Err(e) = res { error!("Serveur HTTP: {e}") },
         _ = manager => {}

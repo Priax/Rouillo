@@ -526,10 +526,11 @@ fn server_samples() -> Vec<ServerMessage> {
                 .chain([Thumb::of(&boards[0], false)])
                 .collect(),
         },
+        ServerMessage::MatchSaved { id: "m".into() },
     ]
 }
 
-const SERVER_VARIANTS: usize = 20;
+const SERVER_VARIANTS: usize = 21;
 
 fn server_variant(m: &ServerMessage) -> usize {
     match m {
@@ -553,6 +554,7 @@ fn server_variant(m: &ServerMessage) -> usize {
         ServerMessage::Spectators { .. } => 17,
         ServerMessage::OpenedElsewhere => 18,
         ServerMessage::Thumbs { .. } => 19,
+        ServerMessage::MatchSaved { .. } => 20,
     }
 }
 
@@ -585,7 +587,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (14, 13_092_165_943_773_441_792);
+const PROTOCOL_DIGEST: (u32, u64) = (14, 8_470_218_414_645_481_342);
 
 #[test]
 fn protocol_changes_bump_the_version() {

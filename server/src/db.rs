@@ -229,6 +229,11 @@ pub fn hash_password(password: &str) -> Result<String, password_hash::Error> {
         .map(|h| h.to_string())
 }
 
+/// How many replays a player may keep.
+pub const MAX_FAVORITES: i64 = 5;
+/// How long a replay waits to be kept before it goes.
+const REPLAY_KEPT_HOURS: i32 = 24;
+
 pub struct MatchRecord {
     pub ranked: bool,
     pub duration_secs: f64,
@@ -260,7 +265,7 @@ impl MatchRecord {
     }
 }
 
-pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), sqlx::Error> {
+pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<Uuid, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let match_id = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO matches (duration_secs, ranked, replay) VALUES ($1, $2, $3) RETURNING id",
@@ -296,7 +301,8 @@ pub async fn record_match_result(pool: &DbPool, rec: MatchRecord) -> Result<(), 
         .await?;
     }
 
-    tx.commit().await
+    tx.commit().await?;
+    Ok(match_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -492,6 +498,7 @@ pub struct MatchRow {
     pub duration_secs: f64,
     pub ranked: bool,
     pub has_replay: bool,
+    pub favorite: bool,
     pub players: Vec<MatchPlayer>,
 }
 
@@ -520,6 +527,7 @@ struct MatchHead {
     duration_secs: f64,
     ranked: bool,
     has_replay: bool,
+    favorite: bool,
 }
 
 pub enum FriendshipError {
@@ -687,10 +695,12 @@ pub async fn get_match_history(
     offset: i64,
 ) -> Result<Vec<MatchRow>, sqlx::Error> {
     let heads = sqlx::query_as::<_, MatchHead>(
-        "SELECT m.id, m.played_at, m.duration_secs, m.ranked, m.replay IS NOT NULL AS has_replay
+        "SELECT m.id, m.played_at, m.duration_secs, m.ranked, m.replay IS NOT NULL AS has_replay,
+                f.match_id IS NOT NULL AS favorite
          FROM matches m
          JOIN match_stats me ON me.match_id = m.id AND me.user_id = $1
-         ORDER BY m.played_at DESC, m.id
+         LEFT JOIN replay_favorites f ON f.match_id = m.id AND f.user_id = $1
+         ORDER BY favorite DESC, m.played_at DESC, m.id
          LIMIT $2 OFFSET $3",
     )
     .bind(user_id)
@@ -722,6 +732,7 @@ pub async fn get_match_history(
                 duration_secs: h.duration_secs,
                 ranked: h.ranked,
                 has_replay: h.has_replay,
+                favorite: h.favorite,
                 players: mine,
             }
         })
@@ -735,6 +746,78 @@ pub async fn get_replay(pool: &DbPool, match_id: Uuid) -> Result<Option<Vec<u8>>
         .fetch_optional(pool)
         .await?;
     Ok(row.flatten())
+}
+
+#[derive(Debug)]
+pub enum FavoriteError {
+    Unavailable,
+    Full,
+    Db(sqlx::Error),
+}
+
+impl From<sqlx::Error> for FavoriteError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Db(e)
+    }
+}
+
+/// Keeps the replay of a match `user_id` played, within `MAX_FAVORITES`.
+pub async fn add_favorite(pool: &DbPool, user_id: Uuid, match_id: Uuid) -> Result<(), FavoriteError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR NO KEY UPDATE")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    let played: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM matches m
+                        JOIN match_stats ms ON ms.match_id = m.id
+                        WHERE m.id = $1 AND ms.user_id = $2 AND m.replay IS NOT NULL)",
+    )
+    .bind(match_id)
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !played {
+        return Err(FavoriteError::Unavailable);
+    }
+    let others: i64 = sqlx::query_scalar("SELECT count(*) FROM replay_favorites WHERE user_id = $1 AND match_id <> $2")
+        .bind(user_id)
+        .bind(match_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if others >= MAX_FAVORITES {
+        return Err(FavoriteError::Full);
+    }
+    sqlx::query("INSERT INTO replay_favorites (user_id, match_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(user_id)
+        .bind(match_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn remove_favorite(pool: &DbPool, user_id: Uuid, match_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM replay_favorites WHERE user_id = $1 AND match_id = $2")
+        .bind(user_id)
+        .bind(match_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Drops the replays nobody kept once they are too old to be chosen.
+pub async fn purge_replays(pool: &DbPool) -> Result<u64, sqlx::Error> {
+    let r = sqlx::query(
+        "UPDATE matches m SET replay = NULL
+         WHERE m.replay IS NOT NULL
+           AND m.played_at < now() - make_interval(hours => $1)
+           AND NOT EXISTS (SELECT 1 FROM replay_favorites f WHERE f.match_id = m.id)",
+    )
+    .bind(REPLAY_KEPT_HOURS)
+    .execute(pool)
+    .await?;
+    Ok(r.rows_affected())
 }
 
 #[cfg(test)]
