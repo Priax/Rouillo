@@ -83,7 +83,10 @@ pub fn update_game(
 
 pub fn animate(session: &mut GameSession, dt: f32) {
     if let Some(p) = session.predicted_board.piece() {
-        session.my_turn.update(session.predicted_board.piece_id, p.rotation, dt);
+        session
+            .fx
+            .my_turn
+            .update(session.predicted_board.piece_id, p.rotation, dt);
     }
     for rival in &mut session.rivals {
         rival.view.advance(dt);
@@ -94,7 +97,7 @@ pub fn animate(session: &mut GameSession, dt: f32) {
         }
     }
 
-    let off = &mut session.piece_visual_offset;
+    let off = &mut session.fx.piece_visual_offset;
     let decay = (-PIECE_SMOOTH_RATE * dt).exp();
     off.0 *= decay;
     off.1 *= decay;
@@ -105,14 +108,14 @@ pub fn animate(session: &mut GameSession, dt: f32) {
         off.1 = 0.0;
     }
 
-    if let Some((_, ref mut t)) = session.chain_display {
+    if let Some((_, ref mut t)) = session.fx.chain_display {
         *t -= dt;
         if *t <= 0.0 {
-            session.chain_display = None;
+            session.fx.chain_display = None;
         }
     }
-    if session.all_clear_timer > 0.0 {
-        session.all_clear_timer -= dt;
+    if session.fx.all_clear_timer > 0.0 {
+        session.fx.all_clear_timer -= dt;
     }
 }
 
@@ -139,8 +142,8 @@ pub fn hold(session: &mut GameSession) {
 }
 
 fn release_keys(session: &mut GameSession) {
-    session.key_timer_left = 0.0;
-    session.key_timer_right = 0.0;
+    session.keys.key_timer_left = 0.0;
+    session.keys.key_timer_right = 0.0;
 }
 
 fn step_simulation(session: &mut GameSession, dt: f32) {
@@ -191,16 +194,16 @@ pub(crate) fn advance_one(session: &mut GameSession) -> u32 {
 pub fn announce_events(session: &mut GameSession) {
     let board = &session.predicted_board;
     let chain = (board.piece_id, board.chain_count);
-    if board.chain_count > 0 && chain > session.announced_chain {
-        session.announced_chain = chain;
+    if board.chain_count > 0 && chain > session.fx.announced_chain {
+        session.fx.announced_chain = chain;
         crate::audio::play_pop(board.chain_count);
-        session.chain_display = Some((board.chain_count, 2.0));
+        session.fx.chain_display = Some((board.chain_count, 2.0));
     }
     let board = &session.predicted_board;
-    if board.last_was_all_clear && board.piece_id != session.announced_all_clear {
-        session.announced_all_clear = board.piece_id;
+    if board.last_was_all_clear && board.piece_id != session.fx.announced_all_clear {
+        session.fx.announced_all_clear = board.piece_id;
         crate::audio::play_all_clear();
-        session.all_clear_timer = 3.0;
+        session.fx.all_clear_timer = 3.0;
     }
 }
 
@@ -322,9 +325,9 @@ fn handle_game_input(
         (Action::Right, InputKind::MoveRight),
     ] {
         let timer = if kind == InputKind::MoveLeft {
-            &mut session.key_timer_left
+            &mut session.keys.key_timer_left
         } else {
-            &mut session.key_timer_right
+            &mut session.keys.key_timer_right
         };
         let first = *timer == 0.0;
         let moves = autorepeat(timer, input.held(action), delta_time, settings);
@@ -359,8 +362,8 @@ fn autorepeat(timer: &mut f32, held: bool, dt: f32, settings: Settings) -> u32 {
 
 fn handle_soft_drop_key(input: &Frame, session: &mut GameSession, conn: Option<&mut Connection>) {
     let down = input.held(Action::SoftDrop);
-    if down != session.soft_drop_held {
-        session.soft_drop_held = down;
+    if down != session.keys.soft_drop_held {
+        session.keys.soft_drop_held = down;
         let kind = if down {
             InputKind::SoftDropPress
         } else {
@@ -473,16 +476,16 @@ mod tests {
         let mut session = synced_session();
         session.predicted_board.chain_count = 2;
         announce_events(&mut session);
-        assert_eq!(session.chain_display.map(|(c, _)| c), Some(2));
+        assert_eq!(session.fx.chain_display.map(|(c, _)| c), Some(2));
 
-        session.chain_display = None;
+        session.fx.chain_display = None;
         announce_events(&mut session);
-        assert_eq!(session.chain_display, None, "announced twice");
+        assert_eq!(session.fx.chain_display, None, "announced twice");
 
         session.predicted_board.chain_count = 3;
         announce_events(&mut session);
         assert_eq!(
-            session.chain_display.map(|(c, _)| c),
+            session.fx.chain_display.map(|(c, _)| c),
             Some(3),
             "the next step was missed"
         );

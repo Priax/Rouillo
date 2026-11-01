@@ -157,12 +157,12 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
 
     if predicted.piece_id == prev_piece_id {
         if let (Some(prev), Some(cur)) = (&prev_piece, predicted.piece()) {
-            let off = &mut session.piece_visual_offset;
+            let off = &mut session.fx.piece_visual_offset;
             off.0 = (off.0 + (prev.row - cur.row) as f32).clamp(-3.0, 3.0);
             off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
         }
     } else {
-        session.piece_visual_offset = (0.0, 0.0);
+        session.fx.piece_visual_offset = (0.0, 0.0);
     }
 
     session.predicted_board = predicted;

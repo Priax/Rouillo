@@ -507,6 +507,25 @@ impl Rival {
     }
 }
 
+/// What is held down between frames, for the keys that repeat.
+#[derive(Default)]
+pub struct HeldKeys {
+    pub key_timer_left: f32,
+    pub key_timer_right: f32,
+    pub soft_drop_held: bool,
+}
+
+/// What only shows: smoothed movement, and chains and all clears on screen.
+#[derive(Default)]
+pub struct Effects {
+    pub my_turn: TurnAnim,
+    pub piece_visual_offset: (f32, f32),
+    pub chain_display: Option<(u32, f32)>,
+    pub all_clear_timer: f32,
+    pub announced_chain: (u32, u32),
+    pub announced_all_clear: u32,
+}
+
 pub struct GameSession {
     pub board: Board,
     pub predicted_board: Board,
@@ -532,20 +551,12 @@ pub struct GameSession {
     pub opponent_disconnected: bool,
     pub quit_menu: bool,
 
+    pub keys: HeldKeys,
+    pub fx: Effects,
+
     pub input_seq: u32,
     pub my_ack: u32,
     pub pending_inputs: Vec<(u32, StampedInput)>,
-
-    pub key_timer_left: f32,
-    pub key_timer_right: f32,
-    pub soft_drop_held: bool,
-
-    pub my_turn: TurnAnim,
-
-    pub piece_visual_offset: (f32, f32),
-
-    pub chain_display: Option<(u32, f32)>,
-    pub all_clear_timer: f32,
 
     pub clock: f64,
     pub sent_at: Vec<(u32, f64)>,
@@ -561,9 +572,6 @@ pub struct GameSession {
     pub drift_samples: u32,
 
     pub incoming: Vec<IncomingGarbage>,
-
-    pub announced_chain: (u32, u32),
-    pub announced_all_clear: u32,
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub last_server_msg: String,
@@ -594,16 +602,11 @@ impl GameSession {
             out_early: false,
             opponent_disconnected: false,
             quit_menu: false,
+            keys: HeldKeys::default(),
+            fx: Effects::default(),
             input_seq: 0,
             my_ack: 0,
             pending_inputs: Vec::new(),
-            key_timer_left: 0.0,
-            key_timer_right: 0.0,
-            soft_drop_held: false,
-            my_turn: TurnAnim::default(),
-            piece_visual_offset: (0.0, 0.0),
-            chain_display: None,
-            all_clear_timer: 0.0,
             clock: 0.0,
             sent_at: Vec::new(),
             sim_accumulator: 0.0,
@@ -614,8 +617,6 @@ impl GameSession {
             drift_min: None,
             drift_samples: 0,
             incoming: Vec::new(),
-            announced_chain: (0, 0),
-            announced_all_clear: 0,
             last_server_msg: String::new(),
             last_rtt_ms: 0.0,
             ping_rtt_ms: None,
@@ -734,10 +735,10 @@ impl GameSession {
         self.incoming = next.incoming;
         self.predicted_board = next.board.clone();
         self.board = next.board;
-        self.announced_chain = (self.board.piece_id, self.board.chain_count);
-        self.announced_all_clear = self.board.piece_id;
-        self.chain_display = None;
-        self.all_clear_timer = 0.0;
+        self.fx.announced_chain = (self.board.piece_id, self.board.chain_count);
+        self.fx.announced_all_clear = self.board.piece_id;
+        self.fx.chain_display = None;
+        self.fx.all_clear_timer = 0.0;
     }
 
     pub fn add_rival(&mut self, rival: Rival) {

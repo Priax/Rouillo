@@ -329,12 +329,12 @@ pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &
     }
     draw_boards(&mut draw, &pal, fonts, session, &layout, hud, time);
     draw_sidebar(&mut draw, &pal, fonts, session, &layout, hud, time);
-    draw_chain_anim(&mut draw, fonts, session.chain_display, layout.mine);
+    draw_chain_anim(&mut draw, fonts, session.fx.chain_display, layout.mine);
     if let Hud::Online(Role { watchers: 1.., .. }) = hud {
         draw_watchers(&mut draw, &pal, fonts, hud, layout.win_w);
     }
-    if session.all_clear_timer > 0.0 {
-        let alpha = (session.all_clear_timer / 3.0).min(1.0);
+    if session.fx.all_clear_timer > 0.0 {
+        let alpha = (session.fx.all_clear_timer / 3.0).min(1.0);
         let (cx, cy) = (layout.mine.x + layout.mine.w / 2.0, layout.mine.y + layout.mine.h / 2.0);
         shadowed(
             &mut draw,
@@ -407,10 +407,10 @@ fn draw_boards(
     time: f32,
 ) {
     let me = &session.predicted_board;
-    let (row_off, col_off) = session.piece_visual_offset;
+    let (row_off, col_off) = session.fx.piece_visual_offset;
     let piece = Piece {
         offset: (row_off + fall_step(me), col_off),
-        satellite: session.my_turn.satellite(),
+        satellite: session.fx.my_turn.satellite(),
     };
     let mine = match hud {
         _ if session.spectating() => session.name_of(session.focus),
