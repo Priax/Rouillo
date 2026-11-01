@@ -7,6 +7,8 @@ pub struct Client {
     /// latest matters.
     states: Option<mpsc::Sender<Vec<Bytes>>>,
     pub(super) room: Option<RoomId>,
+    /// It wants the room list pushed: not while it shows something else.
+    pub(super) lists_rooms: bool,
     /// The player id sent in Hello: it follows a browser across reconnections.
     pub token: Option<Token>,
     pub(super) user: Option<Uuid>,
@@ -25,6 +27,7 @@ impl Client {
             sender,
             states,
             room: None,
+            lists_rooms: true,
             token: None,
             user: None,
             username: None,

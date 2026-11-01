@@ -5,7 +5,7 @@ use crate::board::{Board, IncomingGarbage, InputKind, Phase, PuyoType};
 use crate::cpu::{Difficulty, Style};
 use crate::room::{RoomSetting, RoomSettings};
 
-pub const PROTOCOL_VERSION: u32 = 13;
+pub const PROTOCOL_VERSION: u32 = 14;
 
 pub const MAX_CHAT_CHARS: usize = 200;
 pub const MAX_SPECTATORS: usize = 20;
@@ -134,6 +134,9 @@ pub enum ClientMessage {
         player_id: String,
         auth_token: Option<String>,
         last_disconnect_reason: Option<String>,
+        /// Opened on its own for a signed-in player: it does not take a seat
+        /// away from a tab that is using it.
+        background: bool,
     },
     Input {
         kind: InputKind,
@@ -201,6 +204,11 @@ pub enum ClientMessage {
     },
     RemoveCpu {
         slot: u8,
+    },
+    /// Whether the room list is pushed to this connection: only the screen
+    /// that shows it wants it. On by default.
+    ListRooms {
+        on: bool,
     },
 }
 

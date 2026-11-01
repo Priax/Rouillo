@@ -267,6 +267,7 @@ fn decode_survives_corrupted_messages() {
             player_id: "p".repeat(32),
             auth_token: Some("t".repeat(36)),
             last_disconnect_reason: Some("read: boom".into()),
+            background: false,
         }),
         bitcode::encode(&ClientMessage::CreateRoom { name: "room".into() }),
         bitcode::encode(&ServerMessage::RoomList {
@@ -308,6 +309,7 @@ fn client_samples() -> Vec<ClientMessage> {
             player_id: "p".into(),
             auth_token: Some("t".into()),
             last_disconnect_reason: Some("r".into()),
+            background: false,
         },
         ClientMessage::Input {
             kind: InputKind::HardDrop,
@@ -354,10 +356,11 @@ fn client_samples() -> Vec<ClientMessage> {
             team: Some(1),
         },
         ClientMessage::RemoveCpu { slot: 2 },
+        ClientMessage::ListRooms { on: false },
     ]
 }
 
-const CLIENT_VARIANTS: usize = 26;
+const CLIENT_VARIANTS: usize = 27;
 
 fn client_variant(m: &ClientMessage) -> usize {
     match m {
@@ -387,6 +390,7 @@ fn client_variant(m: &ClientMessage) -> usize {
         ClientMessage::AddCpu => 23,
         ClientMessage::SetCpu { .. } => 24,
         ClientMessage::RemoveCpu { .. } => 25,
+        ClientMessage::ListRooms { .. } => 26,
     }
 }
 
@@ -581,7 +585,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (13, 8_009_367_441_582_123_114);
+const PROTOCOL_DIGEST: (u32, u64) = (14, 13_092_165_943_773_441_792);
 
 #[test]
 fn protocol_changes_bump_the_version() {

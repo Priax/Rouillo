@@ -177,6 +177,7 @@ async fn the_manager_loop_outlives_a_shutdown_while_a_game_runs() {
         tokio::spawn(async move { while out.recv().await.is_some() {} });
         let hello = Command::Hello {
             last_disconnect_reason: None,
+            background: false,
             conn,
             token: token.to_string(),
             user_id: None,

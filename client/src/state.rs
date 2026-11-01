@@ -4,9 +4,13 @@ use shared::{
 };
 
 use crate::connection::Connection;
+pub use crate::http::HttpSlot;
 use crate::interp::OpponentView;
 use crate::storage;
+use crate::theme::hue;
 use crate::ui::{Status, TextInput};
+
+pub const MAX_PASSWORD_CHARS: usize = 64;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
@@ -33,7 +37,6 @@ pub enum Screen {
 
 impl Screen {
     pub fn hue(self) -> f32 {
-        use crate::theme::hue;
         match self {
             Self::Title | Self::Auth | Self::Menu | Self::PlayMenu | Self::Help => hue::PURPLE,
             Self::RoomBrowser
@@ -59,8 +62,6 @@ impl Screen {
     }
 }
 
-pub use crate::http::HttpSlot;
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AuthMode {
     Login,
@@ -81,8 +82,6 @@ pub struct AuthForm {
     pub status: Status,
     pub pending: Option<HttpSlot>,
 }
-
-pub const MAX_PASSWORD_CHARS: usize = 64;
 
 impl Default for AuthForm {
     fn default() -> Self {
@@ -745,6 +744,12 @@ pub struct State {
     pub title_seen: bool,
     pub pending_invitation: Option<(String, RoomId, String)>,
     pub pending_join: Option<RoomId>,
+    /// The time before which no background connection is tried.
+    pub next_link_at: f64,
+    /// Whether the server pushes the room list on this connection.
+    pub rooms_listed: bool,
+    /// Another tab took over: this one stays off, or they would take turns.
+    pub opened_elsewhere: bool,
     pub pending_watch: Option<String>,
     pub ranked: crate::ranked::RankedView,
     pub help: Option<crate::help::HelpView>,
@@ -795,6 +800,9 @@ impl State {
             title_seen: false,
             pending_invitation: None,
             pending_join: None,
+            next_link_at: 0.0,
+            rooms_listed: true,
+            opened_elsewhere: false,
             pending_watch: None,
             ranked: crate::ranked::RankedView::default(),
             help: None,

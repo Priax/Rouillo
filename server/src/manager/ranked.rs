@@ -435,7 +435,7 @@ impl Manager {
         self.rooms.get(&id).and_then(|r| r.series.as_ref())
     }
 
-    pub(super) fn series_over(&self, id: RoomId) -> bool {
+    pub(crate) fn series_over(&self, id: RoomId) -> bool {
         self.series(id).is_some_and(|s| s.result.is_some())
     }
 

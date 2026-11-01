@@ -282,6 +282,7 @@ impl Inbox {
                 player_id,
                 auth_token,
                 last_disconnect_reason,
+                background,
             } => {
                 self.greeted = true;
                 let session = auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok());
@@ -296,6 +297,7 @@ impl Inbox {
                     user_id: user.as_ref().map(|u| u.id),
                     username: user.map(|u| u.username),
                     last_disconnect_reason: last_disconnect_reason.as_deref().map(log_safe),
+                    background,
                 }
             }
             ClientMessage::Ping { id } => {
@@ -340,6 +342,7 @@ fn command(conn: ConnId, msg: ClientMessage) -> Option<Command> {
         ClientMessage::TogglePause => Command::TogglePause { conn },
         ClientMessage::RequestRestart => Command::Restart { conn },
         ClientMessage::RequestRoomList => Command::RequestRoomList { conn },
+        ClientMessage::ListRooms { on } => Command::ListRooms { conn, on },
         ClientMessage::CreateRoom { name } => Command::CreateRoom { conn, name },
         ClientMessage::JoinRoom { id } => Command::JoinRoom { conn, id },
         ClientMessage::LeaveRoom => Command::LeaveRoom { conn },

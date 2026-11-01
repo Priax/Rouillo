@@ -48,6 +48,7 @@ fn reg(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<Vec<u8>> {
 fn hello(mgr: &mut Manager, conn: ConnId, token: &str) {
     mgr.handle(Command::Hello {
         last_disconnect_reason: None,
+        background: false,
         conn,
         token: token.to_string(),
         user_id: None,

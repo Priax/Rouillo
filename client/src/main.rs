@@ -56,6 +56,8 @@ use pads::{Pad, Pads};
 use state::{Screen, State};
 use ui::{Rect, SharpText, Size};
 
+const BANNER_H: f32 = 80.0;
+
 pub fn server_url() -> String {
     #[cfg(all(target_arch = "wasm32", not(debug_assertions)))]
     {
@@ -224,8 +226,6 @@ fn pad_direction(pads: &Pads) -> Option<(f32, f32)> {
     .map(|(_, dir)| dir)
 }
 
-const BANNER_H: f32 = 80.0;
-
 fn banner_buttons(ww: f32, wh: f32) -> (Rect, Rect) {
     let band = Rect::at(0.0, wh - BANNER_H, ww, BANNER_H).pad(15.0, 30.0, 15.0, 0.0);
     let [accept, decline] = band.right(240.0).columns(10.0, [Size::Px(120.0), Size::Px(110.0)]);
@@ -238,6 +238,7 @@ fn update_invitation(state: &mut State) {
     }
     let (ww, wh) = state.ui.view().size();
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
+    let on_banner = state.ui.clicked(Rect::at(0.0, wh - BANNER_H, ww, BANNER_H));
     if state.ui.clicked(accept_btn) {
         if let Some((_, room_id, _)) = state.pending_invitation.take() {
             if state.conn.is_live() {
@@ -248,11 +249,15 @@ fn update_invitation(state: &mut State) {
                 state.pending_join = Some(room_id);
             }
             state.solo = None;
+            state.replay = None;
             state.ranked.stop();
             state.screen = Screen::RoomBrowser;
         }
     } else if state.ui.clicked(decline_btn) {
         state.pending_invitation = None;
+    }
+    if on_banner {
+        state.ui.swallow_click();
     }
 }
 
@@ -353,6 +358,7 @@ fn update(app: &mut App, state: &mut State) {
     solo::poll_best(state);
     replay::poll(state);
 
+    network::keep_linked(state);
     update_invitation(state);
     network::handle_server_messages(state);
 
@@ -553,6 +559,9 @@ fn draw_reconnect_banner(gfx: &mut Graphics, state: &State) {
     let Some((attempts, secs_left)) = state.conn.recovering(connection::now_secs()) else {
         return;
     };
+    if !state.screen.needs_connection() {
+        return;
+    }
     let ww = state.ui.view().w;
     let mut d = state.ui.canvas(gfx);
     ui::banner(

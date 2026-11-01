@@ -8,6 +8,7 @@ pub(super) fn hello_as(mgr: &mut Manager, conn: ConnId, token: &str, user: u128)
         username: Some(token.to_lowercase()),
         session: None,
         last_disconnect_reason: None,
+        background: false,
     });
 }
 
@@ -251,14 +252,20 @@ fn guests_cannot_invite() {
 }
 
 #[test]
-fn inviting_an_offline_user_costs_no_lookup() {
-    let mut mgr = new_mgr();
-    let _ = inviter_and_target(&mut mgr);
-    mgr.handle(Command::InviteFriend {
+fn a_stranger_cannot_tell_whether_someone_is_online() {
+    let mut mgr = Manager::new();
+    let mut rx1 = reg(&mut mgr, 1);
+    hello_as(&mut mgr, 1, "A", 1);
+    mgr.handle(Command::CreateRoom {
         conn: 1,
-        target_user_id: Uuid::from_u128(77).to_string(),
+        name: "R".into(),
     });
-    assert!(mgr.take_friend_checks().is_empty());
+    let _ = drain(&mut rx1);
+    invite_b(&mut mgr);
+    for check in mgr.take_friend_checks() {
+        mgr.handle(Command::FriendCheckDone { check, friends: false });
+    }
+    assert!(!has(&drain(&mut rx1), |m| matches!(m, ServerMessage::Chat { .. })));
 }
 
 #[test]
@@ -394,4 +401,54 @@ fn a_friendship_changed_while_loading_is_read_again() {
         friends: vec![],
     });
     assert!(mgr.take_friend_loads().is_empty());
+}
+
+fn finish_invite_check(mgr: &mut Manager) {
+    for check in mgr.take_friend_checks() {
+        mgr.handle(Command::FriendCheckDone { check, friends: true });
+    }
+}
+
+#[test]
+fn an_invitation_reaches_every_connection_of_the_friend() {
+    let mut mgr = Manager::new();
+    let mut first = inviter_and_target(&mut mgr);
+    let mut second = reg(&mut mgr, 3);
+    hello_as(&mut mgr, 3, "B2", 2);
+    let _ = drain(&mut second);
+    invite_b(&mut mgr);
+    finish_invite_check(&mut mgr);
+    assert_eq!(invitations(&mut first), 1);
+    assert_eq!(invitations(&mut second), 1);
+}
+
+#[test]
+fn the_inviter_hears_that_the_friend_is_offline() {
+    let mut mgr = Manager::new();
+    let mut rx1 = reg(&mut mgr, 1);
+    hello_as(&mut mgr, 1, "A", 1);
+    mgr.handle(Command::CreateRoom {
+        conn: 1,
+        name: "R".into(),
+    });
+    let _ = drain(&mut rx1);
+    invite_b(&mut mgr);
+    finish_invite_check(&mut mgr);
+    assert!(has(
+        &drain(&mut rx1),
+        |m| matches!(m, ServerMessage::Chat { text, .. } if text == crate::manager::friends::INVITE_OFFLINE)
+    ));
+}
+
+#[test]
+fn the_room_list_goes_only_to_those_who_want_it() {
+    let mut mgr = Manager::new();
+    let mut rx = reg(&mut mgr, 1);
+    hello_as(&mut mgr, 1, "A", 1);
+    mgr.handle(Command::ListRooms { conn: 1, on: false });
+    let _ = drain(&mut rx);
+    mgr.broadcast_room_list();
+    assert!(!has(&drain(&mut rx), |m| matches!(m, ServerMessage::RoomList { .. })));
+    mgr.handle(Command::ListRooms { conn: 1, on: true });
+    assert!(has(&drain(&mut rx), |m| matches!(m, ServerMessage::RoomList { .. })));
 }

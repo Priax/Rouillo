@@ -144,6 +144,7 @@ async fn only_the_first_hello_per_connection_counts() {
         player_id: "p".into(),
         auth_token: None,
         last_disconnect_reason: None,
+        background: false,
     });
     for _ in 0..5 {
         client.send(hello.clone()).await.expect("send");
@@ -378,4 +379,28 @@ async fn inputs_sent_again_each_count_against_the_limit() {
         "{taken} inputs went through a burst of {CLIENT_MSG_BURST}"
     );
     assert!(taken > 1000, "the burst itself was refused: {taken}");
+}
+
+#[test]
+fn a_background_connection_leaves_a_used_seat_alone() {
+    let mut mgr = Manager::new();
+    let _rx1 = reg(&mut mgr, 1);
+    hello(&mut mgr, 1, "A");
+    mgr.handle(Command::CreateRoom {
+        conn: 1,
+        name: "R".into(),
+    });
+    let mut rx2 = reg(&mut mgr, 2);
+    mgr.handle(Command::Hello {
+        conn: 2,
+        token: "A".to_string(),
+        user_id: None,
+        username: None,
+        session: None,
+        last_disconnect_reason: None,
+        background: true,
+    });
+    assert!(mgr.room_of(1).is_some(), "the first tab stays in its room");
+    assert_eq!(mgr.room_of(2), None);
+    assert!(!has(&drain(&mut rx2), |m| matches!(m, ServerMessage::OpenedElsewhere)));
 }

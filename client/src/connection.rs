@@ -244,6 +244,10 @@ impl Connection {
         matches!(self.link, Link::Live { .. })
     }
 
+    pub fn is_offline(&self) -> bool {
+        matches!(self.link, Link::Offline)
+    }
+
     pub fn connect(&mut self, now: f64) {
         if matches!(self.transport, Transport::Unknown) {
             let slot = crate::http::new_slot();

@@ -8,6 +8,7 @@ pub(super) fn hello_session(mgr: &mut Manager, conn: ConnId, token: &str, user: 
         username: Some(token.to_lowercase()),
         session: Some(Uuid::from_u128(session)),
         last_disconnect_reason: None,
+        background: false,
     });
 }
 
@@ -306,6 +307,25 @@ fn coming_back_after_a_finished_series_starts_afresh() {
     assert_eq!(mgr.room_of(3), None, "not put back into the old series");
     assert!(!mgr.rooms.contains_key(&id), "the finished room is gone");
     assert!(has(&drain(&mut rx), |m| matches!(m, ServerMessage::RoomList { .. })));
+}
+
+#[test]
+fn a_background_connection_leaves_a_finished_series_to_the_tab_showing_it() {
+    let mut mgr = new_mgr();
+    let (id, _rx1, _rx2) = ranked_pair(&mut mgr);
+    mgr.handle(Command::LeaveRoom { conn: 1 });
+    assert!(mgr.series_over(id));
+    let _rx3 = reg(&mut mgr, 3);
+    mgr.handle(Command::Hello {
+        conn: 3,
+        token: "P2".to_string(),
+        user_id: Some(Uuid::from_u128(2)),
+        username: Some("p2".to_string()),
+        session: None,
+        last_disconnect_reason: None,
+        background: true,
+    });
+    assert_eq!(mgr.room_of(2), Some(id), "the result stays on screen");
 }
 
 #[test]

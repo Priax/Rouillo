@@ -308,6 +308,11 @@ impl Ui {
         target
     }
 
+    /// Keeps this frame's click from what lies under the widget that took it.
+    pub fn swallow_click(&mut self) {
+        self.inner.get_mut().mouse.pressed = false;
+    }
+
     pub fn clicked(&self, r: Rect) -> bool {
         self.click_in(r).is_some()
     }

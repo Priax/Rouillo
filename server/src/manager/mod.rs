@@ -85,9 +85,14 @@ pub enum Command {
         username: Option<String>,
         session: Option<Uuid>,
         last_disconnect_reason: Option<String>,
+        background: bool,
     },
     RequestRoomList {
         conn: ConnId,
+    },
+    ListRooms {
+        conn: ConnId,
+        on: bool,
     },
     CreateRoom {
         conn: ConnId,
@@ -221,6 +226,7 @@ impl Command {
             Self::Unregister { conn }
             | Self::Hello { conn, .. }
             | Self::RequestRoomList { conn }
+            | Self::ListRooms { conn, .. }
             | Self::CreateRoom { conn, .. }
             | Self::JoinRoom { conn, .. }
             | Self::LeaveRoom { conn }
@@ -416,11 +422,11 @@ impl Manager {
 
     /// The public list is encoded once; only those who also see a
     /// friends-only room get a list of their own.
-    fn broadcast_room_list(&mut self) {
+    pub(crate) fn broadcast_room_list(&mut self) {
         let browsing: Vec<ConnId> = self
             .clients
             .iter()
-            .filter_map(|(&c, client)| client.room.is_none().then_some(c))
+            .filter_map(|(&c, client)| (client.room.is_none() && client.lists_rooms).then_some(c))
             .collect();
         let public = shared::encode(&ServerMessage::RoomList {
             rooms: self.public_room_list(),
@@ -465,15 +471,24 @@ impl Manager {
                 username,
                 session,
                 last_disconnect_reason,
+                background,
             } => {
                 if let Some(reason) = last_disconnect_reason {
                     warn!("WS {conn} reconnecte après coupure client: {reason}");
                 }
                 self.set_identity(conn, user_id, username, session);
-                self.on_hello(conn, token);
+                self.on_hello(conn, token, background);
             }
             Command::Unregister { conn } => self.drop_connection(conn),
             Command::RequestRoomList { conn } => self.send_room_list_to(conn),
+            Command::ListRooms { conn, on } => {
+                if let Some(client) = self.clients.get_mut(&conn) {
+                    client.lists_rooms = on;
+                }
+                if on {
+                    self.send_room_list_to(conn);
+                }
+            }
             Command::CreateRoom { conn, name } => self.create_room(conn, &name),
             Command::JoinRoom { conn, id } => self.request_join(conn, id),
             Command::LeaveRoom { conn } => {

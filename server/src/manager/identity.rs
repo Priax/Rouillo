@@ -3,8 +3,8 @@ use super::*;
 pub(super) const GUEST_NAME: &str = "Invité";
 
 impl Manager {
-    pub(super) fn conn_of_user(&self, user: Uuid) -> Option<ConnId> {
-        self.user_conns.get(&user).and_then(|conns| conns.iter().min().copied())
+    pub(super) fn conns_of_user(&self, user: Uuid) -> Vec<ConnId> {
+        self.user_conns.get(&user).into_iter().flatten().copied().collect()
     }
 
     pub(super) fn display_name(&self, conn: ConnId) -> String {
@@ -53,8 +53,7 @@ impl Manager {
     }
 
     pub(super) fn rename(&mut self, user: Uuid, name: &str) {
-        let conns: Vec<ConnId> = self.user_conns.get(&user).into_iter().flatten().copied().collect();
-        for conn in conns {
+        for conn in self.conns_of_user(user) {
             if let Some(client) = self.clients.get_mut(&conn) {
                 client.username = Some(name.to_owned());
             }
@@ -93,12 +92,7 @@ impl Manager {
     }
 
     pub(super) fn revoke(&mut self, user: Uuid, keep: Option<Uuid>) {
-        let conns: Vec<ConnId> = self
-            .user_conns
-            .get(&user)
-            .map(|c| c.iter().copied().collect())
-            .unwrap_or_default();
-        for conn in conns {
+        for conn in self.conns_of_user(user) {
             if keep.is_some() && self.clients.get(&conn).and_then(|c| c.session) == keep {
                 continue;
             }

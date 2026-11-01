@@ -1,7 +1,7 @@
 use super::*;
 
 impl Manager {
-    pub(super) fn on_hello(&mut self, conn: ConnId, token: Token) {
+    pub(super) fn on_hello(&mut self, conn: ConnId, token: Token, background: bool) {
         if token.is_empty() || token.len() > MAX_PLAYER_ID {
             warn!("WS {conn}: player_id invalide, ignoré");
             return;
@@ -11,6 +11,7 @@ impl Manager {
             Some(id) => {
                 let seat = self.rooms[&id].members.iter().position(|m| m.token == token);
                 match seat {
+                    Some(slot) if background && self.rooms[&id].members[slot].conn.is_some() => None,
                     Some(slot) if self.series_over(id) => {
                         self.detach_ranked(id, slot);
                         None

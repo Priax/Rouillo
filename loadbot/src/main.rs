@@ -160,6 +160,7 @@ impl Bot {
             player_id: format!("loadbot-{}", self.n),
             auth_token: None,
             last_disconnect_reason: None,
+            background: false,
         };
         Self::send(ws, &hello).await?;
         match self.role {

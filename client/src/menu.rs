@@ -155,6 +155,7 @@ pub fn do_logout(state: &mut State) {
 pub fn forget_session(state: &mut State) {
     state.conn.disconnect();
     state.room = None;
+    state.pending_invitation = None;
     clear_auth(state);
     state.auth_form = AuthForm::default();
     state.screen = Screen::Auth;

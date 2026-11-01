@@ -4,6 +4,27 @@ use crate::connection::ConnEvent;
 use crate::state::{GameSession, Rival, Room, Screen, State};
 use crate::ui::Status;
 
+/// After the connection gave up, how long before a background one is tried.
+const LINK_PAUSE_SECS: f64 = 30.0;
+
+/// Keeps a signed-in player connected on every screen, for a friend's
+/// invitation to reach them, with the room list only on the screen showing it.
+pub fn keep_linked(state: &mut State) {
+    let now = crate::connection::now_secs();
+    let wanted = state.auth.is_some() && !state.too_old && !state.opened_elsewhere;
+    if wanted && state.conn.is_offline() && now >= state.next_link_at {
+        state.conn.connect(now);
+    }
+    if state.auth.is_none() && !state.screen.needs_connection() && !state.conn.is_offline() {
+        state.conn.disconnect();
+    }
+    let on = state.screen == Screen::RoomBrowser;
+    if state.conn.is_live() && state.rooms_listed != on {
+        state.conn.send(&ClientMessage::ListRooms { on });
+        state.rooms_listed = on;
+    }
+}
+
 pub fn handle_server_messages(state: &mut State) {
     let now = crate::connection::now_secs();
     for event in state.conn.poll(now) {
@@ -13,30 +34,38 @@ pub fn handle_server_messages(state: &mut State) {
             ConnEvent::Retrying => {
                 if state.screen.needs_connection() {
                     state.notice = Status::info("Connexion perdue, reconnexion…");
-                } else {
-                    state.conn.disconnect();
+                }
+            }
+            ConnEvent::GaveUp => {
+                state.next_link_at = now + LINK_PAUSE_SECS;
+                if state.screen.needs_connection() {
                     reset_to_menu(state, Status::error("Connexion au serveur perdue."));
                 }
             }
-            ConnEvent::GaveUp => reset_to_menu(state, Status::error("Connexion au serveur perdue.")),
             ConnEvent::Outdated => {
                 state.outdated = true;
                 state.too_old = true;
                 #[cfg(not(target_arch = "wasm32"))]
                 crate::updater::check();
-                reset_to_menu(state, Status::Empty);
+                if state.screen.needs_connection() {
+                    reset_to_menu(state, Status::Empty);
+                }
             }
         }
     }
 }
 
 fn on_opened(state: &mut State, recovered: bool) {
+    let background = !state.screen.needs_connection();
+    state.opened_elsewhere &= background;
     let hello = ClientMessage::Hello {
         player_id: state.player_id.clone(),
         auth_token: state.auth.as_ref().map(|a| a.token.clone()),
         last_disconnect_reason: state.conn.take_unreported_drop(),
+        background,
     };
     state.conn.send(&hello);
+    state.rooms_listed = true;
     state.maintenance = false;
     if let Some(id) = state.pending_join.take() {
         state.conn.send(&ClientMessage::JoinRoom { id });
@@ -47,7 +76,7 @@ fn on_opened(state: &mut State, recovered: bool) {
     if state.screen == Screen::Ranked && state.ranked.resume_search() {
         state.conn.send(&ClientMessage::JoinQueue);
     }
-    if recovered {
+    if recovered && state.screen.needs_connection() {
         state.notice.clear();
     }
 }
@@ -359,6 +388,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             }
         }
         ServerMessage::OpenedElsewhere => {
+            state.opened_elsewhere = true;
             state.conn.disconnect();
             reset_to_menu(state, Status::info("Le jeu a été ouvert dans un autre onglet."));
         }

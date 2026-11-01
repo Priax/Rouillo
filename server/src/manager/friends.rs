@@ -2,6 +2,10 @@ use super::*;
 
 pub const INVITE_COOLDOWN: Duration = Duration::from_secs(2);
 
+const INVITE_NOTE_FROM: &str = "Invitation";
+const INVITE_SENT: &str = "Envoyée à votre ami.";
+pub(crate) const INVITE_OFFLINE: &str = "Votre ami n'est pas connecté.";
+
 #[derive(Debug, Clone)]
 pub enum FriendCheck {
     Join {
@@ -84,7 +88,7 @@ impl Manager {
             .into_iter()
             .flatten()
             .copied()
-            .filter(|c| self.clients.get(c).is_some_and(|c| c.room.is_none()))
+            .filter(|c| self.clients.get(c).is_some_and(|c| c.room.is_none() && c.lists_rooms))
             .collect();
         for conn in browsing {
             self.send_room_list_to(conn);
@@ -116,7 +120,7 @@ impl Manager {
             return;
         };
         let Ok(target) = Uuid::parse_str(target) else { return };
-        if target == inviter || self.conn_of_user(target).is_none() {
+        if target == inviter {
             return;
         }
         let now = Instant::now();
@@ -146,9 +150,11 @@ impl Manager {
         if !friends || self.room_of(conn) != Some(room) {
             return;
         }
-        let Some(target_conn) = self.conn_of_user(target) else {
+        let targets = self.conns_of_user(target);
+        if targets.is_empty() {
+            self.invite_note(conn, INVITE_OFFLINE);
             return;
-        };
+        }
         let Some(room_name) = self.rooms.get(&room).map(|r| r.name.clone()) else {
             return;
         };
@@ -157,12 +163,25 @@ impl Manager {
             .get(&conn)
             .and_then(|c| c.username.clone())
             .unwrap_or_else(|| "Un joueur".to_string());
+        let invitation = ServerMessage::FriendInvitation {
+            from_username,
+            room_id: room,
+            room_name,
+        };
+        for target_conn in targets {
+            self.deliver_msg(target_conn, &invitation);
+        }
+        self.invite_note(conn, INVITE_SENT);
+    }
+
+    /// Answers the inviter in the room's chat.
+    fn invite_note(&mut self, conn: ConnId, text: &str) {
         self.deliver_msg(
-            target_conn,
-            &ServerMessage::FriendInvitation {
-                from_username,
-                room_id: room,
-                room_name,
+            conn,
+            &ServerMessage::Chat {
+                from: INVITE_NOTE_FROM.to_string(),
+                text: text.to_string(),
+                spectator: false,
             },
         );
     }
