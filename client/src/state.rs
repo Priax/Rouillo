@@ -510,6 +510,8 @@ impl Rival {
 pub struct GameSession {
     pub board: Board,
     pub predicted_board: Board,
+    /// Played here, with no server: `predicted_board` is all there is.
+    pub local: bool,
     /// The other boards, by slot; the first is the one a duel shows.
     pub rivals: Vec<Rival>,
     pub my_slot: u8,
@@ -579,6 +581,7 @@ impl GameSession {
         Self {
             predicted_board: board.clone(),
             board,
+            local: false,
             rivals: Vec::new(),
             my_slot,
             focus: my_slot.max(1),
@@ -681,13 +684,26 @@ impl GameSession {
         Some(self.teams_alive(me_out)).filter(|alive| alive.len() <= 1)
     }
 
+    /// This player's board as it stands for sure, for deciding the game.
+    pub const fn own_board(&self) -> &Board {
+        if self.local {
+            &self.predicted_board
+        } else {
+            &self.board
+        }
+    }
+
+    pub fn own_board_out(&self) -> bool {
+        self.own_board().state() == GameState::GameOver
+    }
+
     pub fn decided(&self) -> bool {
-        self.outcome(self.board.state() == GameState::GameOver).is_some()
+        self.outcome(self.own_board_out()).is_some()
     }
 
     /// Out of a game that goes on without this player.
     pub fn eliminated(&self) -> bool {
-        !self.spectating() && self.board.state() == GameState::GameOver && !self.decided()
+        !self.spectating() && self.own_board_out() && !self.decided()
     }
 
     pub fn name_of(&self, slot: u8) -> &str {
@@ -880,6 +896,15 @@ mod settings_tests {
 #[cfg(test)]
 mod session_tests {
     use super::*;
+
+    #[test]
+    fn a_local_game_is_decided_by_the_board_played_here() {
+        let mut s = GameSession::new(1, Vec::new());
+        s.predicted_board.lose();
+        assert!(!s.decided(), "online, only the server's board counts");
+        s.local = true;
+        assert!(s.decided());
+    }
 
     fn session(my_team: u8, rivals: &[(u8, u8)]) -> GameSession {
         let mut s = GameSession::new(1, vec!["me".into(), "b".into(), "c".into(), "d".into()]);

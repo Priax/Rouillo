@@ -252,13 +252,6 @@ impl Hud {
             Self::Solo { .. } => "CPU",
         }
     }
-
-    const fn deciding(self, session: &GameSession) -> &Board {
-        match self {
-            Self::Online(_) => &session.board,
-            Self::Solo { .. } | Self::Replay => &session.predicted_board,
-        }
-    }
 }
 
 enum Overlay {
@@ -277,7 +270,6 @@ enum Overlay {
 
 impl Overlay {
     fn of(session: &GameSession, hud: Hud) -> Option<Self> {
-        let me = hud.deciding(session);
         if let Some(SeriesView {
             over: Some((won, _)), ..
         }) = hud.series()
@@ -287,7 +279,7 @@ impl Overlay {
                 draw: false,
             });
         }
-        let me_out = me.state() == GameState::GameOver;
+        let me_out = session.own_board_out();
         if let Some(alive) = session.outcome(me_out) {
             if session.spectating() {
                 return Some(Self::Watched(alive.first().map(|&team| winner(session, team))));
@@ -299,7 +291,7 @@ impl Overlay {
         }
         if session.opponent_disconnected {
             Some(Self::OpponentGone)
-        } else if me.state() == GameState::Paused {
+        } else if session.own_board().state() == GameState::Paused {
             Some(Self::Paused)
         } else if session.quit_menu {
             Some(Self::QuitMenu)

@@ -145,6 +145,7 @@ impl SoloGame {
         let names = std::iter::once(mine).chain(settings.opponents.iter().map(|&(d, s)| shared::cpu::name(d, s)));
         let mut session = GameSession::new(1, names.collect());
         session.predicted_board = board.clone();
+        session.local = true;
         let mut cpus = Vec::new();
         for (i, &(difficulty, style)) in settings.opponents.iter().enumerate() {
             cpus.push(Cpu::new(difficulty, style, seed.wrapping_add(i as u64)));
@@ -180,18 +181,14 @@ impl SoloGame {
         }
     }
 
-    fn me_out(&self) -> bool {
-        self.session.predicted_board.state() == GameState::GameOver
-    }
-
     /// Whether the game is over: one side is left, or the player alone is out.
     fn over(&self) -> bool {
-        self.session.outcome(self.me_out()).is_some()
+        self.session.decided()
     }
 
     /// Out of a game the CPUs play on.
     fn knocked_out(&self) -> bool {
-        self.me_out() && !self.over()
+        self.session.eliminated()
     }
 
     /// Whether nothing is being played: the game is over or paused.
@@ -822,7 +819,7 @@ mod tests {
             hit.iter().filter(|&&h| h).count() >= 2,
             "nuisance only went one way: {hit:?}"
         );
-        let alive = game.session.teams_alive(game.me_out());
+        let alive = game.session.teams_alive(game.session.own_board_out());
         assert_eq!(alive.len(), 1, "one side left: {alive:?}");
     }
 
