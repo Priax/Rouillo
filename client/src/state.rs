@@ -769,13 +769,7 @@ pub struct State {
     pub bindings_panel: crate::bindings_panel::BindingsPanel,
     pub pads: crate::pads::Pads,
     pub touch: crate::touch::TouchPad,
-    pub solo_settings: crate::solo::SoloSettings,
-    /// The board size view is open over the solo settings.
-    pub solo_sizing: bool,
-    pub solo: Option<crate::solo::SoloGame>,
-    /// A guest's best lives on the device, an account's on the server.
-    pub solo_best: u32,
-    pub solo_best_slot: Option<HttpSlot>,
+    pub solo: crate::solo::Solo,
     pub replay: Option<crate::replay::ReplayViewer>,
     pub replay_loading: Option<crate::replay::Loading>,
 }
@@ -821,11 +815,7 @@ impl State {
             bindings_panel: crate::bindings_panel::BindingsPanel::default(),
             pads: crate::pads::Pads::new(),
             touch: crate::touch::TouchPad::default(),
-            solo_settings: crate::solo::SoloSettings::default(),
-            solo_sizing: false,
-            solo: None,
-            solo_best: load_best_score(),
-            solo_best_slot: None,
+            solo: crate::solo::Solo::new(),
             replay: None,
             replay_loading: None,
         }

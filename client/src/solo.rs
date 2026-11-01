@@ -12,6 +12,29 @@ use crate::{board_size, http, logic, rooms, theme};
 /// The most CPUs a solo game takes on: each one thinks on this device.
 pub const MAX_OPPONENTS: usize = 3;
 
+/// Solo play: what is being set up, the game under way, the best score.
+pub struct Solo {
+    pub settings: SoloSettings,
+    /// The board size view is open over the settings.
+    pub sizing: bool,
+    pub game: Option<SoloGame>,
+    /// A guest's best lives on the device, an account's on the server.
+    pub best: u32,
+    pub best_slot: Option<crate::state::HttpSlot>,
+}
+
+impl Solo {
+    pub fn new() -> Self {
+        Self {
+            settings: SoloSettings::default(),
+            sizing: false,
+            game: None,
+            best: crate::state::load_best_score(),
+            best_slot: None,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct SoloSettings {
     /// A CPU playing the player's board, for a game between CPUs.
@@ -282,7 +305,7 @@ pub fn send_best(state: &mut State, score: u32) {
         Some(auth.token.clone()),
         Arc::clone(&slot),
     );
-    state.solo_best_slot = Some(slot);
+    state.solo.best_slot = Some(slot);
 }
 
 pub fn signed_in(state: &mut State) {
@@ -294,7 +317,7 @@ pub fn poll_best(state: &mut State) {
     struct Best {
         solo_best: u32,
     }
-    let Some(result) = http::take_json::<Best>(&mut state.solo_best_slot) else {
+    let Some(result) = http::take_json::<Best>(&mut state.solo.best_slot) else {
         return;
     };
     if state.auth.is_none() {
@@ -302,11 +325,11 @@ pub fn poll_best(state: &mut State) {
     }
     match result {
         Ok(best) => {
-            state.solo_best = state.solo_best.max(best.solo_best);
+            state.solo.best = state.solo.best.max(best.solo_best);
             crate::state::clear_best_score();
         }
         // Kept on the device until the next sign-in sends it again.
-        Err(_) => crate::state::save_best_score(state.solo_best),
+        Err(_) => crate::state::save_best_score(state.solo.best),
     }
 }
 
@@ -318,18 +341,20 @@ pub fn update_game(app: &mut App, state: &mut State) {
         settings,
         ui,
         screen,
-        solo_best,
         controls,
         ..
     } = state;
     let input = controls.frame;
-    let Some(game) = solo.as_mut() else {
+    let Solo {
+        game: current, best, ..
+    } = solo;
+    let Some(game) = current.as_mut() else {
         *screen = Screen::SoloSetup;
         return;
     };
 
     if game.knocked_out() && (input.pause || ui.bar_clicked(crate::draw::out_row(ui.view()))) {
-        *solo = None;
+        *current = None;
         *screen = Screen::SoloSetup;
         return;
     }
@@ -340,7 +365,7 @@ pub fn update_game(app: &mut App, state: &mut State) {
     if over || paused {
         let (quit, again) = crate::draw::exit_rows(ui.view(), true);
         if ui.bar_clicked(quit) {
-            *solo = None;
+            *current = None;
             *screen = Screen::SoloSetup;
             return;
         }
@@ -361,8 +386,8 @@ pub fn update_game(app: &mut App, state: &mut State) {
         }
         game.step(dt);
         let score = game.session.predicted_board.score;
-        if game.over() && game.settings.counts_for_best() && score > *solo_best {
-            *solo_best = score;
+        if game.over() && game.settings.counts_for_best() && score > *best {
+            *best = score;
             game.new_best = true;
             if signed_in {
                 record = Some(score);
@@ -461,10 +486,10 @@ impl Setup {
 
 pub fn update_setup(app: &mut App, state: &mut State) {
     let setup = Setup::new(state.ui.view());
-    let settings = &mut state.solo_settings;
-    if state.solo_sizing {
+    let settings = &mut state.solo.settings;
+    if state.solo.sizing {
         match board_size::update(app, &state.ui, &settings.room.rules, true) {
-            Some(board_size::Action::Close) => state.solo_sizing = false,
+            Some(board_size::Action::Close) => state.solo.sizing = false,
             Some(board_size::Action::Adjust(steps)) => {
                 for (setting, dir) in steps {
                     settings.room.adjust(setting, dir);
@@ -479,7 +504,7 @@ pub fn update_setup(app: &mut App, state: &mut State) {
         let tile = setup.tile(i);
         if i == SIZE_ROW {
             if ui.clicked(Stepper::tile_band(tile)) {
-                state.solo_sizing = true;
+                state.solo.sizing = true;
                 return;
             }
             continue;
@@ -511,7 +536,7 @@ pub fn update_setup(app: &mut App, state: &mut State) {
     }
 
     if ui.bar_clicked(setup.action_row(0)) || app.keyboard.was_pressed(KeyCode::Enter) {
-        state.solo = Some(SoloGame::new(state.solo_settings.clone()));
+        state.solo.game = Some(SoloGame::new(state.solo.settings.clone()));
         state.screen = Screen::Solo;
     } else if ui.bar_clicked(setup.action_row(1)) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.screen = Screen::PlayMenu;
@@ -522,9 +547,9 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
     let view = state.ui.view();
     let fonts = &state.fonts;
-    let settings = &state.solo_settings;
+    let settings = &state.solo.settings;
     let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.set_input(!state.solo_sizing);
+    state.ui.set_input(!state.solo.sizing);
 
     state
         .ui
@@ -535,8 +560,8 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
         .size(theme::size::TITLE)
         .v_align_middle()
         .color(pal.text);
-    if state.solo_best > 0 {
-        let best = format!("Meilleur score: {}", state.solo_best);
+    if state.solo.best > 0 {
+        let best = format!("Meilleur score: {}", state.solo.best);
         let pill = Pill {
             text: &best,
             color: theme::GOLD,
@@ -592,7 +617,7 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
         .ui
         .menu_bar(&mut draw, fonts, setup.action_row(1), "Retour", theme::bar::RED);
 
-    if state.solo_sizing {
+    if state.solo.sizing {
         board_size::draw(&mut draw, &state.ui, fonts, &settings.room.rules, true);
     }
     state.ui.render(gfx, &draw);

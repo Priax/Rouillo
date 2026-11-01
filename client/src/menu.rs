@@ -164,8 +164,8 @@ pub fn forget_session(state: &mut State) {
 pub fn clear_auth(state: &mut State) {
     crate::state::clear_stored_token();
     state.auth = None;
-    state.solo_best = crate::state::load_best_score();
-    state.solo_best_slot = None;
+    state.solo.best = crate::state::load_best_score();
+    state.solo.best_slot = None;
     state.friends = None;
     state.profile = None;
     state.other_profile = None;

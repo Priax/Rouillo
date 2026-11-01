@@ -209,7 +209,7 @@ fn pad_menus(state: &State) -> bool {
             let chatting = state.room.as_ref().is_some_and(|r| r.chat.open);
             can_chat(state) && !chatting || state.session().is_some_and(|s| s.quit_menu)
         }
-        Screen::Solo => state.solo.as_ref().is_some_and(solo::SoloGame::idle),
+        Screen::Solo => state.solo.game.as_ref().is_some_and(solo::SoloGame::idle),
         _ => true,
     }
 }
@@ -248,7 +248,7 @@ fn update_invitation(state: &mut State) {
                 state.rooms.clear();
                 state.pending_join = Some(room_id);
             }
-            state.solo = None;
+            state.solo.game = None;
             state.replay = None;
             state.ranked.stop();
             state.screen = Screen::RoomBrowser;
@@ -460,8 +460,8 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         Screen::Help => help::draw(gfx, state),
         Screen::Replay => replay::draw(app, gfx, state),
         Screen::Solo => {
-            if let Some(game) = state.solo.as_ref() {
-                let hud = game.hud(state.solo_best);
+            if let Some(game) = state.solo.game.as_ref() {
+                let hud = game.hud(state.solo.best);
                 draw::draw_game(app, gfx, &game.session, &state.ui, &state.fonts, hud);
             }
         }
