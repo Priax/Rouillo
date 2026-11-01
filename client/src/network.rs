@@ -1,6 +1,7 @@
 use shared::{config, Board, ClientMessage, IncomingGarbage, PlayerUpdate, Rules, ServerMessage, StampedInput, Thumb};
 
 use crate::connection::ConnEvent;
+use crate::nav::Nav;
 use crate::state::{GameSession, Network, Rival, Room, Screen, State};
 use crate::ui::Status;
 
@@ -25,21 +26,21 @@ pub fn keep_linked(net: &mut Network, signed_in: bool, screen: Screen) {
     }
 }
 
-pub fn handle_server_messages(state: &mut State) {
+pub fn handle_server_messages(state: &mut State, nav: &mut Nav) {
     let now = crate::connection::now_secs();
     for event in state.net.conn.poll(now) {
         match event {
-            ConnEvent::Opened { recovered } => on_opened(state, recovered),
-            ConnEvent::Message(msg) => process_message(state, *msg),
+            ConnEvent::Opened { recovered } => on_opened(state, nav, recovered),
+            ConnEvent::Message(msg) => process_message(state, nav, *msg),
             ConnEvent::Retrying => {
-                if state.screen.needs_connection() {
+                if nav.current.needs_connection() {
                     state.notice = Status::info("Connexion perdue, reconnexion…");
                 }
             }
             ConnEvent::GaveUp => {
                 state.net.next_link_at = now + LINK_PAUSE_SECS;
-                if state.screen.needs_connection() {
-                    reset_to_menu(state, Status::error("Connexion au serveur perdue."));
+                if nav.current.needs_connection() {
+                    reset_to_menu(state, nav, Status::error("Connexion au serveur perdue."));
                 }
             }
             ConnEvent::Outdated => {
@@ -47,16 +48,16 @@ pub fn handle_server_messages(state: &mut State) {
                 state.net.too_old = true;
                 #[cfg(not(target_arch = "wasm32"))]
                 crate::updater::check();
-                if state.screen.needs_connection() {
-                    reset_to_menu(state, Status::Empty);
+                if nav.current.needs_connection() {
+                    reset_to_menu(state, nav, Status::Empty);
                 }
             }
         }
     }
 }
 
-fn on_opened(state: &mut State, recovered: bool) {
-    let background = !state.screen.needs_connection();
+fn on_opened(state: &mut State, nav: &Nav, recovered: bool) {
+    let background = !nav.current.needs_connection();
     state.net.opened_elsewhere &= background;
     let hello = ClientMessage::Hello {
         player_id: state.net.player_id.clone(),
@@ -73,18 +74,18 @@ fn on_opened(state: &mut State, recovered: bool) {
     if let Some(user_id) = state.net.pending_watch.take() {
         state.net.conn.send(&ClientMessage::WatchFriend { user_id });
     }
-    if state.screen == Screen::Ranked && state.ranked.resume_search() {
+    if nav.current == Screen::Ranked && state.ranked.resume_search() {
         state.net.conn.send(&ClientMessage::JoinQueue);
     }
-    if recovered && state.screen.needs_connection() {
+    if recovered && nav.current.needs_connection() {
         state.notice.clear();
     }
 }
 
-fn reset_to_menu(state: &mut State, notice: Status) {
+fn reset_to_menu(state: &mut State, nav: &mut Nav, notice: Status) {
     state.room = None;
     state.rooms.clear();
-    state.screen = Screen::Menu;
+    nav.current = Screen::Menu;
     state.notice = notice;
 }
 
@@ -270,17 +271,17 @@ fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<Pl
     session.out_early |= session.eliminated();
 }
 
-fn process_message(state: &mut State, msg: ServerMessage) {
+fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
     match msg {
         ServerMessage::RoomList { rooms } => {
             state.rooms = rooms;
-            if matches!(state.screen, Screen::RoomLobby | Screen::Game) {
-                state.screen = Screen::RoomBrowser;
+            if matches!(nav.current, Screen::RoomLobby | Screen::Game) {
+                nav.current = Screen::RoomBrowser;
                 state.room = None;
             }
         }
         ServerMessage::Lobby { info } => {
-            state.screen = if info.ranked.is_some() {
+            nav.current = if info.ranked.is_some() {
                 state.ranked.stop();
                 Screen::Ranked
             } else {
@@ -306,7 +307,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
                 session.last_server_msg = "GameStart".to_string();
                 room.info.your_slot = your_slot;
                 room.session = Some(session);
-                state.screen = Screen::Game;
+                nav.current = Screen::Game;
             }
         }
         ServerMessage::StateUpdate { game, tick, players } => {
@@ -380,10 +381,10 @@ fn process_message(state: &mut State, msg: ServerMessage) {
             if state.auth.is_some() {
                 crate::menu::clear_auth(state);
                 if matches!(
-                    state.screen,
+                    nav.current,
                     Screen::Profile | Screen::Friends | Screen::OtherProfile | Screen::Ranked
                 ) {
-                    state.screen = Screen::Menu;
+                    nav.current = Screen::Menu;
                 }
                 state.notice = Status::info("Votre session a été fermée depuis un autre appareil.");
             }
@@ -391,7 +392,7 @@ fn process_message(state: &mut State, msg: ServerMessage) {
         ServerMessage::OpenedElsewhere => {
             state.net.opened_elsewhere = true;
             state.net.conn.disconnect();
-            reset_to_menu(state, Status::info("Le jeu a été ouvert dans un autre onglet."));
+            reset_to_menu(state, nav, Status::info("Le jeu a été ouvert dans un autre onglet."));
         }
         ServerMessage::Pong { .. } => {}
         ServerMessage::Maintenance => state.net.maintenance = true,

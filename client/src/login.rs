@@ -3,6 +3,7 @@ use std::sync::Arc;
 use notan::prelude::*;
 
 use crate::connection::now_secs;
+use crate::nav::{Nav, Transition};
 use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State};
 use crate::ui::{self, field_clicked, text_field, Field, Rect, SharpText, Status, View, FILL};
 use crate::{http, theme};
@@ -66,9 +67,9 @@ fn submit(form: &mut AuthForm) {
     form.pending = Some(slot);
 }
 
-fn poll_auth(state: &mut State) {
+fn poll_auth(state: &mut State) -> Transition {
     let Some(result) = http::take_json::<ApiAuthResponse>(&mut state.auth_form.pending) else {
-        return;
+        return Transition::Stay;
     };
     match result {
         Ok(r) => {
@@ -81,11 +82,12 @@ fn poll_auth(state: &mut State) {
                 avatar_url: r.avatar_url,
             });
             state.auth_form = AuthForm::default();
-            state.screen = Screen::Menu;
             crate::solo::signed_in(state);
+            return Transition::To(Screen::Menu);
         }
         Err(msg) => state.auth_form.status = Status::error(msg),
     }
+    Transition::Stay
 }
 
 const STARTUP_RETRY_SECS: f64 = 5.0;
@@ -100,8 +102,8 @@ pub fn check_stored_session(startup: &mut Startup) {
     startup.check = Some(slot);
 }
 
-pub fn poll_startup_check(state: &mut State) {
-    let waiting = state.auth.is_none() && matches!(state.screen, Screen::Title | Screen::Auth);
+pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
+    let waiting = state.auth.is_none() && matches!(nav.current, Screen::Title | Screen::Auth);
     if waiting && state.startup.retry_at.is_some_and(|t| now_secs() >= t) {
         check_stored_session(&mut state.startup);
     }
@@ -120,14 +122,14 @@ pub fn poll_startup_check(state: &mut State) {
                     avatar_url: me.avatar_url,
                 });
                 state.auth_form.status.clear();
-                state.screen = Screen::Menu;
+                nav.current = Screen::Menu;
                 crate::solo::signed_in(state);
             }
         }
         Ok(resp) if resp.status == 401 => {
             crate::state::clear_stored_token();
-            if state.screen == Screen::Title {
-                state.screen = Screen::Auth;
+            if nav.current == Screen::Title {
+                nav.current = Screen::Auth;
             }
         }
         _ => {
@@ -137,8 +139,11 @@ pub fn poll_startup_check(state: &mut State) {
     }
 }
 
-pub fn update_auth(app: &mut App, state: &mut State) {
-    poll_auth(state);
+pub fn update_auth(app: &mut App, state: &mut State) -> Transition {
+    let polled = poll_auth(state);
+    if !matches!(polled, Transition::Stay) {
+        return polled;
+    }
 
     let layout = auth_layout(state.ui.view(), state.auth_form.focused);
 
@@ -177,8 +182,9 @@ pub fn update_auth(app: &mut App, state: &mut State) {
     if state.ui.clicked(layout.guest) {
         state.auth = None;
         state.auth_form = AuthForm::default();
-        state.screen = Screen::Menu;
+        return Transition::To(Screen::Menu);
     }
+    Transition::Stay
 }
 
 pub fn draw_auth(gfx: &mut Graphics, state: &State) {

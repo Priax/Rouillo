@@ -1,6 +1,7 @@
 use notan::draw::Draw;
 use notan::prelude::*;
 
+use crate::nav::Transition;
 use crate::state::{Screen, State};
 use crate::theme;
 use crate::ui::{Fonts, SharpText, Ui};
@@ -24,19 +25,19 @@ const NOT_A_GESTURE: [KeyCode; 12] = [
     KeyCode::FnLock,
 ];
 
-pub fn update_title(app: &App, state: &mut State) {
+pub fn update_title(app: &App, state: &mut State) -> Transition {
     let key = app.keyboard.pressed.iter().any(|k| !NOT_A_GESTURE.contains(k));
     if !key && !app.mouse.left_was_pressed() {
-        return;
+        return Transition::Stay;
     }
     state.startup.title_seen = true;
     crate::audio::play_ui_click();
     let checking = state.startup.check.is_some() || state.startup.retry_at.is_some();
-    state.screen = if state.auth.is_none() && checking {
+    Transition::To(if state.auth.is_none() && checking {
         Screen::Auth
     } else {
         Screen::Menu
-    };
+    })
 }
 
 pub fn draw_title(gfx: &mut Graphics, state: &State) {

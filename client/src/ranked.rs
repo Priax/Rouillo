@@ -4,6 +4,7 @@ use shared::{config, ClientMessage};
 
 use crate::connection::{now_secs, Connection};
 use crate::http::{self, HttpSlot};
+use crate::nav::Transition;
 use crate::state::{ApiUserProfile, Room, Screen, State};
 use crate::theme;
 use crate::ui::{self, Fonts, Persona, Pill, Rect, SharpText, Ui, View, FILL};
@@ -112,7 +113,7 @@ fn single_button(view: View) -> Rect {
     Rect::centered_on(view.w / 2.0, view.h / 2.0 + 120.0, 280.0, 54.0)
 }
 
-pub fn enter(state: &mut State) {
+pub fn enter(state: &mut State) -> Transition {
     state.notice.clear();
     state.room = None;
     let ranked = &mut state.ranked;
@@ -121,12 +122,12 @@ pub fn enter(state: &mut State) {
         .auth
         .as_ref()
         .map(|auth| http::get_user(&auth.user_id, Some(auth.token.clone())));
-    state.screen = Screen::Ranked;
+    Transition::To(Screen::Ranked)
 }
 
-fn exit(state: &mut State) {
+fn exit(state: &mut State) -> Transition {
     state.net.conn.disconnect();
-    state.screen = Screen::PlayMenu;
+    Transition::To(Screen::PlayMenu)
 }
 
 fn start_search(state: &mut State) {
@@ -154,10 +155,10 @@ fn poll_stats(ranked: &mut RankedView) {
     }
 }
 
-pub fn update(app: &App, state: &mut State) {
+pub fn update(app: &App, state: &mut State) -> Transition {
     poll_stats(&mut state.ranked);
     if matched(state.room.as_ref()) {
-        return;
+        return Transition::Stay;
     }
     let view = state.ui.view();
     let escape = app.keyboard.was_pressed(KeyCode::Escape);
@@ -168,7 +169,7 @@ pub fn update(app: &App, state: &mut State) {
             if can_search && (state.ui.clicked(b.main) || app.keyboard.was_pressed(KeyCode::Enter)) {
                 start_search(state);
             } else if state.ui.clicked(b.second) || escape {
-                exit(state);
+                return exit(state);
             }
         }
         Search::Searching { .. } => {
@@ -189,6 +190,7 @@ pub fn update(app: &App, state: &mut State) {
             }
         }
     }
+    Transition::Stay
 }
 
 const PORTRAIT_R: f32 = 56.0;

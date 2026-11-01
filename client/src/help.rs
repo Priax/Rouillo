@@ -3,6 +3,7 @@ use notan::prelude::*;
 
 use crate::controls::{Action, Bindings};
 use crate::demo::Demo;
+use crate::nav::Transition;
 use crate::pads::Pad;
 use crate::state::{Screen, State};
 use crate::ui::{self, Face, Fonts, Frame, Icon, Rect, SharpText, Size, Ui, View, FILL};
@@ -87,15 +88,15 @@ fn back_btn(view: View) -> Rect {
     Frame::of(view).back
 }
 
-pub fn enter(state: &mut State) {
+pub fn enter(state: &mut State) -> Transition {
     state.help = Some(HelpView {
         demo: Demo::new(),
         rules: false,
     });
-    state.screen = Screen::Help;
+    Transition::To(Screen::Help)
 }
 
-pub fn update(app: &App, state: &mut State) {
+pub fn update(app: &App, state: &mut State) -> Transition {
     let view = state.ui.view();
     if let Some(help) = state.help.as_mut() {
         help.demo.update(app.timer.delta_f32());
@@ -115,8 +116,9 @@ pub fn update(app: &App, state: &mut State) {
     }
     if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.help = None;
-        state.screen = Screen::Menu;
+        return Transition::To(Screen::Menu);
     }
+    Transition::Stay
 }
 
 /// A small game controller, drawn in front of a pad button's name.

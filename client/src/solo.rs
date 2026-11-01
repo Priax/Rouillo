@@ -5,6 +5,7 @@ use shared::cpu::{Cpu, Difficulty, Style};
 use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings, Targeting};
 
 use crate::draw::Hud;
+use crate::nav::Transition;
 use crate::state::{AuthInfo, GameSession, Input, Rival, Screen, State};
 use crate::ui::{self, Frame, Icon, Pill, Rect, SharpText, Size, Stepper, View, FILL};
 use crate::{board_size, http, logic, rooms, theme};
@@ -333,14 +334,13 @@ pub fn poll_best(solo: &mut Solo, signed_in: bool) {
     }
 }
 
-pub fn update_game(app: &mut App, state: &mut State) {
+pub fn update_game(app: &mut App, state: &mut State) -> Transition {
     let signed_in = state.auth.is_some();
     let mut record = None;
     let State {
         solo,
         settings,
         ui,
-        screen,
         input: Input { controls, .. },
         ..
     } = state;
@@ -349,14 +349,12 @@ pub fn update_game(app: &mut App, state: &mut State) {
         game: current, best, ..
     } = solo;
     let Some(game) = current.as_mut() else {
-        *screen = Screen::SoloSetup;
-        return;
+        return Transition::To(Screen::SoloSetup);
     };
 
     if game.knocked_out() && (input.pause || ui.bar_clicked(crate::draw::out_row(ui.view()))) {
         *current = None;
-        *screen = Screen::SoloSetup;
-        return;
+        return Transition::To(Screen::SoloSetup);
     }
     if !game.over() && input.pause {
         game.set_paused(!game.paused());
@@ -366,12 +364,11 @@ pub fn update_game(app: &mut App, state: &mut State) {
         let (quit, again) = crate::draw::exit_rows(ui.view(), true);
         if ui.bar_clicked(quit) {
             *current = None;
-            *screen = Screen::SoloSetup;
-            return;
+            return Transition::To(Screen::SoloSetup);
         }
         if ui.bar_clicked(again) || (over && input.restart) {
             *game = SoloGame::new(game.settings.clone());
-            return;
+            return Transition::Stay;
         }
     }
 
@@ -400,6 +397,7 @@ pub fn update_game(app: &mut App, state: &mut State) {
     if let Some(score) = record {
         send_best(&mut state.solo, state.auth.as_ref(), score);
     }
+    Transition::Stay
 }
 
 const ROW_H: f32 = 44.0;
@@ -484,7 +482,7 @@ impl Setup {
     }
 }
 
-pub fn update_setup(app: &mut App, state: &mut State) {
+pub fn update_setup(app: &mut App, state: &mut State) -> Transition {
     let setup = Setup::new(state.ui.view());
     let settings = &mut state.solo.settings;
     if state.solo.sizing {
@@ -497,7 +495,7 @@ pub fn update_setup(app: &mut App, state: &mut State) {
             }
             None => {}
         }
-        return;
+        return Transition::Stay;
     }
     let ui = &state.ui;
     for i in 0..GAME_ROWS {
@@ -505,7 +503,7 @@ pub fn update_setup(app: &mut App, state: &mut State) {
         if i == SIZE_ROW {
             if ui.clicked(Stepper::tile_band(tile)) {
                 state.solo.sizing = true;
-                return;
+                return Transition::Stay;
             }
             continue;
         }
@@ -520,7 +518,7 @@ pub fn update_setup(app: &mut App, state: &mut State) {
         let row = setup.foe(i);
         if ui.clicked(row.remove) {
             settings.opponents.remove(i);
-            return;
+            return Transition::Stay;
         }
         for (part, band) in [row.difficulty, row.style].into_iter().enumerate() {
             let stepper = Stepper::across(band);
@@ -537,10 +535,11 @@ pub fn update_setup(app: &mut App, state: &mut State) {
 
     if ui.bar_clicked(setup.action_row(0)) || app.keyboard.was_pressed(KeyCode::Enter) {
         state.solo.game = Some(SoloGame::new(state.solo.settings.clone()));
-        state.screen = Screen::Solo;
+        return Transition::To(Screen::Solo);
     } else if ui.bar_clicked(setup.action_row(1)) || app.keyboard.was_pressed(KeyCode::Escape) {
-        state.screen = Screen::PlayMenu;
+        return Transition::To(Screen::PlayMenu);
     }
+    Transition::Stay
 }
 
 pub fn draw_setup(gfx: &mut Graphics, state: &State) {

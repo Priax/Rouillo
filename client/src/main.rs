@@ -26,6 +26,7 @@ mod leaderboard;
 mod logic;
 mod login;
 mod menu;
+mod nav;
 mod network;
 mod pads;
 mod picker;
@@ -52,6 +53,7 @@ mod web;
 mod windows;
 mod wt;
 
+use nav::{Nav, Root, Transition};
 use pads::{Pad, Pads};
 use state::{Input, Network, Screen, State};
 use ui::{Rect, SharpText, Size};
@@ -78,7 +80,7 @@ pub fn server_url() -> String {
     }
 }
 
-fn setup(gfx: &mut Graphics) -> State {
+fn setup(gfx: &mut Graphics) -> Root {
     let fonts = ui::Fonts::load(gfx).expect("the bundled fonts are valid");
     let mut state = State::new(fonts);
     #[cfg(target_arch = "wasm32")]
@@ -91,38 +93,42 @@ fn setup(gfx: &mut Graphics) -> State {
     #[cfg(not(target_arch = "wasm32"))]
     updater::check();
 
+    let mut current = Screen::Auth;
     if state::load_stored_token().is_some() {
         login::check_stored_session(&mut state.startup);
-        state.screen = Screen::Title;
+        current = Screen::Title;
     }
 
-    state
+    Root {
+        nav: Nav { current },
+        state,
+    }
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn event(state: &mut State, evt: Event) {
+fn event(root: &mut Root, evt: Event) {
     #[cfg(not(target_arch = "wasm32"))]
     if let Event::ReceivedCharacter(c) = evt {
-        if let Some(c) = state.input.keys.key_char(c) {
-            type_char(state, c);
+        if let Some(c) = root.state.input.keys.key_char(c) {
+            type_char(&mut root.state, &mut root.nav, c);
         }
     }
     #[cfg(target_arch = "wasm32")]
-    let _ = (state, evt);
+    let _ = (root, evt);
 }
 
-fn type_char(state: &mut State, c: char) {
-    if state.screen == Screen::Settings {
+fn type_char(state: &mut State, nav: &mut Nav, c: char) {
+    if nav.current == Screen::Settings {
         state.bindings_panel.type_char(c);
-    } else if let Some(input) = typing(state) {
+    } else if let Some(input) = typing(state, nav) {
         input.type_char(c);
     }
 }
 
 /// The field the keyboard types into on this screen, if any. Each field
 /// carries its own limits.
-fn typing(state: &mut State) -> Option<&mut ui::TextInput> {
-    match state.screen {
+fn typing<'a>(state: &'a mut State, nav: &'a mut Nav) -> Option<&'a mut ui::TextInput> {
+    match nav.current {
         Screen::Auth => Some(state.auth_form.focused_input()),
         Screen::CreateRoom | Screen::JoinById => Some(&mut state.text_input),
         Screen::RoomBrowser => state.room_pager.typing(),
@@ -139,7 +145,7 @@ fn typing(state: &mut State) -> Option<&mut ui::TextInput> {
             chat.open.then_some(&mut chat.input)
         }
         Screen::Friends => state.friends.as_mut().and_then(friends::typing),
-        Screen::Profile | Screen::OtherProfile => profile::typing(state),
+        Screen::Profile | Screen::OtherProfile => profile::typing(state, nav.current),
         _ => None,
     }
 }
@@ -199,11 +205,11 @@ fn game_chat(app: &App, state: &mut State) -> controls::Frame {
 }
 
 /// Whether the gamepad drives the menus: everywhere but a board being played.
-fn pad_menus(state: &State) -> bool {
+fn pad_menus(state: &State, screen: Screen) -> bool {
     if state.bindings_panel.capturing() {
         return false;
     }
-    match state.screen {
+    match screen {
         Screen::Game => {
             let chatting = state.room.as_ref().is_some_and(|r| r.chat.open);
             can_chat(state) && !chatting || state.session().is_some_and(|s| s.quit_menu)
@@ -231,7 +237,7 @@ fn banner_buttons(ww: f32, wh: f32) -> (Rect, Rect) {
     (accept, decline)
 }
 
-fn update_invitation(state: &mut State) {
+fn update_invitation(state: &mut State, nav: &mut Nav) {
     if state.pending_invitation.is_none() {
         return;
     }
@@ -250,7 +256,7 @@ fn update_invitation(state: &mut State) {
             state.solo.game = None;
             state.replay.viewer = None;
             state.ranked.stop();
-            state.screen = Screen::RoomBrowser;
+            nav.current = Screen::RoomBrowser;
         }
     } else if state.ui.clicked(decline_btn) {
         state.pending_invitation = None;
@@ -292,22 +298,53 @@ fn pace_frame() {
     });
 }
 
-fn update(app: &mut App, state: &mut State) {
+fn update_online_game(app: &mut App, state: &mut State) -> Transition {
+    let online = state
+        .room
+        .as_ref()
+        .map_or_else(logic::Online::default, |r| logic::Online {
+            is_host: r.info.is_host,
+            ranked: r.info.ranked.is_some(),
+            ended: r.series_over.is_some(),
+        });
+    let input = game_chat(app, state);
+    let State {
+        room,
+        settings,
+        net: Network { conn, .. },
+        ui,
+        ..
+    } = &mut *state;
+    let left = room
+        .as_mut()
+        .and_then(|r| r.session.as_mut())
+        .is_some_and(|s| logic::update_game(app, &input, ui, s, *settings, conn, online));
+    let transition = if left && online.ranked {
+        ranked::enter(state)
+    } else {
+        Transition::Stay
+    };
+    replay::update_keep(state);
+    transition
+}
+
+fn update(app: &mut App, root: &mut Root) {
     #[cfg(not(target_arch = "wasm32"))]
     pace_frame();
+    let Root { nav, state } = root;
     let dt = app.timer.delta_f32();
     let view = ui::View::of(app);
     state.input.pads.update();
-    let nav = pad_menus(state);
+    let pad_nav = pad_menus(state, nav.current);
     let real = ui::Mouse::of(app, view);
     state.ui.note_pointer(real);
-    let mouse = if nav && state.input.pads.pressed(Pad::South) {
+    let mouse = if pad_nav && state.input.pads.pressed(Pad::South) {
         state.ui.pad_click().unwrap_or(real)
     } else {
         real
     };
     state.ui.begin_frame(dt, view, mouse);
-    if nav {
+    if pad_nav {
         if let Some(dir) = pad_direction(&state.input.pads) {
             state.ui.move_focus(dir);
         }
@@ -317,7 +354,7 @@ fn update(app: &mut App, state: &mut State) {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        web::set_at_root(matches!(state.screen, Screen::Title | Screen::Auth | Screen::Menu));
+        web::set_at_root(matches!(nav.current, Screen::Title | Screen::Auth | Screen::Menu));
         if web::take_back() {
             app.keyboard.pressed.insert(KeyCode::Escape);
         }
@@ -325,7 +362,7 @@ fn update(app: &mut App, state: &mut State) {
     state.input.keys.update(&app.keyboard, dt);
     if state.input.keys.paste {
         for c in ui::clipboard_text().unwrap_or_default().chars() {
-            type_char(state, c);
+            type_char(state, nav, c);
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -334,19 +371,19 @@ fn update(app: &mut App, state: &mut State) {
         updater::Status::Done => std::process::exit(0),
         _ => {}
     }
-    let in_game = matches!(state.screen, Screen::Game | Screen::Solo);
+    let in_game = matches!(nav.current, Screen::Game | Screen::Solo);
     let (touch_held, touch_pause) = state.input.touch.read(app, view, in_game);
     state
         .input
         .controls
         .update(&app.keyboard, &state.input.pads, touch_held, touch_pause);
     #[cfg(target_arch = "wasm32")]
-    web::want_text(typing(state).is_some());
+    web::want_text(typing(state, nav).is_some());
     #[cfg(target_arch = "wasm32")]
     for c in web::take_typed().chars() {
-        type_char(state, c);
+        type_char(state, nav, c);
     }
-    let was_title = state.screen == Screen::Title;
+    let was_title = nav.current == Screen::Title;
     let (rtt, via) = (state.net.conn.rtt_ms(), state.net.conn.via());
     if let Some(session) = state.session_mut() {
         session.clock += app.timer.delta_f32() as f64;
@@ -354,23 +391,26 @@ fn update(app: &mut App, state: &mut State) {
         session.via = via;
     }
 
-    login::poll_startup_check(state);
+    login::poll_startup_check(state, nav);
     solo::poll_best(&mut state.solo, state.auth.is_some());
-    replay::poll(state);
+    replay::poll(state, nav);
 
-    network::keep_linked(&mut state.net, state.auth.is_some(), state.screen);
-    update_invitation(state);
-    network::handle_server_messages(state);
+    network::keep_linked(&mut state.net, state.auth.is_some(), nav.current);
+    update_invitation(state, nav);
+    network::handle_server_messages(state, nav);
 
-    match state.screen {
+    let transition = match nav.current {
         Screen::Title => title::update_title(app, state),
         Screen::Auth => login::update_auth(app, state),
-        Screen::Menu | Screen::PlayMenu => menu::update_menu(app, state),
+        screen @ (Screen::Menu | Screen::PlayMenu) => menu::update_menu(app, state, screen),
         Screen::Settings => menu::update_settings(app, state),
         Screen::RoomBrowser => rooms::update_browser(app, state),
         Screen::CreateRoom => rooms::update_create_room(app, state),
         Screen::JoinById => rooms::update_join_by_id(app, state),
-        Screen::RoomLobby => rooms::update_lobby(app, state),
+        Screen::RoomLobby => {
+            rooms::update_lobby(app, state);
+            Transition::Stay
+        }
         Screen::Profile => profile::update_profile(app, state),
         Screen::Friends => friends::update_friends(app, state),
         Screen::OtherProfile => profile::update_other_profile(app, state),
@@ -380,38 +420,14 @@ fn update(app: &mut App, state: &mut State) {
         Screen::Help => help::update(app, state),
         Screen::Solo => solo::update_game(app, state),
         Screen::Replay => replay::update(app, state),
-        Screen::Game => {
-            let online = state
-                .room
-                .as_ref()
-                .map_or_else(logic::Online::default, |r| logic::Online {
-                    is_host: r.info.is_host,
-                    ranked: r.info.ranked.is_some(),
-                    ended: r.series_over.is_some(),
-                });
-            let input = game_chat(app, state);
-            let State {
-                room,
-                settings,
-                ui,
-                net: Network { conn, .. },
-                ..
-            } = &mut *state;
-            let left = room
-                .as_mut()
-                .and_then(|r| r.session.as_mut())
-                .is_some_and(|s| logic::update_game(app, &input, ui, s, *settings, conn, online));
-            if left && online.ranked {
-                ranked::enter(state);
-            }
-            replay::update_keep(state);
-        }
-    }
-    if state.screen == Screen::Menu && !state.startup.title_seen {
-        state.screen = Screen::Title;
+        Screen::Game => update_online_game(app, state),
+    };
+    nav.apply(transition);
+    if nav.current == Screen::Menu && !state.startup.title_seen {
+        nav.current = Screen::Title;
     }
     let fade = if was_title { title::FADE } else { ui::TRANSITION };
-    state.ui.set_screen(state.screen as usize, state.screen.hue(), fade);
+    state.ui.set_screen(nav.current as usize, nav.current.hue(), fade);
 }
 
 fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
@@ -441,11 +457,13 @@ fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &d);
 }
 
-fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
-    match state.screen {
+fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
+    let Root { nav, state } = root;
+    let screen = nav.current;
+    match screen {
         Screen::Title => title::draw_title(gfx, state),
         Screen::Auth => login::draw_auth(gfx, state),
-        Screen::Menu | Screen::PlayMenu => menu::draw_menu(gfx, state),
+        Screen::Menu | Screen::PlayMenu => menu::draw_menu(gfx, state, screen),
         Screen::Settings => menu::draw_settings(gfx, state),
         Screen::RoomBrowser => rooms::draw_browser(gfx, state),
         Screen::CreateRoom => rooms::draw_create_room(gfx, state),
@@ -488,9 +506,9 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
             }
         }
     }
-    if matches!(state.screen, Screen::Game | Screen::Solo) {
+    if matches!(screen, Screen::Game | Screen::Solo) {
         let mut d = state.ui.canvas(gfx);
-        if let Some(room) = state.room.as_ref().filter(|_| state.screen == Screen::Game) {
+        if let Some(room) = state.room.as_ref().filter(|_| screen == Screen::Game) {
             let hint = can_chat(state).then_some("Entrée pour écrire");
             room.chat.draw_overlay(
                 &mut d,
@@ -505,16 +523,13 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
         state.ui.render(gfx, &d);
     }
     draw_invitation_banner(gfx, state);
-    draw_maintenance_banner(gfx, state);
-    draw_too_old_banner(gfx, state);
-    draw_reconnect_banner(gfx, state);
+    draw_maintenance_banner(gfx, state, screen);
+    draw_too_old_banner(gfx, state, screen);
+    draw_reconnect_banner(gfx, state, screen);
     let view = state.ui.view();
     // A game, and the screens that lead straight into one, need the phone
     // turned: the boards are laid out side by side.
-    let needs_landscape = matches!(
-        state.screen,
-        Screen::RoomLobby | Screen::Game | Screen::Ranked | Screen::Solo
-    );
+    let needs_landscape = matches!(screen, Screen::RoomLobby | Screen::Game | Screen::Ranked | Screen::Solo);
     if state.input.touch.active && view.portrait() && needs_landscape {
         let mut d = state.ui.canvas(gfx);
         touch::draw_turn_hint(&mut d, &state.fonts, view);
@@ -525,9 +540,9 @@ fn draw(app: &mut App, gfx: &mut Graphics, state: &mut State) {
 
 const MAINTENANCE_H: f32 = 30.0;
 
-fn draw_maintenance_banner(gfx: &mut Graphics, state: &State) {
-    let playing = state.screen == Screen::Game && state.session().is_some_and(|s| !s.decided());
-    if state.net.maintenance && state.net.conn.is_live() && state.screen.needs_connection() && !playing {
+fn draw_maintenance_banner(gfx: &mut Graphics, state: &State, screen: Screen) {
+    let playing = screen == Screen::Game && state.session().is_some_and(|s| !s.decided());
+    if state.net.maintenance && state.net.conn.is_live() && screen.needs_connection() && !playing {
         draw_warning_banner(
             gfx,
             &state.ui,
@@ -538,8 +553,8 @@ fn draw_maintenance_banner(gfx: &mut Graphics, state: &State) {
 }
 
 /// Says why online play is closed while the server refuses this version.
-fn draw_too_old_banner(gfx: &mut Graphics, state: &State) {
-    if state.net.too_old && matches!(state.screen, Screen::Menu | Screen::PlayMenu) {
+fn draw_too_old_banner(gfx: &mut Graphics, state: &State, screen: Screen) {
+    if state.net.too_old && matches!(screen, Screen::Menu | Screen::PlayMenu) {
         draw_warning_banner(gfx, &state.ui, &state.fonts, crate::update::TOO_OLD);
     }
 }
@@ -563,11 +578,11 @@ fn draw_warning_banner(gfx: &mut Graphics, ui: &ui::Ui, fonts: &ui::Fonts, text:
     ui.render(gfx, &d);
 }
 
-fn draw_reconnect_banner(gfx: &mut Graphics, state: &State) {
+fn draw_reconnect_banner(gfx: &mut Graphics, state: &State, screen: Screen) {
     let Some((attempts, secs_left)) = state.net.conn.recovering(connection::now_secs()) else {
         return;
     };
-    if !state.screen.needs_connection() {
+    if !screen.needs_connection() {
         return;
     }
     let ww = state.ui.view().w;

@@ -4,6 +4,7 @@ use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::http::{self, HttpSlot};
+use crate::nav::Transition;
 use crate::state::{Screen, State};
 use crate::theme;
 use crate::ui::{self, Face, Frame, Icon, Label, ListCard, Pager, Pill, Rect, SharpText, Status, View};
@@ -36,10 +37,10 @@ pub struct Leaderboard {
     pager: Pager,
 }
 
-pub fn enter(state: &mut State) {
+pub fn enter(state: &mut State) -> Transition {
     state.leaderboard = Some(Leaderboard::default());
     refresh(state);
-    state.screen = Screen::Leaderboard;
+    Transition::To(Screen::Leaderboard)
 }
 
 fn refresh(state: &mut State) {
@@ -98,12 +99,11 @@ fn refresh_btn(view: View) -> Rect {
     Frame::of(view).header_tools(0.0).right(190.0).middle(44.0)
 }
 
-pub fn update(app: &App, state: &mut State) {
+pub fn update(app: &App, state: &mut State) -> Transition {
     let me = state.auth.as_ref().map(|a| a.user_id.clone());
     let view = state.ui.view();
     let Some(board) = state.leaderboard.as_mut() else {
-        state.screen = Screen::Menu;
-        return;
+        return Transition::To(Screen::Menu);
     };
     poll(board, me.as_deref());
     let pages = ui::page_count(board.top.len(), per_page(view));
@@ -120,12 +120,11 @@ pub fn update(app: &App, state: &mut State) {
     if let Some((user_id, username)) = clicked {
         if Some(&user_id) == me.as_ref() {
             crate::profile::enter_profile(state, Screen::Leaderboard);
-            state.screen = Screen::Profile;
+            return Transition::To(Screen::Profile);
         } else {
             crate::profile::enter_other_profile(state, user_id, username, Screen::Leaderboard);
-            state.screen = Screen::OtherProfile;
+            return Transition::To(Screen::OtherProfile);
         }
-        return;
     }
 
     let loading = board.slot.is_some();
@@ -133,8 +132,9 @@ pub fn update(app: &App, state: &mut State) {
         refresh(state);
     } else if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.leaderboard = None;
-        state.screen = Screen::Menu;
+        return Transition::To(Screen::Menu);
     }
+    Transition::Stay
 }
 
 fn rank_color(rank: i64, fallback: Color) -> Color {

@@ -1,4 +1,3 @@
-use notan::prelude::*;
 use shared::{
     config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, Rotation, Rules, StampedInput, Targeting,
 };
@@ -763,9 +762,8 @@ pub struct Network {
     pub maintenance: bool,
 }
 
-#[derive(AppState)]
+/// What the screens share.
 pub struct State {
-    pub screen: Screen,
     pub settings: Settings,
     pub rooms: Vec<RoomInfo>,
     /// The room this player is in: dropped as a whole on leaving it.
@@ -798,7 +796,6 @@ impl State {
     pub fn new(fonts: crate::ui::Fonts) -> Self {
         let player_id = load_or_create_player_id();
         Self {
-            screen: Screen::Auth,
             settings: Settings::load(),
             rooms: Vec::new(),
             room: None,

@@ -5,6 +5,7 @@ use notan::prelude::*;
 use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSetting, RoomSettings};
 
 use crate::cpu_seat::{self, CpuSeat};
+use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, Input, Invite, Network, Screen, State};
 use crate::ui::{
     self, field_clicked, list_row, text_field, Face, Field, Frame, Icon, ListCard, Modal, Pill, Rect, SettingsGrid,
@@ -65,7 +66,7 @@ fn browser_buttons(view: View) -> BrowserButtons {
     }
 }
 
-pub fn update_browser(app: &App, state: &mut State) {
+pub fn update_browser(app: &App, state: &mut State) -> Transition {
     let view = state.ui.view();
     let b = browser_buttons(view);
 
@@ -86,24 +87,25 @@ pub fn update_browser(app: &App, state: &mut State) {
             ClientMessage::JoinRoom { id }
         };
         state.net.conn.send(&msg);
-        return;
+        return Transition::Stay;
     }
 
     if state.ui.clicked(b.create) {
         state.text_input = TextInput::default().max_chars(24);
         state.notice.clear();
-        state.screen = Screen::CreateRoom;
+        return Transition::To(Screen::CreateRoom);
     } else if state.ui.clicked(b.join_id) {
         state.text_input = TextInput::default().max_chars(9).only(|c| c.is_ascii_digit());
         state.notice.clear();
-        state.screen = Screen::JoinById;
+        return Transition::To(Screen::JoinById);
     } else if state.ui.clicked(b.refresh) {
         state.net.conn.send(&ClientMessage::RequestRoomList);
     } else if state.ui.clicked(b.back) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.net.conn.disconnect();
         state.rooms.clear();
-        state.screen = Screen::PlayMenu;
+        return Transition::To(Screen::PlayMenu);
     }
+    Transition::Stay
 }
 
 pub fn draw_browser(gfx: &mut Graphics, state: &State) {
@@ -248,34 +250,53 @@ fn entry_buttons(w: f32, h: f32) -> (Rect, Rect) {
     (confirm, back)
 }
 
-fn update_entry(app: &mut App, state: &mut State) -> Option<String> {
+/// The outcome of a frame of a one-field screen.
+enum Entry {
+    Typing,
+    Back,
+    Confirmed(String),
+}
+
+fn update_entry(app: &mut App, state: &mut State) -> Entry {
     state.text_input.edit(&state.input.keys);
     let (w, h) = state.ui.view().size();
     field_clicked(&state.ui, &state.fonts, entry_box(w, h), &mut state.text_input);
     let (confirm, back) = entry_buttons(w, h);
     if state.ui.clicked(confirm) || app.keyboard.was_pressed(KeyCode::Enter) {
-        return Some(state.text_input.trim().to_string());
+        return Entry::Confirmed(state.text_input.trim().to_string());
     }
     if state.ui.clicked(back) || app.keyboard.was_pressed(KeyCode::Escape) {
-        state.screen = Screen::RoomBrowser;
+        return Entry::Back;
     }
-    None
+    Entry::Typing
 }
 
-pub fn update_create_room(app: &mut App, state: &mut State) {
-    if let Some(name) = update_entry(app, state).filter(|name| !name.is_empty()) {
-        state.notice.clear();
-        state.net.conn.send(&ClientMessage::CreateRoom { name });
-        state.text_input.clear();
+pub fn update_create_room(app: &mut App, state: &mut State) -> Transition {
+    match update_entry(app, state) {
+        Entry::Back => return Transition::To(Screen::RoomBrowser),
+        Entry::Confirmed(name) if !name.is_empty() => {
+            state.notice.clear();
+            state.net.conn.send(&ClientMessage::CreateRoom { name });
+            state.text_input.clear();
+        }
+        _ => {}
     }
+    Transition::Stay
 }
 
-pub fn update_join_by_id(app: &mut App, state: &mut State) {
-    if let Some(id) = update_entry(app, state).and_then(|text| text.parse::<u32>().ok()) {
-        state.notice.clear();
-        state.net.conn.send(&ClientMessage::JoinRoom { id });
-        state.text_input.clear();
+pub fn update_join_by_id(app: &mut App, state: &mut State) -> Transition {
+    match update_entry(app, state) {
+        Entry::Back => return Transition::To(Screen::RoomBrowser),
+        Entry::Confirmed(text) => {
+            if let Ok(id) = text.parse::<u32>() {
+                state.notice.clear();
+                state.net.conn.send(&ClientMessage::JoinRoom { id });
+                state.text_input.clear();
+            }
+        }
+        Entry::Typing => {}
     }
+    Transition::Stay
 }
 
 fn draw_entry(gfx: &mut Graphics, state: &State, title: &str, confirm: &str, placeholder: &str) {

@@ -6,6 +6,7 @@ use shared::{Board, Playback, Replay};
 
 use crate::draw::{self, Hud};
 use crate::http::{self, HttpSlot};
+use crate::nav::{Nav, Transition};
 use crate::state::{GameSession, ProfileCore, Rival, Room, Screen, State};
 use crate::ui::{Fonts, Icon, Rect, Status, Ui, View};
 use crate::{logic, theme};
@@ -246,7 +247,7 @@ pub fn open(state: &mut State, match_id: &str, focus: u8, back: Screen) {
 
 /// Starts the replay once it has come: an error stays on the screen it was
 /// asked from.
-pub fn poll(state: &mut State) {
+pub fn poll(state: &mut State, nav: &mut Nav) {
     let Some(loading) = state.replay.loading.as_mut() else {
         return;
     };
@@ -263,7 +264,7 @@ pub fn poll(state: &mut State) {
     match replay {
         Some(replay) => {
             state.replay.viewer = Some(ReplayViewer::new(replay, focus, back));
-            state.screen = Screen::Replay;
+            nav.current = Screen::Replay;
         }
         None => {
             if let Some(core) = asked_from(state, back) {
@@ -292,12 +293,11 @@ fn controls(view: View) -> [Rect; 4] {
     std::array::from_fn(|i| Rect::at(x + i as f32 * (W + GAP), y, W, H))
 }
 
-pub fn update(app: &mut App, state: &mut State) {
+pub fn update(app: &mut App, state: &mut State) -> Transition {
     let dt = app.timer.delta_f32();
     let view = state.ui.view();
     let Some(viewer) = state.replay.viewer.as_mut() else {
-        state.screen = Screen::Menu;
-        return;
+        return Transition::To(Screen::Menu);
     };
     let [play, speed, player, quit] = controls(view);
     let (leave_row, again_row) = draw::exit_rows(view, true);
@@ -314,11 +314,12 @@ pub fn update(app: &mut App, state: &mut State) {
     }
     let leave = state.ui.clicked(quit) || (over && state.ui.bar_clicked(leave_row));
     if leave || keys.was_pressed(KeyCode::Escape) {
-        state.screen = viewer.back;
+        let back = viewer.back;
         state.replay.viewer = None;
-        return;
+        return Transition::To(back);
     }
     viewer.step(dt);
+    Transition::Stay
 }
 
 pub fn draw(app: &mut App, gfx: &mut Graphics, state: &State) {

@@ -5,6 +5,7 @@ use notan::prelude::*;
 
 use crate::account::{self, AccountForm, Outcome};
 use crate::history::History;
+use crate::nav::Transition;
 use crate::profile_edit::{self, EditForm};
 use crate::state::{
     ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendshipStatus, Input, OtherProfileData,
@@ -45,8 +46,8 @@ fn poll_core_profile(core: &mut ProfileCore) -> Option<ProfileLoad> {
 
 /// The field the keyboard types into: an open form's, or the match list's
 /// page field.
-pub fn typing(state: &mut State) -> Option<&mut TextInput> {
-    if state.screen == Screen::OtherProfile {
+pub fn typing(state: &mut State, screen: Screen) -> Option<&mut TextInput> {
+    if screen == Screen::OtherProfile {
         return state.other_profile.as_mut()?.core.history.typing();
     }
     let p = state.profile.as_mut()?;
@@ -533,7 +534,7 @@ fn own_buttons(view: View) -> [Rect; 4] {
     bottom_buttons(view, [200.0; 4])
 }
 
-pub fn update_profile(app: &mut App, state: &mut State) {
+pub fn update_profile(app: &mut App, state: &mut State) -> Transition {
     if let Some(p) = state.profile.as_mut() {
         poll_core_profile(&mut p.core);
         p.core.history.poll();
@@ -543,11 +544,11 @@ pub fn update_profile(app: &mut App, state: &mut State) {
     if state.profile.as_ref().is_some_and(|p| p.edit.is_some()) {
         profile_edit::update(app, state);
     } else if state.profile.as_ref().is_some_and(|p| p.account.is_some()) {
-        update_account(app, state);
+        return update_account(app, state);
     } else {
         if let Some(p) = state.profile.as_mut() {
             if update_about(app, &state.ui, &mut p.core) {
-                return;
+                return Transition::Stay;
             }
         }
         update_history(app, state, false);
@@ -555,8 +556,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
 
         if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
             let prev = state.profile.take().map_or(Screen::Menu, |p| p.prev_screen);
-            state.screen = prev;
-            return;
+            return Transition::To(prev);
         }
         if state.ui.clicked(edit_btn) {
             if let Some(p) = state.profile.as_mut() {
@@ -569,8 +569,7 @@ pub fn update_profile(app: &mut App, state: &mut State) {
             }
         }
         if state.ui.clicked(logout_btn) {
-            crate::menu::do_logout(state);
-            return;
+            return crate::menu::do_logout(state);
         }
 
         let opp_target: Option<(String, String)> = 'find: {
@@ -597,12 +596,13 @@ pub fn update_profile(app: &mut App, state: &mut State) {
         };
         if let Some((uid, uname)) = opp_target {
             enter_other_profile(state, uid, uname, Screen::Profile);
-            state.screen = Screen::OtherProfile;
+            return Transition::To(Screen::OtherProfile);
         }
     }
+    Transition::Stay
 }
 
-fn update_account(app: &App, state: &mut State) {
+fn update_account(app: &App, state: &mut State) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let State {
         profile,
@@ -612,7 +612,7 @@ fn update_account(app: &App, state: &mut State) {
         ..
     } = state;
     let Some(form) = profile.as_mut().and_then(|p| p.account.as_mut()) else {
-        return;
+        return Transition::Stay;
     };
     match account::update(app, ui, fonts, keys, form, token) {
         Outcome::Stay => {}
@@ -622,8 +622,9 @@ fn update_account(app: &App, state: &mut State) {
             }
         }
         Outcome::LoggedOut(msg) => {
-            crate::menu::forget_session(state);
+            let gone = crate::menu::forget_session(state);
             state.auth_form.status = Status::success(msg);
+            return gone;
         }
         Outcome::Renamed(name) => {
             if let Some(p) = profile.as_mut() {
@@ -634,6 +635,7 @@ fn update_account(app: &App, state: &mut State) {
             }
         }
     }
+    Transition::Stay
 }
 
 pub fn draw_profile(gfx: &mut Graphics, state: &State) {
@@ -737,7 +739,7 @@ fn other_buttons(view: View) -> (Rect, Rect) {
     (add, back)
 }
 
-pub fn update_other_profile(app: &mut App, state: &mut State) {
+pub fn update_other_profile(app: &mut App, state: &mut State) -> Transition {
     if let Some(p) = state.other_profile.as_mut() {
         poll_friendship_check(p);
         match poll_core_profile(&mut p.core) {
@@ -754,7 +756,7 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
         p.core.history.poll();
         poll_friend(p);
         if update_about(app, &state.ui, &mut p.core) {
-            return;
+            return Transition::Stay;
         }
     }
 
@@ -773,8 +775,9 @@ pub fn update_other_profile(app: &mut App, state: &mut State) {
     if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
         let prev = state.other_profile.as_ref().map_or(Screen::Menu, |p| p.prev_screen);
         state.other_profile = None;
-        state.screen = prev;
+        return Transition::To(prev);
     }
+    Transition::Stay
 }
 
 pub fn draw_other_profile(gfx: &mut Graphics, state: &State) {

@@ -1,6 +1,7 @@
 use notan::draw::DrawShapes;
 use notan::prelude::*;
 
+use crate::nav::Transition;
 use crate::state::{AuthForm, Screen, Settings, State};
 use crate::ui::{Frame, Rect, SettingsPanel, SharpText, Status, View};
 use crate::{http, theme};
@@ -98,38 +99,38 @@ fn outdated_btn(ww: f32) -> Rect {
         .middle(50.0)
 }
 
-pub fn update_menu(app: &App, state: &mut State) {
+pub fn update_menu(app: &App, state: &mut State, screen: Screen) -> Transition {
     let view = state.ui.view();
     let ww = view.w;
     let logged_in = state.auth.is_some();
 
-    let clicked = menu_rows(view, items(state.screen, logged_in)).find(|&(_, row)| state.ui.bar_clicked(row));
+    let clicked = menu_rows(view, items(screen, logged_in)).find(|&(_, row)| state.ui.bar_clicked(row));
     match clicked.map(|(item, _)| item) {
         Some(MenuItem::Play) => {
             state.notice.clear();
-            state.screen = Screen::PlayMenu;
+            return Transition::To(Screen::PlayMenu);
         }
         Some(MenuItem::Multiplayer | MenuItem::Ranked) if state.net.too_old => {
             state.notice = Status::error("Mettez d'abord le jeu à jour, avec le bouton en haut à droite.");
         }
-        Some(MenuItem::Multiplayer) => start_play(state),
-        Some(MenuItem::Ranked) => crate::ranked::enter(state),
-        Some(MenuItem::Leaderboard) => crate::leaderboard::enter(state),
-        Some(MenuItem::Help) => crate::help::enter(state),
+        Some(MenuItem::Multiplayer) => return start_play(state),
+        Some(MenuItem::Ranked) => return crate::ranked::enter(state),
+        Some(MenuItem::Leaderboard) => return crate::leaderboard::enter(state),
+        Some(MenuItem::Help) => return crate::help::enter(state),
         Some(MenuItem::Solo) => {
             state.notice.clear();
-            state.screen = Screen::SoloSetup;
+            return Transition::To(Screen::SoloSetup);
         }
         Some(MenuItem::Friends) => {
             crate::friends::enter_friends(state);
-            state.screen = Screen::Friends;
+            return Transition::To(Screen::Friends);
         }
-        Some(MenuItem::Settings) => state.screen = Screen::Settings,
-        Some(MenuItem::Logout) => do_logout(state),
-        Some(MenuItem::Back) => state.screen = Screen::Menu,
+        Some(MenuItem::Settings) => return Transition::To(Screen::Settings),
+        Some(MenuItem::Logout) => return do_logout(state),
+        Some(MenuItem::Back) => return Transition::To(Screen::Menu),
         None => {
-            if state.screen == Screen::PlayMenu && app.keyboard.was_pressed(KeyCode::Escape) {
-                state.screen = Screen::Menu;
+            if screen == Screen::PlayMenu && app.keyboard.was_pressed(KeyCode::Escape) {
+                return Transition::To(Screen::Menu);
             }
         }
     }
@@ -141,24 +142,25 @@ pub fn update_menu(app: &App, state: &mut State) {
     let profile_pad = state.input.pads.pressed(crate::pads::Pad::North);
     if logged_in && (state.ui.clicked(avatar_rect(ww)) || profile_pad) {
         crate::profile::enter_profile(state, Screen::Menu);
-        state.screen = Screen::Profile;
+        return Transition::To(Screen::Profile);
     }
+    Transition::Stay
 }
 
-pub fn do_logout(state: &mut State) {
+pub fn do_logout(state: &mut State) -> Transition {
     if let Some(auth) = &state.auth {
         http::post_empty(http::api_url("logout"), Some(auth.token.clone()), http::new_slot());
     }
-    forget_session(state);
+    forget_session(state)
 }
 
-pub fn forget_session(state: &mut State) {
+pub fn forget_session(state: &mut State) -> Transition {
     state.net.conn.disconnect();
     state.room = None;
     state.pending_invitation = None;
     clear_auth(state);
     state.auth_form = AuthForm::default();
-    state.screen = Screen::Auth;
+    Transition::To(Screen::Auth)
 }
 
 pub fn clear_auth(state: &mut State) {
@@ -171,7 +173,7 @@ pub fn clear_auth(state: &mut State) {
     state.other_profile = None;
 }
 
-pub fn draw_menu(gfx: &mut Graphics, state: &State) {
+pub fn draw_menu(gfx: &mut Graphics, state: &State, screen: Screen) {
     let pal = state.ui.palette();
     let (ww, wh) = state.ui.view().size();
     let mut draw = state.ui.screen_canvas(gfx);
@@ -179,14 +181,14 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State) {
     draw.sharp_text(&state.fonts.display, "Rouillo")
         .position(
             ww / 2.0,
-            menu_top(state.ui.view(), items(state.screen, state.auth.is_some()).len()) - 80.0,
+            menu_top(state.ui.view(), items(screen, state.auth.is_some()).len()) - 80.0,
         )
         .size(theme::size::HERO)
         .h_align_center()
         .v_align_middle()
         .color(pal.title);
 
-    for (item, row) in menu_rows(state.ui.view(), items(state.screen, state.auth.is_some())) {
+    for (item, row) in menu_rows(state.ui.view(), items(screen, state.auth.is_some())) {
         state
             .ui
             .menu_bar(&mut draw, &state.fonts, row, item.label(), item.color());
@@ -261,7 +263,7 @@ fn settings_back(view: View) -> Rect {
     Frame::of(view).back
 }
 
-pub fn update_settings(app: &mut App, state: &mut State) {
+pub fn update_settings(app: &mut App, state: &mut State) -> Transition {
     let view = state.ui.view();
     let capturing = state.bindings_panel.capturing();
     if state
@@ -271,7 +273,7 @@ pub fn update_settings(app: &mut App, state: &mut State) {
         state.input.controls.bindings.save();
     }
     if capturing {
-        return;
+        return Transition::Stay;
     }
     let panel = settings_panel(view);
     let before = (state.settings.das_delay, state.settings.das_speed);
@@ -287,8 +289,9 @@ pub fn update_settings(app: &mut App, state: &mut State) {
         state.settings.save();
     }
     if state.ui.clicked(settings_back(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
-        state.screen = Screen::Menu;
+        return Transition::To(Screen::Menu);
     }
+    Transition::Stay
 }
 
 pub fn draw_settings(gfx: &mut Graphics, state: &State) {
@@ -326,9 +329,9 @@ pub fn draw_settings(gfx: &mut Graphics, state: &State) {
     state.ui.render(gfx, &draw);
 }
 
-fn start_play(state: &mut State) {
+fn start_play(state: &mut State) -> Transition {
     state.net.conn.connect(crate::connection::now_secs());
     state.rooms.clear();
     state.notice.clear();
-    state.screen = Screen::RoomBrowser;
+    Transition::To(Screen::RoomBrowser)
 }

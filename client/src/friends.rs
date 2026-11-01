@@ -5,6 +5,7 @@ use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::images::Images;
+use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
 use crate::ui::{
     self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Icon, Label, Pager,
@@ -348,7 +349,7 @@ enum FriendAction {
     Cancel(String),
 }
 
-pub fn update_friends(app: &mut App, state: &mut State) {
+pub fn update_friends(app: &mut App, state: &mut State) -> Transition {
     if let Some(f) = state.friends.as_mut() {
         poll_list(f);
         poll_search(f);
@@ -391,16 +392,14 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         let q = search_query(state);
         if looks_like_uuid(&q) {
             crate::profile::enter_other_profile(state, q, "...".to_owned(), Screen::Friends);
-            state.screen = Screen::OtherProfile;
-            return;
+            return Transition::To(Screen::OtherProfile);
         }
         try_search(state);
     }
 
     if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         state.friends = None;
-        state.screen = Screen::Menu;
-        return;
+        return Transition::To(Screen::Menu);
     }
 
     if state.friends.as_ref().is_some_and(can_refresh) && state.ui.clicked(refresh_btn(view)) {
@@ -408,12 +407,11 @@ pub fn update_friends(app: &mut App, state: &mut State) {
     }
 
     let Some(f) = &state.friends else {
-        return;
+        return Transition::Stay;
     };
     if let Some((uid, uname)) = clicked_profile(f, &state.ui, view).or_else(|| clicked_listed(f, &state.ui, view)) {
         crate::profile::enter_other_profile(state, uid, uname, Screen::Friends);
-        state.screen = Screen::OtherProfile;
-        return;
+        return Transition::To(Screen::OtherProfile);
     }
     let add = clicked_add(f, &state.ui, view);
     let action = clicked_action(f, &state.ui, view);
@@ -421,10 +419,11 @@ pub fn update_friends(app: &mut App, state: &mut State) {
         send_add_request(state, &uid);
     }
     match action {
-        Some(FriendAction::Watch(user_id)) => watch(state, user_id),
+        Some(FriendAction::Watch(user_id)) => return watch(state, user_id),
         Some(action) => apply_action(state, action),
         None => {}
     }
+    Transition::Stay
 }
 
 fn can_refresh(f: &FriendsData) -> bool {
@@ -507,7 +506,7 @@ fn clicked_action(f: &FriendsData, ui: &Ui, view: View) -> Option<FriendAction> 
 }
 
 /// Watches a friend's game: the server says where it is, or that there is none.
-fn watch(state: &mut State, user_id: String) {
+fn watch(state: &mut State, user_id: String) -> Transition {
     state.notice.clear();
     if state.net.conn.is_live() {
         state.net.conn.send(&shared::ClientMessage::WatchFriend { user_id });
@@ -516,7 +515,7 @@ fn watch(state: &mut State, user_id: String) {
         state.net.conn.connect(crate::connection::now_secs());
         state.rooms.clear();
     }
-    state.screen = Screen::RoomBrowser;
+    Transition::To(Screen::RoomBrowser)
 }
 
 fn apply_action(state: &mut State, action: FriendAction) {
