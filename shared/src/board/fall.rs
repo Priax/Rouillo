@@ -88,7 +88,7 @@ impl Fall {
     /// How far through its bounce `cell` is, while it bounces.
     pub fn bounce(&self, cell: &CellFall) -> Option<f32> {
         let since = self.frame.checked_sub(self.lands_at(cell))?;
-        (since < BOUNCE_FRAMES).then(|| since as f32 / BOUNCE_FRAMES as f32)
+        (since < BOUNCE_FRAMES).then_some(since as f32 / BOUNCE_FRAMES as f32)
     }
 }
 
