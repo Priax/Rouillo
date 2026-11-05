@@ -254,6 +254,35 @@ fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<Pl
     session.out_early |= session.eliminated();
 }
 
+fn enter_lobby(state: &mut State, nav: &mut Nav, info: shared::LobbyInfo) {
+    let screen = if info.ranked.is_some() { Screen::Ranked } else { Screen::RoomLobby };
+    if info.ranked.is_some() {
+        state.ranked.stop();
+    }
+    nav.apply(Transition::To(screen));
+
+    match state.room.as_mut().filter(|r| r.info.id == info.id) {
+        Some(room) => {
+            room.info = info;
+            room.session = None;
+        }
+        None => state.room = Some(Room::new(info)),
+    }
+}
+
+fn start_game(state: &mut State, nav: &mut Nav, game: u32, your_slot: u8, names: Vec<String>) {
+    let Some(room) = state.room.as_mut() else { return };
+    let mut session = GameSession::new(your_slot, names);
+    session.game = game;
+    session.net.ping_rtt_ms = room.session.as_ref().and_then(|s| s.net.ping_rtt_ms);
+    session.debug.last_server_msg = "GameStart".to_string();
+
+    room.keep.take_if(|offer| !offer.is_for(game));
+    room.info.your_slot = your_slot;
+    room.session = Some(session);
+    nav.apply(Transition::To(Screen::Game));
+}
+
 fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
     match msg {
         ServerMessage::RoomList { rooms } => {
@@ -263,48 +292,23 @@ fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
                 state.room = None;
             }
         }
-        ServerMessage::Lobby { info } => {
-            nav.apply(Transition::To(if info.ranked.is_some() {
-                state.ranked.stop();
-                Screen::Ranked
-            } else {
-                Screen::RoomLobby
-            }));
-            match state.room.as_mut().filter(|r| r.info.id == info.id) {
-                Some(room) => {
-                    room.info = info;
-                    room.session = None;
-                }
-                None => state.room = Some(Room::new(info)),
-            }
-        }
+        ServerMessage::Lobby { info } => enter_lobby(state, nav, info),
         ServerMessage::JoinFailed { reason } => {
             state.notice = Status::error(reason);
         }
-        ServerMessage::GameStart { game, your_slot, names } => {
-            if let Some(room) = state.room.as_mut() {
-                let mut session = GameSession::new(your_slot, names);
-                session.game = game;
-                room.keep.take_if(|offer| !offer.is_for(game));
-                session.net.ping_rtt_ms = room.session.as_ref().and_then(|s| s.net.ping_rtt_ms);
-                session.debug.last_server_msg = "GameStart".to_string();
-                room.info.your_slot = your_slot;
-                room.session = Some(session);
-                nav.apply(Transition::To(Screen::Game));
-            }
-        }
+        ServerMessage::GameStart { game, your_slot, names } => start_game(state, nav, game, your_slot, names),
         ServerMessage::StateUpdate { game, tick, players } => {
-            if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
+            if let Some(session) = state.session_mut() {
                 apply_update(session, game, tick, players);
             }
         }
         ServerMessage::Thumbs { game, tick, thumbs } => {
-            if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
+            if let Some(session) = state.session_mut() {
                 apply_thumbs(session, game, tick, thumbs);
             }
         }
         ServerMessage::OpponentDisconnected => {
-            if let Some(session) = state.room.as_mut().and_then(|r| r.session.as_mut()) {
+            if let Some(session) = state.session_mut() {
                 session.opponent_disconnected = true;
                 session.debug.last_server_msg = "OpponentDisconnected".to_string();
             }
@@ -334,10 +338,8 @@ fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
         }
         ServerMessage::SeriesOver { winner_slot, elo_change } => {
             if let Some(room) = state.room.as_mut() {
-                if room.series_over.is_none() {
-                    if let Some(auth) = state.auth.as_mut() {
-                        auth.elo += elo_change;
-                    }
+                if let Some(auth) = state.auth.as_mut().filter(|_| room.series_over.is_none()) {
+                    auth.elo += elo_change;
                 }
                 room.series_over = Some((winner_slot, elo_change));
             }

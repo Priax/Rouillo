@@ -79,11 +79,7 @@ pub fn text_field(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Fiel
         let at = |i: usize| x + fonts.width(Face::Text, &line.text[line.from..i], line.size);
         highlight(draw, ui, at(a), at(b), mid, line.size);
     }
-    draw.sharp_text(&fonts.text, text)
-        .position(x + placeholder_shift(field), mid)
-        .size(line.size)
-        .v_align_middle()
-        .color(color);
+    draw.sharp_text(&fonts.text, text).left(x + placeholder_shift(field), mid).size(line.size).color(color);
     if field.focused {
         let before = &line.text[line.from..line.caret];
         let caret_x = x + fonts.width(Face::Text, before, line.size);
@@ -193,9 +189,8 @@ pub fn text_area(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Field
 
     if field.input.is_empty() {
         draw.sharp_text(&fonts.text, field.placeholder)
-            .position(x + placeholder_shift(field), line_mid(0))
+            .left(x + placeholder_shift(field), line_mid(0))
             .size(AREA_TEXT)
-            .v_align_middle()
             .color(pal.text_muted);
     }
     let selection = field.input.selection().filter(|_| field.focused);
@@ -206,11 +201,7 @@ pub fn text_area(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Field
             let at = |j: usize| x + fonts.width(Face::Text, &row.text[..j - row.start], AREA_TEXT);
             highlight(draw, ui, at(a), at(b).max(at(a) + 4.0), line_mid(i), AREA_TEXT);
         }
-        draw.sharp_text(&fonts.text, row.text)
-            .position(x, line_mid(i))
-            .size(AREA_TEXT)
-            .v_align_middle()
-            .color(pal.text);
+        draw.sharp_text(&fonts.text, row.text).left(x, line_mid(i)).size(AREA_TEXT).color(pal.text);
     }
     if field.focused {
         caret(

@@ -46,10 +46,12 @@ const LINE_H: f32 = 25.0;
 /// The tabbed card and the demo card: side by side, or the demo below.
 fn cards(view: View) -> (Rect, Rect) {
     let area = Rect::at(0.0, theme::HEADER_H + 20.0, view.w, view.h).pad(0.0, 20.0, 0.0, 20.0);
+
     if view.portrait() {
         let [info, demo] = area.rows(20.0, [Size::Px(INFO_H_UPRIGHT), Size::Px(DEMO_H)]);
         return (info, demo.max_width(DEMO_W));
     }
+
     let row = area.top(DEMO_H).max_width(1220.0);
     let demo_w = DEMO_W.min(row.w * 0.36);
     let [info, demo] = row.columns(25.0, [FILL, Size::Px(demo_w)]);
@@ -76,15 +78,16 @@ pub fn enter() -> Transition {
 
 pub fn update(app: &App, state: &State, help: &mut HelpView) -> Transition {
     let view = state.ui.view();
-    help.demo.update(app.timer.delta_f32());
     let (info, demo_card) = cards(view);
     let [previous, next] = lesson_arrows(demo_card);
+    let [controls, rules] = tabs(info);
+
+    help.demo.update(app.timer.delta_f32());
     if state.ui.clicked(previous) || app.keyboard.was_pressed(KeyCode::ArrowLeft) {
         help.demo.previous();
     } else if state.ui.clicked(next) || app.keyboard.was_pressed(KeyCode::ArrowRight) {
         help.demo.next();
     }
-    let [controls, rules] = tabs(info);
     if state.ui.clicked(controls) {
         help.rules = false;
     } else if state.ui.clicked(rules) {
@@ -93,6 +96,7 @@ pub fn update(app: &App, state: &State, help: &mut HelpView) -> Transition {
     if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Transition::To(Screen::Menu);
     }
+
     Transition::Stay
 }
 
@@ -111,12 +115,14 @@ fn chip(draw: &mut Draw, ui: &Ui, fonts: &Fonts, (x, cy): (f32, f32), label: &st
     let size = theme::size::LABEL;
     let icon = if pad { 32.0 } else { 0.0 };
     let w = fonts.width(Face::Text, label, size) + 24.0 + icon;
+
     draw.rect((x, cy - CHIP_H / 2.0), (w, CHIP_H)).corner_radius(8.0).color(pal.surface_alt);
     draw.rect((x, cy - CHIP_H / 2.0), (w, CHIP_H)).corner_radius(8.0).stroke(1.5).color(pal.border);
     if pad {
         pad_icon(draw, (x + 12.0, cy), theme::GOLD, pal.surface_alt);
     }
-    draw.sharp_text(&fonts.text, label).position(x + 12.0 + icon, cy).size(size).v_align_middle().color(theme::GOLD);
+    draw.sharp_text(&fonts.text, label).left(x + 12.0 + icon, cy).size(size).color(theme::GOLD);
+
     x + w + 8.0
 }
 
@@ -130,6 +136,7 @@ fn controls_rows(bindings: &Bindings) -> Vec<(&'static str, Vec<String>, Option<
         .collect();
     rows.push(("Pause", vec!["Échap".to_owned()], Some(Pad::Start.label())));
     rows.push(("Rejouer (partie finie)", vec!["R".to_owned()], Some(Pad::Select.label())));
+
     rows
 }
 
@@ -142,13 +149,10 @@ fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, bindings: 
     let rows = controls_rows(bindings);
     let room = card.h - TAB_H - 36.0 - note.len() as f32 * LINE_H - 16.0;
     let row_h = ROW_H.min(room / rows.len() as f32);
+
     let mut y = card.y + TAB_H + 36.0;
     for (label, keys, pad) in rows {
-        draw.sharp_text(&fonts.text, label)
-            .position(card.x + 24.0, y)
-            .size(theme::size::EMPHASIS)
-            .v_align_middle()
-            .color(pal.text);
+        draw.sharp_text(&fonts.text, label).left(card.x + 24.0, y).size(theme::size::EMPHASIS).color(pal.text);
         let mut x = card.x + 24.0 + label_w;
         if keys.is_empty() && pad.is_none() {
             chip(draw, ui, fonts, (x, y), "aucune touche", false);
@@ -161,13 +165,10 @@ fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, bindings: 
         }
         y += row_h;
     }
+
     y += 4.0;
     for line in note {
-        draw.sharp_text(&fonts.text, line)
-            .position(card.x + 24.0, y)
-            .size(theme::size::BODY)
-            .v_align_middle()
-            .color(pal.text_muted);
+        draw.sharp_text(&fonts.text, line).left(card.x + 24.0, y).size(theme::size::BODY).color(pal.text_muted);
         y += LINE_H;
     }
 }
@@ -176,18 +177,10 @@ fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect) {
     let pal = ui.palette();
     let mut y = card.y + TAB_H + 30.0;
     for (title, text) in RULES {
-        draw.sharp_text(&fonts.display, title)
-            .position(card.x + 24.0, y)
-            .size(theme::size::EMPHASIS)
-            .v_align_middle()
-            .color(pal.accent);
+        draw.sharp_text(&fonts.display, title).left(card.x + 24.0, y).size(theme::size::EMPHASIS).color(pal.accent);
         y += LINE_H + 4.0;
         for line in fonts.wrap(Face::Text, text, theme::size::BODY, card.w - 48.0) {
-            draw.sharp_text(&fonts.text, line)
-                .position(card.x + 24.0, y)
-                .size(theme::size::BODY)
-                .v_align_middle()
-                .color(pal.text);
+            draw.sharp_text(&fonts.text, line).left(card.x + 24.0, y).size(theme::size::BODY).color(pal.text);
             y += LINE_H;
         }
         y += 8.0;
@@ -198,31 +191,28 @@ fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect) {
 /// the explanation over the board while the game stands still.
 fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, time: f32) {
     let pal = ui.palette();
-    ui::card(draw, &pal, card);
     let title = demo.title();
     let title = fonts.fit(Face::Display, &title, theme::size::LABEL, card.w - 110.0);
-    draw.sharp_text(&fonts.display, &title)
-        .position(card.x + card.w / 2.0, card.y + 22.0)
-        .size(theme::size::LABEL)
-        .h_align_center()
-        .v_align_middle()
-        .color(pal.text);
     let board = if demo.rival.is_some() {
         Rect::at(card.x + 20.0, card.y + 44.0, card.w - 40.0, game_draw::BOARD_H)
     } else {
         let x = card.x + (card.w - game_draw::BOARD_W) / 2.0;
         Rect::at(x, card.y + 44.0, game_draw::BOARD_W, game_draw::BOARD_H)
     };
-    game_draw::draw_demo(draw, fonts, demo, board, time);
     let [previous, next] = lesson_arrows(card);
+
+    ui::card(draw, &pal, card);
+    draw.sharp_text(&fonts.display, &title)
+        .center(card.x + card.w / 2.0, card.y + 22.0)
+        .size(theme::size::LABEL)
+        .color(pal.text);
+    game_draw::draw_demo(draw, fonts, demo, board, time);
     ui.button(draw, fonts, previous, Icon::Previous);
     ui.button(draw, fonts, next, Icon::Next);
     if let Some((key, left)) = demo.key {
         draw.sharp_text(&fonts.display, key)
-            .position(card.x + card.w / 2.0, board.y + board.h + 24.0)
+            .center(card.x + card.w / 2.0, board.y + board.h + 24.0)
             .size(theme::size::EMPHASIS)
-            .h_align_center()
-            .v_align_middle()
             .color(pal.text.with_alpha(left.min(1.0)));
     }
     if let Some(text) = demo.text() {
@@ -230,13 +220,12 @@ fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, t
         let h = lines.len() as f32 * LINE_H + 24.0;
         let (boards, scale) = game_draw::demo_boards(demo, board);
         let bubble = Rect::at(boards.x + 6.0, boards.y + 50.0 * scale, boards.w - 12.0, h);
+
         draw.rect((bubble.x, bubble.y), (bubble.w, bubble.h)).corner_radius(10.0).color(Color::BLACK.with_alpha(0.78));
         for (i, line) in lines.iter().enumerate() {
             draw.sharp_text(&fonts.text, line)
-                .position(bubble.x + bubble.w / 2.0, bubble.y + 12.0 + LINE_H * (i as f32 + 0.5))
+                .center(bubble.x + bubble.w / 2.0, bubble.y + 12.0 + LINE_H * (i as f32 + 0.5))
                 .size(theme::size::BODY)
-                .h_align_center()
-                .v_align_middle()
                 .color(Color::WHITE);
         }
     }
@@ -245,17 +234,13 @@ fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, t
 pub fn draw(gfx: &mut Graphics, state: &State, help: &HelpView) {
     let pal = state.ui.palette();
     let view = state.ui.view();
-    let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
-    draw.sharp_text(&state.fonts.display, "Comment jouer")
-        .position(60.0, theme::HEADER_H / 2.0)
-        .size(theme::size::TITLE)
-        .v_align_middle()
-        .color(pal.text);
     let (info, demo_card) = cards(view);
-    ui::card(&mut draw, &pal, info);
     let rules = help.rules;
     let [controls_tab, rules_tab] = tabs(info);
+
+    let mut draw = state.ui.screen_canvas(gfx);
+    state.ui.page_header(&mut draw, &state.fonts, "Comment jouer");
+    ui::card(&mut draw, &pal, info);
     state.ui.tab(&mut draw, &state.fonts, controls_tab, "Contrôles", !rules);
     state.ui.tab(&mut draw, &state.fonts, rules_tab, "Règles", rules);
     if rules {
@@ -265,5 +250,6 @@ pub fn draw(gfx: &mut Graphics, state: &State, help: &HelpView) {
     }
     draw_demo(&mut draw, &state.ui, &state.fonts, demo_card, &help.demo, state.ui.time() as f32);
     state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
+
     state.ui.render(gfx, &draw);
 }

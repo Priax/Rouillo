@@ -4,9 +4,11 @@ use notan::prelude::*;
 
 use crate::connection::now_secs;
 use crate::nav::{Nav, Transition};
-use crate::state::{ApiAuthResponse, ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State};
+use crate::state::{ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State};
 use crate::ui::{self, field_clicked, text_field, Field, Rect, SharpText, Status, View, FILL};
 use crate::{http, theme};
+
+const STARTUP_RETRY_SECS: f64 = 5.0;
 
 struct AuthLayout {
     cx: f32,
@@ -30,6 +32,7 @@ fn auth_layout(view: View, focused: AuthField) -> AuthLayout {
     };
     let base_y = if wh >= 560.0 { wh / 2.0 - 160.0 } else { wh / 2.0 - field_y - 25.0 };
     let field = |y: f32| Rect::centered_on(cx, y, 420.0, 50.0);
+
     AuthLayout {
         cx,
         base_y,
@@ -46,18 +49,21 @@ fn submit(form: &mut AuthForm) {
     if form.pending.is_some() {
         return;
     }
+
     let username = form.username.trim().to_owned();
     let password = form.password.to_owned();
     if username.is_empty() || password.is_empty() {
         form.status = Status::error("Remplissez tous les champs.");
         return;
     }
+
     let body = serde_json::json!({ "username": username, "password": password }).to_string();
     let slot = http::new_slot();
     let path = match form.mode {
         AuthMode::Login => "login",
         AuthMode::Register => "register",
     };
+
     http::post_json(http::api_url(path), body, None, Arc::clone(&slot));
     form.status.clear();
     form.pending = Some(slot);
@@ -65,35 +71,29 @@ fn submit(form: &mut AuthForm) {
 
 /// Whether the answer to the form just signed the player in.
 fn poll_auth(state: &mut State) -> bool {
-    let Some(result) = http::take_json::<ApiAuthResponse>(&mut state.auth_form.pending) else {
+    let Some(result) = http::take_json::<AuthInfo>(&mut state.auth_form.pending) else {
         return false;
     };
     match result {
         Ok(r) => {
             crate::state::save_token(&r.token);
-            state.auth = Some(AuthInfo {
-                token: r.token,
-                user_id: r.user_id,
-                username: r.username,
-                elo: r.elo,
-                avatar_url: r.avatar_url,
-            });
+            state.auth = Some(r);
             state.auth_form = AuthForm::default();
             crate::solo::signed_in(state);
             return true;
         }
         Err(msg) => state.auth_form.status = Status::error(msg),
     }
+
     false
 }
-
-const STARTUP_RETRY_SECS: f64 = 5.0;
 
 pub fn check_stored_session(startup: &mut Startup) {
     startup.retry_at = None;
     let Some(token) = crate::state::load_stored_token() else {
         return;
     };
+
     let slot = http::new_slot();
     http::get(http::api_url("me"), Some(token), Arc::clone(&slot));
     startup.check = Some(slot);
@@ -104,6 +104,7 @@ pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
     if waiting && state.startup.retry_at.is_some_and(|t| now_secs() >= t) {
         check_stored_session(&mut state.startup);
     }
+
     let Some(result) = http::take(&mut state.startup.check) else {
         return;
     };
@@ -143,11 +144,7 @@ pub fn update_auth(app: &mut App, state: &mut State) -> Transition {
 
     let layout = auth_layout(state.ui.view(), state.auth_form.focused);
 
-    match state.auth_form.focused {
-        AuthField::Username => state.auth_form.username.edit(&state.input.keys),
-        AuthField::Password => state.auth_form.password.edit(&state.input.keys),
-    }
-
+    state.auth_form.focused_input().edit(&state.input.keys);
     if app.keyboard.was_pressed(KeyCode::Tab) {
         state.auth_form.focused = match state.auth_form.focused {
             AuthField::Username => AuthField::Password,
@@ -180,6 +177,7 @@ pub fn update_auth(app: &mut App, state: &mut State) -> Transition {
         state.auth_form = AuthForm::default();
         return Transition::To(Screen::Menu);
     }
+
     Transition::Stay
 }
 
@@ -187,52 +185,37 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
     let layout = auth_layout(state.ui.view(), state.auth_form.focused);
     let AuthLayout { cx, base_y, .. } = layout;
-
-    let mut draw = state.ui.screen_canvas(gfx);
-
-    draw.sharp_text(&state.fonts.display, "Rouillo")
-        .position(cx, base_y - 110.0)
-        .size(theme::size::HERO)
-        .h_align_center()
-        .v_align_middle()
-        .color(pal.title);
-
-    ui::card(&mut draw, &pal, layout.card);
-    let modes = [("Connexion", AuthMode::Login), ("Inscription", AuthMode::Register)];
-    for (&tab, (label, mode)) in layout.tabs.iter().zip(modes) {
-        let active = state.auth_form.mode == mode;
-        state.ui.tab(&mut draw, &state.fonts, tab, label, active);
-    }
-
     let form = &state.auth_form;
+    let modes = [("Connexion", AuthMode::Login), ("Inscription", AuthMode::Register)];
     let fields = [
         (layout.username, "Nom d'utilisateur", &form.username, AuthField::Username),
         (layout.password, "Mot de passe", &form.password, AuthField::Password),
     ];
+    let loading = form.pending.is_some();
+    let submit_label = match (loading, form.mode) {
+        (true, _) => "Chargement...",
+        (false, AuthMode::Login) => "Se connecter",
+        (false, AuthMode::Register) => "S'inscrire",
+    };
+
+    let mut draw = state.ui.screen_canvas(gfx);
+    draw.sharp_text(&state.fonts.display, "Rouillo")
+        .center(cx, base_y - 110.0)
+        .size(theme::size::HERO)
+        .color(pal.title);
+    ui::card(&mut draw, &pal, layout.card);
+    for (&tab, (label, mode)) in layout.tabs.iter().zip(modes) {
+        state.ui.tab(&mut draw, &state.fonts, tab, label, form.mode == mode);
+    }
     for (rect, placeholder, input, which) in fields {
         let field = Field { placeholder, input, focused: form.focused == which };
         text_field(&mut draw, &state.ui, &state.fonts, rect, &field);
     }
-
-    let loading = state.auth_form.pending.is_some();
-    let submit_label = if loading {
-        "Chargement..."
-    } else {
-        match state.auth_form.mode {
-            AuthMode::Login => "Se connecter",
-            AuthMode::Register => "S'inscrire",
-        }
-    };
     state.ui.button_enabled(&mut draw, &state.fonts, layout.submit, submit_label, !loading);
     state.ui.button(&mut draw, &state.fonts, layout.guest, "Jouer en invité");
 
-    if let Some((msg, color)) = state.auth_form.status.shown(&pal) {
-        draw.sharp_text(&state.fonts.text, msg)
-            .position(cx, base_y + 370.0)
-            .size(theme::size::LABEL)
-            .h_align_center()
-            .v_align_middle()
-            .color(color);
+    if let Some((msg, color)) = form.status.shown(&pal) {
+        draw.sharp_text(&state.fonts.text, msg).center(cx, base_y + 370.0).size(theme::size::LABEL).color(color);
     }
 
     state.ui.render(gfx, &draw);

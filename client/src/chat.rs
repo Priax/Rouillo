@@ -62,17 +62,20 @@ impl Chat {
         }
         let text = self.input.trim().to_owned();
         self.input.clear();
+
         (!text.is_empty()).then_some(text)
     }
 
     pub fn click(&mut self, ui: &Ui, fonts: &Fonts, area: Rect) -> bool {
         let clicked = field_clicked(ui, fonts, input_rect(area), &mut self.input);
         let mouse = ui.mouse();
+
         if clicked {
             self.focused = true;
         } else if mouse.pressed && !area.contains(mouse.x, mouse.y) {
             self.focused = false;
         }
+
         clicked || ui.clicked(area)
     }
 
@@ -87,12 +90,14 @@ impl Chat {
             self.focused = false;
             return None;
         }
+
         self.edit(keyboard, keys)
     }
 
     fn draw_lines(&self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect, fade: bool) {
         let pal = ui.palette();
         let now = now_secs();
+
         let mut y = area.y + area.h - INPUT_H - PAD - LINE_H / 2.0;
         for line in self.lines.iter().rev() {
             let alpha = if fade {
@@ -106,14 +111,14 @@ impl Chat {
             }
             let color = if line.spectator { pal.text_dim } else { pal.text };
             let rows = fonts.wrap(Face::Text, &line.text, theme::size::SMALL, area.w - 2.0 * PAD);
+
             for row in rows.iter().rev() {
                 if y < area.y + PAD {
                     return;
                 }
                 draw.sharp_text(&fonts.text, row)
-                    .position(area.x + PAD, y)
+                    .left(area.x + PAD, y)
                     .size(theme::size::SMALL)
-                    .v_align_middle()
                     .color(color.with_alpha(alpha));
                 y -= LINE_H;
             }
@@ -123,15 +128,19 @@ impl Chat {
     /// The lobby's chat: a card with the conversation and its field.
     pub fn draw_card(&self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect) {
         let pal = ui.palette();
+        let field = Field { placeholder: "Écrire un message...", input: &self.input, focused: self.focused };
+
         crate::ui::card(draw, &pal, area);
         self.draw_lines(draw, ui, fonts, area, false);
-        let field = Field { placeholder: "Écrire un message...", input: &self.input, focused: self.focused };
         text_field(draw, ui, fonts, input_rect(area), &field);
     }
 
     /// The in-game chat: recent messages that fade, and the field once open.
     pub fn draw_overlay(&self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect, hint: Option<&str>) {
         let pal = ui.palette();
+        let field =
+            Field { placeholder: "Entrée pour envoyer, Échap pour fermer", input: &self.input, focused: true };
+
         if self.open {
             draw.rect((area.x, area.y), (area.w, area.h))
                 .corner_radius(theme::RADIUS)
@@ -139,14 +148,11 @@ impl Chat {
         }
         self.draw_lines(draw, ui, fonts, area, !self.open);
         if self.open {
-            let field =
-                Field { placeholder: "Entrée pour envoyer, Échap pour fermer", input: &self.input, focused: true };
             text_field(draw, ui, fonts, input_rect(area), &field);
         } else if let Some(hint) = hint {
             draw.sharp_text(&fonts.text, hint)
-                .position(area.x + PAD, area.y + area.h - INPUT_H / 2.0 - PAD / 2.0)
+                .left(area.x + PAD, area.y + area.h - INPUT_H / 2.0 - PAD / 2.0)
                 .size(theme::size::SMALL)
-                .v_align_middle()
                 .color(pal.text_muted);
         }
     }

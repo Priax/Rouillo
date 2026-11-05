@@ -341,12 +341,12 @@ fn autorepeat(timer: &mut f32, held: bool, dt: f32, settings: Settings) -> u32 {
     }
     *timer += dt;
     let mut moves = 0;
-    while *timer + 1e-4 >= settings.das_delay && moves < config::GRID_WIDTH as u32 {
-        *timer -= settings.das_speed;
+    while *timer + 1e-4 >= settings.das_delay() && moves < config::GRID_WIDTH as u32 {
+        *timer -= settings.das_speed();
         moves += 1;
     }
     if moves == config::GRID_WIDTH as u32 {
-        *timer = settings.das_delay;
+        *timer = settings.das_delay();
     }
     moves
 }

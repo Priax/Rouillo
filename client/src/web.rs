@@ -213,6 +213,24 @@ fn hidden_input() -> Option<HtmlInputElement> {
     Some(input)
 }
 
+/// Paste types the clipboard's text; copy and cut hand it the selection.
+fn listen_clipboard(window: &web_sys::Window) {
+    listen(window, "paste", |e: ClipboardEvent| {
+        if let Some(text) = e.clipboard_data().and_then(|d| d.get_data("text/plain").ok()) {
+            e.prevent_default();
+            typed(&text);
+        }
+    });
+    listen(window, "copy", |e: ClipboardEvent| {
+        give_selection(&e);
+    });
+    listen(window, "cut", |e: ClipboardEvent| {
+        if give_selection(&e) {
+            SHORTCUTS.with(|s| s.set(Shortcuts { cut: true, ..s.get() }));
+        }
+    });
+}
+
 pub fn start_text_input() {
     let (Some(window), Some(input)) = (web_sys::window(), hidden_input()) else {
         return;
@@ -265,21 +283,8 @@ pub fn start_text_input() {
                 .is_some_and(|e| e == *input.as_ref())
         }
     };
-    listen(&window, "paste", |e: ClipboardEvent| {
-        if let Some(text) = e.clipboard_data().and_then(|d| d.get_data("text/plain").ok()) {
-            e.prevent_default();
-            typed(&text);
-        }
-    });
+    listen_clipboard(&window);
     listen(&window, "keyup", |_: KeyboardEvent| BACKSPACE_DOWN.with(|b| b.set(false)));
-    listen(&window, "copy", |e: ClipboardEvent| {
-        give_selection(&e);
-    });
-    listen(&window, "cut", |e: ClipboardEvent| {
-        if give_selection(&e) {
-            SHORTCUTS.with(|s| s.set(Shortcuts { cut: true, ..s.get() }));
-        }
-    });
     listen(&window, "keydown", move |e: KeyboardEvent| {
         if e.key() == "Tab" {
             e.prevent_default();

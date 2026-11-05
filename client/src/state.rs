@@ -126,16 +126,8 @@ impl AuthForm {
     }
 }
 
-pub struct AuthInfo {
-    pub token: String,
-    pub user_id: String,
-    pub username: String,
-    pub elo: i32,
-    pub avatar_url: Option<String>,
-}
-
 #[derive(serde::Deserialize)]
-pub struct ApiAuthResponse {
+pub struct AuthInfo {
     pub token: String,
     pub user_id: String,
     pub username: String,
@@ -190,15 +182,6 @@ pub struct ApiFriendsResponse {
     pub received: Vec<FriendEntry>,
 }
 
-#[derive(serde::Deserialize, Clone)]
-pub struct UserSearchEntry {
-    pub user_id: String,
-    pub username: String,
-    pub elo: i32,
-    #[serde(default)]
-    pub avatar_url: Option<String>,
-}
-
 pub struct FriendsData {
     pub friends: Vec<FriendEntry>,
     pub sent: Vec<FriendEntry>,
@@ -207,7 +190,7 @@ pub struct FriendsData {
     pub search_input: TextInput,
     /// Off on arrival: a phone would otherwise open its keyboard at once.
     pub search_focused: bool,
-    pub search_results: Vec<UserSearchEntry>,
+    pub search_results: Vec<FriendEntry>,
     pub search_slot: Option<HttpSlot>,
     pub search_status: Status,
     pub add_pending: Option<HttpSlot>,
@@ -325,68 +308,73 @@ pub fn clear_best_score() {
     storage::remove(BEST_SCORE_KEY);
 }
 
-#[derive(Clone, Copy)]
-pub struct Settings {
-    pub das_delay: f32,
-    pub das_speed: f32,
+struct Setting {
+    label: &'static str,
+    key: &'static str,
+    step: f32,
+    range: (f32, f32),
+    default: f32,
 }
+
+const SETTINGS: [Setting; 2] = [
+    Setting {
+        label: "Délai DAS",
+        key: "rouillo_das_delay",
+        step: 0.01,
+        range: (0.05, 0.50),
+        default: config::DAS_DELAY,
+    },
+    Setting {
+        label: "Vitesse DAS",
+        key: "rouillo_das_speed",
+        step: 0.005,
+        range: (0.005, 0.20),
+        default: config::DAS_SPEED,
+    },
+];
+
+/// The DAS delay, then its speed.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Settings([f32; 2]);
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { das_delay: config::DAS_DELAY, das_speed: config::DAS_SPEED }
+        Self(SETTINGS.map(|s| s.default))
     }
 }
 
 impl Settings {
-    pub const COUNT: usize = 2;
+    pub const COUNT: usize = SETTINGS.len();
 
-    pub fn label(i: usize) -> &'static str {
-        match i {
-            0 => "Délai DAS",
-            _ => "Vitesse DAS",
-        }
+    pub const fn das_delay(self) -> f32 {
+        self.0[0]
     }
 
-    pub fn value(self, i: usize) -> f32 {
-        match i {
-            0 => self.das_delay,
-            _ => self.das_speed,
-        }
+    pub const fn das_speed(self) -> f32 {
+        self.0[1]
     }
 
-    fn step(i: usize) -> f32 {
-        match i {
-            0 => 0.01,
-            _ => 0.005,
-        }
+    pub const fn label(i: usize) -> &'static str {
+        SETTINGS[i].label
     }
 
-    fn range(i: usize) -> (f32, f32) {
-        match i {
-            0 => (0.05, 0.50),
-            _ => (0.005, 0.20),
-        }
+    pub const fn value(self, i: usize) -> f32 {
+        self.0[i]
     }
-
-    const KEYS: [&'static str; Self::COUNT] = ["rouillo_das_delay", "rouillo_das_speed"];
 
     fn set(&mut self, i: usize, value: f32) {
-        let (min, max) = Self::range(i);
-        let value = value.clamp(min, max);
-        match i {
-            0 => self.das_delay = value,
-            _ => self.das_speed = value,
-        }
+        let (min, max) = SETTINGS[i].range;
+        self.0[i] = value.clamp(min, max);
     }
 
     pub fn adjust(&mut self, i: usize, dir: i32) {
-        self.set(i, self.value(i) + dir as f32 * Self::step(i));
+        self.set(i, self.0[i] + dir as f32 * SETTINGS[i].step);
     }
 
     pub fn load() -> Self {
         let mut settings = Self::default();
-        for (i, key) in Self::KEYS.iter().enumerate() {
-            if let Some(value) = storage::get(key).and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()) {
+        for (i, s) in SETTINGS.iter().enumerate() {
+            if let Some(value) = storage::get(s.key).and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()) {
                 settings.set(i, value);
             }
         }
@@ -394,8 +382,8 @@ impl Settings {
     }
 
     pub fn save(self) {
-        for (i, key) in Self::KEYS.iter().enumerate() {
-            storage::set(key, &self.value(i).to_string());
+        for (s, value) in SETTINGS.iter().zip(self.0) {
+            storage::set(s.key, &value.to_string());
         }
     }
 }
@@ -850,14 +838,13 @@ mod settings_tests {
         settings.adjust(0, 3);
         settings.adjust(1, -1);
         settings.save();
-        let loaded = Settings::load();
-        assert_eq!((loaded.das_delay, loaded.das_speed), (settings.das_delay, settings.das_speed));
+        assert_eq!(Settings::load(), settings);
 
-        storage::set(Settings::KEYS[0], "99");
-        storage::set(Settings::KEYS[1], "NaN");
+        storage::set(SETTINGS[0].key, "99");
+        storage::set(SETTINGS[1].key, "NaN");
         let loaded = Settings::load();
-        assert_eq!(loaded.das_delay, Settings::range(0).1, "clamped to the slowest allowed");
-        assert_eq!(loaded.das_speed, Settings::default().das_speed, "garbage is ignored");
+        assert_eq!(loaded.das_delay(), SETTINGS[0].range.1, "clamped to the slowest allowed");
+        assert_eq!(loaded.das_speed(), Settings::default().das_speed(), "garbage is ignored");
     }
 }
 

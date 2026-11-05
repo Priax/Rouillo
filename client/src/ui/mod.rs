@@ -409,28 +409,7 @@ impl Ui {
 
     fn interact_in(&self, label: &str, rect: Rect, area: Area, enabled: bool) -> Response {
         let mut inner = self.inner.borrow_mut();
-        let Inner {
-            target: _,
-            dt,
-            time: _,
-            view: _,
-            hue: _,
-            from_hue: _,
-            target_hue: _,
-            screen: _,
-            entered_at: _,
-            fade: _,
-            palette: _,
-            mouse,
-            input_off,
-            widgets,
-            drawn,
-            caret_text: _,
-            caret_since: _,
-            focus,
-            pad,
-            pointer: _,
-        } = &mut *inner;
+        let Inner { dt, mouse, input_off, widgets, drawn, focus, pad, .. } = &mut *inner;
         let live = enabled && !*input_off;
 
         let label = hash_of(label);

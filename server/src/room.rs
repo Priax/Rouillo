@@ -150,6 +150,13 @@ pub const DATAGRAM_BUDGET: usize = 1100;
 /// The boards in `slots`, as `encode` makes them, in as few datagrams as fit
 /// `DATAGRAM_BUDGET`: boards compressed together cost a fraction of each
 /// alone. A board too big on its own still goes, and takes the stream.
+fn packed_all(slots: Range<usize>, encode: &impl Fn(Range<usize>) -> Vec<u8>) -> Vec<Bytes> {
+    let mut out = Vec::new();
+    packed(slots, encode, &mut out);
+    out
+}
+
+/// Halves `slots` until each part's boards fit a datagram.
 fn packed(slots: Range<usize>, encode: &impl Fn(Range<usize>) -> Vec<u8>, out: &mut Vec<Bytes>) {
     let bytes = encode(slots.clone());
     if bytes.len() <= DATAGRAM_BUDGET || slots.len() == 1 {
@@ -342,14 +349,9 @@ impl Room {
             let datagrams = split(conn);
             let Some(slot) = own else {
                 let out = if datagrams {
-                    StateOut::Boards(
-                        all.get_or_insert_with(|| {
-                            let mut out = Vec::new();
-                            packed(0..boards, &|r| shared::encode(&sim.state_update_of(r)), &mut out);
-                            out
-                        })
-                        .clone(),
-                    )
+                    let all =
+                        all.get_or_insert_with(|| packed_all(0..boards, &|r| shared::encode(&sim.state_update_of(r))));
+                    StateOut::Boards(all.clone())
                 } else {
                     StateOut::Whole(whole.get_or_insert_with(|| shared::encode(&sim.state_update())).clone())
                 };
@@ -365,14 +367,10 @@ impl Room {
                 continue;
             };
             if datagrams {
-                let others = small_packed.get_or_insert_with(|| {
-                    let mut out = Vec::new();
-                    let encode = |r: Range<usize>| {
-                        shared::encode(&ServerMessage::Thumbs { game: *game, tick: *tick, thumbs: list[r].to_vec() })
-                    };
-                    packed(0..list.len(), &encode, &mut out);
-                    out
-                });
+                let encode = |r: Range<usize>| {
+                    shared::encode(&ServerMessage::Thumbs { game: *game, tick: *tick, thumbs: list[r].to_vec() })
+                };
+                let others = small_packed.get_or_insert_with(|| packed_all(0..list.len(), &encode));
                 let mut out = vec![Bytes::from(mine)];
                 out.extend(others.iter().cloned());
                 sink.push((conn, StateOut::Boards(out)));

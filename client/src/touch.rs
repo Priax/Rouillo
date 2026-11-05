@@ -75,12 +75,7 @@ impl TouchPad {
             match button {
                 Button::Pause => {
                     draw.rect((rect.x, rect.y), (rect.w, rect.h)).corner_radius(16.0).color(fill);
-                    draw.sharp_text(&fonts.display, "II")
-                        .position(cx, cy)
-                        .size(theme::size::TITLE)
-                        .h_align_center()
-                        .v_align_middle()
-                        .color(ink);
+                    draw.sharp_text(&fonts.display, "II").center(cx, cy).size(theme::size::TITLE).color(ink);
                 }
                 Button::Act(action) => {
                     draw.circle(rect.w / 2.0).position(cx, cy).color(fill);
@@ -139,10 +134,8 @@ pub fn draw_turn_hint(draw: &mut Draw, fonts: &Fonts, view: View) {
     let (w, h) = view.size();
     draw.rect((0.0, 0.0), (w, h)).color(Color::from_rgb(0.07, 0.07, 0.09));
     draw.sharp_text(&fonts.display, "Tournez votre téléphone")
-        .position(w / 2.0, h / 2.0)
+        .center(w / 2.0, h / 2.0)
         .size(theme::size::TITLE)
-        .h_align_center()
-        .v_align_middle()
         .color(Color::WHITE);
 }
 

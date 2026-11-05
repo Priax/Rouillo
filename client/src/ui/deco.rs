@@ -50,7 +50,11 @@ pub struct Pill<'a> {
     pub size: f32,
 }
 
-impl Pill<'_> {
+impl<'a> Pill<'a> {
+    pub const fn small(text: &'a str, color: Color) -> Self {
+        Self { text, color, size: theme::size::SMALL }
+    }
+
     pub fn width(&self, fonts: &Fonts) -> f32 {
         fonts.width(Face::Text, self.text, self.size) + self.size * 1.4
     }
@@ -60,12 +64,7 @@ impl Pill<'_> {
         let (w, h) = (self.width(fonts), self.size * 1.7);
         draw.rect((x, cy - h / 2.0), (w, h)).corner_radius(h / 2.0).color(self.color.with_alpha(0.18));
         draw.rect((x, cy - h / 2.0), (w, h)).corner_radius(h / 2.0).stroke(1.5).color(self.color);
-        draw.sharp_text(&fonts.text, self.text)
-            .position(x + w / 2.0, cy)
-            .size(self.size)
-            .h_align_center()
-            .v_align_middle()
-            .color(self.color);
+        draw.sharp_text(&fonts.text, self.text).center(x + w / 2.0, cy).size(self.size).color(self.color);
     }
 }
 
@@ -104,10 +103,5 @@ pub fn portrait(draw: &mut Draw, pal: &Palette, fonts: &Fonts, (cx, cy): (f32, f
     }
     draw.circle(radius).position(cx, cy).stroke(2.0).color(pal.accent);
     let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
-    draw.sharp_text(&fonts.display, &initial)
-        .position(cx, cy)
-        .size(radius * 0.8)
-        .h_align_center()
-        .v_align_middle()
-        .color(pal.text);
+    draw.sharp_text(&fonts.display, &initial).center(cx, cy).size(radius * 0.8).color(pal.text);
 }

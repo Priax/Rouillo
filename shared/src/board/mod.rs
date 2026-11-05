@@ -15,7 +15,7 @@ mod tests;
 mod thumb;
 
 pub use fall::{fallen_px, frames_to_fall, CellFall, Fall};
-pub use grid::Grid;
+pub use grid::{neighbours, Grid};
 pub use pair::PairState;
 pub use piece::{ActivePuyo, PuyoType, Rotation};
 use rng::{BoardRng, Stream};

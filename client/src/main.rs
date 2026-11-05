@@ -59,6 +59,7 @@ use state::{Input, Network, Screen, State};
 use ui::{Rect, SharpText, Size};
 
 const BANNER_H: f32 = 80.0;
+const MAINTENANCE_H: f32 = 30.0;
 
 pub fn server_url() -> String {
     #[cfg(all(target_arch = "wasm32", not(debug_assertions)))]
@@ -200,6 +201,7 @@ fn pad_menus(state: &State, screen: &Screen) -> bool {
     if state.bindings_panel.capturing() {
         return false;
     }
+
     match screen {
         Screen::Game => {
             let chatting = state.room.as_ref().is_some_and(|r| r.chat.open);
@@ -225,6 +227,7 @@ fn pad_direction(pads: &Pads) -> Option<(f32, f32)> {
 fn banner_buttons(ww: f32, wh: f32) -> (Rect, Rect) {
     let band = Rect::at(0.0, wh - BANNER_H, ww, BANNER_H).pad(15.0, 30.0, 15.0, 0.0);
     let [accept, decline] = band.right(240.0).columns(10.0, [Size::Px(120.0), Size::Px(110.0)]);
+
     (accept, decline)
 }
 
@@ -232,9 +235,11 @@ fn update_invitation(state: &mut State, nav: &mut Nav) {
     if state.pending_invitation.is_none() {
         return;
     }
+
     let (ww, wh) = state.ui.view().size();
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
     let on_banner = state.ui.clicked(Rect::at(0.0, wh - BANNER_H, ww, BANNER_H));
+
     if state.ui.clicked(accept_btn) {
         if let Some((_, room_id, _)) = state.pending_invitation.take() {
             if state.net.conn.is_live() {
@@ -299,8 +304,10 @@ fn update_online_game(app: &mut App, state: &mut State) -> Transition {
         .as_mut()
         .and_then(|r| r.session.as_mut())
         .is_some_and(|s| logic::update_game(app, &input, ui, s, *settings, conn, online));
+
     let transition = if left && online.ranked { ranked::enter(state) } else { Transition::Stay };
     replay::update_keep(state);
+
     transition
 }
 
@@ -310,9 +317,10 @@ fn update(app: &mut App, root: &mut Root) {
     let Root { nav, state } = root;
     let dt = app.timer.delta_f32();
     let view = ui::View::of(app);
+    let real = ui::Mouse::of(app, view);
+
     state.input.pads.update();
     let pad_nav = pad_menus(state, nav.current());
-    let real = ui::Mouse::of(app, view);
     state.ui.note_pointer(real);
     let mouse =
         if pad_nav && state.input.pads.pressed(Pad::South) { state.ui.pad_click().unwrap_or(real) } else { real };
@@ -325,6 +333,7 @@ fn update(app: &mut App, root: &mut Root) {
             app.keyboard.pressed.insert(KeyCode::Escape);
         }
     }
+
     #[cfg(target_arch = "wasm32")]
     {
         web::set_at_root(matches!(nav.current(), Screen::Title | Screen::Auth | Screen::Menu));
@@ -344,6 +353,7 @@ fn update(app: &mut App, root: &mut Root) {
         updater::Status::Done => std::process::exit(0),
         _ => {}
     }
+
     let in_game = matches!(nav.current(), Screen::Game | Screen::Solo(_));
     let (touch_held, touch_pause) = state.input.touch.read(app, view, in_game);
     state.input.controls.update(&app.keyboard, &state.input.pads, touch_held, touch_pause);
@@ -353,10 +363,11 @@ fn update(app: &mut App, root: &mut Root) {
     for c in web::take_typed().chars() {
         type_char(state, nav, c);
     }
+
     let was_title = matches!(nav.current(), Screen::Title);
     let (rtt, via) = (state.net.conn.rtt_ms(), state.net.conn.via());
     if let Some(session) = state.session_mut() {
-        session.net.clock += app.timer.delta_f32() as f64;
+        session.net.clock += f64::from(dt);
         session.net.ping_rtt_ms = rtt;
         session.debug.via = via;
     }
@@ -393,6 +404,7 @@ fn update(app: &mut App, root: &mut Root) {
         Screen::Replay(viewer) => replay::update(app, state, viewer),
         Screen::Game => update_online_game(app, state),
     };
+
     nav.apply(transition);
     if matches!(nav.current(), Screen::Menu) && !state.startup.title_seen {
         nav.apply(Transition::To(Screen::Title));
@@ -402,23 +414,22 @@ fn update(app: &mut App, root: &mut Root) {
 }
 
 fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
-    let pal = state.ui.palette();
     let Some((ref from, _, ref room_name)) = state.pending_invitation else {
         return;
     };
+
+    let pal = state.ui.palette();
     let (ww, wh) = state.ui.view().size();
     let banner_y = wh - BANNER_H;
+    let msg = format!("{from} vous invite dans \"{room_name}\"");
+    let (accept_btn, decline_btn) = banner_buttons(ww, wh);
+
     let mut d = state.ui.canvas(gfx);
     ui::banner(&mut d, Rect::at(0.0, banner_y, ww, BANNER_H), pal.banner, pal.accent, ui::Edge::Top);
-    let msg = format!("{from} vous invite dans \"{room_name}\"");
-    d.sharp_text(&state.fonts.text, &msg)
-        .position(20.0, banner_y + 40.0)
-        .size(theme::size::LABEL)
-        .v_align_middle()
-        .color(pal.text);
-    let (accept_btn, decline_btn) = banner_buttons(ww, wh);
+    d.sharp_text(&state.fonts.text, &msg).left(20.0, banner_y + 40.0).size(theme::size::LABEL).color(pal.text);
     state.ui.button(&mut d, &state.fonts, accept_btn, "Rejoindre");
     state.ui.button(&mut d, &state.fonts, decline_btn, "Ignorer");
+
     state.ui.render(gfx, &d);
 }
 
@@ -448,26 +459,12 @@ fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
             draw::draw_game(app, gfx, &game.session, &state.ui, &state.fonts, hud);
         }
         Screen::Game => {
-            if let Some(room) = &state.room {
-                let l = &room.info;
-                let role = draw::Role {
-                    is_host: l.is_host,
-                    watchers: l.spectators,
-                    can_pause: l.settings.pause.allows(l.is_host),
-                    series: l.ranked.as_ref().map(|ranked| {
-                        let me = usize::from(l.your_slot.clamp(1, 2) - 1);
-                        draw::SeriesView {
-                            wins: [ranked.wins[me], ranked.wins[1 - me]],
-                            over: room.series_over.map(|(winner, elo)| (winner.map(|w| w == l.your_slot), elo)),
-                        }
-                    }),
-                };
-                if let Some(session) = &room.session {
-                    draw::draw_game(app, gfx, session, &state.ui, &state.fonts, draw::Hud::Online(role));
-                }
+            if let Some((room, session)) = state.room.as_ref().and_then(|r| Some((r, r.session.as_ref()?))) {
+                draw::draw_game(app, gfx, session, &state.ui, &state.fonts, draw::Hud::Online(online_role(room)));
             }
         }
     }
+
     if matches!(screen, Screen::Game | Screen::Solo(_)) {
         let mut d = state.ui.canvas(gfx);
         if let Some(room) = state.room.as_ref().filter(|_| matches!(screen, Screen::Game)) {
@@ -484,10 +481,12 @@ fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
         state.input.touch.draw(&mut d, &state.fonts, state.ui.view());
         state.ui.render(gfx, &d);
     }
+
     draw_invitation_banner(gfx, state);
     draw_maintenance_banner(gfx, state, screen);
     draw_too_old_banner(gfx, state, screen);
     draw_reconnect_banner(gfx, state, screen);
+
     let view = state.ui.view();
     // A game, and the screens that lead straight into one, need the phone
     // turned: the boards are laid out side by side.
@@ -497,10 +496,26 @@ fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
         touch::draw_turn_hint(&mut d, &state.fonts, view);
         state.ui.render(gfx, &d);
     }
+
     state.ui.present(gfx);
 }
 
-const MAINTENANCE_H: f32 = 30.0;
+/// The player's place in an online game, as its screen shows it.
+fn online_role(room: &state::Room) -> draw::Role {
+    let info = &room.info;
+    draw::Role {
+        is_host: info.is_host,
+        watchers: info.spectators,
+        can_pause: info.settings.pause.allows(info.is_host),
+        series: info.ranked.as_ref().map(|ranked| {
+            let me = usize::from(info.your_slot.clamp(1, 2) - 1);
+            draw::SeriesView {
+                wins: [ranked.wins[me], ranked.wins[1 - me]],
+                over: room.series_over.map(|(winner, elo)| (winner.map(|w| w == info.your_slot), elo)),
+            }
+        }),
+    }
+}
 
 fn draw_maintenance_banner(gfx: &mut Graphics, state: &State, screen: &Screen) {
     let playing = matches!(screen, Screen::Game) && state.session().is_some_and(|s| !s.decided());
@@ -523,13 +538,12 @@ fn draw_too_old_banner(gfx: &mut Graphics, state: &State, screen: &Screen) {
 
 fn draw_warning_banner(gfx: &mut Graphics, ui: &ui::Ui, fonts: &ui::Fonts, text: &str) {
     let ww = ui.view().w;
+
     let mut d = ui.canvas(gfx);
     ui::banner(&mut d, Rect::at(0.0, 0.0, ww, MAINTENANCE_H), theme::WARNING_BANNER, theme::WARNING, ui::Edge::Bottom);
     d.sharp_text(&fonts.text, text)
-        .position(ww / 2.0, MAINTENANCE_H / 2.0)
+        .center(ww / 2.0, MAINTENANCE_H / 2.0)
         .size(theme::size::SMALL)
-        .h_align_center()
-        .v_align_middle()
         .color(theme::WARNING_TEXT);
     ui.render(gfx, &d);
 }
@@ -541,17 +555,14 @@ fn draw_reconnect_banner(gfx: &mut Graphics, state: &State, screen: &Screen) {
     if !screen.needs_connection() {
         return;
     }
+
     let ww = state.ui.view().w;
-    let mut d = state.ui.canvas(gfx);
-    ui::banner(&mut d, Rect::at(0.0, 0.0, ww, 46.0), theme::WARNING_BANNER, theme::WARNING, ui::Edge::Bottom);
     let dots = state.ui.waiting_dots();
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
-    d.sharp_text(&state.fonts.text, &msg)
-        .position(ww / 2.0, 22.0)
-        .size(theme::size::LABEL)
-        .h_align_center()
-        .v_align_middle()
-        .color(theme::WARNING_TEXT);
+
+    let mut d = state.ui.canvas(gfx);
+    ui::banner(&mut d, Rect::at(0.0, 0.0, ww, 46.0), theme::WARNING_BANNER, theme::WARNING, ui::Edge::Bottom);
+    d.sharp_text(&state.fonts.text, &msg).center(ww / 2.0, 22.0).size(theme::size::LABEL).color(theme::WARNING_TEXT);
     state.ui.render(gfx, &d);
 }
 

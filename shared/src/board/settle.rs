@@ -40,14 +40,7 @@ impl Board {
                 colors_seen[colour as usize] = true;
                 group_bonuses += group_bonus(small(group.len()));
                 cleared += small::<u32>(group.len());
-                for (gr, gc) in group {
-                    popped[self.cells.flat(gr, gc)] = true;
-                    for (nr, nc) in self.cells.neighbours(gr, gc) {
-                        if self.cells[(nr, nc)] == Some(PuyoType::Garbage) {
-                            popped[self.cells.flat(nr, nc)] = true;
-                        }
-                    }
-                }
+                self.cells.mark_popped(&group, &mut popped);
             }
         }
         let cells: Vec<(u8, u8)> = (0..height)

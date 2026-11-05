@@ -7,7 +7,7 @@ use crate::http::{self, HttpSlot};
 use crate::nav::Transition;
 use crate::state::{Screen, State};
 use crate::theme;
-use crate::ui::{self, Face, Frame, Icon, Label, ListCard, Pager, Pill, Rect, SharpText, Status, View};
+use crate::ui::{self, Face, Frame, Label, ListCard, Pager, Pill, Rect, SharpText, Status, View};
 
 const SIZE: i64 = 100;
 const ROW_H: f32 = 56.0;
@@ -40,6 +40,7 @@ pub struct Leaderboard {
 pub fn enter(state: &State) -> Transition {
     let mut board = Box::<Leaderboard>::default();
     refresh(&mut board, state);
+
     Transition::To(Screen::Leaderboard(board))
 }
 
@@ -49,6 +50,7 @@ fn refresh(board: &mut Leaderboard, state: &State) {
         Some(id) => http::api_url(&format!("leaderboard?me={id}")),
         None => http::api_url("leaderboard"),
     };
+
     let slot = http::new_slot();
     http::get(url, None, Arc::clone(&slot));
     board.slot = Some(slot);
@@ -72,22 +74,6 @@ fn list(view: View) -> ListCard {
     ListCard::new(view, ROW_H)
 }
 
-fn list_card(view: View) -> Rect {
-    list(view).card
-}
-
-fn per_page(view: View) -> usize {
-    list(view).per_page()
-}
-
-fn row_rect(view: View, i: usize) -> Rect {
-    list(view).row(i)
-}
-
-fn pager_area(view: View) -> Rect {
-    list(view).pager()
-}
-
 fn back_btn(view: View) -> Rect {
     Frame::of(view).back
 }
@@ -98,16 +84,18 @@ fn refresh_btn(view: View) -> Rect {
 
 pub fn update(app: &App, state: &mut State, board: &mut Leaderboard) -> Transition {
     let me = state.auth.as_ref().map(|a| a.user_id.clone());
+    let list = list(state.ui.view());
     let view = state.ui.view();
+
     poll(board, me.as_deref());
-    let pages = ui::page_count(board.top.len(), per_page(view));
+    let pages = ui::page_count(board.top.len(), list.per_page());
     board.pager.clamp(pages);
-    board.pager.update(app, &state.ui, &state.fonts, &state.input.keys, pager_area(view), pages);
+    board.pager.update(app, &state.ui, &state.fonts, &state.input.keys, list.pager(), pages);
 
     let clicked = board
         .pager
-        .shown(&board.top, per_page(view))
-        .find(|&(i, _)| state.ui.clicked(row_rect(view, i)))
+        .shown(&board.top, list.per_page())
+        .find(|&(i, _)| state.ui.clicked(list.row(i)))
         .map(|(_, e)| (e.user_id.clone(), e.username.clone()));
     if let Some((user_id, username)) = clicked {
         if Some(&user_id) == me.as_ref() {
@@ -122,6 +110,7 @@ pub fn update(app: &App, state: &mut State, board: &mut Leaderboard) -> Transiti
     } else if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Transition::To(Screen::Menu);
     }
+
     Transition::Stay
 }
 
@@ -137,85 +126,38 @@ fn rank_color(rank: i64, fallback: Color) -> Color {
 fn draw_row(draw: &mut Draw, state: &State, (row, i): (Rect, usize), e: &Entry, mine: bool, picture: Option<&Texture>) {
     let pal = state.ui.palette();
     let fonts = &state.fonts;
-    state.ui.row(draw, row, i, &format!("rank:{}", e.user_id));
     let mid = row.y + row.h / 2.0;
     let who = ui::Persona { name: &e.username, glow: 0.0, picture };
-    ui::portrait(draw, &pal, fonts, (row.x + 100.0 + AVATAR_R, mid), AVATAR_R, &who);
-    draw.sharp_text(&fonts.display, &format!("#{}", e.rank))
-        .position(row.x + 18.0, mid)
-        .size(theme::size::EMPHASIS)
-        .v_align_middle()
-        .color(rank_color(e.rank, pal.text_muted));
-
+    let name_x = row.x + 100.0 + 2.0 * AVATAR_R + 12.0;
     let elo = format!("ELO {}", e.elo);
     let record = format!("{} V / {} séries", e.series_won, e.series);
     let mut pills = Vec::new();
     if mine {
-        pills.push(Pill { text: "Vous", color: pal.accent, size: theme::size::SMALL });
+        pills.push(Pill::small("Vous", pal.accent));
     }
-    pills.push(Pill { text: &record, color: pal.text_dim, size: theme::size::SMALL });
-    pills.push(Pill { text: &elo, color: theme::GOLD, size: theme::size::SMALL });
-    let pills_start = ui::pills_ending_at(draw, fonts, &pills, row.x + row.w - 16.0, mid);
-    let name_x = row.x + 100.0 + 2.0 * AVATAR_R + 12.0;
-    let name = fonts.fit(Face::Display, &e.username, theme::size::EMPHASIS, pills_start - 20.0 - name_x);
-    draw.sharp_text(&fonts.display, &name)
-        .position(name_x, mid)
+    pills.push(Pill::small(&record, pal.text_dim));
+    pills.push(Pill::small(&elo, theme::GOLD));
+
+    state.ui.row(draw, row, i, &format!("rank:{}", e.user_id));
+    ui::portrait(draw, &pal, fonts, (row.x + 100.0 + AVATAR_R, mid), AVATAR_R, &who);
+    draw.sharp_text(&fonts.display, &format!("#{}", e.rank))
+        .left(row.x + 18.0, mid)
         .size(theme::size::EMPHASIS)
-        .v_align_middle()
-        .color(pal.text);
+        .color(rank_color(e.rank, pal.text_muted));
+    let pills_start = ui::pills_ending_at(draw, fonts, &pills, row.x + row.w - 16.0, mid);
+    let name = fonts.fit(Face::Display, &e.username, theme::size::EMPHASIS, pills_start - 20.0 - name_x);
+    draw.sharp_text(&fonts.display, &name).left(name_x, mid).size(theme::size::EMPHASIS).color(pal.text);
 }
 
 pub fn draw(gfx: &mut Graphics, state: &State, board: &Leaderboard) {
     let pal = state.ui.palette();
     let view = state.ui.view();
-    let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
-    draw.sharp_text(&state.fonts.display, "Classement")
-        .position(60.0, theme::HEADER_H / 2.0)
-        .size(theme::size::TITLE)
-        .v_align_middle()
-        .color(pal.text);
-
-    let card = list_card(view);
-    ui::card(&mut draw, &pal, card);
+    let list = list(view);
+    let card = list.card;
     let me = state.auth.as_ref().map(|a| a.user_id.as_str());
-    let empty = if board.slot.is_some() {
-        Some("Chargement...")
-    } else if board.top.is_empty() && board.status.shown(&pal).is_none() {
-        Some("Personne n'a encore joué en classé.")
-    } else {
-        None
-    };
-    if let Some(text) = empty {
-        draw.sharp_text(&state.fonts.text, text)
-            .position(card.x + card.w / 2.0, card.y + 60.0)
-            .size(theme::size::EMPHASIS)
-            .h_align_center()
-            .v_align_middle()
-            .color(pal.text_muted);
-    } else {
-        for (i, e) in board.pager.shown(&board.top, per_page(view)) {
-            let picture = state.images.get_opt(gfx, e.avatar_url.as_deref());
-            let mine = Some(e.user_id.as_str()) == me;
-            draw_row(&mut draw, state, (row_rect(view, i), i), e, mine, picture.as_ref());
-        }
-        let pages = ui::page_count(board.top.len(), per_page(view));
-        if pages > 1 {
-            board.pager.draw(&mut draw, &state.ui, &state.fonts, pager_area(view), pages);
-        }
-    }
-
     let loading = board.slot.is_some();
-    state.ui.button_enabled(
-        &mut draw,
-        &state.fonts,
-        refresh_btn(view),
-        if loading { Label::from(Icon::Busy) } else { Label::from("Rafraîchir") },
-        !loading,
-    );
     let back = back_btn(view);
-    state.ui.button(&mut draw, &state.fonts, back, "Retour");
-
+    let refresh = Label::busy_or(loading, "Rafraîchir");
     let footer = match (&board.me, me, loading) {
         (_, _, true) => None,
         (Some(e), _, _) if e.rank > SIZE => Some((format!("Votre rang: #{} (ELO {})", e.rank, e.elo), pal.text)),
@@ -223,12 +165,40 @@ pub fn draw(gfx: &mut Graphics, state: &State, board: &Leaderboard) {
         _ => None,
     };
     let footer = board.status.shown(&pal).map(|(msg, color)| (msg.to_owned(), color)).or(footer);
+    let empty = if board.slot.is_some() {
+        Some("Chargement...")
+    } else if board.top.is_empty() && board.status.shown(&pal).is_none() {
+        Some("Personne n'a encore joué en classé.")
+    } else {
+        None
+    };
+
+    let mut draw = state.ui.screen_canvas(gfx);
+    state.ui.page_header(&mut draw, &state.fonts, "Classement");
+    ui::card(&mut draw, &pal, card);
+    if let Some(text) = empty {
+        draw.sharp_text(&state.fonts.text, text)
+            .center(card.x + card.w / 2.0, card.y + 60.0)
+            .size(theme::size::EMPHASIS)
+            .color(pal.text_muted);
+    } else {
+        for (i, e) in board.pager.shown(&board.top, list.per_page()) {
+            let picture = state.images.get_opt(gfx, e.avatar_url.as_deref());
+            let mine = Some(e.user_id.as_str()) == me;
+            draw_row(&mut draw, state, (list.row(i), i), e, mine, picture.as_ref());
+        }
+        let pages = ui::page_count(board.top.len(), list.per_page());
+        if pages > 1 {
+            board.pager.draw(&mut draw, &state.ui, &state.fonts, list.pager(), pages);
+        }
+    }
+
+    state.ui.button_enabled(&mut draw, &state.fonts, refresh_btn(view), refresh, !loading);
+    state.ui.button(&mut draw, &state.fonts, back, "Retour");
     if let Some((msg, color)) = footer {
         draw.sharp_text(&state.fonts.text, &msg)
-            .position(view.w / 2.0, back.y + back.h / 2.0)
+            .center(view.w / 2.0, back.y + back.h / 2.0)
             .size(theme::size::EMPHASIS)
-            .h_align_center()
-            .v_align_middle()
             .color(color);
     }
 

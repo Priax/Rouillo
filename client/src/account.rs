@@ -7,7 +7,7 @@ use crate::http::{self, HttpSlot};
 use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
 use crate::ui::{
-    field_clicked, text_field, EditKeys, Field, Fonts, Icon, Label, Rect, SharpText, Status, TextInput, Ui, FILL,
+    field_clicked, text_field, EditKeys, Field, Fonts, Label, Rect, SharpText, Status, TextInput, Ui, FILL,
 };
 
 const MIN_PASSWORD: usize = 8;
@@ -76,6 +76,7 @@ impl AccountForm {
     pub fn open() -> Self {
         let mut form = Self::default();
         form.show(Page::Choose);
+
         form
     }
 
@@ -137,6 +138,7 @@ impl AccountForm {
                 return Err("Les deux nouveaux mots de passe ne correspondent pas.");
             }
         }
+
         Ok(())
     }
 
@@ -148,6 +150,7 @@ impl AccountForm {
             self.status = Status::error(msg);
             return;
         }
+
         let slot = http::new_slot();
         let (path, body) = match self.page {
             Page::Password => {
@@ -161,6 +164,7 @@ impl AccountForm {
             Page::Delete => ("me/delete", serde_json::json!({ "password": &*self.current }).to_string()),
             Page::Choose => return,
         };
+
         if body.is_empty() {
             http::post_empty(http::api_url(path), token, Arc::clone(&slot));
         } else {
@@ -174,6 +178,7 @@ impl AccountForm {
         let Some(result) = http::take_json::<serde_json::Value>(&mut self.pending) else {
             return Outcome::Stay;
         };
+
         match result {
             Ok(reply) => match self.page {
                 Page::Username => {
@@ -238,11 +243,11 @@ pub fn update(
     form: &mut AccountForm,
     token: Option<String>,
 ) -> Outcome {
+    let cx = ui.view().w / 2.0;
     let outcome = form.poll();
     if !matches!(outcome, Outcome::Stay) {
         return outcome;
     }
-    let cx = ui.view().w / 2.0;
 
     if form.page == Page::Choose {
         for choice in Choice::ALL {
@@ -275,6 +280,7 @@ pub fn update(
             }
         }
     }
+
     let (confirm_btn, cancel_btn) = buttons(cx, form);
     if ui.clicked(confirm_btn) || app.keyboard.was_pressed(KeyCode::Enter) {
         form.submit(token);
@@ -282,57 +288,43 @@ pub fn update(
     if form.pending.is_none() && (ui.clicked(cancel_btn) || app.keyboard.was_pressed(KeyCode::Escape)) {
         form.show(Page::Choose);
     }
+
     Outcome::Stay
 }
 
 pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &AccountForm, cx: f32) {
     let pal = ui.palette();
-    let mut status_y = TOP - 40.0;
+    let choosing = form.page == Page::Choose;
+    let (confirm_btn, cancel_btn) = buttons(cx, form);
+    let busy = form.pending.is_some();
+    let confirm = Label::busy_or(busy, confirm_label(form.page));
+    let warning_color = if form.page == Page::Delete { theme::DANGER } else { pal.text_dim };
+    let status_y = if choosing { TOP - 40.0 } else { confirm_btn.y + confirm_btn.h + 26.0 };
 
-    if form.page == Page::Choose {
+    if choosing {
         for choice in Choice::ALL {
             ui.button(draw, fonts, choice.rect(cx), choice.label());
         }
     } else {
         if let Some(text) = warning(form.page) {
-            let color = if form.page == Page::Delete { theme::DANGER } else { pal.text_dim };
-            draw.sharp_text(&fonts.text, text)
-                .position(cx, TOP + 20.0)
-                .size(theme::size::LABEL)
-                .h_align_center()
-                .v_align_middle()
-                .color(color);
+            draw.sharp_text(&fonts.text, text).center(cx, TOP + 20.0).size(theme::size::LABEL).color(warning_color);
         }
         for (i, label) in form.labels().iter().enumerate() {
             let rect = field_rect(cx, form.page, i);
-            draw.sharp_text(&fonts.text, label)
-                .position(rect.x, rect.y - 15.0)
-                .size(theme::size::LABEL)
-                .v_align_middle()
-                .color(pal.text_dim);
             let field = Field { placeholder: "", input: form.input(i), focused: form.focused == i };
+
+            draw.sharp_text(&fonts.text, label)
+                .left(rect.x, rect.y - 15.0)
+                .size(theme::size::LABEL)
+                .color(pal.text_dim);
             text_field(draw, ui, fonts, rect, &field);
         }
-        let (confirm_btn, cancel_btn) = buttons(cx, form);
-        let busy = form.pending.is_some();
-        ui.button_enabled(
-            draw,
-            fonts,
-            confirm_btn,
-            if busy { Label::from(Icon::Busy) } else { Label::from(confirm_label(form.page)) },
-            !busy,
-        );
+        ui.button_enabled(draw, fonts, confirm_btn, confirm, !busy);
         ui.button(draw, fonts, cancel_btn, "Annuler");
-        status_y = confirm_btn.y + confirm_btn.h + 26.0;
     }
 
     if let Some((msg, color)) = form.status.shown(&pal) {
-        draw.sharp_text(&fonts.text, msg)
-            .position(cx, status_y)
-            .size(theme::size::LABEL)
-            .h_align_center()
-            .v_align_middle()
-            .color(color);
+        draw.sharp_text(&fonts.text, msg).center(cx, status_y).size(theme::size::LABEL).color(color);
     }
 }
 

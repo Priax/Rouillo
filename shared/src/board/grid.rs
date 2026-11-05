@@ -90,12 +90,8 @@ impl Grid {
         self.collides(&piece.shifted(1, 0))
     }
 
-    pub(super) fn neighbours(&self, r: usize, c: usize) -> impl Iterator<Item = (usize, usize)> + '_ {
-        [(-1, 0), (1, 0), (0, -1), (0, 1)].into_iter().filter_map(move |(dr, dc)| {
-            let nr = r.checked_add_signed(dr)?;
-            let nc = c.checked_add_signed(dc)?;
-            (nr < self.height && nc < self.width).then_some((nr, nc))
-        })
+    pub(super) fn neighbours(&self, r: usize, c: usize) -> impl Iterator<Item = (usize, usize)> {
+        neighbours((self.width, self.height), r, c)
     }
 
     pub(super) const fn flat(&self, r: usize, c: usize) -> usize {
@@ -119,19 +115,30 @@ impl Grid {
         group
     }
 
+    /// Marks `group` in `popped`, with the nuisance beside it.
+    pub(super) fn mark_popped(&self, group: &[(usize, usize)], popped: &mut [bool]) {
+        for &(r, c) in group {
+            popped[self.flat(r, c)] = true;
+            for (nr, nc) in self.neighbours(r, c) {
+                if self[(nr, nc)] == Some(PuyoType::Garbage) {
+                    popped[self.flat(nr, nc)] = true;
+                }
+            }
+        }
+    }
+
     /// Lets every puyo fall to the floor or onto the stack.
     pub(super) fn collapse(&mut self) -> Vec<Move> {
         let mut moved = Vec::new();
         for col in 0..self.width {
             let mut floor = self.height;
             for row in (0..self.height).rev() {
-                if let Some(t) = self[(row, col)] {
-                    floor -= 1;
-                    if floor != row {
-                        self[(floor, col)] = Some(t);
-                        self[(row, col)] = None;
-                        moved.push(Move { from: row, col, to: floor });
-                    }
+                let Some(t) = self[(row, col)] else { continue };
+                floor -= 1;
+                if floor != row {
+                    self[(floor, col)] = Some(t);
+                    self[(row, col)] = None;
+                    moved.push(Move { from: row, col, to: floor });
                 }
             }
         }
@@ -171,4 +178,13 @@ impl IndexMut<(usize, usize)> for Grid {
         let at = self.flat(r, c);
         &mut self.cells[at]
     }
+}
+
+/// The cells beside `(r, c)` in a grid `w` wide and `h` high.
+pub fn neighbours((w, h): (usize, usize), r: usize, c: usize) -> impl Iterator<Item = (usize, usize)> {
+    [(-1, 0), (1, 0), (0, -1), (0, 1)].into_iter().filter_map(move |(dr, dc)| {
+        let nr = r.checked_add_signed(dr)?;
+        let nc = c.checked_add_signed(dc)?;
+        (nr < h && nc < w).then_some((nr, nc))
+    })
 }

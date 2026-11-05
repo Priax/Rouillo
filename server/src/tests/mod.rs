@@ -53,6 +53,10 @@ fn hello(mgr: &mut Manager, conn: ConnId, token: &str) {
     });
 }
 
+fn create_room(mgr: &mut Manager, conn: ConnId) {
+    mgr.handle(Command::CreateRoom { conn, name: "R".into() });
+}
+
 fn drain(rx: &mut mpsc::Receiver<Vec<u8>>) -> Vec<ServerMessage> {
     let mut out = Vec::new();
     while let Ok(bytes) = rx.try_recv() {
@@ -77,7 +81,7 @@ fn has(msgs: &[ServerMessage], f: impl Fn(&ServerMessage) -> bool) -> bool {
 fn two_player_room(mgr: &mut Manager) -> (RoomId, mpsc::Receiver<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
     let rx1 = reg(mgr, 1);
     hello(mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(mgr, 1);
     let rx2 = reg(mgr, 2);
     hello(mgr, 2, "B");
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });

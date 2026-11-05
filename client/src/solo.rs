@@ -13,6 +13,15 @@ use crate::{board_size, http, logic, rooms, theme};
 /// The most CPUs a solo game takes on: each one thinks on this device.
 pub const MAX_OPPONENTS: usize = 3;
 
+const ROW_H: f32 = 44.0;
+const ROW_GAP: f32 = 12.0;
+/// The opponents' rows stand a little lower than tiles would.
+const FOES_TOP: f32 = 8.0;
+const CARD_GAP: f32 = 24.0;
+const GAME_W: f32 = 420.0;
+const FOES_W: f32 = 600.0;
+const ADD_W: f32 = 260.0;
+
 /// What lasts between solo games: the settings and the best score.
 pub struct Solo {
     pub settings: SoloSettings,
@@ -144,6 +153,7 @@ impl SoloGame {
         let mut session = GameSession::new(1, names.collect());
         session.predicted_board = board.clone();
         session.local = true;
+
         let mut cpus = Vec::new();
         for (i, &(difficulty, style)) in settings.opponents.iter().enumerate() {
             cpus.push(Cpu::new(difficulty, style, seed.wrapping_add(i as u64)));
@@ -151,10 +161,12 @@ impl SoloGame {
             let (slot, team) = (seat + 1, shared::own_team(seat));
             session.add_rival(Rival::new(slot, team, board.clone()));
         }
+
         let pilot = settings
             .pilot
             .map(|difficulty| Cpu::new(difficulty, settings.pilot_style, seed.wrapping_add(MAX_OPPONENTS as u64)));
         let boards = cpus.len() + 1;
+
         Self {
             session,
             settings,
@@ -220,12 +232,14 @@ impl SoloGame {
         let alive: Vec<usize> =
             (0..self.targets.len()).filter(|&i| self.board(i).state() != GameState::GameOver).collect();
         let now = self.session.net.local_tick;
+
         for i in 0..self.targets.len() {
             let opponents: Vec<usize> = alive.iter().copied().filter(|&o| o != i).collect();
             if !alive.contains(&i) || opponents.is_empty() {
                 self.targets[i] = None;
                 continue;
             }
+
             let targeting = match self.session.targeting {
                 Targeting::Manual(slot) => Targeting::Manual(slot.saturating_sub(1)),
                 t => t,
@@ -238,6 +252,7 @@ impl SoloGame {
                 opponents[rand::random_range(0..opponents.len())]
             }));
         }
+
         let slot = |t: Option<usize>| t.map(|t| t as u8 + 1);
         self.session.target = slot(self.targets[0]);
         for (i, rival) in self.session.rivals.iter_mut().enumerate() {
@@ -252,6 +267,7 @@ impl SoloGame {
                 self.session.predicted_board.apply_input(kind);
             }
         }
+
         let mut sent = vec![logic::advance_one(&mut self.session)];
         let now = self.session.net.local_tick;
         self.session.incoming.retain(|g| g.at > now);
@@ -262,6 +278,7 @@ impl SoloGame {
             sent.push(rival.board.step(input, landed).sent);
         }
         self.aim();
+
         let at = now + config::GARBAGE_TRAVEL_TICKS;
         for (from, amount) in sent.into_iter().enumerate().filter(|&(_, amount)| amount > 0) {
             let garbage = IncomingGarbage { at, amount };
@@ -281,6 +298,7 @@ impl SoloGame {
 /// device's best, so a guest's record follows them into their account.
 fn send_best(solo: &mut Solo, auth: Option<&AuthInfo>, score: u32) {
     let Some(auth) = auth else { return };
+
     let slot = http::new_slot();
     let body = serde_json::json!({ "score": score }).to_string();
     http::post_json(http::api_url("me/solo-best"), body, Some(auth.token.clone()), Arc::clone(&slot));
@@ -296,12 +314,14 @@ pub fn poll_best(solo: &mut Solo, signed_in: bool) {
     struct Best {
         solo_best: u32,
     }
+
     let Some(result) = http::take_json::<Best>(&mut solo.best_slot) else {
         return;
     };
     if !signed_in {
         return;
     }
+
     match result {
         Ok(best) => {
             solo.best = solo.best.max(best.solo_best);
@@ -326,6 +346,8 @@ pub fn update_game(app: &mut App, state: &mut State, game: &mut SoloGame) -> Tra
         game.set_paused(!game.paused());
     }
     let (over, paused) = (game.over(), game.paused());
+    let dt = app.timer.delta_f32();
+
     if over || paused {
         let (quit, again) = crate::draw::exit_rows(ui.view(), true);
         if ui.bar_clicked(quit) {
@@ -337,7 +359,6 @@ pub fn update_game(app: &mut App, state: &mut State, game: &mut SoloGame) -> Tra
         }
     }
 
-    let dt = app.timer.delta_f32();
     if over || paused {
         logic::hold(&mut game.session);
     } else {
@@ -362,17 +383,9 @@ pub fn update_game(app: &mut App, state: &mut State, game: &mut SoloGame) -> Tra
     if let Some(score) = record {
         send_best(&mut state.solo, state.auth.as_ref(), score);
     }
+
     Transition::Stay
 }
-
-const ROW_H: f32 = 44.0;
-const ROW_GAP: f32 = 12.0;
-/// The opponents' rows stand a little lower than tiles would.
-const FOES_TOP: f32 = 8.0;
-const CARD_GAP: f32 = 24.0;
-const GAME_W: f32 = 420.0;
-const FOES_W: f32 = 600.0;
-const ADD_W: f32 = 260.0;
 
 /// The settings screen: the game's settings in one card, the opponents in
 /// another, side by side or one above the other on a narrow screen.
@@ -396,6 +409,7 @@ impl Setup {
         let body = Frame::of(view).body;
         let game_h = ui::card_height(GAME_ROWS as f32 * ui::TILE_H);
         let foes_h = ui::card_height(FOES_TOP + (MAX_OPPONENTS + 1) as f32 * (ROW_H + ROW_GAP));
+
         let (game, foes) = if view.portrait() {
             let game = body.top(game_h).max_width(FOES_W);
             let below = body.below(game_h + CARD_GAP);
@@ -434,6 +448,7 @@ impl Setup {
 pub fn update_setup(app: &mut App, state: &mut State) -> Transition {
     let setup = Setup::new(state.ui.view());
     let settings = &mut state.solo.settings;
+
     if state.solo.sizing {
         match board_size::update(app, &state.ui, &settings.room.rules, true) {
             Some(board_size::Action::Close) => state.solo.sizing = false,
@@ -446,6 +461,7 @@ pub fn update_setup(app: &mut App, state: &mut State) -> Transition {
         }
         return Transition::Stay;
     }
+
     let ui = &state.ui;
     for i in 0..GAME_ROWS {
         let tile = setup.tile(i);
@@ -463,6 +479,7 @@ pub fn update_setup(app: &mut App, state: &mut State) -> Transition {
             settings.adjust(i, 1);
         }
     }
+
     for i in 0..settings.opponents.len() {
         let row = setup.foe(i);
         if ui.clicked(row.remove) {
@@ -487,6 +504,7 @@ pub fn update_setup(app: &mut App, state: &mut State) -> Transition {
     } else if ui.bar_clicked(setup.action_row(1)) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Transition::To(Screen::PlayMenu);
     }
+
     Transition::Stay
 }
 
@@ -495,23 +513,17 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
     let view = state.ui.view();
     let fonts = &state.fonts;
     let settings = &state.solo.settings;
+    let setup = Setup::new(view);
+    let count = settings.opponents.len();
+    let best = format!("Meilleur score: {}", state.solo.best);
+
     let mut draw = state.ui.screen_canvas(gfx);
     state.ui.set_input(!state.solo.sizing);
-
-    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
-    let mid = theme::HEADER_H / 2.0;
-    draw.sharp_text(&fonts.display, "Solo")
-        .position(60.0, mid)
-        .size(theme::size::TITLE)
-        .v_align_middle()
-        .color(pal.text);
+    state.ui.page_header(&mut draw, fonts, "Solo");
     if state.solo.best > 0 {
-        let best = format!("Meilleur score: {}", state.solo.best);
-        let pill = Pill { text: &best, color: theme::GOLD, size: theme::size::SMALL };
-        ui::pills_ending_at(&mut draw, fonts, &[pill], view.w - 60.0, mid);
+        ui::pills_ending_at(&mut draw, fonts, &[Pill::small(&best, theme::GOLD)], view.w - 60.0, theme::HEADER_H / 2.0);
     }
 
-    let setup = Setup::new(view);
     ui::panel_card(&mut draw, &pal, fonts, setup.game, "Partie");
     for i in 0..GAME_ROWS {
         let (tile, label, value) = (setup.tile(i), SoloSettings::label(i), settings.value(i));
@@ -526,17 +538,15 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
     for (i, &(difficulty, style)) in settings.opponents.iter().enumerate() {
         let row = setup.foe(i);
         let (x, y) = row.number.center();
+
         draw.sharp_text(&fonts.display, &(i + 1).to_string())
-            .position(x, y)
+            .center(x, y)
             .size(theme::size::EMPHASIS)
-            .h_align_center()
-            .v_align_middle()
             .color(pal.text_dim);
         state.ui.stepper_band(&mut draw, fonts, row.difficulty, difficulty.label(), true);
         state.ui.stepper_band(&mut draw, fonts, row.style, style.character(), true);
         state.ui.button(&mut draw, fonts, row.remove, Icon::Close);
     }
-    let count = settings.opponents.len();
     if count < MAX_OPPONENTS {
         state.ui.button(&mut draw, fonts, setup.add(count), "Ajouter un CPU");
     }
@@ -547,6 +557,7 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
     if state.solo.sizing {
         board_size::draw(&mut draw, &state.ui, fonts, &settings.room.rules, true);
     }
+
     state.ui.render(gfx, &draw);
 }
 

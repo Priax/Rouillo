@@ -20,7 +20,7 @@ fn rewind_invite(mgr: &mut Manager, conn: ConnId) {
 pub(super) fn friends_only_room(mgr: &mut Manager) -> (mpsc::Receiver<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
     let rx1 = reg(mgr, 1);
     hello_as(mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(mgr, 1);
     mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::FriendsOnly, dir: 1 });
     assert!(mgr.rooms[&1].settings.friends_only, "setup");
     let rx2 = reg(mgr, 2);
@@ -149,7 +149,7 @@ fn join_is_rechecked_if_the_host_changed() {
 pub(super) fn inviter_and_target(mgr: &mut Manager) -> mpsc::Receiver<Vec<u8>> {
     let _ = reg(mgr, 1);
     hello_as(mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(mgr, 1);
     let mut rx2 = reg(mgr, 2);
     hello_as(mgr, 2, "B", 2);
     let _ = drain(&mut rx2);
@@ -212,7 +212,7 @@ fn guests_cannot_invite() {
     let mut mgr = new_mgr();
     let _ = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     let _ = reg(&mut mgr, 2);
     hello_as(&mut mgr, 2, "B", 2);
     invite_b(&mut mgr);
@@ -224,7 +224,7 @@ fn a_stranger_cannot_tell_whether_someone_is_online() {
     let mut mgr = Manager::new();
     let mut rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     let _ = drain(&mut rx1);
     invite_b(&mut mgr);
     for check in mgr.take_friend_checks() {
@@ -365,7 +365,7 @@ fn the_inviter_hears_that_the_friend_is_offline() {
     let mut mgr = Manager::new();
     let mut rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     let _ = drain(&mut rx1);
     invite_b(&mut mgr);
     finish_invite_check(&mut mgr);

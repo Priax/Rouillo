@@ -2,7 +2,8 @@ use notan::draw::{Draw, DrawShapes};
 use notan::math::{vec2, Mat3};
 use notan::prelude::Graphics;
 
-use super::{Rect, Triangles, Ui};
+use super::{Fonts, Rect, SharpText, Triangles, Ui};
+use crate::theme;
 
 /// How far a new screen slides in from, rightwards.
 const SLIDE: f32 = 40.0;
@@ -24,6 +25,15 @@ impl Ui {
         draw.set_alpha(t);
         draw.transform().push(Mat3::from_translation(vec2((1.0 - t) * SLIDE, 0.0)));
         draw
+    }
+
+    /// The header band along the top of a page, with its title.
+    pub fn page_header(&self, draw: &mut Draw, fonts: &Fonts, title: &str) {
+        self.header_band(draw, Rect::at(0.0, 0.0, self.view().w, theme::HEADER_H));
+        draw.sharp_text(&fonts.display, title)
+            .left(60.0, theme::HEADER_H / 2.0)
+            .size(theme::size::TITLE)
+            .color(self.palette().text);
     }
 
     /// A page header: a band in the section's colour with triangles rising

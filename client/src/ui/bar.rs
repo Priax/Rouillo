@@ -55,10 +55,8 @@ impl Ui {
         }
         let shrink = 1.0 - 0.03 * r.press;
         draw.sharp_text(&fonts.display, label)
-            .position(cx, row.y + row.h / 2.0)
+            .center(cx, row.y + row.h / 2.0)
             .size(row.h * TEXT_HEIGHT * shrink)
-            .h_align_center()
-            .v_align_middle()
             .color(if enabled { Color::WHITE } else { pal.text_disabled });
     }
 }

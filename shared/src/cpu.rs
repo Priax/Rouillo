@@ -3,6 +3,7 @@ use std::ops::{Index, IndexMut};
 use bitcode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
+use crate::board::neighbours;
 use crate::{config, Board, GameState, InputKind, PuyoType, Rotation, BOARD_COLUMNS, BOARD_ROWS};
 
 const TOP: usize = config::VISIBLE_ROW_OFFSET;
@@ -320,14 +321,6 @@ const fn code(t: PuyoType) -> u8 {
     t as u8 + 1
 }
 
-fn neighbours((w, h): (usize, usize), r: usize, c: usize) -> impl Iterator<Item = (usize, usize)> {
-    [(-1, 0), (1, 0), (0, -1), (0, 1)].into_iter().filter_map(move |(dr, dc)| {
-        let nr = r.checked_add_signed(dr)?;
-        let nc = c.checked_add_signed(dc)?;
-        (nr < h && nc < w).then_some((nr, nc))
-    })
-}
-
 /// Cells as bytes: a group is flooded for every judged board.
 struct Group {
     cells: [(u8, u8); MAX_W * MAX_H],
@@ -360,6 +353,19 @@ fn flood(grid: &Grid, r: usize, c: usize, seen: &mut Marks) -> Group {
     group
 }
 
+/// Marks `group` in `remove`, with the nuisance beside it.
+#[inline]
+fn mark_popped(grid: &Grid, group: &Group, remove: &mut Marks) {
+    for (r, c) in group.cells() {
+        remove[r][c] = true;
+        for (nr, nc) in neighbours(grid.size(), r, c) {
+            if grid[nr][nc] == GARBAGE {
+                remove[nr][nc] = true;
+            }
+        }
+    }
+}
+
 fn pop_once(grid: &mut Grid, link: u32) -> Option<u32> {
     let mut seen = NO_MARKS;
     let mut remove = NO_MARKS;
@@ -379,14 +385,7 @@ fn pop_once(grid: &mut Grid, link: u32) -> Option<u32> {
             let len: u32 = crate::small(group.len);
             cleared += len;
             group_bonus += crate::group_bonus(len);
-            for (gr, gc) in group.cells() {
-                remove[gr][gc] = true;
-                for (nr, nc) in neighbours(grid.size(), gr, gc) {
-                    if grid[nr][nc] == GARBAGE {
-                        remove[nr][nc] = true;
-                    }
-                }
-            }
+            mark_popped(grid, &group, &mut remove);
         }
     }
     if cleared == 0 {
@@ -880,9 +879,10 @@ mod tests {
         let mut grid = standard();
         for r in 0..grid.h {
             for c in 0..grid.w {
-                if rng.next() < fill {
-                    grid[r][c] = if rng.next() < 0.15 { GARBAGE } else { 1 + (rng.next() * colours as f32) as u8 };
+                if rng.next() >= fill {
+                    continue;
                 }
+                grid[r][c] = if rng.next() < 0.15 { GARBAGE } else { 1 + (rng.next() * colours as f32) as u8 };
             }
         }
         settle(&mut grid);
@@ -983,12 +983,10 @@ mod tests {
                     expected = Some((*id, grid_of(&seen)));
                 }
                 board.step(input, 0);
-                if let Some((id, grid)) = expected {
-                    if board.state() != GameState::Playing && board.piece_id == id {
-                        assert_eq!(grid_of(&board), grid, "{difficulty:?}, pair {id}");
-                        expected = None;
-                        checked += 1;
-                    }
+                let locked = board.state() != GameState::Playing;
+                if let Some((id, grid)) = expected.take_if(|(id, _)| locked && board.piece_id == *id) {
+                    assert_eq!(grid_of(&board), grid, "{difficulty:?}, pair {id}");
+                    checked += 1;
                 }
             }
             assert!(checked > 10, "{difficulty:?} on {rules:?}: only {checked} pairs checked");
@@ -1269,6 +1267,14 @@ mod tests {
     const ATTACKS: [Attack; 5] =
         [(18, 30 * 60, 0), (30, 30 * 60, 0), (48, 30 * 60, 0), (72, 30 * 60, 0), (6, 10 * 60, 10 * 60)];
 
+    fn attack_name((amount, _, every): Attack) -> String {
+        if every == 0 {
+            format!("{amount} once")
+        } else {
+            format!("{amount}/{}s", every / 60)
+        }
+    }
+
     #[test]
     #[ignore = "prints how long each CPU holds under attack, to tune its defence"]
     fn report_defence() {
@@ -1282,10 +1288,7 @@ mod tests {
                         let deaths: Vec<u32> =
                             (0..seeds).filter_map(|seed| play_attacked(difficulty, style, seed, attack)).collect();
                         let mean = deaths.iter().sum::<u32>() as f32 / deaths.len().max(1) as f32 / 60.0;
-                        let (amount, _, every) = attack;
-                        let name =
-                            if every == 0 { format!("{amount} once") } else { format!("{amount}/{}s", every / 60) };
-                        format!("{name}: {}/{seeds} dead ({mean:.0} s)", deaths.len())
+                        format!("{}: {}/{seeds} dead ({mean:.0} s)", attack_name(attack), deaths.len())
                     })
                     .collect();
                 println!("{difficulty:?} {style:?}: {}", cells.join(", "));

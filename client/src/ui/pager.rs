@@ -142,9 +142,8 @@ impl Pager {
         let field = Field { placeholder: "", input: &self.input, focused: self.focused };
         text_field(draw, ui, fonts, l.field, &field);
         draw.sharp_text(&fonts.text, &format!("/ {pages}"))
-            .position(l.of_x, l.field.y + l.field.h / 2.0)
+            .left(l.of_x, l.field.y + l.field.h / 2.0)
             .size(theme::size::LABEL)
-            .v_align_middle()
             .color(ui.palette().text_dim);
         ui.button_enabled(draw, fonts, l.next, Icon::Next, forward);
         ui.button_enabled(draw, fonts, l.last, Icon::Last, forward);

@@ -18,6 +18,21 @@ use crate::ui::{
 };
 use crate::{http, profile_about};
 
+const PROFILE_HEADER_H: f32 = 150.0;
+const CARD_TOP: f32 = 180.0;
+const CARD_PAD: f32 = 20.0;
+const CARD_TITLE_H: f32 = 56.0;
+const HISTORY_ROW_H: f32 = 48.0;
+const STATUS_GAP: f32 = 56.0;
+const STAT_ROWS: usize = 4;
+const STAT_ROW_H: f32 = 32.0;
+
+const BUTTON_H: f32 = 54.0;
+const BUTTON_STEP: f32 = 64.0;
+const STATS_CARD_H: f32 = 340.0;
+/// Below this width, a row shows neither the statistics nor the length.
+const WIDE_ROW: f32 = 620.0;
+
 /// The bottom buttons sit near the bottom of the window, never below it: on a
 /// short screen the cards shrink, down to what the four stats need.
 fn button_row_y(wh: f32) -> f32 {
@@ -72,15 +87,16 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
 fn update_history(app: &App, state: &mut State, core: &mut ProfileCore, other: bool) {
     let view = state.ui.view();
     let area = pager_area(view);
-    let State { ui, fonts, auth, input: Input { keys, .. }, .. } = state;
-    let total = core.info.total_matches;
-    core.history.update(app, ui, fonts, keys, area, total, history_rows(view));
     let (_, card) = cards(view);
+    let State { ui, fonts, auth, input: Input { keys, .. }, .. } = state;
+
+    core.history.update(app, ui, fonts, keys, area, core.info.total_matches, history_rows(view));
     match http::take_done(&mut core.favorite_slot) {
         Some(Ok(())) => core.history.fetch(),
         Some(Err(e)) => core.replay_status = Status::error(e),
         None => {}
     }
+
     let shown = core.history.entries.iter().take(core.history.per_page).enumerate();
     let mut hit = None;
     let mut favorite = None;
@@ -93,6 +109,7 @@ fn update_history(app: &App, state: &mut State, core: &mut ProfileCore, other: b
             favorite = Some((m.id.clone(), !m.favorite));
         }
     }
+
     if let (Some((id, on)), Some(auth), None) = (favorite, auth.as_ref(), &core.favorite_slot) {
         core.replay_status = Status::Empty;
         core.favorite_slot = Some(crate::replay::set_favorite(&id, on, auth.token.clone()));
@@ -120,15 +137,6 @@ fn friendship_with(
     }
 }
 
-const PROFILE_HEADER_H: f32 = 150.0;
-const CARD_TOP: f32 = 180.0;
-const CARD_PAD: f32 = 20.0;
-const CARD_TITLE_H: f32 = 56.0;
-const HISTORY_ROW_H: f32 = 48.0;
-const STATUS_GAP: f32 = 56.0;
-const STAT_ROWS: usize = 4;
-const STAT_ROW_H: f32 = 32.0;
-
 /// Draws `picture` over the whole of `r`, cropped to keep its proportions.
 fn cover(draw: &mut Draw, picture: &Texture, r: Rect) {
     let (tw, th) = picture.size();
@@ -141,32 +149,26 @@ fn draw_header(draw: &mut Draw, gfx: &mut Graphics, state: &State, core: &Profil
     let (ui, fonts) = (&state.ui, &state.fonts);
     let pal = ui.palette();
     let view = ui.view();
+    let banner = state.images.get_opt(gfx, core.info.banner_url.as_deref());
+    let avatar = state.images.get_opt(gfx, core.info.avatar_url.as_deref());
+    let radius = 48.0;
+    let (px, py) = (60.0 + radius, PROFILE_HEADER_H / 2.0);
+    let who = ui::Persona { name: &core.info.username, glow: 0.0, picture: avatar.as_ref() };
+    let text_x = px + radius + 28.0;
+    let name = fonts.fit(Face::Display, &core.info.username, theme::size::TITLE, view.w - text_x - 60.0);
+    let elo = format!("ELO {}", core.info.elo);
+    let rating = Pill { text: &elo, color: theme::GOLD, size: theme::size::BODY };
+
     ui.header_band(draw, Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H));
-    if let Some(banner) = state.images.get_opt(gfx, core.info.banner_url.as_deref()) {
+    if let Some(banner) = banner {
         let r = Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H - 2.0);
         cover(draw, &banner, r);
         draw.rect((r.x, r.y), (r.w, r.h)).color(Color::BLACK.with_alpha(0.35));
     }
-    let radius = 48.0;
-    let (px, py) = (60.0 + radius, PROFILE_HEADER_H / 2.0);
-    let avatar = state.images.get_opt(gfx, core.info.avatar_url.as_deref());
-    let who = ui::Persona { name: &core.info.username, glow: 0.0, picture: avatar.as_ref() };
     portrait(draw, &pal, fonts, (px, py), radius, &who);
-    let text_x = px + radius + 28.0;
-    let name = fonts.fit(Face::Display, &core.info.username, theme::size::TITLE, view.w - text_x - 60.0);
-    draw.sharp_text(&fonts.display, &name)
-        .position(text_x, py - 16.0)
-        .size(theme::size::TITLE)
-        .v_align_middle()
-        .color(pal.text);
-    let elo = format!("ELO {}", core.info.elo);
-    let rating = Pill { text: &elo, color: theme::GOLD, size: theme::size::BODY };
+    draw.sharp_text(&fonts.display, &name).left(text_x, py - 16.0).size(theme::size::TITLE).color(pal.text);
     rating.draw(draw, fonts, (text_x, py + 30.0));
 }
-
-const BUTTON_H: f32 = 54.0;
-const BUTTON_STEP: f32 = 64.0;
-const STATS_CARD_H: f32 = 340.0;
 
 /// Where the bottom buttons start: one row in landscape, two upright.
 fn buttons_top(view: View) -> f32 {
@@ -180,10 +182,12 @@ fn buttons_top(view: View) -> f32 {
 /// The stats card and the match list: side by side, or stacked upright.
 fn cards(view: View) -> (Rect, Rect) {
     let area = Rect::at(0.0, CARD_TOP, view.w, buttons_top(view) - STATUS_GAP - CARD_TOP);
+
     if view.portrait() {
         let [stats, list] = area.pad(0.0, 20.0, 0.0, 20.0).rows(20.0, [Size::Px(STATS_CARD_H), FILL]);
         return (stats, list);
     }
+
     let stats_w = (view.w * 0.36).max(280.0);
     let [stats, list] = area.pad(0.0, 20.0, 0.0, 40.0).columns(30.0, [Size::Px(stats_w), FILL]);
     (stats, list)
@@ -193,6 +197,7 @@ fn cards(view: View) -> (Rect, Rect) {
 fn bottom_buttons<const N: usize>(view: View, widths: [f32; N]) -> [Rect; N] {
     let top = buttons_top(view);
     let cx = view.w / 2.0;
+
     if view.portrait() {
         let w = (view.w - 60.0) / 2.0;
         return std::array::from_fn(|i| {
@@ -201,6 +206,7 @@ fn bottom_buttons<const N: usize>(view: View, widths: [f32; N]) -> [Rect; N] {
             Rect::at(x, top + row * BUTTON_STEP, w, BUTTON_H)
         });
     }
+
     let gap = 30.0;
     let total: f32 = widths.iter().sum::<f32>() + gap * (N - 1) as f32;
     Rect::centered_on(cx, top, total, BUTTON_H).columns(gap, widths.map(Size::Px))
@@ -208,25 +214,23 @@ fn bottom_buttons<const N: usize>(view: View, widths: [f32; N]) -> [Rect; N] {
 
 fn card_title(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card: Rect, title: &str) {
     draw.sharp_text(&fonts.display, title)
-        .position(card.x + CARD_PAD, card.y + CARD_TITLE_H / 2.0)
+        .left(card.x + CARD_PAD, card.y + CARD_TITLE_H / 2.0)
         .size(theme::size::EMPHASIS)
-        .v_align_middle()
         .color(pal.text_dim);
     divider(draw, pal, card.x + CARD_PAD, card.y + CARD_TITLE_H, card.w - 2.0 * CARD_PAD);
 }
 
 fn card_message(draw: &mut Draw, fonts: &Fonts, card: Rect, text: &str, color: Color) {
     draw.sharp_text(&fonts.text, text)
-        .position(card.x + card.w / 2.0, card.y + CARD_TITLE_H + 40.0)
+        .center(card.x + card.w / 2.0, card.y + CARD_TITLE_H + 40.0)
         .size(theme::size::LABEL)
-        .h_align_center()
-        .v_align_middle()
         .color(color);
 }
 
 fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore, load_failed: bool) {
     let pal = ui.palette();
     let (card, _) = cards(ui.view());
+
     ui::card(draw, &pal, card);
     card_title(draw, &pal, fonts, card, "Statistiques");
 
@@ -248,25 +252,16 @@ fn draw_stats_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore,
     ];
     let (label_x, value_x) = (card.x + CARD_PAD, card.x + card.w - CARD_PAD);
     let first = card.y + CARD_TITLE_H + 30.0;
+    let area = about_area(card);
+    let summary = profile_about::summary(fonts, &core.info, area, 1);
+
     for (i, (label, value)) in stats.iter().enumerate() {
         let y = first + i as f32 * STAT_ROW_H;
-        draw.sharp_text(&fonts.text, label)
-            .position(label_x, y)
-            .size(theme::size::LABEL)
-            .v_align_middle()
-            .color(pal.text_muted);
-        draw.sharp_text(&fonts.display, value)
-            .position(value_x, y)
-            .size(theme::size::EMPHASIS)
-            .h_align_right()
-            .v_align_middle()
-            .color(pal.text);
+        draw.sharp_text(&fonts.text, label).left(label_x, y).size(theme::size::LABEL).color(pal.text_muted);
+        draw.sharp_text(&fonts.display, value).right(value_x, y).size(theme::size::EMPHASIS).color(pal.text);
     }
 
     divider(draw, &pal, label_x, stats_end(card), card.w - 2.0 * CARD_PAD);
-
-    let area = about_area(card);
-    let summary = profile_about::summary(fonts, &core.info, area, 1);
     profile_about::draw_summary(draw, ui, fonts, &summary, area);
     if summary.cut {
         profile_about::draw_more_link(draw, ui, fonts, area);
@@ -307,14 +302,13 @@ fn update_about(app: &App, ui: &Ui, core: &mut ProfileCore) -> bool {
 fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCore, clickable: bool) {
     let pal = ui.palette();
     let (_, card) = cards(ui.view());
+
     ui::card(draw, &pal, card);
     card_title(draw, &pal, fonts, card, "Matchs");
     if let Some((msg, color)) = core.replay_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
-            .position(card.x + card.w - CARD_PAD, card.y + CARD_TITLE_H / 2.0)
+            .right(card.x + card.w - CARD_PAD, card.y + CARD_TITLE_H / 2.0)
             .size(theme::size::SMALL)
-            .h_align_right()
-            .v_align_middle()
             .color(color);
     }
 
@@ -336,6 +330,7 @@ fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCor
 fn history_rows(view: View) -> usize {
     let (_, card) = cards(view);
     let room = card.h - CARD_TITLE_H - 12.0 - PAGER_H;
+
     (room / HISTORY_ROW_H).max(1.0) as usize
 }
 
@@ -352,9 +347,6 @@ fn history_row(card: Rect, i: usize) -> Rect {
         HISTORY_ROW_H - 4.0,
     )
 }
-
-/// Below this width, a row shows neither the statistics nor the length.
-const WIDE_ROW: f32 = 620.0;
 
 fn favorite_zone(row: Rect) -> Rect {
     let margin = if row.w < WIDE_ROW { 4.0 } else { CARD_PAD + 44.0 };
@@ -384,13 +376,11 @@ fn draw_match_row(
     viewed_id: &str,
     clickable: bool,
 ) {
+    let Some(me) = m.me(viewed_id) else { return };
+
     let pal = ui.palette();
     let mid = row.y + row.h / 2.0;
-    let Some(me) = m.me(viewed_id) else { return };
     let opp = m.opponent(viewed_id);
-
-    list_row(draw, &pal, row, index);
-
     let place = format!("{}e", me.place);
     let (text, color) = if me.won {
         ("VICTOIRE", theme::SUCCESS)
@@ -401,45 +391,38 @@ fn draw_match_row(
     } else {
         (place.as_str(), theme::DANGER)
     };
-    let result = Pill { text, color, size: theme::size::SMALL };
-    result.draw(draw, fonts, (row.x + row.w * 0.1 - result.width(fonts) / 2.0, mid));
-    if m.ranked {
-        let ranked = Pill { text: "CLASSÉ", color: theme::bar::ORANGE, size: theme::size::SMALL };
-        ranked.draw(draw, fonts, (row.x + row.w * 0.2, mid));
-    }
-
+    let result = Pill::small(text, color);
     let label = match opp {
         Some(opp) => format!("vs {}", opp.username.as_deref().unwrap_or("Invité")),
         None => format!("{} joueurs", m.players.len()),
     };
     let linked = clickable && opp.is_some_and(|o| o.user_id.is_some());
-    ui.link(draw, fonts, opponent_zone(row), &label, linked);
-
     let wide = row.w >= WIDE_ROW;
+    let star = if m.favorite { Icon::Star } else { Icon::StarOutline };
+    let secs = m.duration_secs as u32;
+
+    list_row(draw, &pal, row, index);
+    result.draw(draw, fonts, (row.x + row.w * 0.1 - result.width(fonts) / 2.0, mid));
+    if m.ranked {
+        Pill::small("CLASSÉ", theme::bar::ORANGE).draw(draw, fonts, (row.x + row.w * 0.2, mid));
+    }
+    ui.link(draw, fonts, opponent_zone(row), &label, linked);
     if wide {
         draw.sharp_text(&fonts.text, &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent))
-            .position(replay_zone(row).x - 14.0, mid)
+            .right(replay_zone(row).x - 14.0, mid)
             .size(theme::size::SMALL)
-            .h_align_right()
-            .v_align_middle()
             .color(theme::GOLD);
     }
-
     if m.has_replay {
         ui.button(draw, fonts, replay_zone(row), "Revoir");
     }
     if clickable && (m.has_replay || m.favorite) {
-        let star = if m.favorite { Icon::Star } else { Icon::StarOutline };
         ui.button(draw, fonts, favorite_zone(row), star);
     }
-
     if wide {
-        let secs = m.duration_secs as u32;
         draw.sharp_text(&fonts.text, &format!("{}:{:02}", secs / 60, secs % 60))
-            .position(row.x + row.w - CARD_PAD, mid)
+            .right(row.x + row.w - CARD_PAD, mid)
             .size(theme::size::SMALL)
-            .h_align_right()
-            .v_align_middle()
             .color(pal.text_muted);
     }
 }
@@ -449,6 +432,7 @@ pub fn enter_profile(state: &State) -> Transition {
         return Transition::Stay;
     };
     let core = load_core(auth.user_id.clone(), auth.username.clone(), auth.elo, Some(auth.token.clone()));
+
     Transition::Push(Screen::Profile(Box::new(ProfileData { core, edit: None, account: None })))
 }
 
@@ -471,9 +455,9 @@ pub fn update_profile(app: &mut App, state: &mut State, p: &mut ProfileData) -> 
     if update_about(app, &state.ui, &mut p.core) {
         return Transition::Stay;
     }
-    update_history(app, state, &mut p.core, false);
-    let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(state.ui.view());
 
+    let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(state.ui.view());
+    update_history(app, state, &mut p.core, false);
     if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Transition::Pop;
     }
@@ -493,6 +477,7 @@ pub fn update_profile(app: &mut App, state: &mut State, p: &mut ProfileData) -> 
         let opp = m.opponent(my_id)?;
         Some((opp.user_id.clone()?, opp.username.clone()?))
     });
+
     match opponent {
         Some((uid, uname)) => enter_other_profile(state, uid, uname, None),
         None => Transition::Stay,
@@ -520,15 +505,16 @@ fn update_account(app: &App, state: &mut State, p: &mut ProfileData) -> Transiti
             }
         }
     }
+
     Transition::Stay
 }
 
 pub fn draw_profile(gfx: &mut Graphics, state: &State, profile: &ProfileData) {
     let cx = state.ui.view().w / 2.0;
+    let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(state.ui.view());
+
     let mut draw = state.ui.screen_canvas(gfx);
-
     draw_header(&mut draw, gfx, state, &profile.core);
-
     if let Some(form) = &profile.edit {
         profile_edit::draw(&state.ui, &mut draw, &state.fonts, form, &profile.core.info, cx);
     } else if let Some(form) = &profile.account {
@@ -537,8 +523,6 @@ pub fn draw_profile(gfx: &mut Graphics, state: &State, profile: &ProfileData) {
         state.ui.set_input(!profile.core.about_open);
         draw_stats_panel(&mut draw, &state.ui, &state.fonts, &profile.core, false);
         draw_history_panel(&mut draw, &state.ui, &state.fonts, &profile.core, true);
-
-        let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(state.ui.view());
         state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
         state.ui.button(&mut draw, &state.fonts, edit_btn, "Modifier");
         state.ui.button(&mut draw, &state.fonts, account_btn, "Compte");
@@ -603,6 +587,7 @@ fn add_friend(state: &State, p: &mut OtherProfileData) {
     if p.friend_slot.is_some() {
         return;
     }
+
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let body = serde_json::json!({ "user_id": p.core.user_id }).to_string();
     let slot = http::new_slot();
@@ -635,48 +620,44 @@ pub fn update_other_profile(app: &mut App, state: &mut State, p: &mut OtherProfi
         return Transition::Stay;
     }
 
-    update_history(app, state, &mut p.core, true);
     let (add_btn, back_btn) = other_buttons(state.ui.view());
-
     let can_add = !p.load_failed && matches!(p.friendship, FriendshipStatus::Unknown | FriendshipStatus::NotFriends);
+
+    update_history(app, state, &mut p.core, true);
     if state.ui.clicked(add_btn) && can_add {
         add_friend(state, p);
     }
-
     if state.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Transition::Pop;
     }
+
     Transition::Stay
 }
 
 pub fn draw_other_profile(gfx: &mut Graphics, state: &State, p: &OtherProfileData) {
     let pal = state.ui.palette();
     let cx = state.ui.view().w / 2.0;
+    let btn_y = buttons_top(state.ui.view());
+    let sending = p.friend_slot.is_some();
+    let (add_btn, back_btn) = other_buttons(state.ui.view());
+    let can_add = !p.load_failed && p.friendship == FriendshipStatus::NotFriends;
+    let label = if sending { "Envoi..." } else { "Ajouter en ami" };
 
     let mut draw = state.ui.screen_canvas(gfx);
-
     draw_header(&mut draw, gfx, state, &p.core);
     state.ui.set_input(!p.core.about_open);
     draw_stats_panel(&mut draw, &state.ui, &state.fonts, &p.core, p.load_failed);
     draw_history_panel(&mut draw, &state.ui, &state.fonts, &p.core, false);
 
-    let btn_y = buttons_top(state.ui.view());
-    let sending = p.friend_slot.is_some();
-    let (add_btn, back_btn) = other_buttons(state.ui.view());
-
-    let can_add = !p.load_failed && p.friendship == FriendshipStatus::NotFriends;
     if can_add {
-        let label = if sending { "Envoi..." } else { "Ajouter en ami" };
         state.ui.button_enabled(&mut draw, &state.fonts, add_btn, label, !sending);
     }
     state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
 
     if let Some((msg, color)) = p.friend_status.shown(&pal) {
         draw.sharp_text(&state.fonts.text, msg)
-            .position(cx, btn_y - STATUS_GAP / 2.0)
+            .center(cx, btn_y - STATUS_GAP / 2.0)
             .size(theme::size::BODY)
-            .h_align_center()
-            .v_align_middle()
             .color(color);
     }
     draw_about_overlay(&mut draw, &state.ui, &state.fonts, &p.core);

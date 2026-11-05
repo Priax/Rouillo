@@ -66,6 +66,7 @@ impl Layout {
         let mid_x = origin.0 + max_columns * cell / 2.0;
         let below = corner.1 + X_LABEL + GAP;
         let mid_y = origin.1 - max_rows * cell / 2.0;
+
         Self {
             modal,
             cell,
@@ -110,12 +111,14 @@ fn steps_to(setting: RoomSetting, from: u8, to: u8) -> impl Iterator<Item = (Roo
 pub fn update(app: &App, ui: &Ui, rules: &Rules, editable: bool) -> Option<Action> {
     let layout = Layout::new(ui.view());
     let keys = &app.keyboard;
+
     if layout.modal.dismissed(ui) || keys.was_pressed(KeyCode::Escape) {
         return Some(Action::Close);
     }
     if !editable {
         return None;
     }
+
     let pressed = |rect: Rect, key: KeyCode| ui.clicked(rect) || keys.was_pressed(key);
     let step = [
         (RoomSetting::Columns, -1, pressed(layout.columns[0], KeyCode::ArrowLeft)),
@@ -128,6 +131,7 @@ pub fn update(app: &App, ui: &Ui, rules: &Rules, editable: bool) -> Option<Actio
     if let Some((setting, dir, _)) = step {
         return Some(Action::Adjust(vec![(setting, dir)]));
     }
+
     let standard = Rules::default();
     if !is_standard(rules) && ui.clicked(layout.standard) {
         let steps = steps_to(RoomSetting::Columns, rules.columns, standard.columns)
@@ -135,29 +139,27 @@ pub fn update(app: &App, ui: &Ui, rules: &Rules, editable: bool) -> Option<Actio
             .collect();
         return Some(Action::Adjust(steps));
     }
+
     None
 }
 
 pub fn draw(draw: &mut Draw, ui: &Ui, fonts: &Fonts, rules: &Rules, editable: bool) {
     let pal = ui.palette();
     let layout = Layout::new(ui.view());
-    layout.modal.draw(draw, ui, fonts, "Taille du plateau");
-
     let well = layout.well(rules.columns, rules.rows);
-    draw_empty_well(draw, rules, well, ui.time() as f32);
-
     let standard = Rules::default();
-    if !is_standard(rules) {
-        let outline = layout.well(standard.columns, standard.rows);
-        let color = pal.text_dim.with_alpha(0.6);
-        dashed_rect(draw, outline, color);
-        draw.sharp_text(&fonts.text, "standard")
-            .position(outline.x + 4.0, outline.y - 12.0)
-            .size(theme::size::SMALL)
-            .v_align_middle()
-            .color(color);
-    }
+    let outline = layout.well(standard.columns, standard.rows);
+    let dim = pal.text_dim.with_alpha(0.6);
 
+    layout.modal.draw(draw, ui, fonts, "Taille du plateau");
+    draw_empty_well(draw, rules, well, ui.time() as f32);
+    if !is_standard(rules) {
+        dashed_rect(draw, outline, dim);
+        draw.sharp_text(&fonts.text, "standard")
+            .left(outline.x + 4.0, outline.y - 12.0)
+            .size(theme::size::SMALL)
+            .color(dim);
+    }
     draw_axes(draw, ui, fonts, &layout, rules);
 
     if editable {
@@ -168,10 +170,8 @@ pub fn draw(draw: &mut Draw, ui: &Ui, fonts: &Fonts, rules: &Rules, editable: bo
     } else {
         let (x, y) = layout.standard.center();
         draw.sharp_text(&fonts.text, "Seul l'hôte peut changer la taille.")
-            .position(x, y)
+            .center(x, y)
             .size(theme::size::BODY)
-            .h_align_center()
-            .v_align_middle()
             .color(pal.text_dim);
     }
 }
@@ -182,6 +182,7 @@ fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &Fonts, layout: &Layout, rules: &R
     let (x_end, y_end) = (layout.x_end, layout.y_end);
     let well = layout.well(rules.columns, rules.rows);
     let (right, top) = (well.x + well.w, well.y);
+    let head = 7.0;
 
     for (from, to, color) in [
         ((cx, cy), (x_end, cy), pal.border),
@@ -191,7 +192,6 @@ fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &Fonts, layout: &Layout, rules: &R
     ] {
         draw.line(from, to).width(3.0).color(color);
     }
-    let head = 7.0;
     draw.triangle((x_end + head, cy), (x_end - head, cy - head), (x_end - head, cy + head)).color(pal.border);
     draw.triangle((cx, y_end - head), (cx - head, y_end + head), (cx + head, y_end + head)).color(pal.border);
 
@@ -210,23 +210,22 @@ fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &Fonts, layout: &Layout, rules: &R
         .h_align_center()
         .color(theme::GOLD);
     draw.sharp_text(&fonts.display, &rules.rows.to_string())
-        .position(cx - TICK - 8.0, top)
+        .right(cx - TICK - 8.0, top)
         .size(theme::size::HEADING)
-        .h_align_right()
-        .v_align_middle()
         .color(theme::GOLD);
 }
 
 fn dashed_rect(draw: &mut Draw, r: Rect, color: Color) {
     let corners = r.corners();
+
     for i in 0..4 {
         let (a, b) = (corners[i], corners[(i + 1) % 4]);
         let length = (b.0 - a.0).hypot(b.1 - a.1);
         let dashes = (length / (2.0 * DASH)).ceil() as usize;
+        let at = |t: f32| (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
         for d in 0..dashes {
             let t0 = d as f32 * 2.0 * DASH / length;
             let t1 = ((d as f32 * 2.0 + 1.0) * DASH / length).min(1.0);
-            let at = |t: f32| (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
             draw.line(at(t0), at(t1)).width(2.0).color(color);
         }
     }

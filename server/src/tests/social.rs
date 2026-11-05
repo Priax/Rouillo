@@ -108,7 +108,7 @@ fn the_friend_list_learns_who_is_in_a_room() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     let _rx2 = reg(&mut mgr, 2);
     hello_as(&mut mgr, 2, "B", 2);
     let (u1, u2, u3) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
@@ -151,7 +151,7 @@ fn a_late_watch_answer_leaves_a_player_who_moved_on_alone() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     let _rx4 = reg(&mut mgr, 4);
     hello_as(&mut mgr, 4, "F", 4);
     mgr.handle(Command::WatchFriend { conn: 4, user_id: Uuid::from_u128(1).to_string() });
@@ -166,7 +166,7 @@ fn watching_through_a_friend_respects_the_spectator_limit() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     let _watchers: Vec<_> = (0..shared::MAX_SPECTATORS as u64).map(|i| spectator(&mut mgr, 100 + i)).collect();
     assert_eq!(mgr.rooms[&1].spectators.len(), shared::MAX_SPECTATORS, "setup");
     let _rx4 = reg(&mut mgr, 4);
@@ -219,7 +219,7 @@ fn watching_a_friend_finds_their_room_after_checking_the_friendship() {
     mgr.handle(Command::WatchFriend { conn: 4, user_id: friend.clone() });
     assert!(has(&drain(&mut rx4), |m| matches!(m, ServerMessage::JoinFailed { .. })), "not playing");
 
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     mgr.handle(Command::WatchFriend { conn: 4, user_id: friend });
     let check = watch_check(&mut mgr);
     assert_eq!(check.users(), (Uuid::from_u128(4), Uuid::from_u128(1)));

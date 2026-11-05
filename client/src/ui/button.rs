@@ -56,6 +56,15 @@ impl From<Icon> for Label<'_> {
 }
 
 impl<'a> Label<'a> {
+    /// `text`, or the busy icon while waiting.
+    pub const fn busy_or(busy: bool, text: &'a str) -> Self {
+        if busy {
+            Self::Icon(Icon::Busy)
+        } else {
+            Self::Text(text)
+        }
+    }
+
     fn id(self) -> &'a str {
         match self {
             Self::Text(text) => text,
@@ -146,12 +155,7 @@ fn paint(
             let width = fonts.width(Face::Display, label, tall);
             let room = b.w - TEXT_PADDING;
             let size = if width > room { tall * room / width } else { tall }.max(TEXT_MIN);
-            draw.sharp_text(&fonts.display, label)
-                .position(center.x, center.y)
-                .size(size)
-                .h_align_center()
-                .v_align_middle()
-                .color(text);
+            draw.sharp_text(&fonts.display, label).center(center.x, center.y).size(size).color(text);
         }
         Label::Icon(icon) => paint_icon(draw, icon, (center.x, center.y), b.h.min(b.w), text, time),
     }

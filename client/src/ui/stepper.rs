@@ -62,16 +62,12 @@ impl Ui {
     pub fn stepper(&self, draw: &mut Draw, fonts: &Fonts, s: Stepper, label: &str, value: &str, editable: bool) {
         let pal = self.palette();
         draw.sharp_text(&fonts.text, label)
-            .position(s.label_x(), s.mid_y())
+            .right(s.label_x(), s.mid_y())
             .size(theme::size::EMPHASIS)
-            .h_align_right()
-            .v_align_middle()
             .color(pal.text_dim);
         draw.sharp_text(&fonts.display, value)
-            .position(s.value_x(), s.mid_y())
+            .center(s.value_x(), s.mid_y())
             .size(theme::size::EMPHASIS)
-            .h_align_center()
-            .v_align_middle()
             .color(theme::GOLD);
         if editable {
             self.button(draw, fonts, s.minus, Icon::Minus);
@@ -81,9 +77,8 @@ impl Ui {
 
     fn tile_label(&self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str) {
         draw.sharp_text(&fonts.text, label)
-            .position(tile.x, tile.y + TILE_LABEL_H / 2.0 - 2.0)
+            .left(tile.x, tile.y + TILE_LABEL_H / 2.0 - 2.0)
             .size(theme::size::BODY)
-            .v_align_middle()
             .color(self.palette().text_dim);
     }
 
@@ -100,12 +95,7 @@ impl Ui {
         let room = s.plus.x - (s.minus.x + s.minus.w) - 12.0;
         let full = theme::size::EMPHASIS;
         let size = full.min(full * room / fonts.width(Face::Display, value, full));
-        draw.sharp_text(&fonts.display, value)
-            .position(s.value_x(), s.mid_y())
-            .size(size)
-            .h_align_center()
-            .v_align_middle()
-            .color(theme::GOLD);
+        draw.sharp_text(&fonts.display, value).center(s.value_x(), s.mid_y()).size(size).color(theme::GOLD);
         if editable {
             self.button(draw, fonts, s.minus, Icon::Minus);
             self.button(draw, fonts, s.plus, Icon::Plus);
@@ -148,9 +138,8 @@ impl Ui {
             pal.text_disabled
         });
         draw.sharp_text(&fonts.display, if on { "Oui" } else { "Non" })
-            .position(track.x + track.w + 14.0, track.y + track.h / 2.0)
+            .left(track.x + track.w + 14.0, track.y + track.h / 2.0)
             .size(theme::size::EMPHASIS)
-            .v_align_middle()
             .color(theme::GOLD);
     }
 }

@@ -231,7 +231,7 @@ fn the_same_account_still_gets_its_seat_back() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     let _rx2 = reg(&mut mgr, 2);
     hello_as(&mut mgr, 2, "B", 2);
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
@@ -343,7 +343,7 @@ fn a_background_connection_leaves_a_used_seat_alone() {
     let mut mgr = Manager::new();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     let mut rx2 = reg(&mut mgr, 2);
     mgr.handle(Command::Hello {
         conn: 2,

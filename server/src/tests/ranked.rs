@@ -375,6 +375,12 @@ fn a_match_starts_only_once_both_players_accept() {
     assert!(mgr.pending_matches.is_empty());
 }
 
+fn assert_first_requeued(mgr: &Manager, rx1: &mut mpsc::Receiver<Vec<u8>>) {
+    assert!(mgr.pending_matches.is_empty());
+    assert_eq!(mgr.queue.iter().map(|e| e.conn).collect::<Vec<_>>(), vec![1]);
+    assert!(matches!(cancelled(rx1)[..], [ServerMessage::MatchCancelled { requeued: true }]));
+}
+
 #[tokio::test(start_paused = true)]
 async fn an_unanswered_match_requeues_who_accepted_and_holds_back_the_other() {
     let mut mgr = new_mgr();
@@ -382,9 +388,7 @@ async fn an_unanswered_match_requeues_who_accepted_and_holds_back_the_other() {
     mgr.handle(Command::AcceptMatch { conn: 1 });
     tokio::time::advance(ACCEPT_WINDOW).await;
     mgr.tick(STEP, false);
-    assert!(mgr.pending_matches.is_empty());
-    assert_eq!(mgr.queue.iter().map(|e| e.conn).collect::<Vec<_>>(), vec![1]);
-    assert!(matches!(cancelled(&mut rx1)[..], [ServerMessage::MatchCancelled { requeued: true }]));
+    assert_first_requeued(&mgr, &mut rx1);
     assert!(matches!(
         cancelled(&mut rx2)[..],
         [
@@ -407,9 +411,7 @@ fn declining_a_match_cancels_it_at_once() {
     let mut mgr = new_mgr();
     let (mut rx1, mut rx2) = found_pair(&mut mgr);
     mgr.handle(Command::LeaveQueue { conn: 2 });
-    assert!(mgr.pending_matches.is_empty());
-    assert_eq!(mgr.queue.iter().map(|e| e.conn).collect::<Vec<_>>(), vec![1]);
-    assert!(matches!(cancelled(&mut rx1)[..], [ServerMessage::MatchCancelled { requeued: true }]));
+    assert_first_requeued(&mgr, &mut rx1);
     assert!(has(&cancelled(&mut rx2), |m| matches!(m, ServerMessage::QueueCooldown { .. })));
 }
 
@@ -419,9 +421,7 @@ fn disconnecting_from_a_proposed_match_declines_it() {
     let (mut rx1, _rx2) = found_pair(&mut mgr);
     mgr.handle(Command::AcceptMatch { conn: 1 });
     mgr.handle(Command::Unregister { conn: 2 });
-    assert!(mgr.pending_matches.is_empty());
-    assert_eq!(mgr.queue.iter().map(|e| e.conn).collect::<Vec<_>>(), vec![1]);
-    assert!(matches!(cancelled(&mut rx1)[..], [ServerMessage::MatchCancelled { requeued: true }]));
+    assert_first_requeued(&mgr, &mut rx1);
     assert!(ranked_id(&mgr).is_none());
 }
 
@@ -440,7 +440,7 @@ fn a_player_in_a_proposed_match_cannot_queue_again() {
 fn joining_a_room_takes_a_player_out_of_the_ranked_queue() {
     let mut mgr = new_mgr();
     let _rx1 = queue_up(&mut mgr, 1, 1, 1000, config::RANKED_MIN_CASUAL);
-    mgr.handle(Command::CreateRoom { conn: 1, name: "r".into() });
+    create_room(&mut mgr, 1);
     assert!(mgr.queue.is_empty(), "a player in a room is not searching any more");
     let _rx2 = queue_up(&mut mgr, 2, 2, 1000, config::RANKED_MIN_CASUAL);
     mgr.tick(STEP, false);
@@ -451,9 +451,7 @@ fn joining_a_room_takes_a_player_out_of_the_ranked_queue() {
 fn leaving_for_a_room_while_matched_declines_the_match() {
     let mut mgr = new_mgr();
     let (mut rx1, mut rx2) = found_pair(&mut mgr);
-    mgr.handle(Command::CreateRoom { conn: 2, name: "r".into() });
-    assert!(mgr.pending_matches.is_empty());
-    assert_eq!(mgr.queue.iter().map(|e| e.conn).collect::<Vec<_>>(), vec![1]);
-    assert!(matches!(cancelled(&mut rx1)[..], [ServerMessage::MatchCancelled { requeued: true }]));
+    create_room(&mut mgr, 2);
+    assert_first_requeued(&mgr, &mut rx1);
     assert!(has(&cancelled(&mut rx2), |m| matches!(m, ServerMessage::QueueCooldown { .. })));
 }

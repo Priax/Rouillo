@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use notan::draw::Draw;
 use notan::prelude::*;
 use shared::config::CLIENT_SIM_DT;
 use shared::{Board, Playback, Replay};
@@ -8,7 +9,7 @@ use crate::draw::{self, Hud};
 use crate::http::{self, HttpSlot};
 use crate::nav::{Nav, Transition};
 use crate::state::{GameSession, Rival, Room, Screen, State};
-use crate::ui::{Fonts, Icon, Rect, Status, Ui, View};
+use crate::ui::{Fonts, Icon, Rect, SharpText, Status, Ui, View};
 use crate::{logic, theme};
 
 const MAX_REPLAY_SIZE: usize = 64 << 20;
@@ -47,11 +48,13 @@ fn favorite_url(match_id: &str) -> String {
 /// Asks the server to keep the replay of a match, or to let it go.
 pub fn set_favorite(match_id: &str, on: bool, token: String) -> HttpSlot {
     let slot = http::new_slot();
+
     if on {
         http::post_empty(favorite_url(match_id), Some(token), Arc::clone(&slot));
     } else {
         http::delete_req(favorite_url(match_id), Some(token), Arc::clone(&slot));
     }
+
     slot
 }
 
@@ -65,6 +68,7 @@ pub fn update_keep(state: &mut State) {
     let Some(offer) = state.room.as_mut().and_then(|r| r.keep.as_mut()) else {
         return;
     };
+
     match http::take_done(&mut offer.slot) {
         Some(Ok(())) => offer.kept = true,
         Some(Err(e)) => offer.status = Status::error(e),
@@ -78,24 +82,23 @@ pub fn update_keep(state: &mut State) {
     }
 }
 
-pub fn draw_keep(d: &mut notan::draw::Draw, state: &State) {
-    use crate::ui::SharpText;
+pub fn draw_keep(d: &mut Draw, state: &State) {
     let Some(offer) = state.room.as_ref().and_then(|r| r.keep.as_ref()) else {
         return;
     };
     if !state.room.as_ref().is_some_and(Room::finished) || state.auth.is_none() {
         return;
     }
+
     let rect = keep_button(state.ui.view());
     let label = if offer.kept { "Replay gardé" } else { "Garder le replay" };
     let enabled = !offer.kept && offer.slot.is_none();
+
     state.ui.button_enabled(d, &state.fonts, rect, label, enabled);
     if let Some((msg, color)) = offer.status.shown(&state.ui.palette()) {
         d.sharp_text(&state.fonts.text, msg)
-            .position(rect.x + rect.w, rect.y + rect.h + 16.0)
+            .right(rect.x + rect.w, rect.y + rect.h + 16.0)
             .size(theme::size::SMALL)
-            .h_align_right()
-            .v_align_middle()
             .color(color);
     }
 }
@@ -123,6 +126,7 @@ impl ReplayViewer {
             behind: 0.0,
         };
         viewer.watch(focus);
+
         viewer
     }
 
@@ -133,12 +137,14 @@ impl ReplayViewer {
         let mut session = GameSession::new(0, players.iter().map(|p| p.name.clone()).collect());
         session.focus = focus;
         session.team = players.get(usize::from(focus) - 1).map_or(0, |p| p.team);
+
         for (i, player) in players.iter().enumerate() {
             let slot = u8::try_from(i + 1).unwrap_or(u8::MAX);
             if slot != focus {
                 session.add_rival(Rival::new(slot, player.team, Board::new(0, &shared::Rules::default())));
             }
         }
+
         self.session = session;
         self.show();
     }
@@ -146,6 +152,7 @@ impl ReplayViewer {
     fn show(&mut self) {
         let boards = self.playback.boards();
         let focus = usize::from(self.session.focus) - 1;
+
         if let Some(board) = boards.get(focus) {
             self.session.predicted_board = board.clone();
             self.session.board = board.clone();
@@ -252,6 +259,7 @@ fn controls(view: View) -> [Rect; 4] {
     const GAP: f32 = 12.0;
     let total = 4.0 * W + 3.0 * GAP;
     let (x, y) = ((view.w - total) / 2.0, view.h - H - 14.0);
+
     std::array::from_fn(|i| Rect::at(x + i as f32 * (W + GAP), y, W, H))
 }
 
@@ -262,6 +270,8 @@ pub fn update(app: &App, state: &State, viewer: &mut ReplayViewer) -> Transition
     let (leave_row, again_row) = draw::exit_rows(view, true);
     let over = viewer.over();
     let keys = &app.keyboard;
+    let leave = state.ui.clicked(quit) || (over && state.ui.bar_clicked(leave_row));
+
     if (over && state.ui.bar_clicked(again_row)) || keys.was_pressed(KeyCode::KeyR) {
         viewer.restart();
     } else if state.ui.clicked(play) || keys.was_pressed(KeyCode::Space) {
@@ -271,39 +281,39 @@ pub fn update(app: &App, state: &State, viewer: &mut ReplayViewer) -> Transition
     } else if state.ui.clicked(player) || keys.was_pressed(KeyCode::Tab) {
         viewer.next_player();
     }
-    let leave = state.ui.clicked(quit) || (over && state.ui.bar_clicked(leave_row));
     if leave || keys.was_pressed(KeyCode::Escape) {
         return Transition::Pop;
     }
     viewer.step(dt);
+
     Transition::Stay
 }
 
 pub fn draw(app: &mut App, gfx: &mut Graphics, state: &State, viewer: &ReplayViewer) {
     draw::draw_game(app, gfx, &viewer.session, &state.ui, &state.fonts, Hud::Replay);
-    let view = state.ui.view();
-    let mut d = state.ui.canvas(gfx);
-    if !viewer.over() {
-        let [play, speed, player, quit] = controls(view);
-        let fonts = &state.fonts;
-        let icon = if viewer.paused { Icon::Play } else { Icon::Pause };
-        state.ui.button(&mut d, fonts, play, icon);
-        let label = format!("Vitesse x{}", SPEEDS[viewer.speed]);
-        state.ui.button(&mut d, fonts, speed, label.as_str());
-        let multi = viewer.playback.replay().players.len() > 1;
-        state.ui.button_enabled(&mut d, fonts, player, "Joueur suivant", multi);
-        state.ui.button(&mut d, fonts, quit, "Quitter");
-        draw_clock(&mut d, &state.ui, fonts, &viewer.clock(), play);
+    if viewer.over() {
+        return;
     }
+
+    let [play, speed, player, quit] = controls(state.ui.view());
+    let fonts = &state.fonts;
+    let icon = if viewer.paused { Icon::Play } else { Icon::Pause };
+    let label = format!("Vitesse x{}", SPEEDS[viewer.speed]);
+    let multi = viewer.playback.replay().players.len() > 1;
+
+    let mut d = state.ui.canvas(gfx);
+    state.ui.button(&mut d, fonts, play, icon);
+    state.ui.button(&mut d, fonts, speed, label.as_str());
+    state.ui.button_enabled(&mut d, fonts, player, "Joueur suivant", multi);
+    state.ui.button(&mut d, fonts, quit, "Quitter");
+    draw_clock(&mut d, &state.ui, fonts, &viewer.clock(), play);
+
     state.ui.render(gfx, &d);
 }
 
-fn draw_clock(d: &mut notan::draw::Draw, ui: &Ui, fonts: &Fonts, clock: &str, play: Rect) {
-    use crate::ui::SharpText;
+fn draw_clock(d: &mut Draw, ui: &Ui, fonts: &Fonts, clock: &str, play: Rect) {
     d.sharp_text(&fonts.display, clock)
-        .position(play.x - 20.0, play.y + play.h / 2.0)
+        .right(play.x - 20.0, play.y + play.h / 2.0)
         .size(theme::size::LABEL)
-        .h_align_right()
-        .v_align_middle()
         .color(ui.palette().text_dim);
 }

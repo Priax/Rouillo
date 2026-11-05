@@ -20,18 +20,20 @@ mod imp {
     pub fn unlock_on_gesture() {
         let Some(window) = web_sys::window() else { return };
         for event in ["pointerdown", "pointerup", "touchend", "keydown"] {
-            crate::web::listen(&window, event, |_: Event| {
-                CTX.with(|cell| {
-                    let mut borrow = cell.borrow_mut();
-                    if borrow.is_none() {
-                        *borrow = AudioContext::new().ok();
-                    }
-                    if let Some(ctx) = borrow.as_ref().filter(|c| c.state() != AudioContextState::Running) {
-                        let _ = ctx.resume();
-                    }
-                });
-            });
+            crate::web::listen(&window, event, wake);
         }
+    }
+
+    fn wake(_: Event) {
+        CTX.with(|cell| {
+            let mut borrow = cell.borrow_mut();
+            if borrow.is_none() {
+                *borrow = AudioContext::new().ok();
+            }
+            if let Some(ctx) = borrow.as_ref().filter(|c| c.state() != AudioContextState::Running) {
+                let _ = ctx.resume();
+            }
+        });
     }
 
     fn with_ctx<F: FnOnce(&AudioContext)>(f: F) {

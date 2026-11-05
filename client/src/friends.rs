@@ -6,10 +6,10 @@ use notan::prelude::*;
 
 use crate::images::Images;
 use crate::nav::Transition;
-use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State, UserSearchEntry};
+use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State};
 use crate::ui::{
-    self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Icon, Label, Pager,
-    Pill, Rect, SharpText, Size, Status, TextInput, Ui, View,
+    self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Label, Pager, Pill,
+    Rect, SharpText, Size, Status, TextInput, Ui, View,
 };
 use crate::{http, theme};
 
@@ -25,8 +25,9 @@ const MAX_ROWS: usize = 5;
 const COL_W: f32 = 360.0;
 const COL_GAP: f32 = 30.0;
 const SMALL_BTN_H: f32 = 32.0;
-
 const COL_GAP_UPRIGHT: f32 = 16.0;
+const AVATAR_R: f32 = 15.0;
+const AVATAR_ROOM: f32 = 2.0 * AVATAR_R + 10.0;
 
 /// How many friends a column lists per page: as many as fit above the
 /// bottom buttons, with a row left for the pager. Upright, the three
@@ -133,9 +134,6 @@ fn avatar(
     ui::portrait(draw, &ui.palette(), fonts, (x + AVATAR_R, cy), AVATAR_R, &who);
 }
 
-const AVATAR_R: f32 = 15.0;
-const AVATAR_ROOM: f32 = 2.0 * AVATAR_R + 10.0;
-
 /// Up to the row's first button: "Regarder" only shows while the friend plays.
 fn name_zone(view: View, col: usize, row: usize, playing: bool) -> Rect {
     let rect = list_row_rect(view, col, row);
@@ -181,6 +179,7 @@ pub fn enter_friends(state: &State) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let slot = http::new_slot();
     http::get(http::api_url("friends"), token, Arc::clone(&slot));
+
     Transition::To(Screen::Friends(Box::new(FriendsData {
         friends: Vec::new(),
         sent: Vec::new(),
@@ -229,12 +228,14 @@ fn try_search(state: &State, f: &mut FriendsData) {
     if f.search_slot.is_some() {
         return;
     }
+
     let q = search_query(f);
     if q.len() < 2 {
         f.search_status = Status::info("Saisir au moins 2 caractères.");
         f.search_results.clear();
         return;
     }
+
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let slot = http::new_slot();
     http::get(http::api_url(&format!("users/search?q={}", http::encode_query(&q))), token, Arc::clone(&slot));
@@ -247,6 +248,7 @@ fn send_add_request(state: &State, f: &mut FriendsData, user_id: &str) {
     if f.add_pending.is_some() {
         return;
     }
+
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let body = serde_json::json!({ "user_id": user_id }).to_string();
     let slot = http::new_slot();
@@ -265,7 +267,7 @@ fn poll_list(f: &mut FriendsData) {
 }
 
 fn poll_search(f: &mut FriendsData) {
-    let Some(result) = http::take_json::<Vec<UserSearchEntry>>(&mut f.search_slot) else {
+    let Some(result) = http::take_json::<Vec<FriendEntry>>(&mut f.search_slot) else {
         return;
     };
     match result {
@@ -320,8 +322,8 @@ pub fn update_friends(app: &mut App, state: &mut State, f: &mut FriendsData) -> 
     poll_action(state, f);
 
     let view = state.ui.view();
-
     let paging = f.pages.iter().any(Pager::focused);
+
     if field_clicked(&state.ui, &state.fonts, search_box(view), &mut f.search_input) {
         f.search_focused = true;
     } else if state.ui.clicked(Rect::at(0.0, 0.0, view.w, view.h)) {
@@ -331,6 +333,7 @@ pub fn update_friends(app: &mut App, state: &mut State, f: &mut FriendsData) -> 
     if searching {
         f.search_input.edit(&state.input.keys);
     }
+
     for col in 0..3 {
         let pages = page_count(lists(f)[col].len(), rows_for(view));
         f.pages[col].clamp(pages);
@@ -356,6 +359,7 @@ pub fn update_friends(app: &mut App, state: &mut State, f: &mut FriendsData) -> 
     if let Some((uid, uname)) = clicked_profile(f, &state.ui, view).or_else(|| clicked_listed(f, &state.ui, view)) {
         return crate::profile::enter_other_profile(state, uid, uname, Some(f));
     }
+
     let add = clicked_add(f, &state.ui, view);
     let action = clicked_action(f, &state.ui, view);
     if let Some(uid) = add {
@@ -366,6 +370,7 @@ pub fn update_friends(app: &mut App, state: &mut State, f: &mut FriendsData) -> 
         Some(action) => apply_action(state, f, action),
         None => {}
     }
+
     Transition::Stay
 }
 
@@ -412,6 +417,7 @@ fn clicked_action(f: &FriendsData, ui: &Ui, view: View) -> Option<FriendAction> 
     if f.action_pending.is_some() || f.list_slot.is_some() {
         return None;
     }
+
     if let Some(confirm_id) = &f.confirm_remove {
         let (row, _) = f.pages[0].shown(&f.friends, rows_for(view)).find(|(_, e)| &e.user_id == confirm_id)?;
         if ui.clicked(confirm_yes_btn(view, row)) {
@@ -422,6 +428,7 @@ fn clicked_action(f: &FriendsData, ui: &Ui, view: View) -> Option<FriendAction> 
         }
         return None;
     }
+
     for (i, e) in f.pages[0].shown(&f.friends, rows_for(view)) {
         if ui.clicked(remove_btn(view, 0, i)) {
             return Some(FriendAction::StartRemove(e.user_id.clone()));
@@ -443,12 +450,14 @@ fn clicked_action(f: &FriendsData, ui: &Ui, view: View) -> Option<FriendAction> 
             return Some(FriendAction::Cancel(e.user_id.clone()));
         }
     }
+
     None
 }
 
 /// Watches a friend's game: the server says where it is, or that there is none.
 fn watch(state: &mut State, user_id: String) -> Transition {
     state.notice.clear();
+
     if state.net.conn.is_live() {
         state.net.conn.send(&shared::ClientMessage::WatchFriend { user_id });
     } else {
@@ -456,11 +465,13 @@ fn watch(state: &mut State, user_id: String) -> Transition {
         state.net.conn.connect(crate::connection::now_secs());
         state.rooms.clear();
     }
+
     Transition::To(Screen::RoomBrowser)
 }
 
 fn apply_action(state: &State, f: &mut FriendsData, action: FriendAction) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
+
     match action {
         FriendAction::Watch(_) => {}
         FriendAction::StartRemove(id) => f.confirm_remove = Some(id),
@@ -482,24 +493,17 @@ fn apply_action(state: &State, f: &mut FriendsData, action: FriendAction) {
 }
 
 pub fn draw_friends(gfx: &mut Graphics, state: &State, f: &FriendsData) {
-    let pal = state.ui.palette();
     let view = state.ui.view();
-
-    let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
-    draw.sharp_text(&state.fonts.display, "Amis")
-        .position(60.0, theme::HEADER_H / 2.0)
-        .size(theme::size::TITLE)
-        .v_align_middle()
-        .color(pal.text);
-
     let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
     let pics = pictures(gfx, &state.images, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
+    let label = Label::busy_or(f.list_slot.is_some(), "Rafraîchir");
+
+    let mut draw = state.ui.screen_canvas(gfx);
+    state.ui.page_header(&mut draw, &state.fonts, "Amis");
     draw_search(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
     draw_lists(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
 
     state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
-    let label = if f.list_slot.is_some() { Label::from(Icon::Busy) } else { Label::from("Rafraîchir") };
     state.ui.button_enabled(&mut draw, &state.fonts, refresh_btn(view), label, can_refresh(f));
 
     state.ui.render(gfx, &draw);
@@ -508,50 +512,44 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State, f: &FriendsData) {
 fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
     let pal = ui.palette();
     let field = search_box(view);
-    draw.sharp_text(&fonts.text, "Rechercher un ami")
-        .position(field.x, field.y - 14.0)
-        .size(theme::size::SMALL)
-        .v_align_middle()
-        .color(pal.text_dim);
-
     let searching = f.search_slot.is_some();
     let search = Field { placeholder: "Pseudo ou UUID", input: &f.search_input, focused: f.search_focused };
+    let submit = Label::busy_or(searching, "Rechercher");
+
+    draw.sharp_text(&fonts.text, "Rechercher un ami")
+        .left(field.x, field.y - 14.0)
+        .size(theme::size::SMALL)
+        .color(pal.text_dim);
     text_field(draw, ui, fonts, field, &search);
-    ui.button_enabled(
-        draw,
-        fonts,
-        search_submit_btn(view),
-        if searching { Label::from(Icon::Busy) } else { Label::from("Rechercher") },
-        !searching,
-    );
+    ui.button_enabled(draw, fonts, search_submit_btn(view), submit, !searching);
 
     let status = f.search_status.shown(&pal);
     if f.search_results.is_empty() && status.is_none() {
         return;
     }
+
     let card = results_card(view);
+    let adding = f.add_pending.is_some();
+
     ui::card(draw, &pal, card);
     if let (true, Some((msg, color))) = (f.search_results.is_empty(), status) {
         draw.sharp_text(&fonts.text, msg)
-            .position(card.x + card.w / 2.0, card.y + card.h / 2.0)
+            .center(card.x + card.w / 2.0, card.y + card.h / 2.0)
             .size(theme::size::LABEL)
-            .h_align_center()
-            .v_align_middle()
             .color(color);
     }
-    let adding = f.add_pending.is_some();
     for (i, e) in f.search_results.iter().take(MAX_SEARCH_RESULTS).enumerate() {
         let row = result_row(view, i);
         let mid = row.y + row.h / 2.0;
+        let elo = format!("ELO {}", e.elo);
+        let rating = Pill::small(&elo, theme::GOLD);
+
         list_row(draw, &pal, row, i);
         avatar(draw, ui, fonts, (row.x + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
         draw.sharp_text(&fonts.text, &e.username)
-            .position(row.x + 10.0 + AVATAR_ROOM, mid)
+            .left(row.x + 10.0 + AVATAR_ROOM, mid)
             .size(theme::size::LABEL)
-            .v_align_middle()
             .color(pal.text);
-        let elo = format!("ELO {}", e.elo);
-        let rating = Pill { text: &elo, color: theme::GOLD, size: theme::size::SMALL };
         rating.draw(draw, fonts, (row.x + 260.0, mid));
         if !f.friends.iter().any(|fr| fr.user_id == e.user_id) {
             ui.button_enabled(draw, fonts, result_add_btn(view, i), "Ajouter", !adding);
@@ -560,12 +558,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, 
     }
 
     if let Some((msg, color)) = f.add_status.shown(&pal) {
-        draw.sharp_text(&fonts.text, msg)
-            .position(view.w / 2.0, ADD_STATUS_Y)
-            .size(theme::size::BODY)
-            .h_align_center()
-            .v_align_middle()
-            .color(color);
+        draw.sharp_text(&fonts.text, msg).center(view.w / 2.0, ADD_STATUS_Y).size(theme::size::BODY).color(color);
     }
 }
 
@@ -578,25 +571,20 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, p
     ];
     for (col, (title, list, _)) in columns.iter().enumerate() {
         let card = column_card(view, col);
-        ui::card(draw, &pal, card);
         let mid = card.y + CARD_TITLE_H / 2.0;
-        draw.sharp_text(&fonts.display, title)
-            .position(card.x + 16.0, mid)
-            .size(theme::size::EMPHASIS)
-            .v_align_middle()
-            .color(pal.text);
         let count = list.len().to_string();
-        let tally = Pill { text: &count, color: pal.accent, size: theme::size::SMALL };
+        let tally = Pill::small(&count, pal.accent);
+
+        ui::card(draw, &pal, card);
+        draw.sharp_text(&fonts.display, title).left(card.x + 16.0, mid).size(theme::size::EMPHASIS).color(pal.text);
         tally.draw(draw, fonts, (card.x + card.w - 16.0 - tally.width(fonts), mid));
         divider(draw, &pal, card.x + 16.0, card.y + CARD_TITLE_H, card.w - 32.0);
     }
 
     if f.list_slot.is_some() {
         draw.sharp_text(&fonts.text, "Chargement...")
-            .position(view.w / 2.0, list_top(column_card(view, 0)) + 24.0)
+            .center(view.w / 2.0, list_top(column_card(view, 0)) + 24.0)
             .size(theme::size::LABEL)
-            .h_align_center()
-            .v_align_middle()
             .color(pal.text_muted);
     } else {
         let busy = f.action_pending.is_some();
@@ -639,10 +627,8 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, p
 
     if let Some((msg, color)) = f.action_status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
-            .position(view.w / 2.0, column_card(view, 2).bottom() + 10.0)
+            .center(view.w / 2.0, column_card(view, 2).bottom() + 10.0)
             .size(theme::size::SMALL)
-            .h_align_center()
-            .v_align_middle()
             .color(color);
     }
 }
@@ -662,31 +648,25 @@ fn draw_col<F>(
     if list.is_empty() {
         let card = column_card(view, col);
         draw.sharp_text(&fonts.text, empty_msg)
-            .position(card.x + card.w / 2.0, list_top(card) + 24.0)
+            .center(card.x + card.w / 2.0, list_top(card) + 24.0)
             .size(theme::size::SMALL)
-            .h_align_center()
-            .v_align_middle()
             .color(pal.text_muted);
         return;
     }
     for (i, e) in pager.shown(list, rows_for(view)) {
         let row = list_row_rect(view, col, i);
-        list_row(draw, pal, row, i);
         let zone = name_zone(view, col, i, e.playing);
-        let room = zone.w - 12.0 - AVATAR_ROOM;
-        ui.row(draw, zone, i, &format!("friend:{col}:{}", e.user_id));
         let mid = row.y + row.h / 2.0;
-        avatar(draw, ui, fonts, (row.x + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
         let text_x = row.x + 8.0 + AVATAR_ROOM;
-        draw.sharp_text(&fonts.text, &fonts.fit(Face::Text, &e.username, theme::size::BODY, room))
-            .position(text_x, mid - 8.0)
-            .size(theme::size::BODY)
-            .v_align_middle()
-            .color(pal.text);
+        let name = fonts.fit(Face::Text, &e.username, theme::size::BODY, zone.w - 12.0 - AVATAR_ROOM);
+
+        list_row(draw, pal, row, i);
+        ui.row(draw, zone, i, &format!("friend:{col}:{}", e.user_id));
+        avatar(draw, ui, fonts, (row.x + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
+        draw.sharp_text(&fonts.text, &name).left(text_x, mid - 8.0).size(theme::size::BODY).color(pal.text);
         draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
-            .position(text_x, mid + 10.0)
+            .left(text_x, mid + 10.0)
             .size(theme::size::SMALL)
-            .v_align_middle()
             .color(theme::GOLD);
         draw_buttons(draw, fonts, e, i);
     }

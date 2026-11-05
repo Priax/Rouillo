@@ -11,19 +11,20 @@ pub mod hue {
 // HSL to RGB, `h` in degrees, `s` and `l` in `0..=1`. `const` so the palette
 // below is computed at compile time.
 const fn hsl(h: f32, s: f32, l: f32) -> Color {
-    let mut h = h;
-    while h < 0.0 {
-        h += 360.0;
-    }
-    while h >= 360.0 {
-        h -= 360.0;
-    }
     const fn abs(v: f32) -> f32 {
         if v < 0.0 {
             -v
         } else {
             v
         }
+    }
+
+    let mut h = h;
+    while h < 0.0 {
+        h += 360.0;
+    }
+    while h >= 360.0 {
+        h -= 360.0;
     }
     let c = (1.0 - abs(2.0 * l - 1.0)) * s;
     let hp = h / 60.0;

@@ -68,6 +68,7 @@ impl CpuSeat {
 
 pub fn update(app: &App, ui: &Ui, seat: CpuSeat) -> Option<Action> {
     let modal = modal(ui.view());
+
     if modal.dismissed(ui) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Some(Action::Close);
     }
@@ -82,12 +83,14 @@ pub fn update(app: &App, ui: &Ui, seat: CpuSeat) -> Option<Action> {
     if ui.clicked(remove_button(modal)) {
         return Some(Action::Send(ClientMessage::RemoveCpu { slot: seat.slot }));
     }
+
     None
 }
 
 pub fn draw(draw: &mut Draw, ui: &Ui, fonts: &Fonts, seat: CpuSeat) {
     let pal = ui.palette();
     let modal = modal(ui.view());
+
     modal.draw(draw, ui, fonts, "CPU");
     for i in 0..TILES {
         ui.stepper_tile(draw, fonts, tile(modal, i), CpuSeat::label(i), seat.value(i, &pal), true);

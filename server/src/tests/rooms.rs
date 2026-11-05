@@ -37,7 +37,7 @@ fn countdown_needs_two_players() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     mgr.handle(Command::ToggleCountdown { conn: 1 });
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby));
 }
@@ -68,7 +68,7 @@ fn last_member_leaving_closes_room() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     assert!(mgr.rooms.contains_key(&1));
     mgr.handle(Command::LeaveRoom { conn: 1 });
     assert!(!mgr.rooms.contains_key(&1));
@@ -220,7 +220,7 @@ fn joining_your_own_room_keeps_it() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     mgr.handle(Command::JoinRoom { conn: 1, id: 1 });
     assert!(mgr.rooms.contains_key(&1));
     assert_eq!(mgr.room_of(1), Some(1));

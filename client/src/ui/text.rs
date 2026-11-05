@@ -69,9 +69,24 @@ impl Text<'_> {
         self
     }
 
-    pub fn v_align_middle(&mut self) -> &mut Self {
+    fn v_align_middle(&mut self) -> &mut Self {
         self.middle = true;
         self
+    }
+
+    /// Starts at `x`, centred on `y`.
+    pub fn left(&mut self, x: f32, y: f32) -> &mut Self {
+        self.position(x, y).v_align_middle()
+    }
+
+    /// Centred on `(x, y)`.
+    pub fn center(&mut self, x: f32, y: f32) -> &mut Self {
+        self.left(x, y).h_align_center()
+    }
+
+    /// Ends at `x`, centred on `y`.
+    pub fn right(&mut self, x: f32, y: f32) -> &mut Self {
+        self.left(x, y).h_align_right()
     }
 }
 

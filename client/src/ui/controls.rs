@@ -25,10 +25,8 @@ impl Ui {
         }
         let color = if active { pal.text } else { theme::mix(pal.text_muted, pal.text, r.hover) };
         draw.sharp_text(&fonts.display, label)
-            .position(cx, rect.y + rect.h / 2.0 - UNDERLINE)
+            .center(cx, rect.y + rect.h / 2.0 - UNDERLINE)
             .size(theme::size::HEADING)
-            .h_align_center()
-            .v_align_middle()
             .color(color);
     }
 
@@ -54,12 +52,11 @@ impl Ui {
             crate::audio::play_ui_hover();
         }
         let (cx, cy) = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
-        draw.sharp_text(&fonts.text, text)
-            .position(cx, cy)
-            .size(theme::size::BODY)
-            .h_align_center()
-            .v_align_middle()
-            .color(theme::mix(pal.text, theme::LINK, r.hover));
+        draw.sharp_text(&fonts.text, text).center(cx, cy).size(theme::size::BODY).color(theme::mix(
+            pal.text,
+            theme::LINK,
+            r.hover,
+        ));
         if r.hover > 0.01 {
             let w = rect.w * 0.6 * r.hover;
             draw.rect((cx - w / 2.0, cy + 12.0), (w, 1.5)).color(theme::LINK.with_alpha(r.hover));

@@ -146,28 +146,25 @@ impl Manager {
 
     pub(super) fn toggle_countdown(&mut self, conn: ConnId) {
         let closing = self.closing;
-        if let Some(id) = self.room_of(conn) {
-            let toggled = self
-                .with_room(id, |room| {
-                    if room.series.is_none() && room.is_host_conn(conn) {
-                        room.phase = match room.phase {
-                            Phase::Lobby if !closing && room.has_sides() && room.all_connected() => {
-                                Phase::CountingDown(COUNTDOWN_SECS)
-                            }
-                            Phase::Lobby => Phase::Lobby,
-                            Phase::CountingDown(_) => Phase::Lobby,
-                            Phase::Playing => Phase::Playing,
-                        };
-                        true
-                    } else {
-                        false
+        let Some(id) = self.room_of(conn) else { return };
+        let toggled = self
+            .with_room(id, |room| {
+                if room.series.is_some() || !room.is_host_conn(conn) {
+                    return false;
+                }
+                room.phase = match room.phase {
+                    Phase::Lobby if !closing && room.has_sides() && room.all_connected() => {
+                        Phase::CountingDown(COUNTDOWN_SECS)
                     }
-                })
-                .unwrap_or(false);
-            if toggled {
-                self.send_lobby(id);
-                self.room_list_dirty = true;
-            }
+                    Phase::Lobby | Phase::CountingDown(_) => Phase::Lobby,
+                    Phase::Playing => Phase::Playing,
+                };
+                true
+            })
+            .unwrap_or(false);
+        if toggled {
+            self.send_lobby(id);
+            self.room_list_dirty = true;
         }
     }
 
@@ -314,33 +311,26 @@ impl Manager {
         if self.closing {
             return;
         }
-        if let Some(id) = self.room_of(conn) {
-            let restarted = self
-                .with_room(id, |room| {
-                    if room.series.is_none()
-                        && room.slot_of_conn(conn).is_some()
-                        && matches!(room.phase, Phase::Playing)
-                        && room.sim.finished
-                        && room.all_connected()
-                    {
-                        let now = Instant::now();
-                        let in_cooldown =
-                            room.sim.last_restart.is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
-                        if in_cooldown {
-                            false
-                        } else {
-                            room.sim.last_restart = Some(now);
-                            room.start_game();
-                            true
-                        }
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false);
-            if restarted {
-                self.send_game_start(id);
-            }
+        let Some(id) = self.room_of(conn) else { return };
+        let restarted = self
+            .with_room(id, |room| {
+                let ready = room.series.is_none()
+                    && room.slot_of_conn(conn).is_some()
+                    && matches!(room.phase, Phase::Playing)
+                    && room.sim.finished
+                    && room.all_connected();
+                let now = Instant::now();
+                let in_cooldown = room.sim.last_restart.is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
+                if !ready || in_cooldown {
+                    return false;
+                }
+                room.sim.last_restart = Some(now);
+                room.start_game();
+                true
+            })
+            .unwrap_or(false);
+        if restarted {
+            self.send_game_start(id);
         }
     }
 }

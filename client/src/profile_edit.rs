@@ -47,6 +47,7 @@ impl EditField {
 
     fn rect(self, cx: f32) -> Rect {
         let bio = Rect::centered_on(cx, 215.0, 600.0, area_height(BIO_LINES));
+
         match self {
             Self::Bio => bio,
             Self::Music => Rect::at(bio.x, bio.y + bio.h + 44.0, bio.w, 46.0),
@@ -131,12 +132,14 @@ impl EditForm {
         if self.focused != EditField::Bio {
             return true;
         }
+
         let (before, after) = self.bio.around_caret();
         let around =
             before.len() - before.trim_end_matches('\n').len() + after.len() - after.trim_start_matches('\n').len();
         if around < 2 {
             self.bio.type_char('\n');
         }
+
         false
     }
 
@@ -153,12 +156,14 @@ fn buttons(cx: f32) -> (Rect, Rect) {
     let music = EditField::Music.rect(cx);
     let y = music.y + music.h + 39.0;
     let [save, back] = Rect::centered_on(cx, y, 440.0, 54.0).columns(40.0, [FILL, FILL]);
+
     (save, back)
 }
 
 fn picture_buttons(cx: f32) -> [(Picture, bool, Rect); 4] {
     let y = buttons(cx).0.y + 54.0 + 50.0;
     let [a, b, c, d] = Rect::centered_on(cx, y, 630.0, 46.0).columns(10.0, [FILL; 4]);
+
     [(Picture::Avatar, true, a), (Picture::Avatar, false, b), (Picture::Banner, true, c), (Picture::Banner, false, d)]
 }
 
@@ -169,9 +174,22 @@ fn picture_url(info: &ApiUserProfile, picture: Picture) -> Option<&str> {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct Pictures {
+    avatar_url: Option<String>,
+    banner_url: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct PatchResp {
+    bio: Option<String>,
+    favorite_music: Option<String>,
+}
+
 fn poll_pictures(state: &mut State, p: &mut ProfileData) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let Some(form) = p.edit.as_mut() else { return };
+
     if let Some(picture) = form.picking {
         match picker::take() {
             Some(Picked::File(bytes)) => {
@@ -189,11 +207,7 @@ fn poll_pictures(state: &mut State, p: &mut ProfileData) {
             None => {}
         }
     }
-    #[derive(serde::Deserialize)]
-    struct Pictures {
-        avatar_url: Option<String>,
-        banner_url: Option<String>,
-    }
+
     let Some(result) = http::take_json::<Pictures>(&mut form.uploading) else {
         return;
     };
@@ -212,12 +226,8 @@ fn poll_pictures(state: &mut State, p: &mut ProfileData) {
 
 pub fn poll(state: &mut State, p: &mut ProfileData) {
     poll_pictures(state, p);
+
     let Some(form) = p.edit.as_mut() else { return };
-    #[derive(serde::Deserialize)]
-    struct PatchResp {
-        bio: Option<String>,
-        favorite_music: Option<String>,
-    }
     let Some(result) = http::take_json::<PatchResp>(&mut form.pending) else {
         return;
     };
@@ -235,6 +245,7 @@ fn save(form: &mut EditForm, token: Option<String>) {
     if form.pending.is_some() {
         return;
     }
+
     let slot = http::new_slot();
     http::patch_json(http::api_url("me"), form.body(), token, Arc::clone(&slot));
     form.pending = Some(slot);
@@ -244,6 +255,7 @@ fn save(form: &mut EditForm, token: Option<String>) {
 pub fn update(app: &mut App, state: &mut State, profile: &mut ProfileData) {
     let cx = state.ui.view().w / 2.0;
     let token = state.auth.as_ref().map(|a| a.token.clone());
+    let (save_btn, cancel_btn) = buttons(cx);
     let State { ui, fonts, input: Input { keys, .. }, .. } = state;
     let Some(form) = profile.edit.as_mut() else { return };
 
@@ -260,6 +272,7 @@ pub fn update(app: &mut App, state: &mut State, profile: &mut ProfileData) {
     if field_clicked(ui, fonts, EditField::Music.rect(cx), &mut form.music) {
         form.focused = EditField::Music;
     }
+
     if form.uploading.is_none() {
         for (picture, change, rect) in picture_buttons(cx) {
             if !ui.clicked(rect) {
@@ -275,8 +288,8 @@ pub fn update(app: &mut App, state: &mut State, profile: &mut ProfileData) {
             }
         }
     }
+
     let wants_save = app.keyboard.was_pressed(KeyCode::Enter) && form.enter();
-    let (save_btn, cancel_btn) = buttons(cx);
     if ui.clicked(save_btn) || wants_save {
         save(form, token);
     }
@@ -287,28 +300,27 @@ pub fn update(app: &mut App, state: &mut State, profile: &mut ProfileData) {
 
 pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: &ApiUserProfile, cx: f32) {
     let pal = ui.palette();
+    let (save_btn, cancel_btn) = buttons(cx);
+    let saving = form.pending.is_some();
+    let busy = form.uploading.is_some();
+
     for which in EditField::ALL {
         let rect = which.rect(cx);
         let label_y = rect.y - 15.0;
-        draw.sharp_text(&fonts.text, which.label())
-            .position(rect.x, label_y)
-            .size(theme::size::LABEL)
-            .v_align_middle()
-            .color(pal.text_dim);
-        let focused = form.focused == which;
         let left = form.left(which);
         let left_color = match left {
             0 => theme::DANGER,
             1..=20 => theme::WARNING,
             _ => pal.text_muted,
         };
+        let field =
+            Field { placeholder: which.placeholder(), input: form.value(which), focused: form.focused == which };
+
+        draw.sharp_text(&fonts.text, which.label()).left(rect.x, label_y).size(theme::size::LABEL).color(pal.text_dim);
         draw.sharp_text(&fonts.text, &left.to_string())
-            .position(rect.x + rect.w, label_y)
+            .right(rect.x + rect.w, label_y)
             .size(theme::size::SMALL)
-            .h_align_right()
-            .v_align_middle()
             .color(left_color);
-        let field = Field { placeholder: which.placeholder(), input: form.value(which), focused };
         if which == EditField::Bio {
             text_area(draw, ui, fonts, rect, &field);
         } else {
@@ -316,12 +328,8 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: &Api
         }
     }
 
-    let (save_btn, cancel_btn) = buttons(cx);
-    let saving = form.pending.is_some();
     ui.button_enabled(draw, fonts, save_btn, if saving { "Sauvegarde..." } else { "Enregistrer" }, !saving);
     ui.button(draw, fonts, cancel_btn, "Annuler");
-
-    let busy = form.uploading.is_some();
     for (picture, change, rect) in picture_buttons(cx) {
         let label = match (picture, change) {
             (Picture::Avatar, true) => "Changer l'avatar",
@@ -335,10 +343,8 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: &Api
 
     if let Some((msg, color)) = form.status.shown(&pal) {
         draw.sharp_text(&fonts.text, msg)
-            .position(cx, save_btn.y + save_btn.h + 21.0)
+            .center(cx, save_btn.y + save_btn.h + 21.0)
             .size(theme::size::LABEL)
-            .h_align_center()
-            .v_align_middle()
             .color(color);
     }
 }

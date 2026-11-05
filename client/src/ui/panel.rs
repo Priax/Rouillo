@@ -35,9 +35,8 @@ pub fn action_row(card: Rect, view_w: f32, k: usize) -> Rect {
 pub fn panel_card(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card_rect: Rect, title: &str) {
     card(draw, pal, card_rect);
     draw.sharp_text(&fonts.display, title)
-        .position(card_rect.x + CARD_PAD, card_rect.y + TITLE_H / 2.0)
+        .left(card_rect.x + CARD_PAD, card_rect.y + TITLE_H / 2.0)
         .size(theme::size::EMPHASIS)
-        .v_align_middle()
         .color(pal.text_dim);
     divider(draw, pal, card_rect.x + CARD_PAD, card_rect.y + TITLE_H, card_rect.w - 2.0 * CARD_PAD);
 }
@@ -101,9 +100,8 @@ impl SettingsGrid {
         panel_card(draw, pal, fonts, self.card, title);
         for (column, section) in sections.into_iter().enumerate() {
             draw.sharp_text(&fonts.display, section)
-                .position(self.column_x(column).0, self.card.y + TITLE_H + SECTION_H / 2.0 + 2.0)
+                .left(self.column_x(column).0, self.card.y + TITLE_H + SECTION_H / 2.0 + 2.0)
                 .size(theme::size::LABEL)
-                .v_align_middle()
                 .color(pal.accent);
         }
     }

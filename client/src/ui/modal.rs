@@ -39,9 +39,8 @@ impl Modal {
         draw.rect((0.0, 0.0), (view.w, view.h)).color(pal.scrim_strong);
         card(draw, &pal, self.card);
         draw.sharp_text(&fonts.display, title)
-            .position(self.card.x + PADDING, self.card.y + TITLE_H / 2.0 - 1.0)
+            .left(self.card.x + PADDING, self.card.y + TITLE_H / 2.0 - 1.0)
             .size(theme::size::HEADING)
-            .v_align_middle()
             .color(pal.text);
         ui.button(draw, fonts, self.close(), Icon::Close);
     }

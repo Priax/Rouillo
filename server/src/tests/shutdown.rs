@@ -72,7 +72,7 @@ fn no_new_room_and_no_join_during_a_shutdown() {
     let mut mgr = new_mgr();
     let mut rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     let mut rx2 = reg(&mut mgr, 2);
     hello(&mut mgr, 2, "B");
     mgr.handle(Command::Shutdown);
@@ -203,7 +203,7 @@ fn an_account_cannot_take_both_slots() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    create_room(&mut mgr, 1);
     let mut rx2 = reg(&mut mgr, 2);
     hello_as(&mut mgr, 2, "B", 1);
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });

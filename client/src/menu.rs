@@ -6,6 +6,9 @@ use crate::state::{AuthForm, Screen, Settings, State};
 use crate::ui::{Frame, Rect, SettingsPanel, SharpText, Status, View};
 use crate::{http, theme};
 
+const ROW_H: f32 = 64.0;
+const AVATAR: f32 = 76.0;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MenuItem {
     Play,
@@ -64,8 +67,6 @@ fn items(play: bool, logged_in: bool) -> &'static [MenuItem] {
     }
 }
 
-const ROW_H: f32 = 64.0;
-
 /// Where the rows start: a little below the middle, higher on a short screen
 /// so the last one stays on it.
 fn menu_top(view: View, rows: usize) -> f32 {
@@ -77,8 +78,6 @@ fn menu_rows(view: View, items: &'static [MenuItem]) -> impl Iterator<Item = (Me
     let top = menu_top(view, items.len());
     items.iter().enumerate().map(move |(i, &item)| (item, Rect::at(0.0, top, view.w, 0.0).nth_row(i, ROW_H, 0.0)))
 }
-
-const AVATAR: f32 = 76.0;
 
 fn avatar_rect(ww: f32) -> Rect {
     Rect::at(ww - 70.0 - AVATAR / 2.0, 70.0 - AVATAR / 2.0, AVATAR, AVATAR)
@@ -111,9 +110,7 @@ pub fn update_menu(app: &App, state: &mut State, play: bool) -> Transition {
             state.notice.clear();
             return Transition::To(Screen::SoloSetup);
         }
-        Some(MenuItem::Friends) => {
-            return crate::friends::enter_friends(state);
-        }
+        Some(MenuItem::Friends) => return crate::friends::enter_friends(state),
         Some(MenuItem::Settings) => return Transition::To(Screen::Settings),
         Some(MenuItem::Logout) => return do_logout(state),
         Some(MenuItem::Back) => return Transition::To(Screen::Menu),
@@ -132,6 +129,7 @@ pub fn update_menu(app: &App, state: &mut State, play: bool) -> Transition {
     if logged_in && (state.ui.clicked(avatar_rect(ww)) || profile_pad) {
         return crate::profile::enter_profile(state);
     }
+
     Transition::Stay
 }
 
@@ -139,6 +137,7 @@ pub fn do_logout(state: &mut State) -> Transition {
     if let Some(auth) = &state.auth {
         http::post_empty(http::api_url("logout"), Some(auth.token.clone()), http::new_slot());
     }
+
     forget_session(state)
 }
 
@@ -148,6 +147,7 @@ pub fn forget_session(state: &mut State) -> Transition {
     state.pending_invitation = None;
     clear_auth(state);
     state.auth_form = AuthForm::default();
+
     Transition::To(Screen::Auth)
 }
 
@@ -160,35 +160,32 @@ pub fn clear_auth(state: &mut State) {
 
 pub fn draw_menu(gfx: &mut Graphics, state: &State, play: bool) {
     let pal = state.ui.palette();
-    let (ww, wh) = state.ui.view().size();
+    let view = state.ui.view();
+    let (ww, wh) = view.size();
+    let items = items(play, state.auth.is_some());
+
     let mut draw = state.ui.screen_canvas(gfx);
-
     draw.sharp_text(&state.fonts.display, "Rouillo")
-        .position(ww / 2.0, menu_top(state.ui.view(), items(play, state.auth.is_some()).len()) - 80.0)
+        .center(ww / 2.0, menu_top(view, items.len()) - 80.0)
         .size(theme::size::HERO)
-        .h_align_center()
-        .v_align_middle()
         .color(pal.title);
-
-    for (item, row) in menu_rows(state.ui.view(), items(play, state.auth.is_some())) {
+    for (item, row) in menu_rows(view, items) {
         state.ui.menu_bar(&mut draw, &state.fonts, row, item.label(), item.color());
     }
+
     if state.outdated {
         let btn = outdated_btn(ww);
         state.ui.button(&mut draw, &state.fonts, btn, "Mettre à jour");
         if let Some((text, done)) = crate::update::progress() {
-            let mut y = btn.y + btn.h + 18.0;
+            let bar = Rect::at(btn.x, btn.y + btn.h + 10.0, btn.w, 6.0);
+            let y = btn.y + btn.h + if done.is_some() { 30.0 } else { 18.0 };
             if let Some(done) = done {
-                let bar = Rect::at(btn.x, btn.y + btn.h + 10.0, btn.w, 6.0);
                 draw.rect((bar.x, bar.y), (bar.w, bar.h)).corner_radius(3.0).color(pal.text_dim.with_alpha(0.3));
                 draw.rect((bar.x, bar.y), (bar.w * done, bar.h)).corner_radius(3.0).color(pal.title);
-                y += 12.0;
             }
             draw.sharp_text(&state.fonts.text, &text)
-                .position(btn.x + btn.w / 2.0, y)
+                .center(btn.x + btn.w / 2.0, y)
                 .size(theme::size::SMALL)
-                .h_align_center()
-                .v_align_middle()
                 .color(pal.text_dim);
         }
     }
@@ -196,32 +193,24 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State, play: bool) {
     if let Some(auth) = &state.auth {
         let avatar = avatar_rect(ww);
         let picture = state.images.get_opt(gfx, auth.avatar_url.as_deref());
+        let (x, y) = (avatar.x + 6.0, avatar.y + avatar.h - 6.0);
+
         state.ui.avatar(&mut draw, &state.fonts, avatar, &auth.username, picture.as_ref());
         if state.ui.pad_active() {
-            let (x, y) = (avatar.x + 6.0, avatar.y + avatar.h - 6.0);
             draw.circle(14.0).position(x, y).color(theme::GOLD);
             draw.sharp_text(&state.fonts.display, crate::pads::Pad::North.label())
-                .position(x, y)
+                .center(x, y)
                 .size(theme::size::LABEL)
-                .h_align_center()
-                .v_align_middle()
                 .color(Color::BLACK);
         }
         draw.sharp_text(&state.fonts.text, &auth.username)
-            .position(avatar.x + avatar.w / 2.0, avatar.y + avatar.h + 16.0)
+            .center(avatar.x + avatar.w / 2.0, avatar.y + avatar.h + 16.0)
             .size(theme::size::BODY)
-            .h_align_center()
-            .v_align_middle()
             .color(pal.text_dim);
     }
 
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        draw.sharp_text(&state.fonts.text, msg)
-            .position(ww / 2.0, wh - 60.0)
-            .size(theme::size::EMPHASIS)
-            .h_align_center()
-            .v_align_middle()
-            .color(color);
+        draw.sharp_text(&state.fonts.text, msg).center(ww / 2.0, wh - 60.0).size(theme::size::EMPHASIS).color(color);
     }
 
     crate::title::draw_version(&mut draw, &state.ui, &state.fonts);
@@ -239,15 +228,17 @@ fn settings_back(view: View) -> Rect {
 
 pub fn update_settings(app: &mut App, state: &mut State) -> Transition {
     let view = state.ui.view();
+    let panel = settings_panel(view);
     let capturing = state.bindings_panel.capturing();
+
     if state.bindings_panel.update(app, &state.ui, &state.input.pads, &mut state.input.controls.bindings) {
         state.input.controls.bindings.save();
     }
     if capturing {
         return Transition::Stay;
     }
-    let panel = settings_panel(view);
-    let before = (state.settings.das_delay, state.settings.das_speed);
+
+    let before = state.settings;
     for i in 0..Settings::COUNT {
         if state.ui.clicked(panel.stepper(i).minus) {
             state.settings.adjust(i, -1);
@@ -256,28 +247,24 @@ pub fn update_settings(app: &mut App, state: &mut State) -> Transition {
             state.settings.adjust(i, 1);
         }
     }
-    if (state.settings.das_delay, state.settings.das_speed) != before {
+    if state.settings != before {
         state.settings.save();
     }
+
     if state.ui.clicked(settings_back(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Transition::To(Screen::Menu);
     }
+
     Transition::Stay
 }
 
 pub fn draw_settings(gfx: &mut Graphics, state: &State) {
     let pal = state.ui.palette();
     let view = state.ui.view();
-    let mut draw = state.ui.screen_canvas(gfx);
-
-    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
-    draw.sharp_text(&state.fonts.display, "Paramètres")
-        .position(60.0, theme::HEADER_H / 2.0)
-        .size(theme::size::TITLE)
-        .v_align_middle()
-        .color(pal.text);
-
     let panel = settings_panel(view);
+
+    let mut draw = state.ui.screen_canvas(gfx);
+    state.ui.page_header(&mut draw, &state.fonts, "Paramètres");
     panel.draw(&mut draw, &pal, &state.fonts, "Contrôles");
     for i in 0..Settings::COUNT {
         let value = format!("{:.0} ms", state.settings.value(i) * 1000.0);
@@ -286,6 +273,7 @@ pub fn draw_settings(gfx: &mut Graphics, state: &State) {
 
     state.bindings_panel.draw(&mut draw, &state.ui, &state.fonts, &state.input.controls.bindings);
     state.ui.button(&mut draw, &state.fonts, settings_back(view), "Retour");
+
     state.ui.render(gfx, &draw);
 }
 
@@ -293,5 +281,6 @@ fn start_play(state: &mut State) -> Transition {
     state.net.conn.connect(crate::connection::now_secs());
     state.rooms.clear();
     state.notice.clear();
+
     Transition::To(Screen::RoomBrowser)
 }

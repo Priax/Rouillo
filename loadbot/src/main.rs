@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use shared::{ClientMessage, InputKind, RoomId, RoomSetting, ServerMessage};
+use shared::{ClientMessage, InputKind, LobbyInfo, RoomId, RoomSetting, ServerMessage};
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
@@ -146,7 +146,7 @@ impl Bot {
         ws.send(frame(msg)).await.map_err(|e| e.to_string())
     }
 
-    async fn play(&self, ws: &mut Ws, until: Instant, playing: &mut bool) -> Result<(), String> {
+    async fn enter(&self, ws: &mut Ws, until: Instant) -> Result<(), String> {
         let hello = ClientMessage::Hello {
             player_id: format!("loadbot-{}", self.n),
             auth_token: None,
@@ -167,6 +167,33 @@ impl Bot {
                 Self::send(ws, &ClientMessage::JoinRoom { id }).await?;
             }
         }
+        Ok(())
+    }
+
+    /// The host raises the room to its size once, then starts it when everyone is in.
+    async fn on_lobby(&self, ws: &mut Ws, info: &LobbyInfo, hosting: &mut Hosting) -> Result<(), String> {
+        if !info.is_host {
+            return Ok(());
+        }
+        if !hosting.raised {
+            hosting.raised = true;
+            for _ in 2..self.players {
+                Self::send(ws, &ClientMessage::SetRoomSetting { setting: RoomSetting::MaxPlayers, dir: 1 }).await?;
+            }
+        }
+        if usize::from(info.settings.max_players) >= self.players {
+            self.room.send_if_modified(|room| room.replace(info.id).is_none());
+        }
+        let full = usize::from(info.players) == self.players && info.players == info.connected;
+        if full && !hosting.started && info.countdown.is_none() {
+            hosting.started = true;
+            Self::send(ws, &ClientMessage::ToggleCountdown).await?;
+        }
+        Ok(())
+    }
+
+    async fn play(&self, ws: &mut Ws, until: Instant, playing: &mut bool) -> Result<(), String> {
+        self.enter(ws, until).await?;
 
         let mut noise = self.n as u64 * 7_919 + 1;
         let mut tick = tokio::time::interval(Duration::from_secs_f64(1.0 / 60.0));
@@ -176,8 +203,7 @@ impl Bot {
         let mut seq = 0;
         let mut server_tick = None;
         let mut last_state = None::<Instant>;
-        let mut raised = false;
-        let mut started = false;
+        let mut hosting = Hosting::default();
         loop {
             if Instant::now() >= until {
                 return Ok(());
@@ -195,28 +221,7 @@ impl Bot {
                     let data = msg.into_data();
                     Stats::add(&self.stats.bytes, data.len() as u64);
                     match shared::decode::<ServerMessage>(&data) {
-                        Some(ServerMessage::Lobby { info }) => {
-                            if !info.is_host {
-                                continue;
-                            }
-                            if !raised {
-                                raised = true;
-                                for _ in 2..self.players {
-                                    Self::send(ws, &ClientMessage::SetRoomSetting {
-                                            setting: RoomSetting::MaxPlayers,
-                                            dir: 1,
-                                        }).await?;
-                                }
-                            }
-                            if usize::from(info.settings.max_players) >= self.players {
-                                self.room.send_if_modified(|room| room.replace(info.id).is_none());
-                            }
-                            let full = usize::from(info.players) == self.players && info.players == info.connected;
-                            if full && !started && info.countdown.is_none() {
-                                started = true;
-                                Self::send(ws, &ClientMessage::ToggleCountdown).await?;
-                            }
-                        }
+                        Some(ServerMessage::Lobby { info }) => self.on_lobby(ws, &info, &mut hosting).await?,
                         Some(ServerMessage::GameStart { .. }) => {
                             seq = 0;
                             server_tick = None;
@@ -236,10 +241,8 @@ impl Bot {
                             server_tick = Some(tick);
                         }
                         Some(ServerMessage::Pong { id }) => {
-                            if let Some((sent_id, at)) = pinged.take() {
-                                if sent_id == id {
-                                    self.stats.rtts.lock().expect("rtts").push(at.elapsed());
-                                }
+                            if let Some((_, at)) = pinged.take().filter(|&(sent, _)| sent == id) {
+                                self.stats.rtts.lock().expect("rtts").push(at.elapsed());
                             }
                         }
                         Some(ServerMessage::JoinFailed { reason }) => {
@@ -275,6 +278,21 @@ impl Bot {
                 }
             }
         }
+    }
+}
+
+/// How far the host got with its room: raised to its size, then started.
+#[derive(Default)]
+struct Hosting {
+    raised: bool,
+    started: bool,
+}
+
+async fn run_bot(bot: Bot, url: String, until: Instant) {
+    let (n, stats) = (bot.n, Arc::clone(&bot.stats));
+    if let Err(e) = bot.run(url, until).await {
+        Stats::add(&stats.dropped, 1);
+        eprintln!("bot {n}: {e}");
     }
 }
 
@@ -345,14 +363,7 @@ async fn main() {
                 room: id_tx.clone(),
                 stats: Arc::clone(&stats),
             };
-            let (url, stats) = (args.url.clone(), Arc::clone(&stats));
-            tasks.push(tokio::spawn(async move {
-                let n = bot.n;
-                if let Err(e) = bot.run(url, until).await {
-                    Stats::add(&stats.dropped, 1);
-                    eprintln!("bot {n}: {e}");
-                }
-            }));
+            tasks.push(tokio::spawn(run_bot(bot, args.url.clone(), until)));
             tokio::time::sleep(args.ramp).await;
         }
     }
