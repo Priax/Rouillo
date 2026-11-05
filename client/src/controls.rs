@@ -60,10 +60,7 @@ pub struct KeyBinding {
 
 impl KeyBinding {
     pub fn new(code: KeyCode) -> Self {
-        Self {
-            code,
-            label: key_label(code),
-        }
+        Self { code, label: key_label(code) }
     }
 }
 
@@ -252,10 +249,7 @@ pub struct Controls {
 
 impl Controls {
     pub fn load() -> Self {
-        Self {
-            bindings: Bindings::load(),
-            ..Self::default()
-        }
+        Self { bindings: Bindings::load(), ..Self::default() }
     }
 
     pub fn update(&mut self, keyboard: &Keyboard, pads: &Pads, touch: [bool; ACTIONS], touch_pause: bool) {

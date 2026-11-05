@@ -124,11 +124,7 @@ impl Manager {
             return;
         }
         let now = Instant::now();
-        if self
-            .clients
-            .get(&conn)
-            .and_then(|c| c.last_invite)
-            .is_some_and(|t| now.duration_since(t) < INVITE_COOLDOWN)
+        if self.clients.get(&conn).and_then(|c| c.last_invite).is_some_and(|t| now.duration_since(t) < INVITE_COOLDOWN)
         {
             return;
         }
@@ -138,12 +134,7 @@ impl Manager {
         if let Some(client) = self.clients.get_mut(&conn) {
             client.last_invite = Some(now);
         }
-        self.friend_checks.push(FriendCheck::Invite {
-            conn,
-            room,
-            inviter,
-            target,
-        });
+        self.friend_checks.push(FriendCheck::Invite { conn, room, inviter, target });
     }
 
     pub(super) fn finish_invite_check(&mut self, conn: ConnId, room: RoomId, target: Uuid, friends: bool) {
@@ -158,16 +149,9 @@ impl Manager {
         let Some(room_name) = self.rooms.get(&room).map(|r| r.name.clone()) else {
             return;
         };
-        let from_username = self
-            .clients
-            .get(&conn)
-            .and_then(|c| c.username.clone())
-            .unwrap_or_else(|| "Un joueur".to_string());
-        let invitation = ServerMessage::FriendInvitation {
-            from_username,
-            room_id: room,
-            room_name,
-        };
+        let from_username =
+            self.clients.get(&conn).and_then(|c| c.username.clone()).unwrap_or_else(|| "Un joueur".to_string());
+        let invitation = ServerMessage::FriendInvitation { from_username, room_id: room, room_name };
         for target_conn in targets {
             self.deliver_msg(target_conn, &invitation);
         }
@@ -178,11 +162,7 @@ impl Manager {
     fn invite_note(&mut self, conn: ConnId, text: &str) {
         self.deliver_msg(
             conn,
-            &ServerMessage::Chat {
-                from: INVITE_NOTE_FROM.to_string(),
-                text: text.to_string(),
-                spectator: false,
-            },
+            &ServerMessage::Chat { from: INVITE_NOTE_FROM.to_string(), text: text.to_string(), spectator: false },
         );
     }
 
@@ -191,20 +171,13 @@ impl Manager {
             client.checking_friends = false;
         }
         match check {
-            FriendCheck::Join {
-                conn, room, host, from, ..
-            } => self.finish_join_check(conn, room, &host, from, friends),
+            FriendCheck::Join { conn, room, host, from, .. } => {
+                self.finish_join_check(conn, room, &host, from, friends)
+            }
             FriendCheck::Invite { conn, room, target, .. } => {
                 self.finish_invite_check(conn, room, target, friends);
             }
-            FriendCheck::Watch {
-                conn,
-                room,
-                host,
-                from,
-                other,
-                ..
-            } => {
+            FriendCheck::Watch { conn, room, host, from, other, .. } => {
                 if self.room_of(conn) == from {
                     self.finish_watch_check(conn, room, &host, other, friends);
                 }

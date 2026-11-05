@@ -48,10 +48,7 @@ pub fn progress() -> Option<(String, Option<f32>)> {
     use crate::updater::Status;
     let text = match crate::updater::status() {
         Status::Checking => "Recherche de la mise à jour...".to_owned(),
-        Status::Downloading {
-            done,
-            total: Some(total),
-        } if total > 0 => {
+        Status::Downloading { done, total: Some(total) } if total > 0 => {
             let text = format!("Téléchargement: {} / {} Mo", megabytes(done), megabytes(total));
             return Some((text, Some((done as f32 / total as f32).min(1.0))));
         }

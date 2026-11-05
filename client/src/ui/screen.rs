@@ -16,19 +16,13 @@ impl Ui {
         let pal = self.palette();
         let view = self.view();
         draw.clear(pal.background);
-        let backdrop = Triangles {
-            seed: 0x5eed,
-            size: 220.0,
-            density: 0.35,
-            speed: 0.015,
-            color: pal.raised.with_alpha(0.35),
-        };
+        let backdrop =
+            Triangles { seed: 0x5eed, size: 220.0, density: 0.35, speed: 0.015, color: pal.raised.with_alpha(0.35) };
         backdrop.draw(&mut draw, Rect::at(0.0, 0.0, view.w, view.h), self.time());
 
         let t = self.transition();
         draw.set_alpha(t);
-        draw.transform()
-            .push(Mat3::from_translation(vec2((1.0 - t) * SLIDE, 0.0)));
+        draw.transform().push(Mat3::from_translation(vec2((1.0 - t) * SLIDE, 0.0)));
         draw
     }
 
@@ -45,7 +39,6 @@ impl Ui {
             color: pal.accent.with_alpha(0.08),
         };
         triangles.draw_clipped(draw, rect, self.time(), Some(&rect.corners()));
-        draw.rect((rect.x, rect.y + rect.h - 2.0), (rect.w, 2.0))
-            .color(pal.accent);
+        draw.rect((rect.x, rect.y + rect.h - 2.0), (rect.w, 2.0)).color(pal.accent);
     }
 }

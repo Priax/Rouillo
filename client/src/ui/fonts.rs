@@ -35,21 +35,14 @@ impl Deref for Fonts {
 
 impl Fonts {
     pub fn load(gfx: &mut Graphics) -> Result<Self, String> {
-        Ok(Self {
-            text: gfx.create_font(TEXT)?,
-            display: gfx.create_font(DISPLAY)?,
-            metrics: Metrics::load()?,
-        })
+        Ok(Self { text: gfx.create_font(TEXT)?, display: gfx.create_font(DISPLAY)?, metrics: Metrics::load()? })
     }
 }
 
 impl Metrics {
     pub fn load() -> Result<Self, String> {
         let metrics = |bytes| FontRef::try_from_slice(bytes).map_err(|e| e.to_string());
-        Ok(Self {
-            text: metrics(TEXT)?,
-            display: metrics(DISPLAY)?,
-        })
+        Ok(Self { text: metrics(TEXT)?, display: metrics(DISPLAY)? })
     }
 
     pub fn width(&self, face: Face, text: &str, size: f32) -> f32 {
@@ -86,17 +79,11 @@ impl Metrics {
 
 fn tail<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> &'a str {
     let width = |t: &str| advances(font, t, size).last().map_or(0.0, |(_, w)| w);
-    text.char_indices()
-        .map(|(start, _)| &text[start..])
-        .find(|rest| width(rest) <= max)
-        .unwrap_or_default()
+    text.char_indices().map(|(start, _)| &text[start..]).find(|rest| width(rest) <= max).unwrap_or_default()
 }
 
 fn head<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> &'a str {
-    let end = advances(font, text, size)
-        .take_while(|&(_, w)| w <= max)
-        .last()
-        .map_or(0, |(end, _)| end);
+    let end = advances(font, text, size).take_while(|&(_, w)| w <= max).last().map_or(0, |(end, _)| end);
     &text[..end]
 }
 
@@ -128,10 +115,7 @@ fn wrap<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> Vec<
 
 fn line_end(font: &FontRef<'static>, text: &str, size: f32, max: f32) -> usize {
     let first = text.chars().next().map_or(0, char::len_utf8);
-    let fits = advances(font, text, size)
-        .take_while(|&(_, w)| w <= max)
-        .last()
-        .map_or(first, |(end, _)| end);
+    let fits = advances(font, text, size).take_while(|&(_, w)| w <= max).last().map_or(first, |(end, _)| end);
     if fits == text.len() {
         return fits;
     }
@@ -144,10 +128,7 @@ fn fit<'a>(font: &FontRef<'static>, text: &'a str, size: f32, max: f32) -> Cow<'
         return Cow::Borrowed(text);
     }
     let room = max - width("…");
-    let end = advances(font, text, size)
-        .take_while(|&(_, w)| w <= room)
-        .last()
-        .map_or(0, |(end, _)| end);
+    let end = advances(font, text, size).take_while(|&(_, w)| w <= room).last().map_or(0, |(end, _)| end);
     Cow::Owned(format!("{}…", text[..end].trim_end()))
 }
 

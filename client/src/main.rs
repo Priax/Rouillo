@@ -99,10 +99,7 @@ fn setup(gfx: &mut Graphics) -> Root {
         current = Screen::Title;
     }
 
-    Root {
-        nav: Nav::new(current),
-        state,
-    }
+    Root { nav: Nav::new(current), state }
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -175,14 +172,7 @@ fn game_chat(app: &App, state: &mut State) -> controls::Frame {
     let mut input = state.input.controls.frame;
     let allowed = can_chat(state);
     let area = game_chat_area(state.ui.view(), state.input.touch.active);
-    let State {
-        room,
-        ui,
-        fonts,
-        input: Input { keys, .. },
-        net: Network { conn, .. },
-        ..
-    } = state;
+    let State { room, ui, fonts, input: Input { keys, .. }, net: Network { conn, .. }, .. } = state;
     let Some(chat) = room.as_mut().map(|r| &mut r.chat) else {
         return input;
     };
@@ -298,31 +288,18 @@ fn pace_frame() {
 }
 
 fn update_online_game(app: &mut App, state: &mut State) -> Transition {
-    let online = state
-        .room
-        .as_ref()
-        .map_or_else(logic::Online::default, |r| logic::Online {
-            is_host: r.info.is_host,
-            ranked: r.info.ranked.is_some(),
-            ended: r.series_over.is_some(),
-        });
+    let online = state.room.as_ref().map_or_else(logic::Online::default, |r| logic::Online {
+        is_host: r.info.is_host,
+        ranked: r.info.ranked.is_some(),
+        ended: r.series_over.is_some(),
+    });
     let input = game_chat(app, state);
-    let State {
-        room,
-        settings,
-        net: Network { conn, .. },
-        ui,
-        ..
-    } = &mut *state;
+    let State { room, settings, net: Network { conn, .. }, ui, .. } = &mut *state;
     let left = room
         .as_mut()
         .and_then(|r| r.session.as_mut())
         .is_some_and(|s| logic::update_game(app, &input, ui, s, *settings, conn, online));
-    let transition = if left && online.ranked {
-        ranked::enter(state)
-    } else {
-        Transition::Stay
-    };
+    let transition = if left && online.ranked { ranked::enter(state) } else { Transition::Stay };
     replay::update_keep(state);
     transition
 }
@@ -337,11 +314,8 @@ fn update(app: &mut App, root: &mut Root) {
     let pad_nav = pad_menus(state, nav.current());
     let real = ui::Mouse::of(app, view);
     state.ui.note_pointer(real);
-    let mouse = if pad_nav && state.input.pads.pressed(Pad::South) {
-        state.ui.pad_click().unwrap_or(real)
-    } else {
-        real
-    };
+    let mouse =
+        if pad_nav && state.input.pads.pressed(Pad::South) { state.ui.pad_click().unwrap_or(real) } else { real };
     state.ui.begin_frame(dt, view, mouse);
     if pad_nav {
         if let Some(dir) = pad_direction(&state.input.pads) {
@@ -372,10 +346,7 @@ fn update(app: &mut App, root: &mut Root) {
     }
     let in_game = matches!(nav.current(), Screen::Game | Screen::Solo(_));
     let (touch_held, touch_pause) = state.input.touch.read(app, view, in_game);
-    state
-        .input
-        .controls
-        .update(&app.keyboard, &state.input.pads, touch_held, touch_pause);
+    state.input.controls.update(&app.keyboard, &state.input.pads, touch_held, touch_pause);
     #[cfg(target_arch = "wasm32")]
     web::want_text(typing(state, nav).is_some());
     #[cfg(target_arch = "wasm32")]
@@ -438,13 +409,7 @@ fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
     let (ww, wh) = state.ui.view().size();
     let banner_y = wh - BANNER_H;
     let mut d = state.ui.canvas(gfx);
-    ui::banner(
-        &mut d,
-        Rect::at(0.0, banner_y, ww, BANNER_H),
-        pal.banner,
-        pal.accent,
-        ui::Edge::Top,
-    );
+    ui::banner(&mut d, Rect::at(0.0, banner_y, ww, BANNER_H), pal.banner, pal.accent, ui::Edge::Top);
     let msg = format!("{from} vous invite dans \"{room_name}\"");
     d.sharp_text(&state.fonts.text, &msg)
         .position(20.0, banner_y + 40.0)
@@ -493,9 +458,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
                         let me = usize::from(l.your_slot.clamp(1, 2) - 1);
                         draw::SeriesView {
                             wins: [ranked.wins[me], ranked.wins[1 - me]],
-                            over: room
-                                .series_over
-                                .map(|(winner, elo)| (winner.map(|w| w == l.your_slot), elo)),
+                            over: room.series_over.map(|(winner, elo)| (winner.map(|w| w == l.your_slot), elo)),
                         }
                     }),
                 };
@@ -528,10 +491,7 @@ fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
     let view = state.ui.view();
     // A game, and the screens that lead straight into one, need the phone
     // turned: the boards are laid out side by side.
-    let needs_landscape = matches!(
-        screen,
-        Screen::RoomLobby | Screen::Game | Screen::Ranked | Screen::Solo(_)
-    );
+    let needs_landscape = matches!(screen, Screen::RoomLobby | Screen::Game | Screen::Ranked | Screen::Solo(_));
     if state.input.touch.active && view.portrait() && needs_landscape {
         let mut d = state.ui.canvas(gfx);
         touch::draw_turn_hint(&mut d, &state.fonts, view);
@@ -564,13 +524,7 @@ fn draw_too_old_banner(gfx: &mut Graphics, state: &State, screen: &Screen) {
 fn draw_warning_banner(gfx: &mut Graphics, ui: &ui::Ui, fonts: &ui::Fonts, text: &str) {
     let ww = ui.view().w;
     let mut d = ui.canvas(gfx);
-    ui::banner(
-        &mut d,
-        Rect::at(0.0, 0.0, ww, MAINTENANCE_H),
-        theme::WARNING_BANNER,
-        theme::WARNING,
-        ui::Edge::Bottom,
-    );
+    ui::banner(&mut d, Rect::at(0.0, 0.0, ww, MAINTENANCE_H), theme::WARNING_BANNER, theme::WARNING, ui::Edge::Bottom);
     d.sharp_text(&fonts.text, text)
         .position(ww / 2.0, MAINTENANCE_H / 2.0)
         .size(theme::size::SMALL)
@@ -589,13 +543,7 @@ fn draw_reconnect_banner(gfx: &mut Graphics, state: &State, screen: &Screen) {
     }
     let ww = state.ui.view().w;
     let mut d = state.ui.canvas(gfx);
-    ui::banner(
-        &mut d,
-        Rect::at(0.0, 0.0, ww, 46.0),
-        theme::WARNING_BANNER,
-        theme::WARNING,
-        ui::Edge::Bottom,
-    );
+    ui::banner(&mut d, Rect::at(0.0, 0.0, ww, 46.0), theme::WARNING_BANNER, theme::WARNING, ui::Edge::Bottom);
     let dots = state.ui.waiting_dots();
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
     d.sharp_text(&state.fonts.text, &msg)
@@ -623,11 +571,5 @@ fn main() -> Result<(), String> {
     #[cfg(target_arch = "wasm32")]
     let win_config = win_config.set_maximized(true);
 
-    notan::init_with(setup)
-        .add_config(DrawConfig)
-        .add_config(win_config)
-        .event(event)
-        .update(update)
-        .draw(draw)
-        .build()
+    notan::init_with(setup).add_config(DrawConfig).add_config(win_config).event(event).update(update).draw(draw).build()
 }

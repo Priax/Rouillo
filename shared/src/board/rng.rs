@@ -30,12 +30,7 @@ impl std::hash::Hash for BoardRng {
 
 impl BoardRng {
     pub(super) const fn from_seed(seed: u64) -> Self {
-        Self {
-            seed,
-            pieces: 0,
-            garbage: 0,
-            cache: [None, None],
-        }
+        Self { seed, pieces: 0, garbage: 0, cache: [None, None] }
     }
 
     const fn pos(&self, stream: Stream) -> u64 {

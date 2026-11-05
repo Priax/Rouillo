@@ -20,27 +20,20 @@ const AREA_LINE_H: f32 = 26.0;
 
 fn frame(draw: &mut Draw, pal: &Palette, r: Rect, focused: bool) {
     let border = if focused { pal.accent } else { pal.border };
-    draw.rect((r.x, r.y), (r.w, r.h))
-        .corner_radius(theme::RADIUS)
-        .color(pal.surface);
-    draw.rect((r.x, r.y), (r.w, r.h))
-        .corner_radius(theme::RADIUS)
-        .stroke(2.0)
-        .color(border);
+    draw.rect((r.x, r.y), (r.w, r.h)).corner_radius(theme::RADIUS).color(pal.surface);
+    draw.rect((r.x, r.y), (r.w, r.h)).corner_radius(theme::RADIUS).stroke(2.0).color(border);
 }
 
 fn caret(draw: &mut Draw, ui: &Ui, input: &TextInput, x: f32, mid: f32, size: f32) {
     if ui.caret_on(input, input.caret()) {
         let h = size * 1.2;
-        draw.rect((x - CARET_W / 2.0, mid - h / 2.0), (CARET_W, h))
-            .color(ui.palette().text);
+        draw.rect((x - CARET_W / 2.0, mid - h / 2.0), (CARET_W, h)).color(ui.palette().text);
     }
 }
 
 fn highlight(draw: &mut Draw, ui: &Ui, x0: f32, x1: f32, mid: f32, size: f32) {
     let h = size * 1.3;
-    draw.rect((x0, mid - h / 2.0), (x1 - x0, h))
-        .color(ui.palette().accent.with_alpha(0.35));
+    draw.rect((x0, mid - h / 2.0), (x1 - x0, h)).color(ui.palette().accent.with_alpha(0.35));
 }
 
 fn room(r: Rect) -> f32 {
@@ -64,16 +57,9 @@ fn line<'a>(fonts: &Metrics, r: Rect, input: &'a TextInput) -> Line<'a> {
     let size = (r.h * 0.45).clamp(16.0, 24.0);
     let (text, caret) = input.shown();
     let fitting = |t: &str| t.len() - fonts.tail(Face::Text, t, size, room(r)).len();
-    let from = text
-        .floor_char_boundary(input.scroll().min(fitting(&text)))
-        .clamp(fitting(&text[..caret]), caret);
+    let from = text.floor_char_boundary(input.scroll().min(fitting(&text))).clamp(fitting(&text[..caret]), caret);
     input.set_scroll(from);
-    Line {
-        text,
-        from,
-        caret,
-        size,
-    }
+    Line { text, from, caret, size }
 }
 
 pub fn text_field(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Field) {
@@ -178,11 +164,7 @@ fn rows<'a>(fonts: &Metrics, text: &'a str, max: f32) -> Vec<Row<'a>> {
         .map(|line| {
             let end = start + line.len();
             let wrapped = end < text.len() && !text[end..].starts_with('\n');
-            let row = Row {
-                text: line,
-                start,
-                wrapped,
-            };
+            let row = Row { text: line, start, wrapped };
             start = end + usize::from(!wrapped);
             row
         })
@@ -198,12 +180,7 @@ fn area<'a>(fonts: &Metrics, r: Rect, input: &'a TextInput) -> Area<'a> {
         .min(rows.len().saturating_sub(visible))
         .clamp((caret_row + 1).saturating_sub(visible), caret_row);
     input.set_scroll(first);
-    Area {
-        rows,
-        first,
-        visible,
-        caret_row,
-    }
+    Area { rows, first, visible, caret_row }
 }
 
 pub fn text_area(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Field) {
@@ -289,11 +266,7 @@ pub fn area_keys(fonts: &Fonts, r: Rect, input: &mut TextInput, keys: &EditKeys)
 
 fn vertical_step(fonts: &Metrics, r: Rect, input: &TextInput, down: bool) -> usize {
     let area = area(fonts, r, input);
-    let to = if down {
-        area.caret_row + 1
-    } else {
-        area.caret_row.wrapping_sub(1)
-    };
+    let to = if down { area.caret_row + 1 } else { area.caret_row.wrapping_sub(1) };
     match area.rows.get(to) {
         Some(row) => row.at(fonts, area.caret_x(fonts, input.caret())),
         None if down => input.len(),
@@ -346,10 +319,7 @@ mod tests {
         let area = area(&fonts, box_of(NARROW, 6), &at);
         assert_eq!(area.caret_row, 1);
         assert!(area.caret_x(&fonts, second).abs() < f32::EPSILON);
-        assert!(
-            area.rows[0].at(&fonts, 5000.0) < second,
-            "so the end of a wrapped row stops short of it"
-        );
+        assert!(area.rows[0].at(&fonts, 5000.0) < second, "so the end of a wrapped row stops short of it");
     }
 
     #[test]

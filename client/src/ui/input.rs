@@ -24,11 +24,7 @@ struct Rules {
 
 impl Default for Rules {
     fn default() -> Self {
-        Self {
-            max_chars: usize::MAX,
-            accepts: |_| true,
-            lines: false,
-        }
+        Self { max_chars: usize::MAX, accepts: |_| true, lines: false }
     }
 }
 
@@ -56,20 +52,13 @@ impl Deref for TextInput {
 
 impl From<String> for TextInput {
     fn from(text: String) -> Self {
-        Self {
-            caret: text.len(),
-            text,
-            ..Self::default()
-        }
+        Self { caret: text.len(), text, ..Self::default() }
     }
 }
 
 impl TextInput {
     pub fn masked() -> Self {
-        Self {
-            masked: true,
-            ..Self::default()
-        }
+        Self { masked: true, ..Self::default() }
     }
 
     pub const fn max_chars(mut self, max: usize) -> Self {
@@ -132,11 +121,7 @@ impl TextInput {
     }
 
     fn restore(&mut self, undo: bool) {
-        let (from, to) = if undo {
-            (&mut self.undo, &mut self.redo)
-        } else {
-            (&mut self.redo, &mut self.undo)
-        };
+        let (from, to) = if undo { (&mut self.undo, &mut self.redo) } else { (&mut self.redo, &mut self.undo) };
         let Some((text, caret)) = from.pop() else { return };
         to.push((std::mem::replace(&mut self.text, text), self.caret));
         self.caret = caret;
@@ -208,11 +193,7 @@ impl TextInput {
     }
 
     pub fn insert(&mut self, c: char) {
-        self.remember(if self.selection().is_some() {
-            Change::Other
-        } else {
-            Change::Typing
-        });
+        self.remember(if self.selection().is_some() { Change::Other } else { Change::Typing });
         self.last = Change::Typing;
         self.delete_selection();
         self.text.insert(self.caret, c);
@@ -227,11 +208,7 @@ impl TextInput {
     }
 
     pub fn erase(&mut self) {
-        let erasing = if self.selection().is_some() {
-            Change::Other
-        } else {
-            Change::Erasing
-        };
+        let erasing = if self.selection().is_some() { Change::Other } else { Change::Erasing };
         if self.selection().is_some() || self.caret > 0 {
             self.remember(erasing);
         }
@@ -343,11 +320,7 @@ impl TextInput {
     }
 
     pub(super) fn set_caret_shown(&mut self, at: usize, extend: bool) {
-        let at = if self.masked {
-            self.text.char_indices().nth(at).map_or(self.text.len(), |(i, _)| i)
-        } else {
-            at
-        };
+        let at = if self.masked { self.text.char_indices().nth(at).map_or(self.text.len(), |(i, _)| i) } else { at };
         self.move_caret(at, extend);
     }
 

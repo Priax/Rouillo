@@ -25,24 +25,14 @@ impl Default for View {
 
 impl View {
     pub fn fit(window_w: f32, window_h: f32) -> Self {
-        let scale = (window_w / REFERENCE_W)
-            .min(window_h / REFERENCE_H)
-            .clamp(MIN_SCALE, MAX_SCALE);
-        Self {
-            w: window_w / scale,
-            h: window_h / scale,
-            scale,
-            dpi: 1.0,
-        }
+        let scale = (window_w / REFERENCE_W).min(window_h / REFERENCE_H).clamp(MIN_SCALE, MAX_SCALE);
+        Self { w: window_w / scale, h: window_h / scale, scale, dpi: 1.0 }
     }
 
     pub fn of(app: &mut App) -> Self {
         let (w, h) = app.window().size();
         let dpi = (app.window().dpi() as f32).max(1.0);
-        Self {
-            dpi,
-            ..Self::fit(w as f32, h as f32)
-        }
+        Self { dpi, ..Self::fit(w as f32, h as f32) }
     }
 
     /// A window taller than wide, such as a phone held upright: screens stack

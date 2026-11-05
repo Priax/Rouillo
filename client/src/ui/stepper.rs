@@ -135,22 +135,18 @@ impl Ui {
             (true, true) => pal.accent,
             (true, false) => theme::mix(pal.raised, pal.raised_hover, r.hover),
         };
-        draw.rect((track.x, track.y), (track.w, track.h))
-            .corner_radius(SWITCH_H / 2.0)
-            .color(fill);
+        draw.rect((track.x, track.y), (track.w, track.h)).corner_radius(SWITCH_H / 2.0).color(fill);
         draw.rect((track.x, track.y), (track.w, track.h))
             .corner_radius(SWITCH_H / 2.0)
             .stroke(2.0)
             .color(theme::mix(pal.border, pal.accent, r.hover));
         let knob = SWITCH_H / 2.0 - 4.0;
-        let knob_x = if on {
-            track.x + track.w - SWITCH_H / 2.0
+        let knob_x = if on { track.x + track.w - SWITCH_H / 2.0 } else { track.x + SWITCH_H / 2.0 };
+        draw.circle(knob).position(knob_x, track.y + track.h / 2.0).color(if editable {
+            pal.text
         } else {
-            track.x + SWITCH_H / 2.0
-        };
-        draw.circle(knob)
-            .position(knob_x, track.y + track.h / 2.0)
-            .color(if editable { pal.text } else { pal.text_disabled });
+            pal.text_disabled
+        });
         draw.sharp_text(&fonts.display, if on { "Oui" } else { "Non" })
             .position(track.x + track.w + 14.0, track.y + track.h / 2.0)
             .size(theme::size::EMPHASIS)

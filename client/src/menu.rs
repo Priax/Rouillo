@@ -60,12 +60,7 @@ fn items(play: bool, logged_in: bool) -> &'static [MenuItem] {
             MenuItem::Settings,
             MenuItem::Logout,
         ],
-        (false, false) => &[
-            MenuItem::Play,
-            MenuItem::Leaderboard,
-            MenuItem::Help,
-            MenuItem::Settings,
-        ],
+        (false, false) => &[MenuItem::Play, MenuItem::Leaderboard, MenuItem::Help, MenuItem::Settings],
     }
 }
 
@@ -80,10 +75,7 @@ fn menu_top(view: View, rows: usize) -> f32 {
 /// The menu's rows, stacked with no gap under the title.
 fn menu_rows(view: View, items: &'static [MenuItem]) -> impl Iterator<Item = (MenuItem, Rect)> {
     let top = menu_top(view, items.len());
-    items
-        .iter()
-        .enumerate()
-        .map(move |(i, &item)| (item, Rect::at(0.0, top, view.w, 0.0).nth_row(i, ROW_H, 0.0)))
+    items.iter().enumerate().map(move |(i, &item)| (item, Rect::at(0.0, top, view.w, 0.0).nth_row(i, ROW_H, 0.0)))
 }
 
 const AVATAR: f32 = 76.0;
@@ -94,9 +86,7 @@ fn avatar_rect(ww: f32) -> Rect {
 
 fn outdated_btn(ww: f32) -> Rect {
     let avatar = avatar_rect(ww);
-    Rect::at(0.0, avatar.y, avatar.x - 20.0, avatar.h)
-        .right(190.0)
-        .middle(50.0)
+    Rect::at(0.0, avatar.y, avatar.x - 20.0, avatar.h).right(190.0).middle(50.0)
 }
 
 pub fn update_menu(app: &App, state: &mut State, play: bool) -> Transition {
@@ -174,19 +164,14 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State, play: bool) {
     let mut draw = state.ui.screen_canvas(gfx);
 
     draw.sharp_text(&state.fonts.display, "Rouillo")
-        .position(
-            ww / 2.0,
-            menu_top(state.ui.view(), items(play, state.auth.is_some()).len()) - 80.0,
-        )
+        .position(ww / 2.0, menu_top(state.ui.view(), items(play, state.auth.is_some()).len()) - 80.0)
         .size(theme::size::HERO)
         .h_align_center()
         .v_align_middle()
         .color(pal.title);
 
     for (item, row) in menu_rows(state.ui.view(), items(play, state.auth.is_some())) {
-        state
-            .ui
-            .menu_bar(&mut draw, &state.fonts, row, item.label(), item.color());
+        state.ui.menu_bar(&mut draw, &state.fonts, row, item.label(), item.color());
     }
     if state.outdated {
         let btn = outdated_btn(ww);
@@ -195,12 +180,8 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State, play: bool) {
             let mut y = btn.y + btn.h + 18.0;
             if let Some(done) = done {
                 let bar = Rect::at(btn.x, btn.y + btn.h + 10.0, btn.w, 6.0);
-                draw.rect((bar.x, bar.y), (bar.w, bar.h))
-                    .corner_radius(3.0)
-                    .color(pal.text_dim.with_alpha(0.3));
-                draw.rect((bar.x, bar.y), (bar.w * done, bar.h))
-                    .corner_radius(3.0)
-                    .color(pal.title);
+                draw.rect((bar.x, bar.y), (bar.w, bar.h)).corner_radius(3.0).color(pal.text_dim.with_alpha(0.3));
+                draw.rect((bar.x, bar.y), (bar.w * done, bar.h)).corner_radius(3.0).color(pal.title);
                 y += 12.0;
             }
             draw.sharp_text(&state.fonts.text, &text)
@@ -215,9 +196,7 @@ pub fn draw_menu(gfx: &mut Graphics, state: &State, play: bool) {
     if let Some(auth) = &state.auth {
         let avatar = avatar_rect(ww);
         let picture = state.images.get_opt(gfx, auth.avatar_url.as_deref());
-        state
-            .ui
-            .avatar(&mut draw, &state.fonts, avatar, &auth.username, picture.as_ref());
+        state.ui.avatar(&mut draw, &state.fonts, avatar, &auth.username, picture.as_ref());
         if state.ui.pad_active() {
             let (x, y) = (avatar.x + 6.0, avatar.y + avatar.h - 6.0);
             draw.circle(14.0).position(x, y).color(theme::GOLD);
@@ -261,10 +240,7 @@ fn settings_back(view: View) -> Rect {
 pub fn update_settings(app: &mut App, state: &mut State) -> Transition {
     let view = state.ui.view();
     let capturing = state.bindings_panel.capturing();
-    if state
-        .bindings_panel
-        .update(app, &state.ui, &state.input.pads, &mut state.input.controls.bindings)
-    {
+    if state.bindings_panel.update(app, &state.ui, &state.input.pads, &mut state.input.controls.bindings) {
         state.input.controls.bindings.save();
     }
     if capturing {
@@ -294,9 +270,7 @@ pub fn draw_settings(gfx: &mut Graphics, state: &State) {
     let view = state.ui.view();
     let mut draw = state.ui.screen_canvas(gfx);
 
-    state
-        .ui
-        .header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     draw.sharp_text(&state.fonts.display, "Paramètres")
         .position(60.0, theme::HEADER_H / 2.0)
         .size(theme::size::TITLE)
@@ -307,19 +281,10 @@ pub fn draw_settings(gfx: &mut Graphics, state: &State) {
     panel.draw(&mut draw, &pal, &state.fonts, "Contrôles");
     for i in 0..Settings::COUNT {
         let value = format!("{:.0} ms", state.settings.value(i) * 1000.0);
-        state.ui.stepper(
-            &mut draw,
-            &state.fonts,
-            panel.stepper(i),
-            Settings::label(i),
-            &value,
-            true,
-        );
+        state.ui.stepper(&mut draw, &state.fonts, panel.stepper(i), Settings::label(i), &value, true);
     }
 
-    state
-        .bindings_panel
-        .draw(&mut draw, &state.ui, &state.fonts, &state.input.controls.bindings);
+    state.bindings_panel.draw(&mut draw, &state.ui, &state.fonts, &state.input.controls.bindings);
     state.ui.button(&mut draw, &state.fonts, settings_back(view), "Retour");
     state.ui.render(gfx, &draw);
 }

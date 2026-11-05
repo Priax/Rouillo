@@ -20,12 +20,7 @@ pub struct PairState {
 
 impl PairState {
     pub(super) const fn new(piece: ActivePuyo) -> Self {
-        Self {
-            piece,
-            fall_offset: 0,
-            ground_frames: 0,
-            push_backs: 0,
-        }
+        Self { piece, fall_offset: 0, ground_frames: 0, push_backs: 0 }
     }
 
     /// How long the pair has rested on something, out of `GRACE_FRAMES`.
@@ -55,13 +50,7 @@ impl Board {
         self.next_types = self.next_next_types;
         let colors = self.colors;
         self.next_next_types = self.rng.draw(Stream::Pieces, |r| PuyoType::random_pair(r, colors));
-        let piece = ActivePuyo {
-            row: 1,
-            col: small(self.spawn_col()),
-            rotation: Rotation::Up,
-            axis_type,
-            sat_type,
-        };
+        let piece = ActivePuyo { row: 1, col: small(self.spawn_col()), rotation: Rotation::Up, axis_type, sat_type };
         if self.cells.collides(&piece) {
             self.phase = Phase::GameOver;
             events.topped_out = true;
@@ -126,12 +115,7 @@ impl Board {
             (sat_row, sat_col, piece.rotation.opposite(), true, false),   // pivot on satellite
         ];
         for (row, col, rotation, applies, push_back) in candidates {
-            let turned = ActivePuyo {
-                row,
-                col,
-                rotation,
-                ..piece
-            };
+            let turned = ActivePuyo { row, col, rotation, ..piece };
             if !applies || !fits(&self.cells, &turned, pair.fall_offset) {
                 continue;
             }
@@ -167,11 +151,7 @@ impl Board {
     }
 
     pub(super) fn tick_pair(&mut self, events: &mut Events) {
-        let speed = if self.soft_dropping {
-            SOFT_DROP_UNITS
-        } else {
-            CELL_UNITS / self.fall_frames_per_cell()
-        };
+        let speed = if self.soft_dropping { SOFT_DROP_UNITS } else { CELL_UNITS / self.fall_frames_per_cell() };
         let Phase::Pair(pair) = &mut self.phase else {
             return;
         };

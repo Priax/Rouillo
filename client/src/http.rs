@@ -161,11 +161,7 @@ fn after(delay: Duration, f: impl FnOnce() + Send + 'static) {
 }
 
 fn json_body(url: String, method: ehttp::Method, body: String) -> ehttp::Request {
-    let mut req = ehttp::Request {
-        method,
-        body: body.into_bytes(),
-        ..ehttp::Request::get(url)
-    };
+    let mut req = ehttp::Request { method, body: body.into_bytes(), ..ehttp::Request::get(url) };
     push_header(&mut req, "content-type", "application/json".to_owned());
     req
 }
@@ -189,19 +185,12 @@ pub fn patch_json(url: String, body: String, token: Option<String>, slot: HttpSl
 }
 
 pub fn delete_req(url: String, token: Option<String>, slot: HttpSlot) {
-    let req = ehttp::Request {
-        method: ehttp::Method::DELETE,
-        ..ehttp::Request::get(url)
-    };
+    let req = ehttp::Request { method: ehttp::Method::DELETE, ..ehttp::Request::get(url) };
     send(req, token, slot);
 }
 
 pub fn put_bytes(url: String, body: Vec<u8>, token: Option<String>, slot: HttpSlot) {
-    let mut req = ehttp::Request {
-        method: ehttp::Method::PUT,
-        body,
-        ..ehttp::Request::get(url)
-    };
+    let mut req = ehttp::Request { method: ehttp::Method::PUT, body, ..ehttp::Request::get(url) };
     push_header(&mut req, "content-type", "application/octet-stream".to_owned());
     send(req, token, slot);
 }
@@ -226,10 +215,7 @@ mod tests {
     }
 
     fn ok(status: u16, body: &str) -> ehttp::Response {
-        ehttp::Response {
-            ok: (200..300).contains(&status),
-            ..response(status, body)
-        }
+        ehttp::Response { ok: (200..300).contains(&status), ..response(status, body) }
     }
 
     #[test]
@@ -238,10 +224,7 @@ mod tests {
         assert_eq!(answer::<Vec<u8>>(Ok(ok(201, "[]"))), Ok(vec![]));
         assert_eq!(answer::<Vec<u8>>(Ok(ok(200, "{"))), Err(INVALID_REPLY.to_owned()));
         let refused = ok(409, r#"{"error":"Username already taken","code":"username_taken"}"#);
-        assert_eq!(
-            answer::<Vec<u8>>(Ok(refused)),
-            Err("Ce pseudo est déjà pris.".to_owned())
-        );
+        assert_eq!(answer::<Vec<u8>>(Ok(refused)), Err("Ce pseudo est déjà pris.".to_owned()));
         assert_eq!(answer::<Vec<u8>>(Err("down".into())), Err(network_error("down")));
         assert_eq!(answer::<serde::de::IgnoredAny>(Ok(ok(200, "{}"))).map(|_| ()), Ok(()));
     }

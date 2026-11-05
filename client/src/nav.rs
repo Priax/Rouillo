@@ -21,10 +21,7 @@ pub struct Nav {
 
 impl Nav {
     pub const fn new(current: Screen) -> Self {
-        Self {
-            current,
-            below: Vec::new(),
-        }
+        Self { current, below: Vec::new() }
     }
 
     pub const fn current(&self) -> &Screen {

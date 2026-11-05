@@ -5,10 +5,8 @@ use super::*;
 const TICKS: u32 = 600;
 
 fn env_list(name: &str, default: &[usize]) -> Vec<usize> {
-    std::env::var(name).map_or_else(
-        |_| default.to_vec(),
-        |v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect(),
-    )
+    std::env::var(name)
+        .map_or_else(|_| default.to_vec(), |v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
 }
 
 /// What one connection receives: its reliable messages, and its states
@@ -23,11 +21,7 @@ impl Link {
     fn new(mgr: &mut Manager, conn: ConnId, datagrams: bool) -> Self {
         let (tx, rx) = mpsc::channel(CLIENT_CHAN_CAP);
         let (states_tx, states) = datagrams.then(|| mpsc::channel(CLIENT_CHAN_CAP)).unzip();
-        mgr.handle(Command::Register {
-            conn,
-            sender: tx,
-            states: states_tx,
-        });
+        mgr.handle(Command::Register { conn, sender: tx, states: states_tx });
         Self { conn, rx, states }
     }
 
@@ -56,22 +50,14 @@ struct Setup {
 /// seat limit is lifted past `MAX_ROOM_PLAYERS` here only, to see what a
 /// bigger room would cost.
 fn seat(mgr: &mut Manager, setup: &Setup) -> (Vec<Link>, Vec<Link>) {
-    let Setup {
-        rooms,
-        players,
-        spectators,
-        datagrams,
-    } = *setup;
+    let Setup { rooms, players, spectators, datagrams } = *setup;
     let mut links = Vec::with_capacity(rooms * players);
     let mut ids = Vec::with_capacity(rooms);
     for _ in 0..rooms {
         let first = links.len() as ConnId + 1;
         let host = Link::new(mgr, first, datagrams);
         hello(mgr, first, &format!("p{first}"));
-        mgr.handle(Command::CreateRoom {
-            conn: first,
-            name: "load".into(),
-        });
+        mgr.handle(Command::CreateRoom { conn: first, name: "load".into() });
         let id = mgr.room_of(first).expect("the room was made");
         ids.push(id);
         mgr.rooms.get_mut(&id).expect("room").settings.max_players = u8::try_from(players).expect("at most 255");
@@ -108,9 +94,7 @@ fn seat(mgr: &mut Manager, setup: &Setup) -> (Vec<Link>, Vec<Link>) {
 /// A player's inputs: now and then a move, a turn or a soft drop, never a
 /// hard drop, so that boards last the whole run.
 fn input(noise: &mut u64) -> Option<InputKind> {
-    *noise = noise
-        .wrapping_mul(6_364_136_223_846_793_005)
-        .wrapping_add(1_442_695_040_888_963_407);
+    *noise = noise.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
     match (*noise >> 33) % 48 {
         0 => Some(InputKind::MoveLeft),
         1 => Some(InputKind::MoveRight),
@@ -146,12 +130,7 @@ fn run(setup: &Setup) -> Report {
             if let Some(kind) = input(&mut noise) {
                 let tick = mgr.room_of(link.conn).map_or(0, |id| mgr.rooms[&id].sim.tick) + 1;
                 *seq += 1;
-                mgr.handle(Command::Input {
-                    conn: link.conn,
-                    kind,
-                    seq: *seq,
-                    tick,
-                });
+                mgr.handle(Command::Input { conn: link.conn, kind, seq: *seq, tick });
             }
         }
         mgr.tick(dt, true);
@@ -212,12 +191,7 @@ fn load_rooms() {
     for players in sizes {
         let rooms = fixed.unwrap_or((total / players).max(1));
         for datagrams in [false, true] {
-            let r = run(&Setup {
-                rooms,
-                players,
-                spectators,
-                datagrams,
-            });
+            let r = run(&Setup { rooms, players, spectators, datagrams });
             let per_player = r.bytes as f64 / secs / (rooms * players) as f64 / 1000.0;
             let per_watcher = r.watched_bytes as f64 / secs / (rooms * spectators).max(1) as f64 / 1000.0;
             let mbits = (r.bytes + r.watched_bytes) as f64 * 8.0 / secs / 1e6;

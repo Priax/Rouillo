@@ -28,11 +28,7 @@ fn auth_layout(view: View, focused: AuthField) -> AuthLayout {
         AuthField::Username => 60.0,
         AuthField::Password => 140.0,
     };
-    let base_y = if wh >= 560.0 {
-        wh / 2.0 - 160.0
-    } else {
-        wh / 2.0 - field_y - 25.0
-    };
+    let base_y = if wh >= 560.0 { wh / 2.0 - 160.0 } else { wh / 2.0 - field_y - 25.0 };
     let field = |y: f32| Rect::centered_on(cx, y, 420.0, 50.0);
     AuthLayout {
         cx,
@@ -210,20 +206,11 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
 
     let form = &state.auth_form;
     let fields = [
-        (
-            layout.username,
-            "Nom d'utilisateur",
-            &form.username,
-            AuthField::Username,
-        ),
+        (layout.username, "Nom d'utilisateur", &form.username, AuthField::Username),
         (layout.password, "Mot de passe", &form.password, AuthField::Password),
     ];
     for (rect, placeholder, input, which) in fields {
-        let field = Field {
-            placeholder,
-            input,
-            focused: form.focused == which,
-        };
+        let field = Field { placeholder, input, focused: form.focused == which };
         text_field(&mut draw, &state.ui, &state.fonts, rect, &field);
     }
 
@@ -236,12 +223,8 @@ pub fn draw_auth(gfx: &mut Graphics, state: &State) {
             AuthMode::Register => "S'inscrire",
         }
     };
-    state
-        .ui
-        .button_enabled(&mut draw, &state.fonts, layout.submit, submit_label, !loading);
-    state
-        .ui
-        .button(&mut draw, &state.fonts, layout.guest, "Jouer en invité");
+    state.ui.button_enabled(&mut draw, &state.fonts, layout.submit, submit_label, !loading);
+    state.ui.button(&mut draw, &state.fonts, layout.guest, "Jouer en invité");
 
     if let Some((msg, color)) = state.auth_form.status.shown(&pal) {
         draw.sharp_text(&state.fonts.text, msg)

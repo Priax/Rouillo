@@ -25,13 +25,8 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    let _permit = heavy_semaphore()
-        .acquire()
-        .await
-        .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| sqlx::Error::Protocol(e.to_string()))
+    let _permit = heavy_semaphore().acquire().await.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+    tokio::task::spawn_blocking(f).await.map_err(|e| sqlx::Error::Protocol(e.to_string()))
 }
 
 pub fn dummy_hash() -> &'static str {
@@ -41,9 +36,7 @@ pub fn dummy_hash() -> &'static str {
 }
 
 pub async fn cleanup_expired_sessions(pool: &DbPool) -> Result<u64, sqlx::Error> {
-    let r = sqlx::query("DELETE FROM sessions WHERE expires_at < now()")
-        .execute(pool)
-        .await?;
+    let r = sqlx::query("DELETE FROM sessions WHERE expires_at < now()").execute(pool).await?;
     Ok(r.rows_affected())
 }
 
@@ -77,9 +70,7 @@ pub async fn init_pool(database_url: &str) -> Result<DbPool, sqlx::Error> {
 
 pub async fn create_user(pool: &DbPool, username: &str, password: &str) -> Result<User, sqlx::Error> {
     let password = password.to_owned();
-    let hash = run_heavy(move || hash_password(&password))
-        .await?
-        .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+    let hash = run_heavy(move || hash_password(&password)).await?.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
     sqlx::query_as::<_, User>("INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING *")
         .bind(username)
         .bind(hash)
@@ -117,20 +108,13 @@ pub async fn find_user_by_token(pool: &DbPool, token: Uuid) -> Result<Option<Use
 }
 
 pub async fn delete_session(pool: &DbPool, token: Uuid) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM sessions WHERE token = $1")
-        .bind(token)
-        .execute(pool)
-        .await?;
+    sqlx::query("DELETE FROM sessions WHERE token = $1").bind(token).execute(pool).await?;
     Ok(())
 }
 
 pub async fn set_password(pool: &DbPool, user_id: Uuid, hash: String, keep: Uuid) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
-    sqlx::query("UPDATE users SET password_hash = $2 WHERE id = $1")
-        .bind(user_id)
-        .bind(hash)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query("UPDATE users SET password_hash = $2 WHERE id = $1").bind(user_id).bind(hash).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token <> $2")
         .bind(user_id)
         .bind(keep)
@@ -192,11 +176,7 @@ async fn set_image_url(
         Kind::Avatar => "UPDATE users SET avatar_url = $2 WHERE id = $1 RETURNING *",
         Kind::Banner => "UPDATE users SET banner_url = $2 WHERE id = $1 RETURNING *",
     };
-    sqlx::query_as::<_, User>(query)
-        .bind(user_id)
-        .bind(url)
-        .fetch_one(tx)
-        .await
+    sqlx::query_as::<_, User>(query).bind(user_id).bind(url).fetch_one(tx).await
 }
 
 pub async fn get_image(pool: &DbPool, user_id: Uuid, kind: Kind) -> Result<Option<Vec<u8>>, sqlx::Error> {
@@ -208,25 +188,17 @@ pub async fn get_image(pool: &DbPool, user_id: Uuid, kind: Kind) -> Result<Optio
 }
 
 pub async fn delete_user_sessions(pool: &DbPool, user_id: Uuid) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM sessions WHERE user_id = $1")
-        .bind(user_id)
-        .execute(pool)
-        .await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id = $1").bind(user_id).execute(pool).await?;
     Ok(())
 }
 
 pub async fn delete_user(pool: &DbPool, user_id: Uuid) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(user_id)
-        .execute(pool)
-        .await?;
+    sqlx::query("DELETE FROM users WHERE id = $1").bind(user_id).execute(pool).await?;
     Ok(())
 }
 
 pub fn hash_password(password: &str) -> Result<String, password_hash::Error> {
-    Argon2::default()
-        .hash_password(password.as_bytes())
-        .map(|h| h.to_string())
+    Argon2::default().hash_password(password.as_bytes()).map(|h| h.to_string())
 }
 
 /// How many replays a player may keep.
@@ -314,12 +286,7 @@ pub struct SeriesRecord {
 }
 
 pub async fn record_series(pool: &DbPool, rec: SeriesRecord) -> Result<(), sqlx::Error> {
-    let SeriesRecord {
-        winner,
-        loser,
-        winner_delta,
-        loser_delta,
-    } = rec;
+    let SeriesRecord { winner, loser, winner_delta, loser_delta } = rec;
     let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO ranked_series (winner_id, loser_id) \
@@ -560,10 +527,7 @@ pub async fn send_friend_request(pool: &DbPool, requester: Uuid, target: Uuid) -
     if requester == target {
         return Err(FriendshipError::SelfRequest);
     }
-    if accept_friend_request(pool, requester, target)
-        .await
-        .map_err(FriendshipError::Db)?
-    {
+    if accept_friend_request(pool, requester, target).await.map_err(FriendshipError::Db)? {
         return Ok(true);
     }
     match sqlx::query("INSERT INTO friendships (user_id, friend_id) VALUES ($1, $2)")
@@ -656,11 +620,7 @@ pub async fn list_friends(pool: &DbPool, me: Uuid) -> Result<FriendList, sqlx::E
     .fetch_all(pool)
     .await?;
 
-    Ok(FriendList {
-        friends,
-        sent,
-        received,
-    })
+    Ok(FriendList { friends, sent, received })
 }
 
 pub async fn friend_ids(pool: &DbPool, me: Uuid) -> Result<Vec<Uuid>, sqlx::Error> {
@@ -741,10 +701,8 @@ pub async fn get_match_history(
 
 /// A match's replay, if it was kept.
 pub async fn get_replay(pool: &DbPool, match_id: Uuid) -> Result<Option<Vec<u8>>, sqlx::Error> {
-    let row: Option<Option<Vec<u8>>> = sqlx::query_scalar("SELECT replay FROM matches WHERE id = $1")
-        .bind(match_id)
-        .fetch_optional(pool)
-        .await?;
+    let row: Option<Option<Vec<u8>>> =
+        sqlx::query_scalar("SELECT replay FROM matches WHERE id = $1").bind(match_id).fetch_optional(pool).await?;
     Ok(row.flatten())
 }
 
@@ -764,10 +722,7 @@ impl From<sqlx::Error> for FavoriteError {
 /// Keeps the replay of a match `user_id` played, within `MAX_FAVORITES`.
 pub async fn add_favorite(pool: &DbPool, user_id: Uuid, match_id: Uuid) -> Result<(), FavoriteError> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR NO KEY UPDATE")
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR NO KEY UPDATE").bind(user_id).execute(&mut *tx).await?;
     let played: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM matches m
                         JOIN match_stats ms ON ms.match_id = m.id
@@ -839,11 +794,7 @@ mod tests {
         let hash = hash_password("password123").unwrap();
         assert!(hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"), "{hash}");
         assert!(verify_password("password123", &hash));
-        assert_ne!(
-            hash,
-            hash_password("password123").unwrap(),
-            "each hash gets its own salt"
-        );
+        assert_ne!(hash, hash_password("password123").unwrap(), "each hash gets its own salt");
     }
 
     #[test]

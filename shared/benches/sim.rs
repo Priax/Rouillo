@@ -14,13 +14,7 @@ fn empty_board() -> Board {
 }
 
 fn full_board() -> Board {
-    let palette = [
-        PuyoType::Red,
-        PuyoType::Blue,
-        PuyoType::Yellow,
-        PuyoType::Green,
-        PuyoType::Purple,
-    ];
+    let palette = [PuyoType::Red, PuyoType::Blue, PuyoType::Yellow, PuyoType::Green, PuyoType::Purple];
     let mut b = Board::new(1, &Rules::default());
     b.spawn_piece();
     for r in 0..GRID_HEIGHT {
@@ -40,11 +34,7 @@ fn state_update(p1: &Board, p2: &Board) -> ServerMessage {
         incoming: Vec::new(),
         target: Some(3 - slot),
     };
-    ServerMessage::StateUpdate {
-        game: 1,
-        tick: 0,
-        players: vec![player(1, p1), player(2, p2)],
-    }
+    ServerMessage::StateUpdate { game: 1, tick: 0, players: vec![player(1, p1), player(2, p2)] }
 }
 
 fn bench_codec(c: &mut Criterion) {
@@ -63,11 +53,7 @@ fn bench_codec(c: &mut Criterion) {
         b.iter(|| decode::<ServerMessage>(black_box(&full_bytes)).unwrap());
     });
 
-    println!(
-        "\n[payload sizes] empty StateUpdate = {} bytes, full = {} bytes\n",
-        empty_bytes.len(),
-        full_bytes.len()
-    );
+    println!("\n[payload sizes] empty StateUpdate = {} bytes, full = {} bytes\n", empty_bytes.len(), full_bytes.len());
 }
 
 fn bench_simulation(c: &mut Criterion) {

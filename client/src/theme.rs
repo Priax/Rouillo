@@ -51,12 +51,7 @@ const fn hsl(h: f32, s: f32, l: f32) -> Color {
 
 /// The colour `t` of the way from `a` to `b`.
 pub fn mix(a: Color, b: Color, t: f32) -> Color {
-    Color::from_rgba(
-        a.r + (b.r - a.r) * t,
-        a.g + (b.g - a.g) * t,
-        a.b + (b.b - a.b) * t,
-        a.a + (b.a - a.a) * t,
-    )
+    Color::from_rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,12 +129,8 @@ pub mod bar {
 }
 
 /// The teams a lobby offers, from team 1. Above them, a team is one player.
-const TEAMS: [(&str, Color); 4] = [
-    ("Rouge", bar::RED),
-    ("Bleu", bar::BLUE),
-    ("Vert", bar::GREEN),
-    ("Jaune", bar::YELLOW),
-];
+const TEAMS: [(&str, Color); 4] =
+    [("Rouge", bar::RED), ("Bleu", bar::BLUE), ("Vert", bar::GREEN), ("Jaune", bar::YELLOW)];
 
 pub fn team(team: u8) -> Option<(&'static str, Color)> {
     TEAMS.get(usize::from(team).checked_sub(1)?).copied()
@@ -239,14 +230,7 @@ mod tests {
         let luma = |c: Color| 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
         for h in [hue::PURPLE, hue::BLUE, hue::GREEN, hue::PINK, hue::ORANGE] {
             let p = Palette::new(h);
-            let order = [
-                p.background,
-                p.surface_alt,
-                p.surface,
-                p.raised,
-                p.raised_hover,
-                p.border,
-            ];
+            let order = [p.background, p.surface_alt, p.surface, p.raised, p.raised_hover, p.border];
             assert!(order.windows(2).all(|w| luma(w[0]) < luma(w[1])), "hue {h}");
         }
     }

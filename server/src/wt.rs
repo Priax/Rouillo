@@ -62,17 +62,11 @@ impl Config {
     /// clients dial) and `WT_CERT` and `WT_KEY` (PEM files). Without the
     /// files, a certificate is made up: for a local test.
     pub fn from_env() -> Option<Self> {
-        let addr: SocketAddr = std::env::var("WT_ADDR")
-            .ok()?
-            .parse()
-            .expect("WT_ADDR must be an address");
+        let addr: SocketAddr = std::env::var("WT_ADDR").ok()?.parse().expect("WT_ADDR must be an address");
         let url = std::env::var("WT_URL").unwrap_or_else(|_| format!("https://127.0.0.1:{}{PATH}", addr.port()));
-        let files = std::env::var("WT_CERT").ok().map(|cert| {
-            (
-                PathBuf::from(cert),
-                PathBuf::from(std::env::var("WT_KEY").expect("WT_KEY with WT_CERT")),
-            )
-        });
+        let files = std::env::var("WT_CERT")
+            .ok()
+            .map(|cert| (PathBuf::from(cert), PathBuf::from(std::env::var("WT_KEY").expect("WT_KEY with WT_CERT"))));
         Some(Self { addr, url, files })
     }
 }
@@ -123,30 +117,19 @@ pub fn start(config: Config, cmd_tx: mpsc::Sender<Command>, pool: db::DbPool, co
             tokio::spawn(handle_request(request, cmd_tx.clone(), pool.clone(), conns.clone()));
         }
     });
-    Some(Offer {
-        url: config.url,
-        cert_hash,
-    })
+    Some(Offer { url: config.url, cert_hash })
 }
 
 async fn handle_request(request: Request, cmd_tx: mpsc::Sender<Command>, pool: db::DbPool, conns: Conns) {
-    let version = request
-        .url
-        .query_pairs()
-        .find(|(k, _)| k == "v")
-        .and_then(|(_, v)| v.parse::<u32>().ok());
+    let version = request.url.query_pairs().find(|(k, _)| k == "v").and_then(|(_, v)| v.parse::<u32>().ok());
     if request.url.path() != PATH || version != Some(shared::PROTOCOL_VERSION) {
-        let _ = request
-            .reject(web_transport_quinn::http::StatusCode::UPGRADE_REQUIRED)
-            .await;
+        let _ = request.reject(web_transport_quinn::http::StatusCode::UPGRADE_REQUIRED).await;
         return;
     }
     let ip = crate::api::client_key(Some(request.conn().remote_address()), None);
     let Ok(slot) = IpSlot::take(&conns.ips, ip) else {
         warn!("WT refusé: trop de connexions depuis la même IP");
-        let _ = request
-            .reject(web_transport_quinn::http::StatusCode::TOO_MANY_REQUESTS)
-            .await;
+        let _ = request.reject(web_transport_quinn::http::StatusCode::TOO_MANY_REQUESTS).await;
         return;
     };
     let session = match request.ok().await {
@@ -173,13 +156,7 @@ async fn serve(session: &Session, cmd_tx: mpsc::Sender<Command>, pool: db::DbPoo
     let (states_tx, mut states_rx) = mpsc::channel::<Vec<Bytes>>(STATE_CHAN_CAP);
     let mut inbox = Inbox::new(conn, cmd_tx.clone(), pool, to_client_tx.clone());
     info!("WT {conn} ouverture");
-    let _ = cmd_tx
-        .send(Command::Register {
-            conn,
-            sender: to_client_tx,
-            states: Some(states_tx),
-        })
-        .await;
+    let _ = cmd_tx.send(Command::Register { conn, sender: to_client_tx, states: Some(states_tx) }).await;
 
     let outgoing = session.clone();
     let sending = async move {
@@ -282,9 +259,7 @@ fn self_signed() -> (CertifiedKey, Vec<u8>) {
     params.not_after = now + time::Duration::days(SELF_SIGNED_DAYS);
     let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("a P-256 key");
     let cert = params.self_signed(&key).expect("a self-signed certificate");
-    let hash = ring::digest::digest(&ring::digest::SHA256, cert.der())
-        .as_ref()
-        .to_vec();
+    let hash = ring::digest::digest(&ring::digest::SHA256, cert.der()).as_ref().to_vec();
     let der = PrivateKeyDer::try_from(key.serialize_der()).expect("the key in DER");
     let signing = any_supported_type(&der).expect("a supported key");
     (CertifiedKey::new(vec![cert.der().clone()], signing), hash)
@@ -307,16 +282,9 @@ struct Loaded {
 
 impl FileCert {
     fn load(cert: PathBuf, key: PathBuf) -> Result<Self, String> {
-        let loaded = Loaded {
-            key: Arc::new(read_pair(&cert, &key)?),
-            modified: modified(&cert),
-            checked: Instant::now(),
-        };
-        Ok(Self {
-            cert,
-            key,
-            current: Mutex::new(loaded),
-        })
+        let loaded =
+            Loaded { key: Arc::new(read_pair(&cert, &key)?), modified: modified(&cert), checked: Instant::now() };
+        Ok(Self { cert, key, current: Mutex::new(loaded) })
     }
 }
 

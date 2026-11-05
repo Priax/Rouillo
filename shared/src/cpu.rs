@@ -23,11 +23,7 @@ const NO_MARKS: Marks = [[false; MAX_W]; MAX_H];
 
 impl Grid {
     const fn new(w: usize, h: usize) -> Self {
-        Self {
-            cells: [[0; MAX_W]; MAX_H],
-            w,
-            h,
-        }
+        Self { cells: [[0; MAX_W]; MAX_H], w, h }
     }
 
     const fn size(&self) -> (usize, usize) {
@@ -93,14 +89,8 @@ pub fn name(difficulty: Difficulty, style: Style) -> String {
 }
 
 impl Style {
-    pub const ALL: [Self; 6] = [
-        Self::Balanced,
-        Self::Harasser,
-        Self::Builder,
-        Self::Counter,
-        Self::AllClear,
-        Self::Architect,
-    ];
+    pub const ALL: [Self; 6] =
+        [Self::Balanced, Self::Harasser, Self::Builder, Self::Counter, Self::AllClear, Self::Architect];
 
     pub const fn character(self) -> &'static str {
         match self {
@@ -131,12 +121,7 @@ fn template(rows: &[&str]) -> Template {
     rows.iter()
         .rev()
         .enumerate()
-        .flat_map(|(up, row)| {
-            row.bytes()
-                .enumerate()
-                .filter(|&(_, b)| b != b'.')
-                .map(move |(c, b)| (up, c, b))
-        })
+        .flat_map(|(up, row)| row.bytes().enumerate().filter(|&(_, b)| b != b'.').map(move |(c, b)| (up, c, b)))
         .collect()
 }
 
@@ -272,12 +257,7 @@ struct Exec {
 
 impl Exec {
     fn new(target: Placement, wait: u32) -> Self {
-        Self {
-            target,
-            wait,
-            inputs_left: MAX_INPUTS,
-            dropped: false,
-        }
+        Self { target, wait, inputs_left: MAX_INPUTS, dropped: false }
     }
 
     fn next(&mut self, board: &Board, profile: &Profile) -> Option<InputKind> {
@@ -293,11 +273,7 @@ impl Exec {
         let step = if self.inputs_left == 0 {
             None
         } else if piece.rotation != self.target.rotation {
-            Some(if piece.rotation.ccw() == self.target.rotation {
-                InputKind::RotateCCW
-            } else {
-                InputKind::RotateCW
-            })
+            Some(if piece.rotation.ccw() == self.target.rotation { InputKind::RotateCCW } else { InputKind::RotateCW })
         } else if piece.col < col {
             Some(InputKind::MoveRight)
         } else if piece.col > col {
@@ -311,11 +287,7 @@ impl Exec {
             return Some(kind);
         }
         self.dropped = true;
-        Some(if profile.hard_drop {
-            InputKind::HardDrop
-        } else {
-            InputKind::SoftDropPress
-        })
+        Some(if profile.hard_drop { InputKind::HardDrop } else { InputKind::SoftDropPress })
     }
 }
 
@@ -349,13 +321,11 @@ const fn code(t: PuyoType) -> u8 {
 }
 
 fn neighbours((w, h): (usize, usize), r: usize, c: usize) -> impl Iterator<Item = (usize, usize)> {
-    [(-1, 0), (1, 0), (0, -1), (0, 1)]
-        .into_iter()
-        .filter_map(move |(dr, dc)| {
-            let nr = r.checked_add_signed(dr)?;
-            let nc = c.checked_add_signed(dc)?;
-            (nr < h && nc < w).then_some((nr, nc))
-        })
+    [(-1, 0), (1, 0), (0, -1), (0, 1)].into_iter().filter_map(move |(dr, dc)| {
+        let nr = r.checked_add_signed(dr)?;
+        let nc = c.checked_add_signed(dc)?;
+        (nr < h && nc < w).then_some((nr, nc))
+    })
 }
 
 /// Cells as bytes: a group is flooded for every judged board.
@@ -366,18 +336,13 @@ struct Group {
 
 impl Group {
     fn cells(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
-        self.cells[..self.len]
-            .iter()
-            .map(|&(r, c)| (usize::from(r), usize::from(c)))
+        self.cells[..self.len].iter().map(|&(r, c)| (usize::from(r), usize::from(c)))
     }
 }
 
 fn flood(grid: &Grid, r: usize, c: usize, seen: &mut Marks) -> Group {
     let colour = grid[r][c];
-    let mut group = Group {
-        cells: [(0, 0); MAX_W * MAX_H],
-        len: 1,
-    };
+    let mut group = Group { cells: [(0, 0); MAX_W * MAX_H], len: 1 };
     group.cells[0] = (crate::small(r), crate::small(c));
     seen[r][c] = true;
     let mut next = 0;
@@ -501,10 +466,7 @@ fn place(grid: &Grid, (axis, satellite): (u8, u8), p: Placement) -> Option<Grid>
     } else {
         [(p.col, axis), (sat_col, satellite)]
     };
-    order
-        .into_iter()
-        .all(|(col, cell)| drop_into(&mut grid, col, cell))
-        .then_some(grid)
+    order.into_iter().all(|(col, cell)| drop_into(&mut grid, col, cell)).then_some(grid)
 }
 
 fn potential(grid: &Grid) -> Chain {
@@ -642,9 +604,7 @@ fn template_value(grid: &Grid, template: &Template) -> f32 {
 }
 
 fn template_value_at(grid: &Grid, cells: impl Iterator<Item = (usize, usize, u8)>) -> f32 {
-    let placed: Vec<_> = cells
-        .filter(|&(r, c, _)| grid[r][c] != 0 && grid[r][c] != GARBAGE)
-        .collect();
+    let placed: Vec<_> = cells.filter(|&(r, c, _)| grid[r][c] != 0 && grid[r][c] != GARBAGE).collect();
     let mut value = placed.len() as f32 * TEMPLATE_PLACED;
     for (i, &(r1, c1, l1)) in placed.iter().enumerate() {
         for &(r2, c2, l2) in &placed[i + 1..] {
@@ -661,11 +621,7 @@ fn template_value_at(grid: &Grid, cells: impl Iterator<Item = (usize, usize, u8)
 
 impl Judge<'_> {
     fn need(&self) -> u32 {
-        let wanted = if self.threatened {
-            self.profile.min_chain
-        } else {
-            self.profile.calm_chain
-        };
+        let wanted = if self.threatened { self.profile.min_chain } else { self.profile.calm_chain };
         wanted.min(self.longest)
     }
 
@@ -786,13 +742,7 @@ impl Search {
             placements: 4 * board.width() - 2,
             tried: 0,
             elapsed: 0,
-            best: (
-                f32::NEG_INFINITY,
-                Placement {
-                    col: board.spawn_col(),
-                    rotation: Rotation::Up,
-                },
-            ),
+            best: (f32::NEG_INFINITY, Placement { col: board.spawn_col(), rotation: Rotation::Up }),
         }
     }
 
@@ -931,11 +881,7 @@ mod tests {
         for r in 0..grid.h {
             for c in 0..grid.w {
                 if rng.next() < fill {
-                    grid[r][c] = if rng.next() < 0.15 {
-                        GARBAGE
-                    } else {
-                        1 + (rng.next() * colours as f32) as u8
-                    };
+                    grid[r][c] = if rng.next() < 0.15 { GARBAGE } else { 1 + (rng.next() * colours as f32) as u8 };
                 }
             }
         }
@@ -974,11 +920,7 @@ mod tests {
                 board.apply_board_gravity();
             }
             let chain = resolve(&mut grid);
-            assert_eq!(
-                (chain.links, chain.score),
-                (board.chain_count, score),
-                "grid {i} resolved differently"
-            );
+            assert_eq!((chain.links, chain.score), (board.chain_count, score), "grid {i} resolved differently");
             assert_eq!(grid, grid_of(&board), "grid {i} ended differently");
             chains += u32::from(chain.links >= 2);
         }
@@ -996,11 +938,7 @@ mod tests {
     }
 
     fn sized(columns: u8, rows: u8) -> Rules {
-        Rules {
-            columns,
-            rows,
-            ..Rules::default()
-        }
+        Rules { columns, rows, ..Rules::default() }
     }
 
     #[test]
@@ -1022,9 +960,7 @@ mod tests {
 
     #[test]
     fn the_pair_lands_where_the_search_saw_it_land() {
-        for (difficulty, rules) in Difficulty::ALL
-            .into_iter()
-            .flat_map(|d| [(d, Rules::default()), (d, sized(9, 14))])
+        for (difficulty, rules) in Difficulty::ALL.into_iter().flat_map(|d| [(d, Rules::default()), (d, sized(9, 14))])
         {
             let mut board = started_on(11, &rules);
             let mut cpu = Cpu::new(difficulty, Style::Balanced, 11);
@@ -1055,10 +991,7 @@ mod tests {
                     }
                 }
             }
-            assert!(
-                checked > 10,
-                "{difficulty:?} on {rules:?}: only {checked} pairs checked"
-            );
+            assert!(checked > 10, "{difficulty:?} on {rules:?}: only {checked} pairs checked");
         }
     }
 
@@ -1075,10 +1008,7 @@ mod tests {
             board.piece_id
         };
         let (free, short, none) = (pairs(usize::MAX), pairs(1), pairs(0));
-        assert!(
-            short > 5 && short < free,
-            "pairs: {free} free, {short} on one placement a tick"
-        );
+        assert!(short > 5 && short < free, "pairs: {free} free, {short} on one placement a tick");
         assert!(none < short, "a CPU with no budget played as much: {none}");
     }
 
@@ -1208,10 +1138,7 @@ mod tests {
             grid[row][col] = label - b'A' + 1;
         }
         let full = shape.len() as f32 * TEMPLATE_PLACED;
-        assert!(
-            template_value(&grid, &shape) > full,
-            "a GTR built against the right wall is not seen"
-        );
+        assert!(template_value(&grid, &shape) > full, "a GTR built against the right wall is not seen");
     }
 
     #[test]
@@ -1250,15 +1177,8 @@ mod tests {
     fn play_on(difficulty: Difficulty, style: Style, seed: u64, ticks: u32, rules: &Rules) -> Run {
         let mut board = started_on(seed, rules);
         let mut cpu = Cpu::new(difficulty, style, seed);
-        let mut run = Run {
-            ticks: 0,
-            pairs: 0,
-            best_chain: 0,
-            chains: Vec::new(),
-            sent: 0,
-            all_clears: 0,
-            alive: true,
-        };
+        let mut run =
+            Run { ticks: 0, pairs: 0, best_chain: 0, chains: Vec::new(), sent: 0, all_clears: 0, alive: true };
         let mut last = (board.piece_id, 0);
         for _ in 0..ticks {
             if board.state() == GameState::GameOver {
@@ -1301,10 +1221,7 @@ mod tests {
 
     fn duel_styled(players: [(Difficulty, Style); 2], seed: u64) -> (usize, u32) {
         let mut boards = [started(seed), started(seed)];
-        let mut cpus = [
-            Cpu::new(players[0].0, players[0].1, seed),
-            Cpu::new(players[1].0, players[1].1, seed + 1000),
-        ];
+        let mut cpus = [Cpu::new(players[0].0, players[0].1, seed), Cpu::new(players[1].0, players[1].1, seed + 1000)];
         let mut in_flight = InFlight::new();
         for tick in 1..=30 * 60 * 60 {
             let mut sent = [0; 2];
@@ -1349,13 +1266,8 @@ mod tests {
     type Attack = (u32, u32, u32);
 
     const DEFENCE_TICKS: u32 = 2 * 60 * 60;
-    const ATTACKS: [Attack; 5] = [
-        (18, 30 * 60, 0),
-        (30, 30 * 60, 0),
-        (48, 30 * 60, 0),
-        (72, 30 * 60, 0),
-        (6, 10 * 60, 10 * 60),
-    ];
+    const ATTACKS: [Attack; 5] =
+        [(18, 30 * 60, 0), (30, 30 * 60, 0), (48, 30 * 60, 0), (72, 30 * 60, 0), (6, 10 * 60, 10 * 60)];
 
     #[test]
     #[ignore = "prints how long each CPU holds under attack, to tune its defence"]
@@ -1363,23 +1275,16 @@ mod tests {
         let seeds = std::env::var("SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
         let only = std::env::var("STYLES").unwrap_or_default();
         for difficulty in Difficulty::ALL {
-            for style in Style::ALL
-                .into_iter()
-                .filter(|s| only.is_empty() || only.contains(&format!("{s:?}")))
-            {
+            for style in Style::ALL.into_iter().filter(|s| only.is_empty() || only.contains(&format!("{s:?}"))) {
                 let cells: Vec<String> = ATTACKS
                     .iter()
                     .map(|&attack| {
-                        let deaths: Vec<u32> = (0..seeds)
-                            .filter_map(|seed| play_attacked(difficulty, style, seed, attack))
-                            .collect();
+                        let deaths: Vec<u32> =
+                            (0..seeds).filter_map(|seed| play_attacked(difficulty, style, seed, attack)).collect();
                         let mean = deaths.iter().sum::<u32>() as f32 / deaths.len().max(1) as f32 / 60.0;
                         let (amount, _, every) = attack;
-                        let name = if every == 0 {
-                            format!("{amount} once")
-                        } else {
-                            format!("{amount}/{}s", every / 60)
-                        };
+                        let name =
+                            if every == 0 { format!("{amount} once") } else { format!("{amount}/{}s", every / 60) };
                         format!("{name}: {}/{seeds} dead ({mean:.0} s)", deaths.len())
                     })
                     .collect();
@@ -1397,10 +1302,7 @@ mod tests {
             _ => Difficulty::Hard,
         };
         let only = std::env::var("STYLES").unwrap_or_default();
-        for style in Style::ALL
-            .into_iter()
-            .filter(|s| only.is_empty() || only.contains(&format!("{s:?}")))
-        {
+        for style in Style::ALL.into_iter().filter(|s| only.is_empty() || only.contains(&format!("{s:?}"))) {
             let (mut pairs, mut sent, mut deaths, mut ticks, mut clears) = (0, 0, 0, 0, 0);
             let mut hist = [0u32; 12];
             let seeds = 40;
@@ -1471,10 +1373,7 @@ mod tests {
                 wins[winner] += 1;
                 ticks += length;
             }
-            println!(
-                "{levels:?}: wins {wins:?}, {:.0} s on average",
-                ticks as f32 / games as f32 / 60.0
-            );
+            println!("{levels:?}: wins {wins:?}, {:.0} s on average", ticks as f32 / games as f32 / 60.0);
         }
     }
 }

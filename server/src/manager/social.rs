@@ -5,11 +5,8 @@ const CHAT_REFILL_SECS: f32 = 1.5;
 
 /// Text as shown to others: one line of printable characters, at most `max`.
 pub fn one_line(text: &str, max: usize) -> Option<String> {
-    let line: String = text
-        .chars()
-        .map(|c| if c.is_whitespace() { ' ' } else { c })
-        .filter(|c| !c.is_control())
-        .collect();
+    let line: String =
+        text.chars().map(|c| if c.is_whitespace() { ' ' } else { c }).filter(|c| !c.is_control()).collect();
     let line: String = line.trim().chars().take(max).collect();
     (!line.is_empty()).then_some(line)
 }
@@ -34,11 +31,7 @@ impl Manager {
         }
         *tokens -= 1.0;
         let spectator = self.rooms.get(&id).is_some_and(|r| r.spectator_slot(conn).is_some());
-        let msg = ServerMessage::Chat {
-            from: self.display_name(conn),
-            text,
-            spectator,
-        };
+        let msg = ServerMessage::Chat { from: self.display_name(conn), text, spectator };
         self.send_room_msg(id, &msg);
     }
 
@@ -95,10 +88,8 @@ impl Manager {
         let (Some(watcher), Ok(friend)) = (self.user_of(conn), Uuid::parse_str(friend)) else {
             return;
         };
-        let found = self
-            .rooms
-            .values()
-            .find(|r| r.members.iter().any(|m| m.user_id == Some(friend) && m.conn.is_some()));
+        let found =
+            self.rooms.values().find(|r| r.members.iter().any(|m| m.user_id == Some(friend) && m.conn.is_some()));
         let Some((id, host)) = found.map(|r| (r.id, r.host.clone())) else {
             self.join_failed(conn, WATCH_NOBODY);
             return;
@@ -111,14 +102,7 @@ impl Manager {
             return;
         }
         let from = self.room_of(conn);
-        self.friend_checks.push(FriendCheck::Watch {
-            conn,
-            room,
-            host,
-            from,
-            watcher,
-            other,
-        });
+        self.friend_checks.push(FriendCheck::Watch { conn, room, host, from, watcher, other });
     }
 
     /// The answer to a `FriendCheck::Watch` about `other`. A friends-only
@@ -135,11 +119,7 @@ impl Manager {
             self.join_failed(conn, WATCH_NOT_FRIENDS);
             return;
         }
-        let host_user = room
-            .members
-            .iter()
-            .find(|m| m.token == room.host)
-            .and_then(|m| m.user_id);
+        let host_user = room.members.iter().find(|m| m.token == room.host).and_then(|m| m.user_id);
         if room.settings.friends_only && (room.host != host || host_user != Some(other)) {
             self.spectate(conn, id);
         } else {
@@ -151,20 +131,12 @@ impl Manager {
         if self.room_of(conn) == Some(id) {
             return;
         }
-        if self
-            .rooms
-            .get(&id)
-            .is_none_or(|r| r.spectators.len() >= shared::MAX_SPECTATORS)
-        {
+        if self.rooms.get(&id).is_none_or(|r| r.spectators.len() >= shared::MAX_SPECTATORS) {
             self.join_failed(conn, JOIN_UNAVAILABLE);
             return;
         }
         self.leave_current(conn);
-        let spectator = Spectator {
-            conn,
-            user_id: self.user_of(conn),
-            name: self.display_name(conn),
-        };
+        let spectator = Spectator { conn, user_id: self.user_of(conn), name: self.display_name(conn) };
         let Some(room) = self.rooms.get_mut(&id) else { return };
         room.spectators.push(spectator);
         let count = room.spectators.len() as u8;

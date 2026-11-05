@@ -58,12 +58,7 @@ fn browser_buttons(view: View) -> BrowserButtons {
     // Narrower when upright, so the title keeps its place on the left.
     let bw = ((tools.w - 2.0 * gap) / 3.0).min(190.0);
     let [create, join_id, refresh] = tools.right(3.0 * bw + 2.0 * gap).columns(gap, [Size::Px(bw); 3]);
-    BrowserButtons {
-        create,
-        join_id,
-        refresh,
-        back: frame.back,
-    }
+    BrowserButtons { create, join_id, refresh, back: frame.back }
 }
 
 pub fn update_browser(app: &App, state: &mut State) -> Transition {
@@ -72,20 +67,14 @@ pub fn update_browser(app: &App, state: &mut State) -> Transition {
 
     let pages = room_pages(&state.rooms, state.ui.view());
     state.room_pager.clamp(pages);
-    state
-        .room_pager
-        .update(app, &state.ui, &state.fonts, &state.input.keys, pager_area(view), pages);
+    state.room_pager.update(app, &state.ui, &state.fonts, &state.input.keys, pager_area(view), pages);
 
     let clicked = shown_rooms(state)
         .find(|&(i, _)| state.ui.clicked(room_row(view, i)))
         .map(|(_, room)| (room.id, watch_only(room)));
     if let Some((id, watch)) = clicked {
         state.notice.clear();
-        let msg = if watch {
-            ClientMessage::Spectate { id }
-        } else {
-            ClientMessage::JoinRoom { id }
-        };
+        let msg = if watch { ClientMessage::Spectate { id } } else { ClientMessage::JoinRoom { id } };
         state.net.conn.send(&msg);
         return Transition::Stay;
     }
@@ -113,9 +102,7 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
     let view = state.ui.view();
     let mut draw = state.ui.screen_canvas(gfx);
 
-    state
-        .ui
-        .header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     draw.sharp_text(&state.fonts.display, "Rooms")
         .position(60.0, theme::HEADER_H / 2.0)
         .size(theme::size::TITLE)
@@ -137,9 +124,7 @@ pub fn draw_browser(gfx: &mut Graphics, state: &State) {
     }
     let pages = room_pages(&state.rooms, state.ui.view());
     if pages > 1 {
-        state
-            .room_pager
-            .draw(&mut draw, &state.ui, &state.fonts, pager_area(view), pages);
+        state.room_pager.draw(&mut draw, &state.ui, &state.fonts, pager_area(view), pages);
     }
 
     let b = browser_buttons(view);
@@ -176,59 +161,26 @@ fn draw_room_row(draw: &mut Draw, state: &State, row: Rect, index: usize, room: 
         .v_align_middle()
         .color(pal.text_muted);
     let players = format!("{}/{} joueurs", room.players, room.max);
-    let mut pills = vec![Pill {
-        text: &players,
-        color: pal.accent,
-        size: theme::size::SMALL,
-    }];
+    let mut pills = vec![Pill { text: &players, color: pal.accent, size: theme::size::SMALL }];
     if room.in_game {
-        pills.push(Pill {
-            text: "En jeu",
-            color: theme::WARNING,
-            size: theme::size::SMALL,
-        });
+        pills.push(Pill { text: "En jeu", color: theme::WARNING, size: theme::size::SMALL });
     }
     if room.friends_only {
-        pills.push(Pill {
-            text: "Amis",
-            color: theme::SUCCESS,
-            size: theme::size::SMALL,
-        });
+        pills.push(Pill { text: "Amis", color: theme::SUCCESS, size: theme::size::SMALL });
     }
     if room.ranked {
-        pills.push(Pill {
-            text: "Classé",
-            color: theme::bar::ORANGE,
-            size: theme::size::SMALL,
-        });
+        pills.push(Pill { text: "Classé", color: theme::bar::ORANGE, size: theme::size::SMALL });
     }
-    let watchers = format!(
-        "{} spectateur{}",
-        room.spectators,
-        if room.spectators > 1 { "s" } else { "" }
-    );
+    let watchers = format!("{} spectateur{}", room.spectators, if room.spectators > 1 { "s" } else { "" });
     if room.spectators > 0 {
-        pills.push(Pill {
-            text: &watchers,
-            color: pal.text_dim,
-            size: theme::size::SMALL,
-        });
+        pills.push(Pill { text: &watchers, color: pal.text_dim, size: theme::size::SMALL });
     }
     if watch_only(room) {
-        pills.push(Pill {
-            text: "Regarder",
-            color: theme::LINK,
-            size: theme::size::SMALL,
-        });
+        pills.push(Pill { text: "Regarder", color: theme::LINK, size: theme::size::SMALL });
     }
     let pills_start = ui::pills_ending_at(draw, fonts, &pills, row.x + row.w - 16.0, mid);
     let name_x = row.x + 90.0;
-    let name = fonts.fit(
-        Face::Display,
-        &room.name,
-        theme::size::EMPHASIS,
-        pills_start - 20.0 - name_x,
-    );
+    let name = fonts.fit(Face::Display, &room.name, theme::size::EMPHASIS, pills_start - 20.0 - name_x);
     draw.sharp_text(&fonts.display, &name)
         .position(name_x, mid)
         .size(theme::size::EMPHASIS)
@@ -313,11 +265,7 @@ fn draw_entry(gfx: &mut Graphics, state: &State, title: &str, confirm: &str, pla
         .v_align_middle()
         .color(pal.text);
 
-    let field = Field {
-        placeholder,
-        input: &state.text_input,
-        focused: true,
-    };
+    let field = Field { placeholder, input: &state.text_input, focused: true };
     text_field(&mut draw, &state.ui, &state.fonts, entry_box(w, h), &field);
 
     let (cbtn, back) = entry_buttons(w, h);
@@ -389,14 +337,7 @@ enum Tile {
 
 /// The lobby's settings, by column: the game played, then the room.
 const LOBBY_SETTINGS: [(&str, &[Tile]); 2] = [
-    (
-        "Partie",
-        &[
-            Tile::Setting(RoomSetting::StartingLevel),
-            Tile::Setting(RoomSetting::Colors),
-            Tile::Size,
-        ],
-    ),
+    ("Partie", &[Tile::Setting(RoomSetting::StartingLevel), Tile::Setting(RoomSetting::Colors), Tile::Size]),
     (
         "Room",
         &[
@@ -415,15 +356,9 @@ fn lobby_panel(view: View) -> SettingsGrid {
 /// Each setting of the lobby with its tile.
 fn lobby_tiles(view: View) -> impl Iterator<Item = (Tile, Rect)> {
     let grid = lobby_panel(view);
-    LOBBY_SETTINGS
-        .into_iter()
-        .enumerate()
-        .flat_map(move |(column, (_, settings))| {
-            settings
-                .iter()
-                .enumerate()
-                .map(move |(row, &setting)| (setting, grid.tile(column, row)))
-        })
+    LOBBY_SETTINGS.into_iter().enumerate().flat_map(move |(column, (_, settings))| {
+        settings.iter().enumerate().map(move |(row, &setting)| (setting, grid.tile(column, row)))
+    })
 }
 
 fn lobby_size_button(view: View) -> Rect {
@@ -475,9 +410,7 @@ impl PlayerList {
         let area = card.below(PLAYERS_TITLE_H).pad(0.0, 12.0, below, 12.0);
         let count = info.names.len();
         let step = (area.h / count.max(1) as f32).clamp(MIN_PLAYER_ROW_H, PLAYER_ROW_H);
-        let shown = area
-            .rows_fitting(step - PLAYER_ROW_GAP, PLAYER_ROW_GAP)
-            .clamp(1, count.max(1));
+        let shown = area.rows_fitting(step - PLAYER_ROW_GAP, PLAYER_ROW_GAP).clamp(1, count.max(1));
         Self {
             area,
             step,
@@ -490,10 +423,9 @@ impl PlayerList {
 
     /// Row `i`, if it is in sight.
     fn row(&self, i: usize) -> Option<Rect> {
-        (self.first..self.first + self.shown).contains(&i).then(|| {
-            self.area
-                .nth_row(i - self.first, self.step - PLAYER_ROW_GAP, PLAYER_ROW_GAP)
-        })
+        (self.first..self.first + self.shown)
+            .contains(&i)
+            .then(|| self.area.nth_row(i - self.first, self.step - PLAYER_ROW_GAP, PLAYER_ROW_GAP))
     }
 
     fn scrolls(&self) -> bool {
@@ -504,10 +436,7 @@ impl PlayerList {
     fn scroll_buttons(&self) -> [Rect; 2] {
         let band = self.title.pad(0.0, 12.0, 0.0, 0.0).middle(SCROLL_BUTTON);
         let down = band.right(SCROLL_BUTTON);
-        [
-            Rect::at(down.x - SCROLL_BUTTON - 6.0, down.y, SCROLL_BUTTON, SCROLL_BUTTON),
-            down,
-        ]
+        [Rect::at(down.x - SCROLL_BUTTON - 6.0, down.y, SCROLL_BUTTON, SCROLL_BUTTON), down]
     }
 
     /// The first row after scrolling by `dir` rows.
@@ -518,10 +447,7 @@ impl PlayerList {
 }
 
 fn add_cpu_button(view: View) -> Rect {
-    lobby_players(view)
-        .pad(0.0, 12.0, 12.0, 12.0)
-        .bottom_band(ADD_CPU_H)
-        .centered(220.0, ADD_CPU_H)
+    lobby_players(view).pad(0.0, 12.0, 12.0, 12.0).bottom_band(ADD_CPU_H).centered(220.0, ADD_CPU_H)
 }
 
 /// Whether the host may seat, change and remove CPUs now.
@@ -536,12 +462,7 @@ fn may_add_cpu(info: &LobbyInfo) -> bool {
 /// The CPU in lobby seat `i`, if a CPU plays it.
 fn cpu_seat_at(info: &LobbyInfo, i: usize) -> Option<CpuSeat> {
     let (difficulty, style) = info.cpus.get(i).copied().flatten()?;
-    Some(CpuSeat {
-        slot: u8::try_from(i + 1).ok()?,
-        difficulty,
-        style,
-        team: info.teams.get(i).copied().flatten(),
-    })
+    Some(CpuSeat { slot: u8::try_from(i + 1).ok()?, difficulty, style, team: info.teams.get(i).copied().flatten() })
 }
 
 /// One's own row, while one may still change team on it.
@@ -586,9 +507,7 @@ fn draw_lobby_players(draw: &mut Draw, state: &State, info: &LobbyInfo) {
     if list.scrolls() {
         let [up, down] = list.scroll_buttons();
         state.ui.button_enabled(draw, fonts, up, Icon::Up, list.first > 0);
-        state
-            .ui
-            .button_enabled(draw, fonts, down, Icon::Down, list.first + list.shown < list.count);
+        state.ui.button_enabled(draw, fonts, down, Icon::Down, list.first + list.shown < list.count);
     }
     let own = usize::from(info.your_slot).checked_sub(1);
     let picker = team_picker(info);
@@ -603,11 +522,7 @@ fn draw_lobby_players(draw: &mut Draw, state: &State, info: &LobbyInfo) {
             list_row(draw, &pal, row, i);
         }
         let (label, color) = team_look(info.teams.get(i).copied().flatten(), &pal);
-        let pill = Pill {
-            text: label,
-            color,
-            size: theme::size::SMALL,
-        };
+        let pill = Pill { text: label, color, size: theme::size::SMALL };
         let pill_w = pill.width(fonts);
         let name = fonts.fit(Face::Text, name, theme::size::BODY, row.w - pill_w - 36.0);
         draw.sharp_text(&fonts.text, &name)
@@ -654,15 +569,7 @@ fn invite_button(view: View, i: usize) -> Rect {
 
 pub fn update_lobby(app: &mut App, state: &mut State) {
     let view = state.ui.view();
-    let State {
-        room,
-        ui,
-        fonts,
-        auth,
-        input: Input { keys, .. },
-        net: Network { conn, maintenance, .. },
-        ..
-    } = state;
+    let State { room, ui, fonts, auth, input: Input { keys, .. }, net: Network { conn, maintenance, .. }, .. } = state;
     let Some(room) = room.as_mut() else { return };
     if let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut room.invite.slot) {
         room.invite.friends = data.friends;
@@ -678,9 +585,7 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
         let per_page = visible_invites(view);
         let pages = ui::page_count(invite.friends.len(), per_page);
         invite.pager.clamp(pages);
-        invite
-            .pager
-            .update(app, ui, fonts, keys, invite_pager_area(view), pages);
+        invite.pager.update(app, ui, fonts, keys, invite_pager_area(view), pages);
         let loaded = invite.slot.is_none();
         let invited = invite
             .pager
@@ -805,11 +710,8 @@ pub fn update_lobby(app: &mut App, state: &mut State) {
 
     let (_, _, launch_enabled) = launch_bar(info, *maintenance);
     if launch_enabled && ui.bar_clicked(lobby_launch(view)) {
-        let msg = if info.your_slot == 0 {
-            ClientMessage::JoinRoom { id: info.id }
-        } else {
-            ClientMessage::ToggleCountdown
-        };
+        let msg =
+            if info.your_slot == 0 { ClientMessage::JoinRoom { id: info.id } } else { ClientMessage::ToggleCountdown };
         conn.send(&msg);
         return;
     }
@@ -841,20 +743,12 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     let view = state.ui.view();
     let fonts = &state.fonts;
     let mut draw = state.ui.screen_canvas(gfx);
-    state
-        .ui
-        .set_input(!room.invite.open && !room.sizing && room.cpu_edit.is_none());
+    state.ui.set_input(!room.invite.open && !room.sizing && room.cpu_edit.is_none());
 
     draw_lobby_header(&mut draw, state, info);
     draw_lobby_players(&mut draw, state, info);
 
-    lobby_panel(view).draw(
-        &mut draw,
-        &pal,
-        fonts,
-        "Réglages de la room",
-        LOBBY_SETTINGS.map(|(section, _)| section),
-    );
+    lobby_panel(view).draw(&mut draw, &pal, fonts, "Réglages de la room", LOBBY_SETTINGS.map(|(section, _)| section));
     let editable = info.is_host && info.countdown.is_none();
     for (setting, tile) in lobby_tiles(view) {
         let Tile::Setting(setting) = setting else {
@@ -873,18 +767,12 @@ pub fn draw_lobby(gfx: &mut Graphics, state: &State) {
     }
 
     let (label, color, enabled) = launch_bar(info, state.net.maintenance);
-    state
-        .ui
-        .menu_bar_enabled(&mut draw, fonts, lobby_launch(view), label, color, enabled);
+    state.ui.menu_bar_enabled(&mut draw, fonts, lobby_launch(view), label, color, enabled);
     if info.your_slot != 0 && state.auth.is_some() {
-        state
-            .ui
-            .menu_bar(&mut draw, fonts, lobby_invite(view), "Inviter un ami", theme::bar::BLUE);
+        state.ui.menu_bar(&mut draw, fonts, lobby_invite(view), "Inviter un ami", theme::bar::BLUE);
     }
     room.chat.draw_card(&mut draw, &state.ui, fonts, lobby_chat(view));
-    state
-        .ui
-        .menu_bar(&mut draw, fonts, lobby_leave(view), "Quitter la room", theme::bar::RED);
+    state.ui.menu_bar(&mut draw, fonts, lobby_leave(view), "Quitter la room", theme::bar::RED);
 
     if let Some(n) = info.countdown {
         draw.rect((0.0, 0.0), (view.w, view.h)).color(theme::SCRIM);
@@ -939,38 +827,18 @@ fn draw_lobby_header(draw: &mut Draw, state: &State, info: &LobbyInfo) {
     state.ui.header_band(draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     let id = format!("Room #{}", info.id);
     let players = format!("{}/{} joueurs", info.players, info.settings.max_players);
-    let watchers = format!(
-        "{} spectateur{}",
-        info.spectators,
-        if info.spectators > 1 { "s" } else { "" }
-    );
+    let watchers = format!("{} spectateur{}", info.spectators, if info.spectators > 1 { "s" } else { "" });
     let away = info.players.saturating_sub(info.connected);
     let away_text = format!("{away} déconnecté");
     let mut pills = vec![
-        Pill {
-            text: &id,
-            color: pal.text_dim,
-            size: theme::size::SMALL,
-        },
-        Pill {
-            text: &players,
-            color: pal.accent,
-            size: theme::size::SMALL,
-        },
+        Pill { text: &id, color: pal.text_dim, size: theme::size::SMALL },
+        Pill { text: &players, color: pal.accent, size: theme::size::SMALL },
     ];
     if away > 0 {
-        pills.push(Pill {
-            text: &away_text,
-            color: theme::WARNING,
-            size: theme::size::SMALL,
-        });
+        pills.push(Pill { text: &away_text, color: theme::WARNING, size: theme::size::SMALL });
     }
     if info.spectators > 0 {
-        pills.push(Pill {
-            text: &watchers,
-            color: pal.text_dim,
-            size: theme::size::SMALL,
-        });
+        pills.push(Pill { text: &watchers, color: pal.text_dim, size: theme::size::SMALL });
     }
     let mid = theme::HEADER_H / 2.0;
     let pills_start = ui::pills_ending_at(draw, fonts, &pills, view.w - 60.0, mid);
@@ -1009,9 +877,7 @@ fn draw_invite_overlay(draw: &mut Draw, state: &State, invite: &Invite) {
     let per_page = visible_invites(view);
     let pages = ui::page_count(invite.friends.len(), per_page);
     if pages > 1 {
-        invite
-            .pager
-            .draw(draw, &state.ui, fonts, invite_pager_area(view), pages);
+        invite.pager.draw(draw, &state.ui, fonts, invite_pager_area(view), pages);
     }
     for (i, friend) in invite.pager.shown(&invite.friends, per_page) {
         let row = invite_row(view, i);
@@ -1069,23 +935,12 @@ mod team_tests {
         while seen.len() < info.names.len() {
             for i in 0..info.names.len() {
                 let Some(row) = list.row(i) else { continue };
-                assert!(
-                    row.h >= MIN_PLAYER_ROW_H - PLAYER_ROW_GAP,
-                    "row {i} squeezed to {}",
-                    row.h
-                );
-                assert!(
-                    row.y >= card.y && row.bottom() <= card.bottom(),
-                    "row {i} out of the card"
-                );
+                assert!(row.h >= MIN_PLAYER_ROW_H - PLAYER_ROW_GAP, "row {i} squeezed to {}", row.h);
+                assert!(row.y >= card.y && row.bottom() <= card.bottom(), "row {i} out of the card");
                 seen.insert(i);
             }
             let next = list.scrolled(1);
-            assert!(
-                next > list.first || seen.len() == info.names.len(),
-                "stuck at {}",
-                list.first
-            );
+            assert!(next > list.first || seen.len() == info.names.len(), "stuck at {}", list.first);
             list = PlayerList::new(view, &info, next);
         }
     }

@@ -31,11 +31,7 @@ pub(super) struct UserSearchQuery {
 }
 
 pub(super) async fn handle_search_users(
-    State(Api {
-        pool,
-        search_limit: limit,
-        ..
-    }): State<Api>,
+    State(Api { pool, search_limit: limit, .. }): State<Api>,
     Authed(me): Authed,
     Params(query): Params<UserSearchQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -61,29 +57,17 @@ pub(super) async fn handle_list_friends(
     let users = list.friends.iter().map(|f| f.user_id).collect();
     let (reply, answer) = tokio::sync::oneshot::channel();
     let _ = cmd_tx.send(Command::Playing { users, reply }).await;
-    let playing = tokio::time::timeout(Duration::from_secs(1), answer)
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default();
+    let playing =
+        tokio::time::timeout(Duration::from_secs(1), answer).await.ok().and_then(Result::ok).unwrap_or_default();
     for friend in &mut list.friends {
         friend.playing = playing.contains(&friend.user_id);
     }
 
-    Ok(Json(FriendListResponse {
-        friends: list.friends,
-        sent: list.sent,
-        received: list.received,
-    }))
+    Ok(Json(FriendListResponse { friends: list.friends, sent: list.sent, received: list.received }))
 }
 
 pub(super) async fn handle_send_friend_request(
-    State(Api {
-        pool,
-        cmd_tx,
-        friend_limit: limit,
-        ..
-    }): State<Api>,
+    State(Api { pool, cmd_tx, friend_limit: limit, .. }): State<Api>,
     Authed(me): Authed,
     JsonBody(body): JsonBody<SendFriendRequestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -112,9 +96,7 @@ pub(super) async fn handle_accept_friend(
     PathParam(requester_id): PathParam<Uuid>,
     Authed(me): Authed,
 ) -> Result<impl IntoResponse, ApiError> {
-    let found = db::accept_friend_request(&pool, me.id, requester_id)
-        .await
-        .map_err(internal)?;
+    let found = db::accept_friend_request(&pool, me.id, requester_id).await.map_err(internal)?;
 
     if found {
         let users = (me.id, requester_id);

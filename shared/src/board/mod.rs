@@ -132,9 +132,8 @@ impl Board {
     pub fn new(seed: u64, rules: &Rules) -> Self {
         let mut rng = BoardRng::from_seed(seed);
         let colors = rules.colors;
-        let (n1, n2) = rng.draw(Stream::Pieces, |r| {
-            (PuyoType::random_pair(r, colors), PuyoType::random_pair(r, colors))
-        });
+        let (n1, n2) =
+            rng.draw(Stream::Pieces, |r| (PuyoType::random_pair(r, colors), PuyoType::random_pair(r, colors)));
         let mut cells = Grid::new(usize::from(rules.columns), rules.height());
         let rows = config::starting_garbage_rows(rules.starting_level) as usize;
         for row in cells.rows_mut().rev().take(rows) {
@@ -281,10 +280,7 @@ impl Board {
 
     /// How close to losing: the tallest column, then how many cells are taken.
     pub fn danger(&self) -> (usize, usize) {
-        let peak = (0..self.width())
-            .map(|c| self.cells.column_height(c))
-            .max()
-            .unwrap_or(0);
+        let peak = (0..self.width()).map(|c| self.cells.column_height(c)).max().unwrap_or(0);
         let filled = self.cells.iter().filter(|c| c.is_some()).count();
         (peak, filled)
     }
@@ -296,11 +292,9 @@ impl Board {
         self.cells.is_well_formed()
             && self.height() > VISIBLE_ROW_OFFSET
             && match &self.phase {
-                Phase::Pair(pair) => pair
-                    .piece
-                    .positions()
-                    .into_iter()
-                    .all(|(r, c)| self.cells.checked(r, c).is_some()),
+                Phase::Pair(pair) => {
+                    pair.piece.positions().into_iter().all(|(r, c)| self.cells.checked(r, c).is_some())
+                }
                 Phase::Falling(fall) => fall.cells.iter().all(|f| on_grid(f.row, f.col)),
                 Phase::Popping { cells, .. } => cells.iter().all(|&(r, c)| on_grid(r, c)),
                 Phase::Waiting | Phase::Settled | Phase::GameOver => true,

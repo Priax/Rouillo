@@ -83,10 +83,7 @@ pub fn update_game(
 
 pub fn animate(session: &mut GameSession, dt: f32) {
     if let Some(p) = session.predicted_board.piece() {
-        session
-            .fx
-            .my_turn
-            .update(session.predicted_board.piece_id, p.rotation, dt);
+        session.fx.my_turn.update(session.predicted_board.piece_id, p.rotation, dt);
     }
     for rival in &mut session.rivals {
         rival.view.advance(dt);
@@ -212,13 +209,7 @@ pub fn announce_events(session: &mut GameSession) {
 /// not overtake an older one still on its way.
 fn unacknowledged(session: &GameSession) -> Vec<SentInput> {
     let pending = session.net.pending_inputs.iter().take(shared::MAX_RESENT_INPUTS);
-    pending
-        .map(|p| SentInput {
-            seq: p.seq,
-            tick: p.input.tick,
-            kind: p.input.kind,
-        })
-        .collect()
+    pending.map(|p| SentInput { seq: p.seq, tick: p.input.tick, kind: p.input.kind }).collect()
 }
 
 fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: InputKind) -> bool {
@@ -240,9 +231,7 @@ fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: In
             sent: session.net.clock,
         });
         conn.send(&ClientMessage::Input { kind, seq, tick });
-        conn.send_datagram(&ClientMessage::Inputs {
-            inputs: unacknowledged(session),
-        });
+        conn.send_datagram(&ClientMessage::Inputs { inputs: unacknowledged(session) });
     }
     moved
 }
@@ -283,9 +272,7 @@ pub fn choose_target(
         _ => session.target,
     };
     let after = |slot: Option<u8>| {
-        let i = slot
-            .and_then(|s| foes.iter().position(|&f| f == s))
-            .map_or(0, |i| i + 1);
+        let i = slot.and_then(|s| foes.iter().position(|&f| f == s)).map_or(0, |i| i + 1);
         foes.get(i % foes.len().max(1)).copied()
     };
     let manual = |slot: Option<u8>| slot.filter(|s| foes.contains(s)).or_else(|| foes.first().copied());
@@ -327,10 +314,7 @@ fn handle_game_input(
         return;
     }
 
-    for (action, kind) in [
-        (Action::Left, InputKind::MoveLeft),
-        (Action::Right, InputKind::MoveRight),
-    ] {
+    for (action, kind) in [(Action::Left, InputKind::MoveLeft), (Action::Right, InputKind::MoveRight)] {
         let timer = if kind == InputKind::MoveLeft {
             &mut session.keys.key_timer_left
         } else {
@@ -371,11 +355,7 @@ fn handle_soft_drop_key(input: &Frame, session: &mut GameSession, conn: Option<&
     let down = input.held(Action::SoftDrop);
     if down != session.keys.soft_drop_held {
         session.keys.soft_drop_held = down;
-        let kind = if down {
-            InputKind::SoftDropPress
-        } else {
-            InputKind::SoftDropRelease
-        };
+        let kind = if down { InputKind::SoftDropPress } else { InputKind::SoftDropRelease };
         send_input(session, conn, kind);
     }
 }
@@ -420,10 +400,7 @@ mod tests {
             ("jittery", vec![1.0 / 61.0, 1.0 / 58.0, 1.0 / 144.0, 1.0 / 45.0]),
         ] {
             let rows = rows_fallen(&dts, secs);
-            assert!(
-                (rows - at_60).abs() <= 1,
-                "{name} fell {rows} rows where 60 Hz fell {at_60}"
-            );
+            assert!((rows - at_60).abs() <= 1, "{name} fell {rows} rows where 60 Hz fell {at_60}");
         }
     }
 
@@ -491,11 +468,7 @@ mod tests {
 
         session.predicted_board.chain_count = 3;
         announce_events(&mut session);
-        assert_eq!(
-            session.fx.chain_display.map(|(c, _)| c),
-            Some(3),
-            "the next step was missed"
-        );
+        assert_eq!(session.fx.chain_display.map(|(c, _)| c), Some(3), "the next step was missed");
     }
 
     #[test]
@@ -537,9 +510,7 @@ mod tests {
     fn moves_over(frames: u32, dt: f32) -> Vec<u32> {
         let settings = Settings::default();
         let mut timer = 0.0;
-        (0..frames)
-            .map(|_| autorepeat(&mut timer, true, dt, settings))
-            .collect()
+        (0..frames).map(|_| autorepeat(&mut timer, true, dt, settings)).collect()
     }
 
     #[test]
@@ -558,9 +529,7 @@ mod tests {
         autorepeat(&mut timer, true, 1.0 / 60.0, settings);
         let burst = autorepeat(&mut timer, true, 5.0, settings);
         assert_eq!(burst, config::GRID_WIDTH as u32);
-        let after: u32 = (0..10)
-            .map(|_| autorepeat(&mut timer, true, 1.0 / 60.0, settings))
-            .sum();
+        let after: u32 = (0..10).map(|_| autorepeat(&mut timer, true, 1.0 / 60.0, settings)).sum();
         assert!(after <= 6, "{after} moves in the 10 frames after the stall");
     }
 
@@ -570,11 +539,7 @@ mod tests {
         let mut timer = 0.0;
         autorepeat(&mut timer, true, 1.0 / 60.0, settings);
         assert_eq!(autorepeat(&mut timer, false, 1.0 / 60.0, settings), 0);
-        assert_eq!(
-            autorepeat(&mut timer, true, 1.0 / 60.0, settings),
-            1,
-            "a new press moves at once"
-        );
+        assert_eq!(autorepeat(&mut timer, true, 1.0 / 60.0, settings), 1, "a new press moves at once");
     }
 
     fn arena() -> GameSession {
@@ -597,12 +562,7 @@ mod tests {
         }
         assert_eq!(
             seen,
-            [
-                Targeting::Attackers,
-                Targeting::Danger,
-                Targeting::Manual(3),
-                Targeting::Random
-            ],
+            [Targeting::Attackers, Targeting::Danger, Targeting::Manual(3), Targeting::Random],
             "the partner in slot 2 is skipped"
         );
     }
@@ -634,21 +594,10 @@ mod tests {
     fn inputs_sent_again_start_from_the_oldest_unacknowledged() {
         let mut session = synced_session();
         session.net.pending_inputs = (1..=20)
-            .map(|seq| PendingInput {
-                seq,
-                input: StampedInput {
-                    tick: seq,
-                    kind: InputKind::RotateCW,
-                },
-                sent: 0.0,
-            })
+            .map(|seq| PendingInput { seq, input: StampedInput { tick: seq, kind: InputKind::RotateCW }, sent: 0.0 })
             .collect();
         session.net.pending_inputs.retain(|p| p.seq > 3);
         let seqs: Vec<u32> = unacknowledged(&session).iter().map(|i| i.seq).collect();
-        assert_eq!(
-            seqs,
-            (4..20).collect::<Vec<_>>(),
-            "a gap would get the older ones refused"
-        );
+        assert_eq!(seqs, (4..20).collect::<Vec<_>>(), "a gap would get the older ones refused");
     }
 }

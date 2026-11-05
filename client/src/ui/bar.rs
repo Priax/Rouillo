@@ -76,13 +76,7 @@ impl Slanted {
     fn of(row: Rect, hover: f32) -> Self {
         let cx = row.x + row.w / 2.0;
         let half = row.w * (WIDTH + HOVER_WIDTH * hover) / 2.0;
-        Self {
-            left: cx - half,
-            right: cx + half,
-            top: row.y,
-            bottom: row.y + row.h,
-            slant: row.h * SLANT,
-        }
+        Self { left: cx - half, right: cx + half, top: row.y, bottom: row.y + row.h, slant: row.h * SLANT }
     }
 
     fn contains(self, x: f32, y: f32) -> bool {
@@ -94,31 +88,13 @@ impl Slanted {
     }
 
     fn corners(self) -> [(f32, f32); 4] {
-        let Self {
-            left,
-            right,
-            top,
-            bottom,
-            slant,
-        } = self;
-        [
-            (left + slant, top),
-            (right + slant, top),
-            (right - slant, bottom),
-            (left - slant, bottom),
-        ]
+        let Self { left, right, top, bottom, slant } = self;
+        [(left + slant, top), (right + slant, top), (right - slant, bottom), (left - slant, bottom)]
     }
 
     fn fill(self, draw: &mut Draw, color: Color) {
         let [a, b, c, d] = self.corners();
-        draw.path()
-            .move_to(a.0, a.1)
-            .line_to(b.0, b.1)
-            .line_to(c.0, c.1)
-            .line_to(d.0, d.1)
-            .close()
-            .fill()
-            .color(color);
+        draw.path().move_to(a.0, a.1).line_to(b.0, b.1).line_to(c.0, c.1).line_to(d.0, d.1).close().fill().color(color);
     }
 }
 
@@ -130,13 +106,7 @@ fn glow(draw: &mut Draw, bar: Slanted, color: Color) {
     if color.a <= 0.0 {
         return;
     }
-    let Slanted {
-        left,
-        right,
-        top,
-        bottom,
-        slant,
-    } = bar;
+    let Slanted { left, right, top, bottom, slant } = bar;
     glow_quad(draw, (left + slant, top), (left - slant, bottom), -GLOW_WIDTH, color);
     glow_quad(draw, (right + slant, top), (right - slant, bottom), GLOW_WIDTH, color);
 }
@@ -145,12 +115,9 @@ fn glow_quad(draw: &mut Draw, top: (f32, f32), bottom: (f32, f32), reach: f32, c
     let clear = color.with_alpha(0.0);
     let (far_top, far_bottom) = ((top.0 + reach, top.1), (bottom.0 + reach, bottom.1));
     draw.triangle(far_top, top, bottom).color_vertex(clear, color, color);
-    draw.triangle(far_top, bottom, far_bottom)
-        .color_vertex(clear, color, clear);
+    draw.triangle(far_top, bottom, far_bottom).color_vertex(clear, color, clear);
 }
 
 fn seed_of(label: &str) -> u64 {
-    label.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
-    })
+    label.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }

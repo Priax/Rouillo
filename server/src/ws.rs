@@ -53,12 +53,7 @@ pub enum Verdict {
 
 impl RateLimiter {
     pub fn new(now: Instant) -> Self {
-        Self {
-            tokens: CLIENT_MSG_BURST,
-            last: now,
-            window_start: now,
-            drops_in_window: 0,
-        }
+        Self { tokens: CLIENT_MSG_BURST, last: now, window_start: now, drops_in_window: 0 }
     }
 
     pub fn check(&mut self, now: Instant) -> Verdict {
@@ -117,10 +112,7 @@ impl IpSlot {
         }
         *n += 1;
         drop(m);
-        Ok(Some(Self {
-            conns: Arc::clone(conns),
-            ip,
-        }))
+        Ok(Some(Self { conns: Arc::clone(conns), ip }))
     }
 }
 
@@ -146,10 +138,7 @@ pub struct Conns {
 
 impl Conns {
     pub fn new() -> Self {
-        Self {
-            counter: Arc::new(AtomicU64::new(1)),
-            ips: IpConns::default(),
-        }
+        Self { counter: Arc::new(AtomicU64::new(1)), ips: IpConns::default() }
     }
 }
 
@@ -176,9 +165,7 @@ async fn upgrade(
         return (StatusCode::TOO_MANY_REQUESTS, "Too many connections").into_response();
     };
     let conn = state.conns.counter.fetch_add(1, Ordering::Relaxed);
-    let ws = ws
-        .max_message_size(MAX_CLIENT_MESSAGE)
-        .max_frame_size(MAX_CLIENT_MESSAGE);
+    let ws = ws.max_message_size(MAX_CLIENT_MESSAGE).max_frame_size(MAX_CLIENT_MESSAGE);
     let version = query.ok().and_then(|Query(q)| q.v);
     if version == Some(shared::PROTOCOL_VERSION) {
         let WsState { cmd_tx, pool, .. } = state;
@@ -187,10 +174,7 @@ async fn upgrade(
             drop(slot);
         })
     } else {
-        info!(
-            "WS {conn} refusé: protocole {version:?}, attendu {}",
-            shared::PROTOCOL_VERSION
-        );
+        info!("WS {conn} refusé: protocole {version:?}, attendu {}", shared::PROTOCOL_VERSION);
         ws.on_upgrade(reject_outdated)
     }
 }
@@ -207,12 +191,8 @@ const CLOSE_OUTDATED: u16 = 4426;
 async fn reject_outdated(ws: WebSocket) {
     let (mut tx, _rx) = ws.split();
     let _ = tx.send(Message::text(shared::OUTDATED_FRAME)).await;
-    let _ = tx
-        .send(Message::Close(Some(CloseFrame {
-            code: CLOSE_OUTDATED,
-            reason: shared::OUTDATED_FRAME.into(),
-        })))
-        .await;
+    let _ =
+        tx.send(Message::Close(Some(CloseFrame { code: CLOSE_OUTDATED, reason: shared::OUTDATED_FRAME.into() }))).await;
 }
 
 /// What a connection does with the messages it receives, whatever carries them.
@@ -233,14 +213,7 @@ impl Inbox {
         pool: db::DbPool,
         pong_tx: mpsc::Sender<Vec<u8>>,
     ) -> Self {
-        Self {
-            conn,
-            cmd_tx,
-            pool,
-            pong_tx,
-            limiter: RateLimiter::new(Instant::now()),
-            greeted: false,
-        }
+        Self { conn, cmd_tx, pool, pong_tx, limiter: RateLimiter::new(Instant::now()), greeted: false }
     }
 
     /// Handles one message, `None` for one that carries no game message.
@@ -278,12 +251,7 @@ impl Inbox {
         let conn = self.conn;
         let cmd = match msg {
             ClientMessage::Hello { .. } if self.greeted => return true,
-            ClientMessage::Hello {
-                player_id,
-                auth_token,
-                last_disconnect_reason,
-                background,
-            } => {
+            ClientMessage::Hello { player_id, auth_token, last_disconnect_reason, background } => {
                 self.greeted = true;
                 let session = auth_token.as_deref().and_then(|t| Uuid::parse_str(t).ok());
                 let user = match session {
@@ -312,12 +280,7 @@ impl Inbox {
                         Verdict::Drop => return true,
                         Verdict::Disconnect => return false,
                     }
-                    let cmd = Command::Input {
-                        conn,
-                        kind: i.kind,
-                        seq: i.seq,
-                        tick: i.tick,
-                    };
+                    let cmd = Command::Input { conn, kind: i.kind, seq: i.seq, tick: i.tick };
                     if self.cmd_tx.send(cmd).await.is_err() {
                         return false;
                     }
@@ -349,10 +312,7 @@ fn command(conn: ConnId, msg: ClientMessage) -> Option<Command> {
         ClientMessage::SetRoomSetting { setting, dir } => Command::SetSetting { conn, setting, dir },
         ClientMessage::ToggleCountdown => Command::ToggleCountdown { conn },
         ClientMessage::ReturnToLobby => Command::ReturnToLobby { conn },
-        ClientMessage::InviteFriend { user_id } => Command::InviteFriend {
-            conn,
-            target_user_id: user_id,
-        },
+        ClientMessage::InviteFriend { user_id } => Command::InviteFriend { conn, target_user_id: user_id },
         ClientMessage::JoinQueue => Command::JoinQueue { conn },
         ClientMessage::LeaveQueue => Command::LeaveQueue { conn },
         ClientMessage::AcceptMatch => Command::AcceptMatch { conn },
@@ -362,18 +322,9 @@ fn command(conn: ConnId, msg: ClientMessage) -> Option<Command> {
         ClientMessage::SetTargeting { targeting } => Command::SetTargeting { conn, targeting },
         ClientMessage::SetTeam { team } => Command::SetTeam { conn, team },
         ClientMessage::AddCpu => Command::AddCpu { conn },
-        ClientMessage::SetCpu {
-            slot,
-            difficulty,
-            style,
-            team,
-        } => Command::SetCpu {
-            conn,
-            slot,
-            difficulty,
-            style,
-            team,
-        },
+        ClientMessage::SetCpu { slot, difficulty, style, team } => {
+            Command::SetCpu { conn, slot, difficulty, style, team }
+        }
         ClientMessage::RemoveCpu { slot } => Command::RemoveCpu { conn, slot },
         ClientMessage::Follow { slot } => Command::Follow { conn, slot },
     })
@@ -385,13 +336,7 @@ async fn handle_connection(ws: WebSocket, cmd_tx: mpsc::Sender<Command>, conn: C
     let pong_tx = to_client_tx.clone();
     info!("WS {conn} ouverture");
 
-    let _ = cmd_tx
-        .send(Command::Register {
-            conn,
-            sender: to_client_tx,
-            states: None,
-        })
-        .await;
+    let _ = cmd_tx.send(Command::Register { conn, sender: to_client_tx, states: None }).await;
 
     let mut send_task = tokio::spawn(async move {
         while let Some(payload) = to_client_rx.recv().await {

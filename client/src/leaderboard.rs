@@ -102,9 +102,7 @@ pub fn update(app: &App, state: &mut State, board: &mut Leaderboard) -> Transiti
     poll(board, me.as_deref());
     let pages = ui::page_count(board.top.len(), per_page(view));
     board.pager.clamp(pages);
-    board
-        .pager
-        .update(app, &state.ui, &state.fonts, &state.input.keys, pager_area(view), pages);
+    board.pager.update(app, &state.ui, &state.fonts, &state.input.keys, pager_area(view), pages);
 
     let clicked = board
         .pager
@@ -141,11 +139,7 @@ fn draw_row(draw: &mut Draw, state: &State, (row, i): (Rect, usize), e: &Entry, 
     let fonts = &state.fonts;
     state.ui.row(draw, row, i, &format!("rank:{}", e.user_id));
     let mid = row.y + row.h / 2.0;
-    let who = ui::Persona {
-        name: &e.username,
-        glow: 0.0,
-        picture,
-    };
+    let who = ui::Persona { name: &e.username, glow: 0.0, picture };
     ui::portrait(draw, &pal, fonts, (row.x + 100.0 + AVATAR_R, mid), AVATAR_R, &who);
     draw.sharp_text(&fonts.display, &format!("#{}", e.rank))
         .position(row.x + 18.0, mid)
@@ -157,30 +151,13 @@ fn draw_row(draw: &mut Draw, state: &State, (row, i): (Rect, usize), e: &Entry, 
     let record = format!("{} V / {} séries", e.series_won, e.series);
     let mut pills = Vec::new();
     if mine {
-        pills.push(Pill {
-            text: "Vous",
-            color: pal.accent,
-            size: theme::size::SMALL,
-        });
+        pills.push(Pill { text: "Vous", color: pal.accent, size: theme::size::SMALL });
     }
-    pills.push(Pill {
-        text: &record,
-        color: pal.text_dim,
-        size: theme::size::SMALL,
-    });
-    pills.push(Pill {
-        text: &elo,
-        color: theme::GOLD,
-        size: theme::size::SMALL,
-    });
+    pills.push(Pill { text: &record, color: pal.text_dim, size: theme::size::SMALL });
+    pills.push(Pill { text: &elo, color: theme::GOLD, size: theme::size::SMALL });
     let pills_start = ui::pills_ending_at(draw, fonts, &pills, row.x + row.w - 16.0, mid);
     let name_x = row.x + 100.0 + 2.0 * AVATAR_R + 12.0;
-    let name = fonts.fit(
-        Face::Display,
-        &e.username,
-        theme::size::EMPHASIS,
-        pills_start - 20.0 - name_x,
-    );
+    let name = fonts.fit(Face::Display, &e.username, theme::size::EMPHASIS, pills_start - 20.0 - name_x);
     draw.sharp_text(&fonts.display, &name)
         .position(name_x, mid)
         .size(theme::size::EMPHASIS)
@@ -192,9 +169,7 @@ pub fn draw(gfx: &mut Graphics, state: &State, board: &Leaderboard) {
     let pal = state.ui.palette();
     let view = state.ui.view();
     let mut draw = state.ui.screen_canvas(gfx);
-    state
-        .ui
-        .header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     draw.sharp_text(&state.fonts.display, "Classement")
         .position(60.0, theme::HEADER_H / 2.0)
         .size(theme::size::TITLE)
@@ -226,9 +201,7 @@ pub fn draw(gfx: &mut Graphics, state: &State, board: &Leaderboard) {
         }
         let pages = ui::page_count(board.top.len(), per_page(view));
         if pages > 1 {
-            board
-                .pager
-                .draw(&mut draw, &state.ui, &state.fonts, pager_area(view), pages);
+            board.pager.draw(&mut draw, &state.ui, &state.fonts, pager_area(view), pages);
         }
     }
 
@@ -237,11 +210,7 @@ pub fn draw(gfx: &mut Graphics, state: &State, board: &Leaderboard) {
         &mut draw,
         &state.fonts,
         refresh_btn(view),
-        if loading {
-            Label::from(Icon::Busy)
-        } else {
-            Label::from("Rafraîchir")
-        },
+        if loading { Label::from(Icon::Busy) } else { Label::from("Rafraîchir") },
         !loading,
     );
     let back = back_btn(view);
@@ -250,17 +219,10 @@ pub fn draw(gfx: &mut Graphics, state: &State, board: &Leaderboard) {
     let footer = match (&board.me, me, loading) {
         (_, _, true) => None,
         (Some(e), _, _) if e.rank > SIZE => Some((format!("Votre rang: #{} (ELO {})", e.rank, e.elo), pal.text)),
-        (None, Some(_), _) => Some((
-            "Jouez une série classée pour apparaître au classement.".to_owned(),
-            pal.text_dim,
-        )),
+        (None, Some(_), _) => Some(("Jouez une série classée pour apparaître au classement.".to_owned(), pal.text_dim)),
         _ => None,
     };
-    let footer = board
-        .status
-        .shown(&pal)
-        .map(|(msg, color)| (msg.to_owned(), color))
-        .or(footer);
+    let footer = board.status.shown(&pal).map(|(msg, color)| (msg.to_owned(), color)).or(footer);
     if let Some((msg, color)) = footer {
         draw.sharp_text(&state.fonts.text, &msg)
             .position(view.w / 2.0, back.y + back.h / 2.0)

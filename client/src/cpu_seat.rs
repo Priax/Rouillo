@@ -29,9 +29,7 @@ pub enum Action {
 
 fn modal(view: View) -> Modal {
     let h = 70.0 + TILES as f32 * ui::TILE_H + REMOVE_H + 40.0;
-    Modal {
-        card: Rect::at(0.0, 0.0, view.w, view.h).centered(CARD_W, h),
-    }
+    Modal { card: Rect::at(0.0, 0.0, view.w, view.h).centered(CARD_W, h) }
 }
 
 fn tile(modal: Modal, i: usize) -> Rect {
@@ -57,28 +55,14 @@ impl CpuSeat {
 
     fn stepped(self, i: usize, dir: i32) -> Self {
         match i {
-            0 => Self {
-                difficulty: ui::cycle(&Difficulty::ALL, self.difficulty, dir),
-                ..self
-            },
-            1 => Self {
-                style: ui::cycle(&Style::ALL, self.style, dir),
-                ..self
-            },
-            _ => Self {
-                team: step_team(self.team, dir),
-                ..self
-            },
+            0 => Self { difficulty: ui::cycle(&Difficulty::ALL, self.difficulty, dir), ..self },
+            1 => Self { style: ui::cycle(&Style::ALL, self.style, dir), ..self },
+            _ => Self { team: step_team(self.team, dir), ..self },
         }
     }
 
     const fn message(self) -> ClientMessage {
-        ClientMessage::SetCpu {
-            slot: self.slot,
-            difficulty: self.difficulty,
-            style: self.style,
-            team: self.team,
-        }
+        ClientMessage::SetCpu { slot: self.slot, difficulty: self.difficulty, style: self.style, team: self.team }
     }
 }
 
@@ -106,14 +90,7 @@ pub fn draw(draw: &mut Draw, ui: &Ui, fonts: &Fonts, seat: CpuSeat) {
     let modal = modal(ui.view());
     modal.draw(draw, ui, fonts, "CPU");
     for i in 0..TILES {
-        ui.stepper_tile(
-            draw,
-            fonts,
-            tile(modal, i),
-            CpuSeat::label(i),
-            seat.value(i, &pal),
-            true,
-        );
+        ui.stepper_tile(draw, fonts, tile(modal, i), CpuSeat::label(i), seat.value(i, &pal), true);
     }
     ui.button(draw, fonts, remove_button(modal), "Retirer");
 }

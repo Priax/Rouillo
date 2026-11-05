@@ -47,16 +47,7 @@ struct CpuPlayer {
 
 impl Member {
     pub const fn present(token: Token, conn: ConnId, user_id: Option<Uuid>, name: String) -> Self {
-        Self {
-            token,
-            conn: Some(conn),
-            disconnect_at: None,
-            user_id,
-            name,
-            team: None,
-            game_slot: None,
-            cpu: None,
-        }
+        Self { token, conn: Some(conn), disconnect_at: None, user_id, name, team: None, game_slot: None, cpu: None }
     }
 
     /// A CPU's seat: `n` makes its token, which no client holds.
@@ -78,11 +69,7 @@ impl Member {
     /// Makes the CPU playing this seat this one, named after it.
     pub fn set_cpu(&mut self, difficulty: Difficulty, style: Style) {
         self.name = shared::cpu::name(difficulty, style);
-        self.cpu = Some(CpuSeat {
-            difficulty,
-            style,
-            game: None,
-        });
+        self.cpu = Some(CpuSeat { difficulty, style, game: None });
     }
 
     /// Whether someone, or a CPU, plays this seat now.
@@ -206,11 +193,7 @@ impl Room {
         self.seats = self
             .members
             .iter()
-            .map(|m| Seat {
-                user_id: m.user_id,
-                name: m.name.clone(),
-                cpu: m.cpu.is_some(),
-            })
+            .map(|m| Seat { user_id: m.user_id, name: m.name.clone(), cpu: m.cpu.is_some() })
             .collect();
         let teams = self.teams();
         let game = self.sim.game.wrapping_add(1);
@@ -237,11 +220,8 @@ impl Room {
 
     pub fn lobby_payloads(&self) -> Vec<(ConnId, Vec<u8>)> {
         let encode = |info: LobbyInfo| shared::encode(&ServerMessage::Lobby { info });
-        let members = self
-            .members
-            .iter()
-            .enumerate()
-            .filter_map(|(i, m)| Some((m.conn?, encode(self.lobby_info_for(i)))));
+        let members =
+            self.members.iter().enumerate().filter_map(|(i, m)| Some((m.conn?, encode(self.lobby_info_for(i)))));
         let watching = encode(self.spectator_info());
         let spectators = self.spectators.iter().map(|s| (s.conn, watching.clone()));
         members.chain(spectators).collect()
@@ -270,10 +250,7 @@ impl Room {
     }
 
     pub fn game_start_payloads(&mut self) -> Vec<(ConnId, Vec<u8>)> {
-        self.audience()
-            .into_iter()
-            .map(|c| (c, shared::encode(&self.game_start_for(c))))
-            .collect()
+        self.audience().into_iter().map(|c| (c, shared::encode(&self.game_start_for(c)))).collect()
     }
 
     pub fn spectator_slot(&self, conn: ConnId) -> Option<usize> {
@@ -329,8 +306,7 @@ impl Room {
                 info!(
                     "Match terminé room #{} → {} ({:.0}s, inputs en retard {:?})",
                     self.id,
-                    rec.winner_slot()
-                        .map_or_else(|| "égalité".to_string(), |w| format!("slot {w} gagne")),
+                    rec.winner_slot().map_or_else(|| "égalité".to_string(), |w| format!("slot {w} gagne")),
                     rec.duration_secs,
                     self.sim.late_inputs
                 );
@@ -356,10 +332,7 @@ impl Room {
         let sim = &self.sim;
         let (mut whole, mut all, mut small, mut small_packed) = (None, None, None, None);
         let followed = |conn| self.follows.get(&conn).copied().unwrap_or(0);
-        let seated = self
-            .members
-            .iter()
-            .filter_map(|m| Some((m.conn?, m.game_slot.filter(|&s| s < boards))));
+        let seated = self.members.iter().filter_map(|m| Some((m.conn?, m.game_slot.filter(|&s| s < boards))));
         let watching = self.spectators.iter().map(|s| (s.conn, None));
         let audience = seated.chain(watching).map(|(conn, own)| {
             let large = own.unwrap_or_else(|| followed(conn));
@@ -384,21 +357,10 @@ impl Room {
                 continue;
             };
             let mine = shared::encode(&sim.state_update_of([slot]));
-            let Some(
-                msg @ ServerMessage::Thumbs {
-                    game,
-                    tick,
-                    thumbs: list,
-                },
-            ) = &thumbs
-            else {
+            let Some(msg @ ServerMessage::Thumbs { game, tick, thumbs: list }) = &thumbs else {
                 sink.push((
                     conn,
-                    if datagrams {
-                        StateOut::Boards(vec![Bytes::from(mine)])
-                    } else {
-                        StateOut::Whole(mine)
-                    },
+                    if datagrams { StateOut::Boards(vec![Bytes::from(mine)]) } else { StateOut::Whole(mine) },
                 ));
                 continue;
             };
@@ -406,11 +368,7 @@ impl Room {
                 let others = small_packed.get_or_insert_with(|| {
                     let mut out = Vec::new();
                     let encode = |r: Range<usize>| {
-                        shared::encode(&ServerMessage::Thumbs {
-                            game: *game,
-                            tick: *tick,
-                            thumbs: list[r].to_vec(),
-                        })
+                        shared::encode(&ServerMessage::Thumbs { game: *game, tick: *tick, thumbs: list[r].to_vec() })
                     };
                     packed(0..list.len(), &encode, &mut out);
                     out
@@ -431,8 +389,7 @@ impl Room {
     }
 
     pub fn is_host_conn(&self, conn: ConnId) -> bool {
-        self.slot_of_conn(conn)
-            .is_some_and(|s| self.members[s].token == self.host)
+        self.slot_of_conn(conn).is_some_and(|s| self.members[s].token == self.host)
     }
 
     /// The member in `slot`, from 1, if a CPU plays it.
@@ -511,11 +468,7 @@ impl Room {
             names: self.members.iter().map(|m| m.name.clone()).collect(),
             teams: self.members.iter().map(|m| m.team).collect(),
             cpu_seats: self.cpu_seats,
-            cpus: self
-                .members
-                .iter()
-                .map(|m| m.cpu.as_ref().map(|c| (c.difficulty, c.style)))
-                .collect(),
+            cpus: self.members.iter().map(|m| m.cpu.as_ref().map(|c| (c.difficulty, c.style))).collect(),
             spectators: self.spectators.len() as u8,
         }
     }
@@ -560,11 +513,10 @@ impl Room {
             return None;
         }
         let team = self.sim.teams[slot];
-        let others_connected = self.members.iter().any(|m| {
-            m.playing()
-                && m.game_slot
-                    .is_some_and(|s| s < self.sim.teams.len() && self.sim.teams[s] != team)
-        });
+        let others_connected = self
+            .members
+            .iter()
+            .any(|m| m.playing() && m.game_slot.is_some_and(|s| s < self.sim.teams.len() && self.sim.teams[s] != team));
         if !others_connected {
             return None;
         }
@@ -579,11 +531,7 @@ impl Room {
 
     /// The game's team of each member: the one picked, or one of their own.
     pub fn teams(&self) -> Vec<u8> {
-        self.members
-            .iter()
-            .enumerate()
-            .map(|(i, m)| m.team.unwrap_or(shared::own_team(slot_byte(i))))
-            .collect()
+        self.members.iter().enumerate().map(|(i, m)| m.team.unwrap_or(shared::own_team(slot_byte(i)))).collect()
     }
 
     /// From 1 while the member plays the running game or waits in the lobby,
@@ -597,10 +545,7 @@ impl Room {
     }
 
     pub fn host_user(&self) -> Option<Uuid> {
-        self.members
-            .iter()
-            .find(|m| m.token == self.host)
-            .and_then(|m| m.user_id)
+        self.members.iter().find(|m| m.token == self.host).and_then(|m| m.user_id)
     }
 
     pub fn info(&self) -> RoomInfo {

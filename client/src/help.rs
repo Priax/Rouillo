@@ -10,10 +10,7 @@ use crate::ui::{self, Face, Fonts, Frame, Icon, Rect, SharpText, Size, Ui, View,
 use crate::{draw as game_draw, theme};
 
 const RULES: [(&str, &str); 7] = [
-    (
-        "Le but",
-        "Empilez les paires qui tombent. Quatre Puyos de la même couleur qui se touchent disparaissent.",
-    ),
+    ("Le but", "Empilez les paires qui tombent. Quatre Puyos de la même couleur qui se touchent disparaissent."),
     (
         "Les chaînes",
         "Quand des Puyos disparaissent, ceux du dessus tombent et peuvent en faire disparaître d'autres: \
@@ -24,22 +21,10 @@ const RULES: [(&str, &str); 7] = [
         "Vos chaînes envoient des Puyos gris chez l'adversaire, après un court délai. Une chaîne \
          annule d'abord les nuisances qui vous attendent. Un gris disparaît quand un groupe éclate à côté.",
     ),
-    (
-        "All Clear",
-        "Videz tout le plateau: votre chaîne suivante enverra une grosse attaque en plus.",
-    ),
-    (
-        "La défaite",
-        "La partie est perdue quand la case marquée d'une croix, en haut du plateau, est occupée.",
-    ),
-    (
-        "Les niveaux",
-        "Avec le temps, les paires tombent plus vite et les attaques deviennent plus fortes.",
-    ),
-    (
-        "Le classé",
-        "Une série se joue en trois manches gagnantes. Seul le classé fait bouger l'ELO.",
-    ),
+    ("All Clear", "Videz tout le plateau: votre chaîne suivante enverra une grosse attaque en plus."),
+    ("La défaite", "La partie est perdue quand la case marquée d'une croix, en haut du plateau, est occupée."),
+    ("Les niveaux", "Avec le temps, les paires tombent plus vite et les attaques deviennent plus fortes."),
+    ("Le classé", "Une série se joue en trois manches gagnantes. Seul le classé fait bouger l'ELO."),
 ];
 
 /// The help screen: a demo that plays lessons, next to a card showing either
@@ -72,10 +57,7 @@ fn cards(view: View) -> (Rect, Rect) {
 }
 
 fn tabs(info: Rect) -> [Rect; 2] {
-    info.pad(8.0, 0.0, 0.0, 20.0)
-        .top(TAB_H - 8.0)
-        .left(420.0)
-        .columns(20.0, [FILL, FILL])
+    info.pad(8.0, 0.0, 0.0, 20.0).top(TAB_H - 8.0).left(420.0).columns(20.0, [FILL, FILL])
 }
 
 /// The buttons to the lesson before and after, around its title.
@@ -89,10 +71,7 @@ fn back_btn(view: View) -> Rect {
 }
 
 pub fn enter() -> Transition {
-    Transition::To(Screen::Help(Box::new(HelpView {
-        demo: Demo::new(),
-        rules: false,
-    })))
+    Transition::To(Screen::Help(Box::new(HelpView { demo: Demo::new(), rules: false })))
 }
 
 pub fn update(app: &App, state: &State, help: &mut HelpView) -> Transition {
@@ -132,21 +111,12 @@ fn chip(draw: &mut Draw, ui: &Ui, fonts: &Fonts, (x, cy): (f32, f32), label: &st
     let size = theme::size::LABEL;
     let icon = if pad { 32.0 } else { 0.0 };
     let w = fonts.width(Face::Text, label, size) + 24.0 + icon;
-    draw.rect((x, cy - CHIP_H / 2.0), (w, CHIP_H))
-        .corner_radius(8.0)
-        .color(pal.surface_alt);
-    draw.rect((x, cy - CHIP_H / 2.0), (w, CHIP_H))
-        .corner_radius(8.0)
-        .stroke(1.5)
-        .color(pal.border);
+    draw.rect((x, cy - CHIP_H / 2.0), (w, CHIP_H)).corner_radius(8.0).color(pal.surface_alt);
+    draw.rect((x, cy - CHIP_H / 2.0), (w, CHIP_H)).corner_radius(8.0).stroke(1.5).color(pal.border);
     if pad {
         pad_icon(draw, (x + 12.0, cy), theme::GOLD, pal.surface_alt);
     }
-    draw.sharp_text(&fonts.text, label)
-        .position(x + 12.0 + icon, cy)
-        .size(size)
-        .v_align_middle()
-        .color(theme::GOLD);
+    draw.sharp_text(&fonts.text, label).position(x + 12.0 + icon, cy).size(size).v_align_middle().color(theme::GOLD);
     x + w + 8.0
 }
 
@@ -154,18 +124,12 @@ fn controls_rows(bindings: &Bindings) -> Vec<(&'static str, Vec<String>, Option<
     let mut rows: Vec<_> = Action::ALL
         .into_iter()
         .map(|a| {
-            let keys = (0..2)
-                .filter_map(|slot| bindings.key(a, slot).map(|k| k.label.clone()))
-                .collect();
+            let keys = (0..2).filter_map(|slot| bindings.key(a, slot).map(|k| k.label.clone())).collect();
             (a.label(), keys, bindings.pad(a).map(Pad::label))
         })
         .collect();
     rows.push(("Pause", vec!["Échap".to_owned()], Some(Pad::Start.label())));
-    rows.push((
-        "Rejouer (partie finie)",
-        vec!["R".to_owned()],
-        Some(Pad::Select.label()),
-    ));
+    rows.push(("Rejouer (partie finie)", vec!["R".to_owned()], Some(Pad::Select.label())));
     rows
 }
 
@@ -266,9 +230,7 @@ fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, t
         let h = lines.len() as f32 * LINE_H + 24.0;
         let (boards, scale) = game_draw::demo_boards(demo, board);
         let bubble = Rect::at(boards.x + 6.0, boards.y + 50.0 * scale, boards.w - 12.0, h);
-        draw.rect((bubble.x, bubble.y), (bubble.w, bubble.h))
-            .corner_radius(10.0)
-            .color(Color::BLACK.with_alpha(0.78));
+        draw.rect((bubble.x, bubble.y), (bubble.w, bubble.h)).corner_radius(10.0).color(Color::BLACK.with_alpha(0.78));
         for (i, line) in lines.iter().enumerate() {
             draw.sharp_text(&fonts.text, line)
                 .position(bubble.x + bubble.w / 2.0, bubble.y + 12.0 + LINE_H * (i as f32 + 0.5))
@@ -284,9 +246,7 @@ pub fn draw(gfx: &mut Graphics, state: &State, help: &HelpView) {
     let pal = state.ui.palette();
     let view = state.ui.view();
     let mut draw = state.ui.screen_canvas(gfx);
-    state
-        .ui
-        .header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     draw.sharp_text(&state.fonts.display, "Comment jouer")
         .position(60.0, theme::HEADER_H / 2.0)
         .size(theme::size::TITLE)
@@ -303,14 +263,7 @@ pub fn draw(gfx: &mut Graphics, state: &State, help: &HelpView) {
     } else {
         draw_controls(&mut draw, &state.ui, &state.fonts, info, &state.input.controls.bindings);
     }
-    draw_demo(
-        &mut draw,
-        &state.ui,
-        &state.fonts,
-        demo_card,
-        &help.demo,
-        state.ui.time() as f32,
-    );
+    draw_demo(&mut draw, &state.ui, &state.fonts, demo_card, &help.demo, state.ui.time() as f32);
     state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
     state.ui.render(gfx, &draw);
 }

@@ -33,11 +33,7 @@ pub fn update_title(app: &App, state: &mut State) -> Transition {
     state.startup.title_seen = true;
     crate::audio::play_ui_click();
     let checking = state.startup.check.is_some() || state.startup.retry_at.is_some();
-    Transition::To(if state.auth.is_none() && checking {
-        Screen::Auth
-    } else {
-        Screen::Menu
-    })
+    Transition::To(if state.auth.is_none() && checking { Screen::Auth } else { Screen::Menu })
 }
 
 pub fn draw_title(gfx: &mut Graphics, state: &State) {

@@ -37,11 +37,7 @@ fn new_mgr() -> Manager {
 
 fn reg(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<Vec<u8>> {
     let (tx, rx) = mpsc::channel(CLIENT_CHAN_CAP);
-    mgr.handle(Command::Register {
-        conn,
-        sender: tx,
-        states: None,
-    });
+    mgr.handle(Command::Register { conn, sender: tx, states: None });
     rx
 }
 
@@ -81,10 +77,7 @@ fn has(msgs: &[ServerMessage], f: impl Fn(&ServerMessage) -> bool) -> bool {
 fn two_player_room(mgr: &mut Manager) -> (RoomId, mpsc::Receiver<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
     let rx1 = reg(mgr, 1);
     hello(mgr, 1, "A");
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
     let rx2 = reg(mgr, 2);
     hello(mgr, 2, "B");
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
@@ -96,10 +89,7 @@ fn create_room_lobbies_host() {
     let mut mgr = new_mgr();
     let mut rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "Room".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "Room".into() });
     let info = last_lobby(&drain(&mut rx1)).expect("host should get a Lobby");
     assert_eq!(info.players, 1);
     assert_eq!(info.your_slot, 1);

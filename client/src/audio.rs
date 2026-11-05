@@ -36,11 +36,7 @@ mod imp {
 
     fn with_ctx<F: FnOnce(&AudioContext)>(f: F) {
         CTX.with(|cell| {
-            if let Some(ctx) = cell
-                .borrow()
-                .as_ref()
-                .filter(|c| c.state() == AudioContextState::Running)
-            {
+            if let Some(ctx) = cell.borrow().as_ref().filter(|c| c.state() == AudioContextState::Running) {
                 f(ctx);
             }
         });
@@ -153,13 +149,7 @@ mod imp {
                 Some(opened)
             });
             if let Some(sink) = sink {
-                sink.mixer().add(Tone {
-                    wave,
-                    freq,
-                    peak_gain,
-                    sample: 0,
-                    samples: (duration * RATE as f64) as u32,
-                });
+                sink.mixer().add(Tone { wave, freq, peak_gain, sample: 0, samples: (duration * RATE as f64) as u32 });
             }
         });
     }

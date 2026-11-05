@@ -98,12 +98,7 @@ impl Rect {
     }
 
     pub fn pad(self, top: f32, right: f32, bottom: f32, left: f32) -> Self {
-        Self::at(
-            self.x + left,
-            self.y + top,
-            (self.w - left - right).max(0.0),
-            (self.h - top - bottom).max(0.0),
-        )
+        Self::at(self.x + left, self.y + top, (self.w - left - right).max(0.0), (self.h - top - bottom).max(0.0))
     }
 
     /// A `w` by `h` box in the middle, no larger than this one.
@@ -143,12 +138,8 @@ impl Frame {
         let screen = Rect::at(0.0, 0.0, view.w, view.h);
         let header = screen.top(theme::HEADER_H);
         let back = Rect::at(BACK_MARGIN, view.h - BACK_BOTTOM - BACK_H, BACK_W, BACK_H);
-        let body = Rect::at(
-            0.0,
-            header.bottom() + BODY_TOP,
-            view.w,
-            (back.y - header.bottom() - 2.0 * BODY_TOP).max(0.0),
-        );
+        let body =
+            Rect::at(0.0, header.bottom() + BODY_TOP, view.w, (back.y - header.bottom() - 2.0 * BODY_TOP).max(0.0));
         Self { header, body, back }
     }
 
@@ -173,15 +164,11 @@ const LIST_GAP: f32 = 6.0;
 impl ListCard {
     /// `row_h` is a row's pitch, gap included.
     pub fn new(view: super::View, row_h: f32) -> Self {
-        Self {
-            card: Frame::of(view).body.pad(0.0, 20.0, 0.0, 20.0).max_width(LIST_MAX_W),
-            row_h,
-        }
+        Self { card: Frame::of(view).body.pad(0.0, 20.0, 0.0, 20.0).max_width(LIST_MAX_W), row_h }
     }
 
     fn list(self) -> Rect {
-        self.card
-            .pad(LIST_PAD, LIST_PAD, super::PAGER_H + LIST_PAD + LIST_GAP, LIST_PAD)
+        self.card.pad(LIST_PAD, LIST_PAD, super::PAGER_H + LIST_PAD + LIST_GAP, LIST_PAD)
     }
 
     pub fn per_page(self) -> usize {
@@ -203,9 +190,7 @@ mod tests {
     use crate::ui::View;
 
     fn close(a: Rect, b: Rect) -> bool {
-        [(a.x, b.x), (a.y, b.y), (a.w, b.w), (a.h, b.h)]
-            .iter()
-            .all(|(p, q)| (p - q).abs() < 1e-3)
+        [(a.x, b.x), (a.y, b.y), (a.w, b.w), (a.h, b.h)].iter().all(|(p, q)| (p - q).abs() < 1e-3)
     }
 
     #[test]

@@ -108,18 +108,13 @@ impl Board {
             columns.extend_from_slice(&cols[..leftover]);
         }
 
-        let landed: Vec<(usize, usize)> = columns
-            .into_iter()
-            .filter_map(|col| Some((self.cells.drop_into(col, PuyoType::Garbage)?, col)))
-            .collect();
+        let landed: Vec<(usize, usize)> =
+            columns.into_iter().filter_map(|col| Some((self.cells.drop_into(col, PuyoType::Garbage)?, col))).collect();
         let mut lowest = vec![0; width];
         for &(r, c) in &landed {
             lowest[c] = lowest[c].max(r);
         }
-        let cells = landed
-            .into_iter()
-            .map(|(r, c)| CellFall::new(r, c, lowest[c]))
-            .collect();
+        let cells = landed.into_iter().map(|(r, c)| CellFall::new(r, c, lowest[c])).collect();
         self.phase = Phase::Falling(Fall::new(cells, true));
         events.ojama_dropped = true;
     }

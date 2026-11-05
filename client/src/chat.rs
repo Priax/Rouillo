@@ -46,11 +46,7 @@ impl Chat {
         if self.lines.len() == KEPT {
             self.lines.pop_front();
         }
-        self.lines.push_back(Line {
-            text: format!("{from}: {text}"),
-            spectator,
-            at: now_secs(),
-        });
+        self.lines.push_back(Line { text: format!("{from}: {text}"), spectator, at: now_secs() });
     }
 
     /// The lobby's field, once focused.
@@ -129,11 +125,7 @@ impl Chat {
         let pal = ui.palette();
         crate::ui::card(draw, &pal, area);
         self.draw_lines(draw, ui, fonts, area, false);
-        let field = Field {
-            placeholder: "Écrire un message...",
-            input: &self.input,
-            focused: self.focused,
-        };
+        let field = Field { placeholder: "Écrire un message...", input: &self.input, focused: self.focused };
         text_field(draw, ui, fonts, input_rect(area), &field);
     }
 
@@ -147,11 +139,8 @@ impl Chat {
         }
         self.draw_lines(draw, ui, fonts, area, !self.open);
         if self.open {
-            let field = Field {
-                placeholder: "Entrée pour envoyer, Échap pour fermer",
-                input: &self.input,
-                focused: true,
-            };
+            let field =
+                Field { placeholder: "Entrée pour envoyer, Échap pour fermer", input: &self.input, focused: true };
             text_field(draw, ui, fonts, input_rect(area), &field);
         } else if let Some(hint) = hint {
             draw.sharp_text(&fonts.text, hint)

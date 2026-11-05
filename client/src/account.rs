@@ -36,13 +36,7 @@ enum Choice {
 }
 
 impl Choice {
-    const ALL: [Self; 5] = [
-        Self::Username,
-        Self::Password,
-        Self::LogoutAll,
-        Self::Delete,
-        Self::Back,
-    ];
+    const ALL: [Self; 5] = [Self::Username, Self::Password, Self::LogoutAll, Self::Delete, Self::Back];
 
     const fn label(self) -> &'static str {
         match self {
@@ -156,19 +150,15 @@ impl AccountForm {
         }
         let slot = http::new_slot();
         let (path, body) = match self.page {
-            Page::Password => (
-                "me/password",
-                serde_json::json!({ "current": &*self.current, "new": &*self.new }).to_string(),
-            ),
+            Page::Password => {
+                ("me/password", serde_json::json!({ "current": &*self.current, "new": &*self.new }).to_string())
+            }
             Page::Username => (
                 "me/username",
                 serde_json::json!({ "username": self.new.trim(), "password": &*self.current }).to_string(),
             ),
             Page::LogoutAll => ("logout-all", String::new()),
-            Page::Delete => (
-                "me/delete",
-                serde_json::json!({ "password": &*self.current }).to_string(),
-            ),
+            Page::Delete => ("me/delete", serde_json::json!({ "password": &*self.current }).to_string()),
             Page::Choose => return,
         };
         if body.is_empty() {
@@ -187,9 +177,7 @@ impl AccountForm {
         match result {
             Ok(reply) => match self.page {
                 Page::Username => {
-                    let name = reply["username"]
-                        .as_str()
-                        .map_or_else(|| self.new.trim().to_owned(), str::to_owned);
+                    let name = reply["username"].as_str().map_or_else(|| self.new.trim().to_owned(), str::to_owned);
                     self.show(Page::Choose);
                     self.status = Status::success("Pseudo changé.");
                     Outcome::Renamed(name)
@@ -307,11 +295,7 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &AccountForm, cx: f32
         }
     } else {
         if let Some(text) = warning(form.page) {
-            let color = if form.page == Page::Delete {
-                theme::DANGER
-            } else {
-                pal.text_dim
-            };
+            let color = if form.page == Page::Delete { theme::DANGER } else { pal.text_dim };
             draw.sharp_text(&fonts.text, text)
                 .position(cx, TOP + 20.0)
                 .size(theme::size::LABEL)
@@ -326,11 +310,7 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &AccountForm, cx: f32
                 .size(theme::size::LABEL)
                 .v_align_middle()
                 .color(pal.text_dim);
-            let field = Field {
-                placeholder: "",
-                input: form.input(i),
-                focused: form.focused == i,
-            };
+            let field = Field { placeholder: "", input: form.input(i), focused: form.focused == i };
             text_field(draw, ui, fonts, rect, &field);
         }
         let (confirm_btn, cancel_btn) = buttons(cx, form);
@@ -339,11 +319,7 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &AccountForm, cx: f32
             draw,
             fonts,
             confirm_btn,
-            if busy {
-                Label::from(Icon::Busy)
-            } else {
-                Label::from(confirm_label(form.page))
-            },
+            if busy { Label::from(Icon::Busy) } else { Label::from(confirm_label(form.page)) },
             !busy,
         );
         ui.button(draw, fonts, cancel_btn, "Annuler");

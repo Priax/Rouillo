@@ -39,23 +39,11 @@ pub struct Puyo {
 
 impl Puyo {
     pub const fn new(kind: PuyoType, center: (f32, f32), radius: f32) -> Self {
-        Self {
-            kind,
-            center,
-            radius,
-            alpha: 1.0,
-            squash: 0.0,
-            flash: 0.0,
-            mood: Mood::Awake,
-            tint: None,
-        }
+        Self { kind, center, radius, alpha: 1.0, squash: 0.0, flash: 0.0, mood: Mood::Awake, tint: None }
     }
 
     fn radii(&self) -> (f32, f32) {
-        (
-            self.radius * (1.0 + self.squash * 0.6),
-            self.radius * (1.0 - self.squash),
-        )
+        (self.radius * (1.0 + self.squash * 0.6), self.radius * (1.0 - self.squash))
     }
 
     fn body_center(&self) -> (f32, f32) {
@@ -132,12 +120,8 @@ pub fn face(draw: &mut Draw, p: &Puyo) {
     let (rx, ry) = p.radii();
     let (cx, cy) = p.body_center();
     let garbage = p.kind == PuyoType::Garbage;
-    let ink = if garbage {
-        game::GARBAGE_INK
-    } else {
-        mix(shade(game::puyo(p.kind)), Color::BLACK, 0.6)
-    }
-    .with_alpha(p.alpha);
+    let ink =
+        if garbage { game::GARBAGE_INK } else { mix(shade(game::puyo(p.kind)), Color::BLACK, 0.6) }.with_alpha(p.alpha);
     let white = Color::WHITE.with_alpha(p.alpha);
     let spread = rx * if garbage { 0.28 } else { 0.27 };
     let eye_y = cy - ry * 0.06;
@@ -162,14 +146,10 @@ pub fn face(draw: &mut Draw, p: &Puyo) {
                 draw.ellipse((ex, eye_y + ry * 0.08), (rx * 0.1, ry * 0.13)).color(ink);
             }
             Mood::Awake => {
-                draw.ellipse((ex, eye_y), (rx * 0.21, ry * 0.31))
-                    .rotate(side * 0.18)
-                    .color(white);
+                draw.ellipse((ex, eye_y), (rx * 0.21, ry * 0.31)).rotate(side * 0.18).color(white);
                 let (px, py) = (ex - side * rx * 0.05, eye_y + ry * 0.09);
                 draw.ellipse((px, py), (rx * 0.13, ry * 0.2)).color(ink);
-                draw.circle(rx * 0.05)
-                    .position(px - rx * 0.04, py - ry * 0.08)
-                    .color(white);
+                draw.circle(rx * 0.05).position(px - rx * 0.04, py - ry * 0.08).color(white);
             }
         }
     }
@@ -256,26 +236,18 @@ pub fn nuisance_icon(
             draw.rect((cx - w / 2.0, cy - h / 2.0 + unit * 0.1), (w, h))
                 .corner_radius(unit * 0.35)
                 .color(lit(shade(tint)));
-            draw.rect((cx - w / 2.0, cy - h / 2.0), (w, h * 0.92))
-                .corner_radius(unit * 0.35)
-                .color(lit(tint));
+            draw.rect((cx - w / 2.0, cy - h / 2.0), (w, h * 0.92)).corner_radius(unit * 0.35).color(lit(tint));
             draw.rect((cx - w * 0.3, cy - h * 0.32), (w * 0.3, h * 0.14))
                 .corner_radius(unit * 0.07)
                 .color(Color::WHITE.with_alpha(0.35));
         }
         Nuisance::Star => {
-            draw.star(5, unit * 0.95, unit * 0.45)
-                .position(cx, cy + unit * 0.06)
-                .color(lit(shade(game::STAR)));
-            draw.star(5, unit * 0.9, unit * 0.42)
-                .position(cx, cy)
-                .color(lit(game::STAR));
+            draw.star(5, unit * 0.95, unit * 0.45).position(cx, cy + unit * 0.06).color(lit(shade(game::STAR)));
+            draw.star(5, unit * 0.9, unit * 0.42).position(cx, cy).color(lit(game::STAR));
         }
         Nuisance::Moon => {
             draw.circle(unit * 0.85).position(cx, cy).color(lit(game::MOON));
-            draw.circle(unit * 0.72)
-                .position(cx + unit * 0.42, cy - unit * 0.22)
-                .color(backdrop);
+            draw.circle(unit * 0.72).position(cx + unit * 0.42, cy - unit * 0.22).color(backdrop);
         }
         Nuisance::Crown => {
             let (w, h) = (unit * 1.7, unit * 1.2);

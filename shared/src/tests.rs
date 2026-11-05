@@ -57,32 +57,16 @@ fn room_settings_survive_any_step_from_the_network() {
     let mut s = RoomSettings::default();
     for dir in [i32::MAX, i32::MIN, 7, -7] {
         s.adjust(RoomSetting::StartingLevel, dir);
-        assert!(
-            (1..=15).contains(&s.rules.starting_level),
-            "level {} after {dir}",
-            s.rules.starting_level
-        );
+        assert!((1..=15).contains(&s.rules.starting_level), "level {} after {dir}", s.rules.starting_level);
         s.adjust(RoomSetting::Colors, dir);
-        assert!(
-            (4..=5).contains(&s.rules.colors),
-            "colors {} after {dir}",
-            s.rules.colors
-        );
+        assert!((4..=5).contains(&s.rules.colors), "colors {} after {dir}", s.rules.colors);
         s.adjust(RoomSetting::Columns, dir);
-        assert!(
-            (4..=10).contains(&s.rules.columns),
-            "columns {} after {dir}",
-            s.rules.columns
-        );
+        assert!((4..=10).contains(&s.rules.columns), "columns {} after {dir}", s.rules.columns);
         s.adjust(RoomSetting::Rows, dir);
         assert!((8..=16).contains(&s.rules.rows), "rows {} after {dir}", s.rules.rows);
         s.adjust(RoomSetting::Pause, dir);
         s.adjust(RoomSetting::MaxPlayers, dir);
-        assert!(
-            (2..=MAX_ROOM_PLAYERS).contains(&s.max_players),
-            "players {} after {dir}",
-            s.max_players
-        );
+        assert!((2..=MAX_ROOM_PLAYERS).contains(&s.max_players), "players {} after {dir}", s.max_players);
     }
 }
 
@@ -113,10 +97,7 @@ fn state_update_survives_encode_decode() {
     board.score = 1234;
     let (tick, players) = round_trip(vec![player(1, &board, 7), player(2, &empty_board(), 9)], 4_242);
     assert_eq!(tick, 4_242);
-    assert_eq!(
-        players.iter().map(|p| (p.slot, p.ack)).collect::<Vec<_>>(),
-        [(1, 7), (2, 9)]
-    );
+    assert_eq!(players.iter().map(|p| (p.slot, p.ack)).collect::<Vec<_>>(), [(1, 7), (2, 9)]);
     let first = &players[0].board;
     assert_eq!(first.score, 1234);
     assert_eq!(first.cells(), board.cells());
@@ -159,24 +140,12 @@ fn a_malformed_thumb_is_not_applied() {
     let mut shown = empty_board();
     assert!(Thumb::of(&board, true).apply_to(&mut shown));
     let before = shown.state_hash();
-    let short = Thumb {
-        cells: Some(vec![None; 5]),
-        ..Thumb::of(&board, true)
-    };
+    let short = Thumb { cells: Some(vec![None; 5]), ..Thumb::of(&board, true) };
     assert!(!short.apply_to(&mut shown), "too few cells for the size");
-    let off_grid = Thumb {
-        phase: Phase::Popping {
-            frame: 0,
-            cells: vec![(GRID_HEIGHT as u8, 0)],
-        },
-        ..Thumb::of(&board, false)
-    };
+    let off_grid =
+        Thumb { phase: Phase::Popping { frame: 0, cells: vec![(GRID_HEIGHT as u8, 0)] }, ..Thumb::of(&board, false) };
     assert!(!off_grid.apply_to(&mut shown), "a popping cell below the floor");
-    let no_rows = Thumb {
-        height: 0,
-        cells: Some(Vec::new()),
-        ..Thumb::of(&board, false)
-    };
+    let no_rows = Thumb { height: 0, cells: Some(Vec::new()), ..Thumb::of(&board, false) };
     assert!(!no_rows.apply_to(&mut shown), "no room to spawn");
     assert_eq!(shown.state_hash(), before, "a rejected thumb changed the board");
     assert!(Grid::from_cells(6, 13, vec![None; 77]).is_none());
@@ -311,21 +280,14 @@ fn client_samples() -> Vec<ClientMessage> {
             last_disconnect_reason: Some("r".into()),
             background: false,
         },
-        ClientMessage::Input {
-            kind: InputKind::HardDrop,
-            seq: 7,
-            tick: 9,
-        },
+        ClientMessage::Input { kind: InputKind::HardDrop, seq: 7, tick: 9 },
         ClientMessage::TogglePause,
         ClientMessage::RequestRestart,
         ClientMessage::RequestRoomList,
         ClientMessage::CreateRoom { name: "n".into() },
         ClientMessage::JoinRoom { id: 3 },
         ClientMessage::LeaveRoom,
-        ClientMessage::SetRoomSetting {
-            setting: RoomSetting::Colors,
-            dir: -1,
-        },
+        ClientMessage::SetRoomSetting { setting: RoomSetting::Colors, dir: -1 },
         ClientMessage::ToggleCountdown,
         ClientMessage::ReturnToLobby,
         ClientMessage::InviteFriend { user_id: "f".into() },
@@ -336,17 +298,9 @@ fn client_samples() -> Vec<ClientMessage> {
         ClientMessage::Chat { text: "c".into() },
         ClientMessage::Spectate { id: 9 },
         ClientMessage::WatchFriend { user_id: "u".into() },
-        ClientMessage::SetTargeting {
-            targeting: Targeting::Manual(2),
-        },
+        ClientMessage::SetTargeting { targeting: Targeting::Manual(2) },
         ClientMessage::SetTeam { team: Some(2) },
-        ClientMessage::Inputs {
-            inputs: vec![SentInput {
-                seq: 4,
-                tick: 90,
-                kind: InputKind::HardDrop,
-            }],
-        },
+        ClientMessage::Inputs { inputs: vec![SentInput { seq: 4, tick: 90, kind: InputKind::HardDrop }] },
         ClientMessage::Follow { slot: 3 },
         ClientMessage::AddCpu,
         ClientMessage::SetCpu {
@@ -425,11 +379,7 @@ fn server_samples() -> Vec<ServerMessage> {
     let boards = busy_boards();
     let settings = RoomSettings::default();
     vec![
-        ServerMessage::GameStart {
-            game: 9,
-            your_slot: 2,
-            names: vec!["a".into(), "b".into(), "c".into()],
-        },
+        ServerMessage::GameStart { game: 9, your_slot: 2, names: vec!["a".into(), "b".into(), "c".into()] },
         ServerMessage::StateUpdate {
             game: 9,
             tick: 3,
@@ -482,33 +432,17 @@ fn server_samples() -> Vec<ServerMessage> {
             },
         },
         ServerMessage::JoinFailed { reason: "x".into() },
-        ServerMessage::FriendInvitation {
-            from_username: "f".into(),
-            room_id: 2,
-            room_name: "r".into(),
-        },
+        ServerMessage::FriendInvitation { from_username: "f".into(), room_id: 2, room_name: "r".into() },
         ServerMessage::Pong { id: 8 },
         ServerMessage::Maintenance,
         ServerMessage::QueueRefused { reason: "q".into() },
-        ServerMessage::MatchFound {
-            opponent: "o".into(),
-            opponent_elo: 990,
-            opponent_avatar: None,
-            secs: 10,
-        },
+        ServerMessage::MatchFound { opponent: "o".into(), opponent_elo: 990, opponent_avatar: None, secs: 10 },
         ServerMessage::MatchCancelled { requeued: true },
         ServerMessage::QueueCooldown { secs: 60 },
         ServerMessage::SeriesScore { wins: [1, 2] },
-        ServerMessage::SeriesOver {
-            winner_slot: Some(2),
-            elo_change: -16,
-        },
+        ServerMessage::SeriesOver { winner_slot: Some(2), elo_change: -16 },
         ServerMessage::SessionRevoked,
-        ServerMessage::Chat {
-            from: "f".into(),
-            text: "t".into(),
-            spectator: true,
-        },
+        ServerMessage::Chat { from: "f".into(), text: "t".into(), spectator: true },
         ServerMessage::Spectators { count: 3 },
         ServerMessage::OpenedElsewhere,
         ServerMessage::Thumbs {
@@ -562,16 +496,8 @@ fn server_variant(m: &ServerMessage) -> usize {
 fn protocol_samples_cover_every_variant() {
     let client: HashSet<usize> = client_samples().iter().map(client_variant).collect();
     let server: HashSet<usize> = server_samples().iter().map(server_variant).collect();
-    assert_eq!(
-        client,
-        (0..CLIENT_VARIANTS).collect(),
-        "a ClientMessage variant has no sample"
-    );
-    assert_eq!(
-        server,
-        (0..SERVER_VARIANTS).collect(),
-        "a ServerMessage variant has no sample"
-    );
+    assert_eq!(client, (0..CLIENT_VARIANTS).collect(), "a ClientMessage variant has no sample");
+    assert_eq!(server, (0..SERVER_VARIANTS).collect(), "a ServerMessage variant has no sample");
 }
 
 /// Digest of the raw (uncompressed) encoding of every sample: it moves whenever

@@ -31,21 +31,13 @@ struct Drop {
 }
 
 const fn drop(pair: (char, char), col: i32, rot: usize) -> Drop {
-    Drop {
-        pair,
-        col,
-        rot,
-        incoming: 0,
-    }
+    Drop { pair, col, rot, incoming: 0 }
 }
 
 enum Play {
     /// Pairs placed one by one on a board given by its lowest rows, top
     /// first: R B Y G P for colours, X for nuisance, `.` for nothing.
-    Script {
-        board: &'static [&'static str],
-        drops: &'static [Drop],
-    },
+    Script { board: &'static [&'static str], drops: &'static [Drop] },
     /// The hard CPU playing a real game, up to its 5-chain.
     Cpu,
     /// Two hard CPUs playing each other, until one loses.
@@ -231,11 +223,7 @@ fn keys_for(d: &Drop) -> VecDeque<InputKind> {
         _ => vec![],
     };
     let dx = d.col - config::SPAWN_COL as i32;
-    let side = if dx < 0 {
-        InputKind::MoveLeft
-    } else {
-        InputKind::MoveRight
-    };
+    let side = if dx < 0 { InputKind::MoveLeft } else { InputKind::MoveRight };
     let moves = std::iter::repeat_n(side, dx.unsigned_abs() as usize);
     turns.into_iter().chain(moves).collect()
 }
@@ -343,10 +331,7 @@ impl Demo {
         if demo.cpu.is_none() {
             demo.take_next_drop();
         }
-        demo.first_pairs = [
-            demo.board.take_piece(),
-            demo.rival.as_mut().and_then(|r| r.board.take_piece()),
-        ];
+        demo.first_pairs = [demo.board.take_piece(), demo.rival.as_mut().and_then(|r| r.board.take_piece())];
         demo
     }
 
@@ -365,9 +350,7 @@ impl Demo {
 
     /// The players' names, left then right, in a match between two CPUs.
     pub fn players(&self) -> Option<[&'static str; 2]> {
-        self.rival
-            .as_ref()
-            .map(|_| [Style::Architect.character(), Style::Balanced.character()])
+        self.rival.as_ref().map(|_| [Style::Architect.character(), Style::Balanced.character()])
     }
 
     /// The explanation on screen: while the game stands still only.
@@ -512,24 +495,13 @@ impl Demo {
     }
 
     fn versus_step(&mut self) {
-        let Self {
-            board,
-            cpu: Some(cpu),
-            rival: Some(rival),
-            in_flight,
-            tick,
-            ..
-        } = self
-        else {
+        let Self { board, cpu: Some(cpu), rival: Some(rival), in_flight, tick, .. } = self else {
             return;
         };
         *tick += 1;
         let now = *tick;
         let mut events = [Events::default(); 2];
-        for (i, (board, cpu)) in [(board, cpu), (&mut rival.board, &mut rival.cpu)]
-            .into_iter()
-            .enumerate()
-        {
+        for (i, (board, cpu)) in [(board, cpu), (&mut rival.board, &mut rival.cpu)].into_iter().enumerate() {
             let to_me = |g: &&(bool, u32, u32)| g.0 == (i == 1);
             let landed: u32 = in_flight.iter().filter(to_me).filter(|g| g.1 <= now).map(|g| g.2).sum();
             let travelling: u32 = in_flight.iter().filter(to_me).filter(|g| g.1 > now).map(|g| g.2).sum();
@@ -600,12 +572,7 @@ mod tests {
         };
         for _ in 0..60 * 180 {
             if let Phase::Outro(_) = demo.phase {
-                seen.garbage_left = demo
-                    .board
-                    .cells()
-                    .iter()
-                    .filter(|c| **c == Some(PuyoType::Garbage))
-                    .count();
+                seen.garbage_left = demo.board.cells().iter().filter(|c| **c == Some(PuyoType::Garbage)).count();
                 seen.all_clear = demo.board.last_was_all_clear;
                 seen.pops = demo.pops;
                 seen.lost = demo.board.state() == GameState::GameOver;
@@ -653,11 +620,7 @@ mod tests {
         let seen = play(lesson("Les nuisances"));
         assert_eq!(seen.best_chain, 1);
         assert!(seen.dropped_garbage, "the attack never fell");
-        assert_eq!(
-            seen.garbage_left,
-            2 + 6,
-            "two greys untouched by the pop, six from the attack"
-        );
+        assert_eq!(seen.garbage_left, 2 + 6, "two greys untouched by the pop, six from the attack");
     }
 
     #[test]
@@ -719,11 +682,7 @@ mod tests {
         demo.next();
         demo.next();
         assert_eq!(demo.lesson, 1);
-        assert_eq!(
-            demo.phase,
-            Phase::Intro(INTRO_SECS),
-            "a lesson picked starts from its words"
-        );
+        assert_eq!(demo.phase, Phase::Intro(INTRO_SECS), "a lesson picked starts from its words");
     }
 
     #[test]

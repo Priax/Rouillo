@@ -49,9 +49,7 @@ impl Layout {
 }
 
 fn page_input(page: usize) -> TextInput {
-    TextInput::from(page.to_string())
-        .max_chars(PAGE_DIGITS)
-        .only(|c| c.is_ascii_digit())
+    TextInput::from(page.to_string()).max_chars(PAGE_DIGITS).only(|c| c.is_ascii_digit())
 }
 
 pub fn page_count(items: usize, per_page: usize) -> usize {
@@ -60,11 +58,7 @@ pub fn page_count(items: usize, per_page: usize) -> usize {
 
 impl Default for Pager {
     fn default() -> Self {
-        Self {
-            page: 0,
-            input: page_input(1),
-            focused: false,
-        }
+        Self { page: 0, input: page_input(1), focused: false }
     }
 }
 
@@ -145,11 +139,7 @@ impl Pager {
         let forward = self.page + 1 < pages;
         ui.button_enabled(draw, fonts, l.first, Icon::First, back);
         ui.button_enabled(draw, fonts, l.prev, Icon::Previous, back);
-        let field = Field {
-            placeholder: "",
-            input: &self.input,
-            focused: self.focused,
-        };
+        let field = Field { placeholder: "", input: &self.input, focused: self.focused };
         text_field(draw, ui, fonts, l.field, &field);
         draw.sharp_text(&fonts.text, &format!("/ {pages}"))
             .position(l.of_x, l.field.y + l.field.h / 2.0)

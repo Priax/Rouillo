@@ -47,18 +47,8 @@ pub fn frames_to_fall(cells: u32, start: u32, accel: u32) -> u32 {
 
 impl Fall {
     pub(super) fn new(cells: Vec<CellFall>, ojama: bool) -> Self {
-        let mut fall = Self {
-            frame: 0,
-            frames: 0,
-            cells,
-            ojama,
-        };
-        fall.frames = fall
-            .cells
-            .iter()
-            .map(|c| fall.lands_at(c) + BOUNCE_FRAMES)
-            .max()
-            .unwrap_or(0);
+        let mut fall = Self { frame: 0, frames: 0, cells, ojama };
+        fall.frames = fall.cells.iter().map(|c| fall.lands_at(c) + BOUNCE_FRAMES).max().unwrap_or(0);
         fall
     }
 
@@ -94,12 +84,7 @@ impl Fall {
 
 impl CellFall {
     pub(super) fn new(row: usize, col: usize, cells_fallen: usize) -> Self {
-        Self {
-            row: small(row),
-            col: small(col),
-            cells_fallen: small(cells_fallen),
-            delay: 0,
-        }
+        Self { row: small(row), col: small(col), cells_fallen: small(cells_fallen), delay: 0 }
     }
 }
 

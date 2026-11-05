@@ -88,9 +88,7 @@ impl Default for EditForm {
 impl EditForm {
     pub fn open(info: &ApiUserProfile) -> Self {
         Self {
-            bio: TextInput::from(info.bio.clone().unwrap_or_default())
-                .max_chars(EditField::Bio.max())
-                .multiline(),
+            bio: TextInput::from(info.bio.clone().unwrap_or_default()).max_chars(EditField::Bio.max()).multiline(),
             music: TextInput::from(info.favorite_music.clone().unwrap_or_default()).max_chars(EditField::Music.max()),
             focused: EditField::default(),
             pending: None,
@@ -161,12 +159,7 @@ fn buttons(cx: f32) -> (Rect, Rect) {
 fn picture_buttons(cx: f32) -> [(Picture, bool, Rect); 4] {
     let y = buttons(cx).0.y + 54.0 + 50.0;
     let [a, b, c, d] = Rect::centered_on(cx, y, 630.0, 46.0).columns(10.0, [FILL; 4]);
-    [
-        (Picture::Avatar, true, a),
-        (Picture::Avatar, false, b),
-        (Picture::Banner, true, c),
-        (Picture::Banner, false, d),
-    ]
+    [(Picture::Avatar, true, a), (Picture::Avatar, false, b), (Picture::Banner, true, c), (Picture::Banner, false, d)]
 }
 
 fn picture_url(info: &ApiUserProfile, picture: Picture) -> Option<&str> {
@@ -251,12 +244,7 @@ fn save(form: &mut EditForm, token: Option<String>) {
 pub fn update(app: &mut App, state: &mut State, profile: &mut ProfileData) {
     let cx = state.ui.view().w / 2.0;
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let State {
-        ui,
-        fonts,
-        input: Input { keys, .. },
-        ..
-    } = state;
+    let State { ui, fonts, input: Input { keys, .. }, .. } = state;
     let Some(form) = profile.edit.as_mut() else { return };
 
     match form.focused {
@@ -320,11 +308,7 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: &Api
             .h_align_right()
             .v_align_middle()
             .color(left_color);
-        let field = Field {
-            placeholder: which.placeholder(),
-            input: form.value(which),
-            focused,
-        };
+        let field = Field { placeholder: which.placeholder(), input: form.value(which), focused };
         if which == EditField::Bio {
             text_area(draw, ui, fonts, rect, &field);
         } else {
@@ -334,13 +318,7 @@ pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: &Api
 
     let (save_btn, cancel_btn) = buttons(cx);
     let saving = form.pending.is_some();
-    ui.button_enabled(
-        draw,
-        fonts,
-        save_btn,
-        if saving { "Sauvegarde..." } else { "Enregistrer" },
-        !saving,
-    );
+    ui.button_enabled(draw, fonts, save_btn, if saving { "Sauvegarde..." } else { "Enregistrer" }, !saving);
     ui.button(draw, fonts, cancel_btn, "Annuler");
 
     let busy = form.uploading.is_some();
@@ -439,11 +417,8 @@ mod tests {
 
     #[test]
     fn an_emptied_field_is_sent_empty_not_left_out() {
-        let mut form = EditForm {
-            bio: "  \n".to_owned().into(),
-            music: " Tsu ".to_owned().into(),
-            ..EditForm::default()
-        };
+        let mut form =
+            EditForm { bio: "  \n".to_owned().into(), music: " Tsu ".to_owned().into(), ..EditForm::default() };
         let body: serde_json::Value = serde_json::from_str(&form.body()).expect("json");
         assert_eq!(body["bio"], "");
         assert_eq!(body["favorite_music"], "Tsu");
@@ -454,10 +429,7 @@ mod tests {
 
     #[test]
     fn opening_the_form_starts_from_the_saved_profile() {
-        let info = ApiUserProfile {
-            bio: Some("salut".into()),
-            ..ApiUserProfile::default()
-        };
+        let info = ApiUserProfile { bio: Some("salut".into()), ..ApiUserProfile::default() };
         let form = EditForm::open(&info);
         assert_eq!((&*form.bio, &*form.music), ("salut", ""));
         assert_eq!(form.focused, EditField::Bio);

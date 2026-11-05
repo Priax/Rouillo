@@ -34,11 +34,8 @@ fn clamp<'a>(fonts: &Fonts, text: &'a str, room: f32, max: usize) -> (Vec<Cow<'a
     if text.is_empty() {
         return (Vec::new(), false);
     }
-    let mut lines: Vec<Cow<str>> = fonts
-        .wrap(Face::Text, text, theme::size::BODY, room)
-        .into_iter()
-        .map(Cow::Borrowed)
-        .collect();
+    let mut lines: Vec<Cow<str>> =
+        fonts.wrap(Face::Text, text, theme::size::BODY, room).into_iter().map(Cow::Borrowed).collect();
     let cut = lines.len() > max;
     if cut {
         lines.truncate(max);
@@ -51,23 +48,9 @@ fn clamp<'a>(fonts: &Fonts, text: &'a str, room: f32, max: usize) -> (Vec<Cow<'a
 }
 
 pub fn summary<'a>(fonts: &Fonts, info: &'a ApiUserProfile, area: Rect, music_lines: usize) -> Summary<'a> {
-    let (music, music_cut) = clamp(
-        fonts,
-        info.favorite_music.as_deref().unwrap_or_default(),
-        area.w,
-        music_lines,
-    );
-    let (bio, bio_cut) = clamp(
-        fonts,
-        info.bio.as_deref().unwrap_or_default(),
-        area.w,
-        bio_room(area.h, music.len()),
-    );
-    Summary {
-        bio,
-        music,
-        cut: bio_cut || music_cut,
-    }
+    let (music, music_cut) = clamp(fonts, info.favorite_music.as_deref().unwrap_or_default(), area.w, music_lines);
+    let (bio, bio_cut) = clamp(fonts, info.bio.as_deref().unwrap_or_default(), area.w, bio_room(area.h, music.len()));
+    Summary { bio, music, cut: bio_cut || music_cut }
 }
 
 pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &Fonts, summary: &Summary, area: Rect) {
@@ -109,12 +92,7 @@ pub fn overlay_closed(app: &App, ui: &Ui) -> bool {
 
 pub fn draw_overlay(draw: &mut Draw, ui: &Ui, fonts: &Fonts, info: &ApiUserProfile) {
     let modal = Modal::new(ui.view(), OVERLAY_W);
-    let title = fonts.fit(
-        Face::Display,
-        &info.username,
-        theme::size::HEADING,
-        modal.card.w - 120.0,
-    );
+    let title = fonts.fit(Face::Display, &info.username, theme::size::HEADING, modal.card.w - 120.0);
     modal.draw(draw, ui, fonts, &title);
     let body = modal.body();
     let area = body.below(LABEL_H);

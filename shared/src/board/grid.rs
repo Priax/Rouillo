@@ -23,11 +23,7 @@ pub(super) struct Move {
 
 impl Grid {
     pub fn new(width: usize, height: usize) -> Self {
-        Self {
-            width,
-            height,
-            cells: vec![None; width * height],
-        }
+        Self { width, height, cells: vec![None; width * height] }
     }
 
     /// A grid of these cells, row by row, if there are as many as its size
@@ -81,18 +77,12 @@ impl Grid {
     /// How many cells of column `col` are taken, from the top of its stack
     /// down, gaps included.
     pub fn column_height(&self, col: usize) -> usize {
-        self.height
-            - (0..self.height)
-                .find(|&r| self[(r, col)].is_some())
-                .unwrap_or(self.height)
+        self.height - (0..self.height).find(|&r| self[(r, col)].is_some()).unwrap_or(self.height)
     }
 
     /// Whether `piece` leaves the grid or overlaps the stack.
     pub fn collides(&self, piece: &ActivePuyo) -> bool {
-        piece
-            .positions()
-            .into_iter()
-            .any(|(r, c)| self.checked(r, c).is_none_or(|at| self[at].is_some()))
+        piece.positions().into_iter().any(|(r, c)| self.checked(r, c).is_none_or(|at| self[at].is_some()))
     }
 
     /// Whether `piece` stands on the stack or the floor.
@@ -101,13 +91,11 @@ impl Grid {
     }
 
     pub(super) fn neighbours(&self, r: usize, c: usize) -> impl Iterator<Item = (usize, usize)> + '_ {
-        [(-1, 0), (1, 0), (0, -1), (0, 1)]
-            .into_iter()
-            .filter_map(move |(dr, dc)| {
-                let nr = r.checked_add_signed(dr)?;
-                let nc = c.checked_add_signed(dc)?;
-                (nr < self.height && nc < self.width).then_some((nr, nc))
-            })
+        [(-1, 0), (1, 0), (0, -1), (0, 1)].into_iter().filter_map(move |(dr, dc)| {
+            let nr = r.checked_add_signed(dr)?;
+            let nc = c.checked_add_signed(dc)?;
+            (nr < self.height && nc < self.width).then_some((nr, nc))
+        })
     }
 
     pub(super) const fn flat(&self, r: usize, c: usize) -> usize {
@@ -142,11 +130,7 @@ impl Grid {
                     if floor != row {
                         self[(floor, col)] = Some(t);
                         self[(row, col)] = None;
-                        moved.push(Move {
-                            from: row,
-                            col,
-                            to: floor,
-                        });
+                        moved.push(Move { from: row, col, to: floor });
                     }
                 }
             }

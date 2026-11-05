@@ -118,10 +118,7 @@ pub fn enter(state: &mut State) -> Transition {
     state.room = None;
     let ranked = &mut state.ranked;
     ranked.search = Search::Idle;
-    ranked.stats_slot = state
-        .auth
-        .as_ref()
-        .map(|auth| http::get_user(&auth.user_id, Some(auth.token.clone())));
+    ranked.stats_slot = state.auth.as_ref().map(|auth| http::get_user(&auth.user_id, Some(auth.token.clone())));
     Transition::To(Screen::Ranked)
 }
 
@@ -207,11 +204,7 @@ fn draw_opponent(
     picture: Option<&Texture>,
 ) {
     let pal = ui.palette();
-    let who = Persona {
-        name,
-        glow: 0.0,
-        picture,
-    };
+    let who = Persona { name, glow: 0.0, picture };
     ui::portrait(draw, &pal, fonts, (cx, cy - 105.0), PORTRAIT_R, &who);
     draw.sharp_text(&fonts.display, name)
         .position(cx, cy - 25.0)
@@ -220,11 +213,7 @@ fn draw_opponent(
         .v_align_middle()
         .color(pal.text);
     let elo = format!("ELO {elo}");
-    let pill = Pill {
-        text: &elo,
-        color: theme::GOLD,
-        size: theme::size::LABEL,
-    };
+    let pill = Pill { text: &elo, color: theme::GOLD, size: theme::size::LABEL };
     pill.draw(draw, fonts, (cx - pill.width(fonts) / 2.0, cy + 15.0));
 }
 
@@ -246,14 +235,10 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
     let view = state.ui.view();
     let (cx, cy) = (view.w / 2.0, view.h / 2.0);
     let fonts = &state.fonts;
-    let picture = state
-        .images
-        .get_opt(gfx, opponent_avatar(state.room.as_ref(), &state.ranked));
+    let picture = state.images.get_opt(gfx, opponent_avatar(state.room.as_ref(), &state.ranked));
     let mut draw = state.ui.screen_canvas(gfx);
 
-    state
-        .ui
-        .header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     draw.sharp_text(&fonts.display, "Classé")
         .position(60.0, theme::HEADER_H / 2.0)
         .size(theme::size::TITLE)
@@ -261,37 +246,14 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
         .color(pal.text);
 
     let line = |draw: &mut Draw, text: &str, y: f32, size: f32, color: Color| {
-        draw.sharp_text(&fonts.text, text)
-            .position(cx, y)
-            .size(size)
-            .h_align_center()
-            .v_align_middle()
-            .color(color);
+        draw.sharp_text(&fonts.text, text).position(cx, y).size(size).h_align_center().v_align_middle().color(color);
     };
     let first_to = format!("Premier à {} manches", config::RANKED_WINS);
 
-    if let Some((lobby, ranked)) = state
-        .room
-        .as_ref()
-        .and_then(|r| Some((&r.info, r.info.ranked.as_ref()?)))
-    {
-        line(
-            &mut draw,
-            "Adversaire trouvé",
-            cy - 200.0,
-            theme::size::HEADING,
-            pal.text_dim,
-        );
+    if let Some((lobby, ranked)) = state.room.as_ref().and_then(|r| Some((&r.info, r.info.ranked.as_ref()?))) {
+        line(&mut draw, "Adversaire trouvé", cy - 200.0, theme::size::HEADING, pal.text_dim);
         let at = (cx, cy);
-        draw_opponent(
-            &mut draw,
-            &state.ui,
-            fonts,
-            at,
-            &ranked.opponent,
-            ranked.opponent_elo,
-            picture.as_ref(),
-        );
+        draw_opponent(&mut draw, &state.ui, fonts, at, &ranked.opponent, ranked.opponent_elo, picture.as_ref());
         line(&mut draw, &first_to, cy + 55.0, theme::size::LABEL, pal.text_muted);
         if let Some(n) = lobby.countdown {
             draw.sharp_text(&fonts.display, &n.to_string())
@@ -317,10 +279,7 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
                 .v_align_middle()
                 .color(pal.title);
             if let Some(stats) = &ranked.stats {
-                let record = format!(
-                    "Séries: {} gagnées sur {}",
-                    stats.ranked_series_won, stats.ranked_series
-                );
+                let record = format!("Séries: {} gagnées sur {}", stats.ranked_series_won, stats.ranked_series);
                 line(&mut draw, &record, cy - 50.0, theme::size::EMPHASIS, pal.text);
             }
             line(&mut draw, &first_to, cy, theme::size::LABEL, pal.text_dim);
@@ -341,9 +300,7 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
                 (None, None) => ("Rechercher une partie".to_string(), true),
             };
             let b = buttons(view);
-            state
-                .ui
-                .button_enabled(&mut draw, fonts, b.main, label.as_str(), enabled);
+            state.ui.button_enabled(&mut draw, fonts, b.main, label.as_str(), enabled);
             state.ui.button(&mut draw, fonts, b.second, "Retour");
         }
         Search::Searching { since } => {
@@ -353,54 +310,22 @@ pub fn draw(gfx: &mut Graphics, state: &State) {
             line(&mut draw, &waited, cy + 10.0, theme::size::EMPHASIS, pal.text_dim);
             state.ui.button(&mut draw, fonts, single_button(view), "Annuler");
         }
-        Search::Found {
-            opponent,
-            opponent_elo,
-            deadline,
-            accepted,
-            ..
-        } => {
-            line(
-                &mut draw,
-                "Adversaire trouvé",
-                cy - 200.0,
-                theme::size::HEADING,
-                pal.text_dim,
-            );
+        Search::Found { opponent, opponent_elo, deadline, accepted, .. } => {
+            line(&mut draw, "Adversaire trouvé", cy - 200.0, theme::size::HEADING, pal.text_dim);
             let at = (cx, cy);
-            draw_opponent(
-                &mut draw,
-                &state.ui,
-                fonts,
-                at,
-                opponent,
-                *opponent_elo,
-                picture.as_ref(),
-            );
+            draw_opponent(&mut draw, &state.ui, fonts, at, opponent, *opponent_elo, picture.as_ref());
             let total = f64::from(config::MATCH_ACCEPT_SECS);
             let left = (deadline - now_secs()).clamp(0.0, total);
             let bar = Rect::at(cx - 200.0, cy + 48.0, 400.0, 10.0);
-            draw.rect((bar.x, bar.y), (bar.w, bar.h))
-                .corner_radius(5.0)
-                .color(pal.surface);
-            draw.rect((bar.x, bar.y), (bar.w * (left / total) as f32, bar.h))
-                .corner_radius(5.0)
-                .color(if left < 3.0 { theme::DANGER } else { pal.accent });
-            line(
-                &mut draw,
-                &format!("{} s", left.ceil() as u64),
-                cy + 80.0,
-                theme::size::EMPHASIS,
-                pal.text_dim,
-            );
+            draw.rect((bar.x, bar.y), (bar.w, bar.h)).corner_radius(5.0).color(pal.surface);
+            draw.rect((bar.x, bar.y), (bar.w * (left / total) as f32, bar.h)).corner_radius(5.0).color(if left < 3.0 {
+                theme::DANGER
+            } else {
+                pal.accent
+            });
+            line(&mut draw, &format!("{} s", left.ceil() as u64), cy + 80.0, theme::size::EMPHASIS, pal.text_dim);
             if *accepted {
-                line(
-                    &mut draw,
-                    "En attente de l'adversaire...",
-                    cy + 104.0,
-                    theme::size::LABEL,
-                    pal.text_muted,
-                );
+                line(&mut draw, "En attente de l'adversaire...", cy + 104.0, theme::size::LABEL, pal.text_muted);
                 state.ui.button(&mut draw, fonts, single_button(view), "Annuler");
             } else {
                 let b = buttons(view);
@@ -421,24 +346,14 @@ mod tests {
     use super::*;
 
     fn searching(since: f64) -> RankedView {
-        RankedView {
-            search: Search::Searching { since },
-            ..RankedView::default()
-        }
+        RankedView { search: Search::Searching { since }, ..RankedView::default() }
     }
 
     #[test]
     fn a_requeue_keeps_the_time_already_waited() {
         let mut view = searching(5.0);
         view.match_found("o".into(), 1000, None, 10);
-        assert!(matches!(
-            view.search,
-            Search::Found {
-                since: 5.0,
-                accepted: false,
-                ..
-            }
-        ));
+        assert!(matches!(view.search, Search::Found { since: 5.0, accepted: false, .. }));
         view.match_cancelled(true);
         assert!(matches!(view.search, Search::Searching { since: 5.0 }));
     }
@@ -474,10 +389,8 @@ mod tests {
     fn too_few_casual_games_block_the_search() {
         let mut view = RankedView::default();
         assert_eq!(view.casual_missing(), None, "unknown until the profile loads");
-        view.stats = Some(ApiUserProfile {
-            casual_matches: config::RANKED_MIN_CASUAL - 2,
-            ..ApiUserProfile::default()
-        });
+        view.stats =
+            Some(ApiUserProfile { casual_matches: config::RANKED_MIN_CASUAL - 2, ..ApiUserProfile::default() });
         assert_eq!(view.casual_missing(), Some(2));
     }
 }

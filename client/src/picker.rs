@@ -16,16 +16,14 @@ mod native {
     static PICKED: Mutex<Option<Picked>> = Mutex::new(None);
 
     pub fn open() {
-        let picked = match rfd::FileDialog::new()
-            .add_filter("Images", &["png", "jpg", "jpeg", "webp", "gif"])
-            .pick_file()
-        {
-            None => Picked::Cancelled,
-            Some(path) => match std::fs::metadata(&path) {
-                Ok(meta) if meta.len() > MAX_BYTES => Picked::Failed(TOO_HEAVY),
-                _ => std::fs::read(&path).map_or(Picked::Failed("Fichier illisible."), Picked::File),
-            },
-        };
+        let picked =
+            match rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "webp", "gif"]).pick_file() {
+                None => Picked::Cancelled,
+                Some(path) => match std::fs::metadata(&path) {
+                    Ok(meta) if meta.len() > MAX_BYTES => Picked::Failed(TOO_HEAVY),
+                    _ => std::fs::read(&path).map_or(Picked::Failed("Fichier illisible."), Picked::File),
+                },
+            };
         if let Ok(mut slot) = PICKED.lock() {
             *slot = Some(picked);
         }

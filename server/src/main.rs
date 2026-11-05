@@ -65,10 +65,7 @@ impl TickProfile {
         if self.enabled {
             let avg = self.sum / self.count.max(1);
             let peak_load = self.max.as_secs_f64() / self.budget.as_secs_f64() * 100.0;
-            info!(
-                "[tick] rooms={rooms} avg={avg:?} max={:?} peak={peak_load:.1}%",
-                self.max
-            );
+            info!("[tick] rooms={rooms} avg={avg:?} max={:?} peak={peak_load:.1}%", self.max);
         }
         self.sum = Duration::ZERO;
         self.max = Duration::ZERO;
@@ -90,10 +87,7 @@ struct Winddown {
 
 impl Winddown {
     fn new(now: Instant) -> Self {
-        Self {
-            deadline: now + SHUTDOWN_DEADLINE,
-            last_game: None,
-        }
+        Self { deadline: now + SHUTDOWN_DEADLINE, last_game: None }
     }
 
     fn check(&mut self, running: usize, now: Instant) -> Option<Exit> {
@@ -101,9 +95,7 @@ impl Winddown {
             self.last_game = Some(now);
             return (now >= self.deadline).then_some(Exit::TimedOut);
         }
-        self.last_game
-            .is_none_or(|t| now.duration_since(t) >= SHUTDOWN_LINGER)
-            .then_some(Exit::Clean)
+        self.last_game.is_none_or(|t| now.duration_since(t) >= SHUTDOWN_LINGER).then_some(Exit::Clean)
     }
 }
 
@@ -199,10 +191,7 @@ async fn manager_loop(mut cmd_rx: mpsc::Receiver<Command>, cmd_tx: mpsc::Sender<
                 break;
             }
             Some(Exit::TimedOut) => {
-                warn!(
-                    "{running} partie(s) encore en cours après {}s, arrêt quand même",
-                    SHUTDOWN_DEADLINE.as_secs()
-                );
+                warn!("{running} partie(s) encore en cours après {}s, arrêt quand même", SHUTDOWN_DEADLINE.as_secs());
                 break;
             }
             None => {}
@@ -265,31 +254,19 @@ async fn main() {
     {
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_target(false)
-            .compact()
-            .init();
+        tracing_subscriber::fmt().with_env_filter(filter).with_target(false).compact().init();
     }
 
     dotenvy::dotenv().ok();
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = db::init_pool(&database_url)
-        .await
-        .expect("Failed to connect to database");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("Failed to run migrations");
+    let pool = db::init_pool(&database_url).await.expect("Failed to connect to database");
+    sqlx::migrate!("./migrations").run(&pool).await.expect("Failed to run migrations");
     info!("DB connectée");
-    tokio::task::spawn_blocking(db::dummy_hash)
-        .await
-        .expect("dummy hash init failed");
+    tokio::task::spawn_blocking(db::dummy_hash).await.expect("dummy hash init failed");
 
     let port = config::SERVER_PORT;
-    let bind: std::net::IpAddr = std::env::var("PUYO_BIND").map_or(config::SERVER_BIND_ADDRESS.into(), |s| {
-        s.parse().expect("PUYO_BIND must be an IP address")
-    });
+    let bind: std::net::IpAddr = std::env::var("PUYO_BIND")
+        .map_or(config::SERVER_BIND_ADDRESS.into(), |s| s.parse().expect("PUYO_BIND must be an IP address"));
     info!("Écoute sur {bind}:{port}");
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(CMD_CHAN_CAP);

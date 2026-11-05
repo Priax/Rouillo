@@ -123,9 +123,8 @@ mod tests {
 
     #[test]
     fn a_hover_animation_reuses_few_sizes() {
-        let sizes: std::collections::HashSet<u32> = (0..=30)
-            .map(|i| raster_size(26.0, 1.35 * (1.0 + 0.03 * i as f32 / 30.0)).to_bits())
-            .collect();
+        let sizes: std::collections::HashSet<u32> =
+            (0..=30).map(|i| raster_size(26.0, 1.35 * (1.0 + 0.03 * i as f32 / 30.0)).to_bits()).collect();
         assert!(sizes.len() <= 3, "{} sizes", sizes.len());
     }
 }

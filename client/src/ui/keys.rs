@@ -92,12 +92,7 @@ impl EditKeys {
         self.end = keyboard.was_pressed(KeyCode::End);
         let down = |codes: &[KeyCode]| codes.iter().any(|&c| keyboard.is_down(c));
         self.shift = down(&[KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-        self.ctrl = down(&[
-            KeyCode::ControlLeft,
-            KeyCode::ControlRight,
-            KeyCode::SuperLeft,
-            KeyCode::SuperRight,
-        ]);
+        self.ctrl = down(&[KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::SuperLeft, KeyCode::SuperRight]);
         #[cfg(target_arch = "wasm32")]
         let typed = crate::web::take_shortcuts();
         #[cfg(not(target_arch = "wasm32"))]
@@ -185,10 +180,7 @@ mod tests {
 
     #[test]
     fn with_ctrl_held_letters_are_shortcuts_and_the_rest_is_typed() {
-        let mut keys = EditKeys {
-            ctrl: true,
-            ..EditKeys::default()
-        };
+        let mut keys = EditKeys { ctrl: true, ..EditKeys::default() };
         assert_eq!(keys.key_char('\u{16}'), None, "Ctrl+V as a control character");
         assert_eq!(keys.key_char('a'), None, "Ctrl+A as the letter");
         assert!(keys.typed.paste && keys.typed.select_all);

@@ -49,11 +49,7 @@ impl Args {
         let mut it = std::env::args().skip(1);
         while let Some(flag) = it.next() {
             let value = it.next().unwrap_or_else(|| usage(&format!("{flag} needs a value")));
-            let number = || {
-                value
-                    .parse::<u64>()
-                    .unwrap_or_else(|_| usage(&format!("{flag}: {value}")))
-            };
+            let number = || value.parse::<u64>().unwrap_or_else(|_| usage(&format!("{flag}: {value}")));
             match flag.as_str() {
                 "--url" => args.url.clone_from(&value),
                 "--rooms" => args.rooms = number() as usize,
@@ -125,14 +121,9 @@ fn frame(msg: &ClientMessage) -> Message {
 }
 
 async fn connect(url: &str, n: usize) -> Result<Ws, String> {
-    let mut req = format!("{url}?v={}", shared::PROTOCOL_VERSION)
-        .into_client_request()
-        .map_err(|e| e.to_string())?;
+    let mut req = format!("{url}?v={}", shared::PROTOCOL_VERSION).into_client_request().map_err(|e| e.to_string())?;
     let ip = format!("10.{}.{}.{}", (n >> 16) & 255, (n >> 8) & 255, n & 255);
-    req.headers_mut().insert(
-        "x-forwarded-for",
-        HeaderValue::from_str(&ip).map_err(|e| e.to_string())?,
-    );
+    req.headers_mut().insert("x-forwarded-for", HeaderValue::from_str(&ip).map_err(|e| e.to_string())?);
     let (ws, _) = tokio_tungstenite::connect_async(req).await.map_err(|e| e.to_string())?;
     Ok(ws)
 }
@@ -290,9 +281,7 @@ impl Bot {
 /// Now and then a move, a turn or a soft drop; never a hard drop, so that
 /// boards last.
 fn input(noise: &mut u64) -> Option<InputKind> {
-    *noise = noise
-        .wrapping_mul(6_364_136_223_846_793_005)
-        .wrapping_add(1_442_695_040_888_963_407);
+    *noise = noise.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
     match (*noise >> 33) % 48 {
         0 => Some(InputKind::MoveLeft),
         1 => Some(InputKind::MoveRight),
@@ -305,10 +294,7 @@ fn input(noise: &mut u64) -> Option<InputKind> {
 }
 
 fn percentile(sorted: &[Duration], p: usize) -> Duration {
-    sorted
-        .get(sorted.len().saturating_sub(1) * p / 100)
-        .copied()
-        .unwrap_or_default()
+    sorted.get(sorted.len().saturating_sub(1) * p / 100).copied().unwrap_or_default()
 }
 
 fn report(stats: &Stats, last: &mut (u64, u64, Instant), bots: usize) {
@@ -345,10 +331,7 @@ async fn main() {
         args.players = seats;
     }
     let bots = args.rooms * args.players;
-    println!(
-        "{} rooms of {} bots on {}, for {} s",
-        args.rooms, args.players, args.url, args.secs
-    );
+    println!("{} rooms of {} bots on {}, for {} s", args.rooms, args.players, args.url, args.secs);
     let stats = Arc::new(Stats::default());
     let until = Instant::now() + args.ramp * bots as u32 + Duration::from_secs(args.secs);
     let mut tasks = Vec::with_capacity(bots);
@@ -357,11 +340,7 @@ async fn main() {
         for seat in 0..args.players {
             let bot = Bot {
                 n: room * args.players + seat + 1,
-                role: if seat == 0 && args.join.is_none() {
-                    Role::Host
-                } else {
-                    Role::Guest
-                },
+                role: if seat == 0 && args.join.is_none() { Role::Host } else { Role::Guest },
                 players: args.players,
                 room: id_tx.clone(),
                 stats: Arc::clone(&stats),

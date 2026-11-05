@@ -39,13 +39,7 @@ pub fn panel_card(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card_rect: Rect
         .size(theme::size::EMPHASIS)
         .v_align_middle()
         .color(pal.text_dim);
-    divider(
-        draw,
-        pal,
-        card_rect.x + CARD_PAD,
-        card_rect.y + TITLE_H,
-        card_rect.w - 2.0 * CARD_PAD,
-    );
+    divider(draw, pal, card_rect.x + CARD_PAD, card_rect.y + TITLE_H, card_rect.w - 2.0 * CARD_PAD);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -62,17 +56,11 @@ impl SettingsPanel {
             _ => TIGHTER_ROW_H,
         };
         let h = TITLE_H + rows as f32 * row_h + 16.0;
-        Self {
-            card: Frame::of(view).body.top(h).max_width(MAX_CARD_W),
-            row_h,
-        }
+        Self { card: Frame::of(view).body.top(h).max_width(MAX_CARD_W), row_h }
     }
 
     pub fn stepper(self, i: usize) -> Stepper {
-        Stepper::at(
-            self.card.x + self.card.w / 2.0 + 20.0,
-            self.card.y + TITLE_H + 8.0 + i as f32 * self.row_h,
-        )
+        Stepper::at(self.card.x + self.card.w / 2.0 + 20.0, self.card.y + TITLE_H + 8.0 + i as f32 * self.row_h)
     }
 
     pub fn draw(self, draw: &mut Draw, pal: &Palette, fonts: &Fonts, title: &str) {
@@ -92,10 +80,7 @@ impl SettingsGrid {
     /// A grid whose longer column holds `rows` tiles.
     pub fn new(view: View, rows: usize) -> Self {
         let h = TITLE_H + SECTION_H + rows as f32 * TILE_H + 8.0;
-        Self {
-            card: Frame::of(view).body.top(h).max_width(MAX_CARD_W),
-            view_w: view.w,
-        }
+        Self { card: Frame::of(view).body.top(h).max_width(MAX_CARD_W), view_w: view.w }
     }
 
     fn column_x(self, column: usize) -> (f32, f32) {
@@ -150,12 +135,7 @@ mod tests {
         assert_eq!(grid.tile(0, 1).y, grid.tile(0, 0).y + TILE_H);
         let actions = grid.action_row(2);
         assert!(actions.y > grid.card.y + grid.card.h);
-        assert!(
-            actions.y + actions.h <= view.h,
-            "{} > {}",
-            actions.y + actions.h,
-            view.h
-        );
+        assert!(actions.y + actions.h <= view.h, "{} > {}", actions.y + actions.h, view.h);
     }
 
     #[test]
@@ -165,11 +145,6 @@ mod tests {
         let last = panel.stepper(6);
         assert!(last.minus.y + last.minus.h <= panel.card.y + panel.card.h);
         let actions = action_row(panel.card, view.w, 2);
-        assert!(
-            actions.y + actions.h <= view.h,
-            "{} > {}",
-            actions.y + actions.h,
-            view.h
-        );
+        assert!(actions.y + actions.h <= view.h, "{} > {}", actions.y + actions.h, view.h);
     }
 }

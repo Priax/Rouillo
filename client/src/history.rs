@@ -22,14 +22,7 @@ pub struct History {
 
 impl History {
     pub fn load(user_id: String, token: Option<String>) -> Self {
-        Self {
-            user_id,
-            token,
-            entries: Vec::new(),
-            slot: None,
-            pager: Pager::default(),
-            per_page: 0,
-        }
+        Self { user_id, token, entries: Vec::new(), slot: None, pager: Pager::default(), per_page: 0 }
     }
 
     fn pages(&self, total: i64) -> usize {

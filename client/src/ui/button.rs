@@ -118,40 +118,26 @@ fn paint(
         let lift = 1.0 + r.hover - r.press;
         for i in 1..=SHADOW_LAYERS {
             let spread = f32::from(i);
-            draw.rect(
-                (b.x - spread, b.y - spread + spread * lift),
-                (b.w + 2.0 * spread, b.h + 2.0 * spread),
-            )
-            .corner_radius(theme::RADIUS + spread)
-            .color(Color::BLACK.with_alpha(SHADOW_ALPHA));
+            draw.rect((b.x - spread, b.y - spread + spread * lift), (b.w + 2.0 * spread, b.h + 2.0 * spread))
+                .corner_radius(theme::RADIUS + spread)
+                .color(Color::BLACK.with_alpha(SHADOW_ALPHA));
         }
     }
 
     let (fill, border, text) = if enabled {
-        (
-            theme::mix(pal.raised, pal.raised_hover, r.hover),
-            theme::mix(pal.border, pal.accent, r.hover),
-            pal.text,
-        )
+        (theme::mix(pal.raised, pal.raised_hover, r.hover), theme::mix(pal.border, pal.accent, r.hover), pal.text)
     } else {
         (pal.disabled, pal.divider, pal.text_disabled)
     };
-    draw.rect((b.x, b.y), (b.w, b.h))
-        .corner_radius(theme::RADIUS)
-        .color(fill);
+    draw.rect((b.x, b.y), (b.w, b.h)).corner_radius(theme::RADIUS).color(fill);
     draw.rect((b.x, b.y), (b.w, b.h / 2.0))
         .top_left_radius(theme::RADIUS)
         .top_right_radius(theme::RADIUS)
         .color(Color::WHITE.with_alpha(SHEEN_ALPHA + SHEEN_ALPHA * r.hover));
     if r.flash > 0.0 {
-        draw.rect((b.x, b.y), (b.w, b.h))
-            .corner_radius(theme::RADIUS)
-            .color(Color::WHITE.with_alpha(0.25 * r.flash));
+        draw.rect((b.x, b.y), (b.w, b.h)).corner_radius(theme::RADIUS).color(Color::WHITE.with_alpha(0.25 * r.flash));
     }
-    draw.rect((b.x, b.y), (b.w, b.h))
-        .corner_radius(theme::RADIUS)
-        .stroke(BORDER_WIDTH)
-        .color(border);
+    draw.rect((b.x, b.y), (b.w, b.h)).corner_radius(theme::RADIUS).stroke(BORDER_WIDTH).color(border);
 
     match label {
         Label::Text(label) => {
@@ -176,9 +162,7 @@ fn paint(
 fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, color: Color, time: f32) {
     let (long, thick) = (size * ICON_LENGTH, size * ICON_THICKNESS);
     let bar = |draw: &mut Draw, x: f32, w: f32, h: f32| {
-        draw.rect((x - w / 2.0, cy - h / 2.0), (w, h))
-            .corner_radius(thick / 2.0)
-            .color(color);
+        draw.rect((x - w / 2.0, cy - h / 2.0), (w, h)).corner_radius(thick / 2.0).color(color);
     };
     let half = long / 2.0;
     // Pointing along `(dx, dy)`, a unit step on one axis.
@@ -201,11 +185,7 @@ fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, colo
             bar(draw, cx, thick, long);
         }
         Icon::Previous | Icon::Next | Icon::First | Icon::Last => {
-            let dir = if matches!(icon, Icon::Next | Icon::Last) {
-                1.0
-            } else {
-                -1.0
-            };
+            let dir = if matches!(icon, Icon::Next | Icon::Last) { 1.0 } else { -1.0 };
             let edge = matches!(icon, Icon::First | Icon::Last);
             let tip = dir * half / 2.0;
             let to_bar = if edge { tip + 2.0 * thick * dir } else { 0.0 };
@@ -218,8 +198,7 @@ fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, colo
         Icon::Up | Icon::Down => chevron(draw, (cx, cy), (0.0, if icon == Icon::Down { 1.0 } else { -1.0 })),
         Icon::Play => {
             let left = cx - half * 0.7;
-            draw.triangle((left, cy - half), (left, cy + half), (cx + half, cy))
-                .color(color);
+            draw.triangle((left, cy - half), (left, cy + half), (cx + half, cy)).color(color);
         }
         Icon::Pause => {
             bar(draw, cx - half * 0.45, thick * 1.4, long);
@@ -228,9 +207,7 @@ fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, colo
         Icon::Close => {
             let arm = half * 0.8;
             for dy in [arm, -arm] {
-                draw.line((cx - arm, cy - dy), (cx + arm, cy + dy))
-                    .width(thick)
-                    .color(color);
+                draw.line((cx - arm, cy - dy), (cx + arm, cy + dy)).width(thick).color(color);
             }
         }
         Icon::Star | Icon::StarOutline => {

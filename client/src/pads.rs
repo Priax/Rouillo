@@ -89,13 +89,8 @@ pub struct Pads {
 
 impl Pads {
     pub fn new() -> Self {
-        let gilrs = Gilrs::new()
-            .map_err(|e| eprintln!("[pads] manettes indisponibles: {e}"))
-            .ok();
-        Self {
-            gilrs,
-            ..Self::default()
-        }
+        let gilrs = Gilrs::new().map_err(|e| eprintln!("[pads] manettes indisponibles: {e}")).ok();
+        Self { gilrs, ..Self::default() }
     }
 
     pub fn update(&mut self) {

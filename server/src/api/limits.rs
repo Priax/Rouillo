@@ -152,30 +152,18 @@ mod tests {
 
     #[test]
     fn direct_peer_is_the_client_and_its_forwarded_header_is_ignored() {
-        assert_eq!(
-            client_key(addr("203.0.113.7:5000"), Some("198.51.100.1")),
-            Some("203.0.113.7".into())
-        );
+        assert_eq!(client_key(addr("203.0.113.7:5000"), Some("198.51.100.1")), Some("203.0.113.7".into()));
     }
 
     #[test]
     fn behind_the_proxy_only_the_last_forwarded_entry_counts() {
-        assert_eq!(
-            client_key(addr("127.0.0.1:40000"), Some("1.2.3.4, 203.0.113.7")),
-            Some("203.0.113.7".into())
-        );
-        assert_eq!(
-            client_key(addr("[::1]:40000"), Some("203.0.113.7")),
-            Some("203.0.113.7".into())
-        );
+        assert_eq!(client_key(addr("127.0.0.1:40000"), Some("1.2.3.4, 203.0.113.7")), Some("203.0.113.7".into()));
+        assert_eq!(client_key(addr("[::1]:40000"), Some("203.0.113.7")), Some("203.0.113.7".into()));
     }
 
     #[test]
     fn unparseable_or_missing_forwarded_header_falls_back_to_the_peer() {
-        assert_eq!(
-            client_key(addr("127.0.0.1:1"), Some("garbage")),
-            Some("127.0.0.1".into())
-        );
+        assert_eq!(client_key(addr("127.0.0.1:1"), Some("garbage")), Some("127.0.0.1".into()));
         assert_eq!(client_key(addr("127.0.0.1:1"), None), Some("127.0.0.1".into()));
         assert_eq!(client_key(None, Some("203.0.113.7")), None);
     }
@@ -191,9 +179,6 @@ mod tests {
 
     #[test]
     fn ipv4_mapped_ipv6_is_the_ipv4_address() {
-        assert_eq!(
-            client_key(addr("[::ffff:203.0.113.7]:1"), None),
-            Some("203.0.113.7".into())
-        );
+        assert_eq!(client_key(addr("[::ffff:203.0.113.7]:1"), None), Some("203.0.113.7".into()));
     }
 }

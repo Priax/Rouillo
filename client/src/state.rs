@@ -72,10 +72,7 @@ impl Screen {
 
     /// Whether this screen means nothing without a signed-in account.
     pub fn needs_account(&self) -> bool {
-        matches!(
-            self,
-            Self::Profile(_) | Self::Friends(_) | Self::OtherProfile(_) | Self::Ranked
-        )
+        matches!(self, Self::Profile(_) | Self::Friends(_) | Self::OtherProfile(_) | Self::Ranked)
     }
 
     pub fn needs_connection(&self) -> bool {
@@ -336,10 +333,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self {
-            das_delay: config::DAS_DELAY,
-            das_speed: config::DAS_SPEED,
-        }
+        Self { das_delay: config::DAS_DELAY, das_speed: config::DAS_SPEED }
     }
 }
 
@@ -392,10 +386,7 @@ impl Settings {
     pub fn load() -> Self {
         let mut settings = Self::default();
         for (i, key) in Self::KEYS.iter().enumerate() {
-            if let Some(value) = storage::get(key)
-                .and_then(|v| v.parse::<f32>().ok())
-                .filter(|v| v.is_finite())
-            {
+            if let Some(value) = storage::get(key).and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()) {
                 settings.set(i, value);
             }
         }
@@ -501,9 +492,7 @@ impl Rival {
 
     /// The board to draw, smoothed between updates, and its piece's offset.
     pub fn shown(&self) -> (&Board, (f32, f32)) {
-        self.view
-            .frame()
-            .unwrap_or((&self.board, (crate::draw::fall_step(&self.board), 0.0)))
+        self.view.frame().unwrap_or((&self.board, (crate::draw::fall_step(&self.board), 0.0)))
     }
 }
 
@@ -561,11 +550,7 @@ pub struct NetDebug {
 
 impl Default for NetDebug {
     fn default() -> Self {
-        Self {
-            last_server_msg: String::new(),
-            last_rtt_ms: 0.0,
-            via: "-",
-        }
+        Self { last_server_msg: String::new(), last_rtt_ms: 0.0, via: "-" }
     }
 }
 
@@ -642,19 +627,12 @@ impl TurnAnim {
     pub fn update(&mut self, piece_id: u32, rotation: Rotation, dt: f32) {
         let target = f32::from(rotation.quarter_turns());
         if piece_id != self.piece_id {
-            *self = Self {
-                piece_id,
-                shown: target,
-            };
+            *self = Self { piece_id, shown: target };
             return;
         }
         let diff = (target - self.shown + 2.0).rem_euclid(4.0) - 2.0;
         let step = dt * 60.0 / TURN_FRAMES;
-        self.shown = if diff.abs() <= step {
-            target
-        } else {
-            (self.shown + step * diff.signum()).rem_euclid(4.0)
-        };
+        self.shown = if diff.abs() <= step { target } else { (self.shown + step * diff.signum()).rem_euclid(4.0) };
     }
 
     pub fn satellite(self) -> (f32, f32) {
@@ -713,20 +691,12 @@ impl GameSession {
     }
 
     pub fn name_of(&self, slot: u8) -> &str {
-        usize::from(slot)
-            .checked_sub(1)
-            .and_then(|i| self.names.get(i))
-            .map_or("", String::as_str)
+        usize::from(slot).checked_sub(1).and_then(|i| self.names.get(i)).map_or("", String::as_str)
     }
 
     /// A spectator's switch of the large board to another player.
     pub fn follow(&mut self, slot: u8) {
-        let Some(i) = self
-            .rivals
-            .iter()
-            .position(|r| r.slot == slot)
-            .filter(|_| self.spectating())
-        else {
+        let Some(i) = self.rivals.iter().position(|r| r.slot == slot).filter(|_| self.spectating()) else {
             return;
         };
         let next = self.rivals.remove(i);
@@ -752,12 +722,7 @@ impl GameSession {
     }
 
     pub fn my_nuisance(&self) -> u32 {
-        let travelling: u32 = self
-            .incoming
-            .iter()
-            .filter(|g| g.at > self.net.local_tick)
-            .map(|g| g.amount)
-            .sum();
+        let travelling: u32 = self.incoming.iter().filter(|g| g.at > self.net.local_tick).map(|g| g.amount).sum();
         self.predicted_board.pending_garbage + travelling
     }
 }
@@ -886,10 +851,7 @@ mod settings_tests {
         settings.adjust(1, -1);
         settings.save();
         let loaded = Settings::load();
-        assert_eq!(
-            (loaded.das_delay, loaded.das_speed),
-            (settings.das_delay, settings.das_speed)
-        );
+        assert_eq!((loaded.das_delay, loaded.das_speed), (settings.das_delay, settings.das_speed));
 
         storage::set(Settings::KEYS[0], "99");
         storage::set(Settings::KEYS[1], "NaN");

@@ -32,13 +32,7 @@ pub struct KeepOffer {
 
 impl KeepOffer {
     pub const fn new(id: String, game: u32) -> Self {
-        Self {
-            id,
-            game,
-            slot: None,
-            status: Status::Empty,
-            kept: false,
-        }
+        Self { id, game, slot: None, status: Status::Empty, kept: false }
     }
 
     pub const fn is_for(&self, game: u32) -> bool {
@@ -93,11 +87,7 @@ pub fn draw_keep(d: &mut notan::draw::Draw, state: &State) {
         return;
     }
     let rect = keep_button(state.ui.view());
-    let label = if offer.kept {
-        "Replay gardé"
-    } else {
-        "Garder le replay"
-    };
+    let label = if offer.kept { "Replay gardé" } else { "Garder le replay" };
     let enabled = !offer.kept && offer.slot.is_none();
     state.ui.button_enabled(d, &state.fonts, rect, label, enabled);
     if let Some((msg, color)) = offer.status.shown(&state.ui.palette()) {
@@ -170,10 +160,7 @@ impl ReplayViewer {
     fn advance(&mut self) {
         let events = self.playback.step();
         self.show();
-        if events
-            .get(usize::from(self.session.focus) - 1)
-            .is_some_and(|e| e.locked)
-        {
+        if events.get(usize::from(self.session.focus) - 1).is_some_and(|e| e.locked) {
             crate::audio::play_lock();
         }
         logic::announce_events(&mut self.session);

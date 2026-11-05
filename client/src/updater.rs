@@ -13,11 +13,7 @@ const PUBLIC_KEY: [u8; 32] = [
     161, 54, 61, 96, 40, 66, 197, 220,
 ];
 
-pub const ASSET: &str = if cfg!(windows) {
-    "rouillo-windows-x86_64.exe"
-} else {
-    "rouillo-linux-x86_64"
-};
+pub const ASSET: &str = if cfg!(windows) { "rouillo-windows-x86_64.exe" } else { "rouillo-linux-x86_64" };
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Status {
@@ -133,10 +129,7 @@ impl Transfer {
             Ok(Part::Chunk(chunk)) if chunk.is_empty() => self.outcome = Some(Ok(())),
             Ok(Part::Chunk(chunk)) => {
                 self.bytes.extend_from_slice(&chunk);
-                set(Status::Downloading {
-                    done: self.bytes.len() as u64,
-                    total: self.total,
-                });
+                set(Status::Downloading { done: self.bytes.len() as u64, total: self.total });
                 return ControlFlow::Continue(());
             }
             Err(e) => self.outcome = Some(Err(e)),
@@ -180,11 +173,7 @@ fn latest() -> Result<Option<Release>, String> {
         return Ok(None);
     }
     let binary = format!("{DOWNLOADS}/v{version}/{ASSET}");
-    Ok(Some(Release {
-        signature: format!("{binary}.sig"),
-        binary,
-        version,
-    }))
+    Ok(Some(Release { signature: format!("{binary}.sig"), binary, version }))
 }
 
 fn parse(version: &str) -> Option<(u32, u32, u32)> {
@@ -207,11 +196,7 @@ pub fn manifest(asset: &str, version: &str, bytes: &[u8]) -> String {
 fn verify(key: &[u8; 32], manifest: &str, signature_hex: &str) -> bool {
     let hex = signature_hex.trim();
     let bytes: Option<Vec<u8>> = (hex.len() == 128)
-        .then(|| {
-            (0..64)
-                .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok())
-                .collect()
-        })
+        .then(|| (0..64).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect())
         .flatten();
     let (Some(bytes), Ok(key)) = (bytes, VerifyingKey::from_bytes(key)) else {
         return false;
@@ -244,9 +229,7 @@ fn run(release: &Release) -> Result<(), String> {
     replaced?;
     #[cfg(windows)]
     crate::windows::record_installed_version(&release.version);
-    std::process::Command::new(&exe)
-        .spawn()
-        .map_err(|e| format!("relance: {e}"))?;
+    std::process::Command::new(&exe).spawn().map_err(|e| format!("relance: {e}"))?;
     Ok(())
 }
 
@@ -257,11 +240,7 @@ mod tests {
     use super::*;
 
     fn sign(key: &SigningKey, text: &str) -> String {
-        key.sign(text.as_bytes())
-            .to_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
+        key.sign(text.as_bytes()).to_bytes().iter().map(|b| format!("{b:02x}")).collect()
     }
 
     #[test]
@@ -283,16 +262,10 @@ mod tests {
         let signature = sign(&key, &good);
         assert!(verify(&public, &good, &signature));
         assert!(!verify(&public, &manifest(ASSET, "0.9.0", b"tampered"), &signature));
-        assert!(
-            !verify(&public, &manifest(ASSET, "0.9.1", binary), &signature),
-            "replayed as another version"
-        );
+        assert!(!verify(&public, &manifest(ASSET, "0.9.1", binary), &signature), "replayed as another version");
         assert!(!verify(&public, &manifest("other.exe", "0.9.0", binary), &signature));
         let stranger = SigningKey::from_bytes(&[8; 32]);
-        assert!(
-            !verify(&public, &good, &sign(&stranger, &good)),
-            "signed by someone else"
-        );
+        assert!(!verify(&public, &good, &sign(&stranger, &good)), "signed by someone else");
         assert!(!verify(&public, &good, "zz"));
     }
 
@@ -305,31 +278,19 @@ mod tests {
         let file = dir.join(ASSET);
         std::fs::write(&file, b"a release binary").unwrap();
         let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/sign-release.sh");
-        let status = std::process::Command::new(script)
-            .args([key.as_str(), "9.9.9", file.to_str().unwrap()])
-            .status()
-            .unwrap();
+        let status =
+            std::process::Command::new(script).args([key.as_str(), "9.9.9", file.to_str().unwrap()]).status().unwrap();
         assert!(status.success());
         let signature = std::fs::read_to_string(dir.join(format!("{ASSET}.sig"))).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         let signed = manifest(ASSET, "9.9.9", b"a release binary");
-        assert!(
-            verify(&PUBLIC_KEY, &signed, &signature),
-            "the game would refuse this release"
-        );
-        assert!(!verify(
-            &PUBLIC_KEY,
-            &manifest(ASSET, "9.9.8", b"a release binary"),
-            &signature
-        ));
+        assert!(verify(&PUBLIC_KEY, &signed, &signature), "the game would refuse this release");
+        assert!(!verify(&PUBLIC_KEY, &manifest(ASSET, "9.9.8", b"a release binary"), &signature));
     }
 
     #[test]
     fn the_manifest_names_file_version_and_content() {
         let m = manifest("a", "1.2.3", b"");
-        assert_eq!(
-            m,
-            "a 1.2.3 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
+        assert_eq!(m, "a 1.2.3 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     }
 }

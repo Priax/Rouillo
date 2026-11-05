@@ -287,12 +287,8 @@ impl Manager {
             return;
         }
         self.closing = true;
-        let counting: Vec<RoomId> = self
-            .rooms
-            .values()
-            .filter(|r| matches!(r.phase, Phase::CountingDown(_)))
-            .map(|r| r.id)
-            .collect();
+        let counting: Vec<RoomId> =
+            self.rooms.values().filter(|r| matches!(r.phase, Phase::CountingDown(_))).map(|r| r.id).collect();
         for id in counting {
             if let Some(room) = self.rooms.get_mut(&id) {
                 room.phase = Phase::Lobby;
@@ -308,10 +304,7 @@ impl Manager {
             self.refuse_queue(entry.conn, JOIN_MAINTENANCE);
         }
         self.cancel_pending_for_maintenance();
-        info!(
-            "Maintenance: {} partie(s) en cours à laisser finir",
-            self.games_running()
-        );
+        info!("Maintenance: {} partie(s) en cours à laisser finir", self.games_running());
     }
 
     pub fn closing(&self) -> bool {
@@ -331,12 +324,7 @@ impl Manager {
     }
 
     fn join_failed(&mut self, conn: ConnId, reason: &str) {
-        self.deliver_msg(
-            conn,
-            &ServerMessage::JoinFailed {
-                reason: reason.to_string(),
-            },
-        );
+        self.deliver_msg(conn, &ServerMessage::JoinFailed { reason: reason.to_string() });
     }
 
     fn with_room<R>(&mut self, id: RoomId, f: impl FnOnce(&mut Room) -> R) -> Option<R> {
@@ -367,12 +355,7 @@ impl Manager {
     }
 
     fn send_game_start(&mut self, id: RoomId) {
-        for (c, payload) in self
-            .rooms
-            .get_mut(&id)
-            .map(Room::game_start_payloads)
-            .unwrap_or_default()
-        {
+        for (c, payload) in self.rooms.get_mut(&id).map(Room::game_start_payloads).unwrap_or_default() {
             self.deliver(c, payload);
         }
     }
@@ -401,11 +384,7 @@ impl Manager {
     }
 
     pub fn public_room_list(&self) -> Vec<RoomInfo> {
-        self.rooms
-            .values()
-            .filter(|r| !r.settings.friends_only)
-            .map(Room::info)
-            .collect()
+        self.rooms.values().filter(|r| !r.settings.friends_only).map(Room::info).collect()
     }
 
     /// The friends-only rooms `conn` may join: its own, or a friend's.
@@ -414,8 +393,7 @@ impl Manager {
         let friends = viewer.and_then(|v| self.friends.get(&v));
         self.rooms.values().filter(move |r| {
             r.settings.friends_only
-                && r.host_user()
-                    .is_some_and(|host| viewer == Some(host) || friends.is_some_and(|f| f.contains(&host)))
+                && r.host_user().is_some_and(|host| viewer == Some(host) || friends.is_some_and(|f| f.contains(&host)))
         })
     }
 
@@ -433,9 +411,7 @@ impl Manager {
             .iter()
             .filter_map(|(&c, client)| (client.room.is_none() && client.lists_rooms).then_some(c))
             .collect();
-        let public = shared::encode(&ServerMessage::RoomList {
-            rooms: self.public_room_list(),
-        });
+        let public = shared::encode(&ServerMessage::RoomList { rooms: self.public_room_list() });
         for c in browsing {
             if self.private_rooms_for(c).next().is_some() {
                 self.send_room_list_to(c);
@@ -446,19 +422,11 @@ impl Manager {
     }
 
     fn send_room_list_to(&mut self, conn: ConnId) {
-        self.deliver_msg(
-            conn,
-            &ServerMessage::RoomList {
-                rooms: self.room_list_for(conn),
-            },
-        );
+        self.deliver_msg(conn, &ServerMessage::RoomList { rooms: self.room_list_for(conn) });
     }
 
     fn room_of_token(&self, token: &str) -> Option<RoomId> {
-        self.rooms
-            .values()
-            .find(|r| r.members.iter().any(|m| m.token == token))
-            .map(|r| r.id)
+        self.rooms.values().find(|r| r.members.iter().any(|m| m.token == token)).map(|r| r.id)
     }
 
     pub fn handle(&mut self, cmd: Command) {
@@ -469,15 +437,7 @@ impl Manager {
             Command::Register { conn, sender, states } => {
                 self.clients.insert(conn, Client::new(sender, states));
             }
-            Command::Hello {
-                conn,
-                token,
-                user_id,
-                username,
-                session,
-                last_disconnect_reason,
-                background,
-            } => {
+            Command::Hello { conn, token, user_id, username, session, last_disconnect_reason, background } => {
                 if let Some(reason) = last_disconnect_reason {
                     warn!("WS {conn} reconnecte après coupure client: {reason}");
                 }
@@ -520,13 +480,9 @@ impl Manager {
             Command::SetTargeting { conn, targeting } => self.set_targeting(conn, targeting),
             Command::SetTeam { conn, team } => self.set_team(conn, team),
             Command::AddCpu { conn } => self.add_cpu(conn),
-            Command::SetCpu {
-                conn,
-                slot,
-                difficulty,
-                style,
-                team,
-            } => self.set_cpu(conn, slot, difficulty, style, team),
+            Command::SetCpu { conn, slot, difficulty, style, team } => {
+                self.set_cpu(conn, slot, difficulty, style, team)
+            }
             Command::RemoveCpu { conn, slot } => self.remove_cpu(conn, slot),
             Command::Follow { conn, slot } => self.follow(conn, slot),
             Command::Playing { users, reply } => {
@@ -568,8 +524,7 @@ impl Manager {
                 let split = |c| clients.get(&c).is_some_and(Client::splits_states);
                 if let Some(rec) = room.tick_game(do_broadcast, split, &mut states, &mut outgoing) {
                     if room.series.is_some() {
-                        out.games_won
-                            .push((room.id, rec.winner_slot().map(|w| usize::from(w) - 1)));
+                        out.games_won.push((room.id, rec.winner_slot().map(|w| usize::from(w) - 1)));
                     }
                     out.records.push(rec);
                 }
@@ -613,11 +568,7 @@ impl Manager {
             })
             .collect();
         for (id, token) in expired {
-            if let Some(slot) = self
-                .rooms
-                .get(&id)
-                .and_then(|r| r.members.iter().position(|m| m.token == token))
-            {
+            if let Some(slot) = self.rooms.get(&id).and_then(|r| r.members.iter().position(|m| m.token == token)) {
                 info!("Grâce expirée, retrait room #{id}");
                 self.release_seat(id, slot, "jamais revenu après sa déconnexion");
             }

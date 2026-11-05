@@ -61,11 +61,7 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
     ProfileCore {
         history: History::load(user_id.clone(), token),
         user_id,
-        info: ApiUserProfile {
-            username,
-            elo,
-            ..ApiUserProfile::default()
-        },
+        info: ApiUserProfile { username, elo, ..ApiUserProfile::default() },
         about_open: false,
         profile_slot: Some(profile_slot),
         replay_status: Status::Empty,
@@ -76,16 +72,9 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
 fn update_history(app: &App, state: &mut State, core: &mut ProfileCore, other: bool) {
     let view = state.ui.view();
     let area = pager_area(view);
-    let State {
-        ui,
-        fonts,
-        auth,
-        input: Input { keys, .. },
-        ..
-    } = state;
+    let State { ui, fonts, auth, input: Input { keys, .. }, .. } = state;
     let total = core.info.total_matches;
-    core.history
-        .update(app, ui, fonts, keys, area, total, history_rows(view));
+    core.history.update(app, ui, fonts, keys, area, total, history_rows(view));
     let (_, card) = cards(view);
     match http::take_done(&mut core.favorite_slot) {
         Some(Ok(())) => core.history.fetch(),
@@ -145,10 +134,7 @@ fn cover(draw: &mut Draw, picture: &Texture, r: Rect) {
     let (tw, th) = picture.size();
     let scale = (r.w / tw).max(r.h / th);
     let (sw, sh) = (r.w / scale, r.h / scale);
-    draw.image(picture)
-        .position(r.x, r.y)
-        .size(r.w, r.h)
-        .crop(((tw - sw) / 2.0, (th - sh) / 2.0), (sw, sh));
+    draw.image(picture).position(r.x, r.y).size(r.w, r.h).crop(((tw - sw) / 2.0, (th - sh) / 2.0), (sw, sh));
 }
 
 fn draw_header(draw: &mut Draw, gfx: &mut Graphics, state: &State, core: &ProfileCore) {
@@ -164,30 +150,17 @@ fn draw_header(draw: &mut Draw, gfx: &mut Graphics, state: &State, core: &Profil
     let radius = 48.0;
     let (px, py) = (60.0 + radius, PROFILE_HEADER_H / 2.0);
     let avatar = state.images.get_opt(gfx, core.info.avatar_url.as_deref());
-    let who = ui::Persona {
-        name: &core.info.username,
-        glow: 0.0,
-        picture: avatar.as_ref(),
-    };
+    let who = ui::Persona { name: &core.info.username, glow: 0.0, picture: avatar.as_ref() };
     portrait(draw, &pal, fonts, (px, py), radius, &who);
     let text_x = px + radius + 28.0;
-    let name = fonts.fit(
-        Face::Display,
-        &core.info.username,
-        theme::size::TITLE,
-        view.w - text_x - 60.0,
-    );
+    let name = fonts.fit(Face::Display, &core.info.username, theme::size::TITLE, view.w - text_x - 60.0);
     draw.sharp_text(&fonts.display, &name)
         .position(text_x, py - 16.0)
         .size(theme::size::TITLE)
         .v_align_middle()
         .color(pal.text);
     let elo = format!("ELO {}", core.info.elo);
-    let rating = Pill {
-        text: &elo,
-        color: theme::GOLD,
-        size: theme::size::BODY,
-    };
+    let rating = Pill { text: &elo, color: theme::GOLD, size: theme::size::BODY };
     rating.draw(draw, fonts, (text_x, py + 30.0));
 }
 
@@ -208,9 +181,7 @@ fn buttons_top(view: View) -> f32 {
 fn cards(view: View) -> (Rect, Rect) {
     let area = Rect::at(0.0, CARD_TOP, view.w, buttons_top(view) - STATUS_GAP - CARD_TOP);
     if view.portrait() {
-        let [stats, list] = area
-            .pad(0.0, 20.0, 0.0, 20.0)
-            .rows(20.0, [Size::Px(STATS_CARD_H), FILL]);
+        let [stats, list] = area.pad(0.0, 20.0, 0.0, 20.0).rows(20.0, [Size::Px(STATS_CARD_H), FILL]);
         return (stats, list);
     }
     let stats_w = (view.w * 0.36).max(280.0);
@@ -226,11 +197,7 @@ fn bottom_buttons<const N: usize>(view: View, widths: [f32; N]) -> [Rect; N] {
         let w = (view.w - 60.0) / 2.0;
         return std::array::from_fn(|i| {
             let row = (i / 2) as f32;
-            let x = if N - i == 1 && i % 2 == 0 {
-                cx - w / 2.0
-            } else {
-                20.0 + (i % 2) as f32 * (w + 20.0)
-            };
+            let x = if N - i == 1 && i % 2 == 0 { cx - w / 2.0 } else { 20.0 + (i % 2) as f32 * (w + 20.0) };
             Rect::at(x, top + row * BUTTON_STEP, w, BUTTON_H)
         });
     }
@@ -245,13 +212,7 @@ fn card_title(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card: Rect, title: 
         .size(theme::size::EMPHASIS)
         .v_align_middle()
         .color(pal.text_dim);
-    divider(
-        draw,
-        pal,
-        card.x + CARD_PAD,
-        card.y + CARD_TITLE_H,
-        card.w - 2.0 * CARD_PAD,
-    );
+    divider(draw, pal, card.x + CARD_PAD, card.y + CARD_TITLE_H, card.w - 2.0 * CARD_PAD);
 }
 
 fn card_message(draw: &mut Draw, fonts: &Fonts, card: Rect, text: &str, color: Color) {
@@ -331,12 +292,7 @@ fn stats_end(card: Rect) -> f32 {
 
 fn about_area(card: Rect) -> Rect {
     let top = stats_end(card) + 24.0;
-    Rect::at(
-        card.x + CARD_PAD,
-        top,
-        card.w - 2.0 * CARD_PAD,
-        card.y + card.h - CARD_PAD - top,
-    )
+    Rect::at(card.x + CARD_PAD, top, card.w - 2.0 * CARD_PAD, card.y + card.h - CARD_PAD - top)
 }
 
 fn update_about(app: &App, ui: &Ui, core: &mut ProfileCore) -> bool {
@@ -372,8 +328,7 @@ fn draw_history_panel(draw: &mut Draw, ui: &Ui, fonts: &Fonts, core: &ProfileCor
         }
     }
     if core.info.total_matches > core.history.per_page as i64 {
-        core.history
-            .draw_pager(draw, ui, fonts, pager_area(ui.view()), core.info.total_matches);
+        core.history.draw_pager(draw, ui, fonts, pager_area(ui.view()), core.info.total_matches);
     }
 }
 
@@ -446,18 +401,10 @@ fn draw_match_row(
     } else {
         (place.as_str(), theme::DANGER)
     };
-    let result = Pill {
-        text,
-        color,
-        size: theme::size::SMALL,
-    };
+    let result = Pill { text, color, size: theme::size::SMALL };
     result.draw(draw, fonts, (row.x + row.w * 0.1 - result.width(fonts) / 2.0, mid));
     if m.ranked {
-        let ranked = Pill {
-            text: "CLASSÉ",
-            color: theme::bar::ORANGE,
-            size: theme::size::SMALL,
-        };
+        let ranked = Pill { text: "CLASSÉ", color: theme::bar::ORANGE, size: theme::size::SMALL };
         ranked.draw(draw, fonts, (row.x + row.w * 0.2, mid));
     }
 
@@ -470,15 +417,12 @@ fn draw_match_row(
 
     let wide = row.w >= WIDE_ROW;
     if wide {
-        draw.sharp_text(
-            &fonts.text,
-            &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent),
-        )
-        .position(replay_zone(row).x - 14.0, mid)
-        .size(theme::size::SMALL)
-        .h_align_right()
-        .v_align_middle()
-        .color(theme::GOLD);
+        draw.sharp_text(&fonts.text, &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent))
+            .position(replay_zone(row).x - 14.0, mid)
+            .size(theme::size::SMALL)
+            .h_align_right()
+            .v_align_middle()
+            .color(theme::GOLD);
     }
 
     if m.has_replay {
@@ -504,17 +448,8 @@ pub fn enter_profile(state: &State) -> Transition {
     let Some(auth) = &state.auth else {
         return Transition::Stay;
     };
-    let core = load_core(
-        auth.user_id.clone(),
-        auth.username.clone(),
-        auth.elo,
-        Some(auth.token.clone()),
-    );
-    Transition::Push(Screen::Profile(Box::new(ProfileData {
-        core,
-        edit: None,
-        account: None,
-    })))
+    let core = load_core(auth.user_id.clone(), auth.username.clone(), auth.elo, Some(auth.token.clone()));
+    Transition::Push(Screen::Profile(Box::new(ProfileData { core, edit: None, account: None })))
 }
 
 fn own_buttons(view: View) -> [Rect; 4] {
@@ -554,12 +489,10 @@ pub fn update_profile(app: &mut App, state: &mut State, p: &mut ProfileData) -> 
 
     let my_id = p.core.user_id.as_str();
     let shown = p.core.history.entries.iter().enumerate().take(p.core.history.per_page);
-    let opponent = shown
-        .filter(|&(i, _)| state.ui.clicked(history_row_zone(state.ui.view(), i)))
-        .find_map(|(_, m)| {
-            let opp = m.opponent(my_id)?;
-            Some((opp.user_id.clone()?, opp.username.clone()?))
-        });
+    let opponent = shown.filter(|&(i, _)| state.ui.clicked(history_row_zone(state.ui.view(), i))).find_map(|(_, m)| {
+        let opp = m.opponent(my_id)?;
+        Some((opp.user_id.clone()?, opp.username.clone()?))
+    });
     match opponent {
         Some((uid, uname)) => enter_other_profile(state, uid, uname, None),
         None => Transition::Stay,
@@ -568,12 +501,7 @@ pub fn update_profile(app: &mut App, state: &mut State, p: &mut ProfileData) -> 
 
 fn update_account(app: &App, state: &mut State, p: &mut ProfileData) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let State {
-        ui,
-        fonts,
-        input: Input { keys, .. },
-        ..
-    } = state;
+    let State { ui, fonts, input: Input { keys, .. }, .. } = state;
     let Some(form) = p.account.as_mut() else {
         return Transition::Stay;
     };
@@ -739,9 +667,7 @@ pub fn draw_other_profile(gfx: &mut Graphics, state: &State, p: &OtherProfileDat
     let can_add = !p.load_failed && p.friendship == FriendshipStatus::NotFriends;
     if can_add {
         let label = if sending { "Envoi..." } else { "Ajouter en ami" };
-        state
-            .ui
-            .button_enabled(&mut draw, &state.fonts, add_btn, label, !sending);
+        state.ui.button_enabled(&mut draw, &state.fonts, add_btn, label, !sending);
     }
     state.ui.button(&mut draw, &state.fonts, back_btn, "Retour");
 

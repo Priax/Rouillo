@@ -38,9 +38,7 @@ fn open_log() {
 /// apps, if this copy is the one the installer put there.
 pub fn record_installed_version(version: &str) {
     let installed = installed_location().and_then(|dir| fs::canonicalize(dir).ok());
-    let here = std::env::current_exe()
-        .ok()
-        .and_then(|exe| fs::canonicalize(exe.parent()?).ok());
+    let here = std::env::current_exe().ok().and_then(|exe| fs::canonicalize(exe.parent()?).ok());
     if installed.is_none() || installed != here {
         return;
     }

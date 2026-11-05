@@ -83,12 +83,7 @@ impl RoomSetting {
 
 impl Default for RoomSettings {
     fn default() -> Self {
-        Self {
-            rules: Rules::default(),
-            friends_only: false,
-            pause: PausePolicy::Everyone,
-            max_players: 2,
-        }
+        Self { rules: Rules::default(), friends_only: false, pause: PausePolicy::Everyone, max_players: 2 }
     }
 }
 

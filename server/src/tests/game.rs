@@ -77,19 +77,11 @@ fn every_state_update_carries_the_current_tick() {
 }
 
 pub(super) fn piece_col(mgr: &Manager, slot: usize) -> i32 {
-    mgr.rooms[&1].sim.boards[slot]
-        .piece()
-        .expect("a piece must be falling")
-        .col
+    mgr.rooms[&1].sim.boards[slot].piece().expect("a piece must be falling").col
 }
 
 pub(super) fn press(mgr: &mut Manager, conn: ConnId, seq: u32, tick: u32) {
-    mgr.handle(Command::Input {
-        conn,
-        kind: InputKind::MoveLeft,
-        seq,
-        tick,
-    });
+    mgr.handle(Command::Input { conn, kind: InputKind::MoveLeft, seq, tick });
 }
 
 #[test]
@@ -192,12 +184,7 @@ fn a_full_input_queue_drops_without_acknowledging() {
 
     let flood = INPUT_QUEUE_CAP as u32 + 50;
     for seq in 1..=flood {
-        mgr.handle(Command::Input {
-            conn: 1,
-            kind: InputKind::RotateCW,
-            seq,
-            tick: now + 20,
-        });
+        mgr.handle(Command::Input { conn: 1, kind: InputKind::RotateCW, seq, tick: now + 20 });
     }
     assert_eq!(mgr.rooms[&1].sim.queued_inputs[0].len(), INPUT_QUEUE_CAP);
     assert_eq!(mgr.rooms[&1].sim.last_seq[0], 0, "acknowledged what it dropped");
@@ -241,11 +228,7 @@ fn an_attack_travels_before_it_lands() {
     assert_eq!(mgr.rooms[&1].sim.tick, sent_at + config::GARBAGE_TRAVEL_TICKS);
     assert_eq!(mgr.rooms[&1].sim.boards[1].pending_garbage, 1);
     assert_eq!(mgr.rooms[&1].sim.nuisance_sent[0], 1);
-    assert!(mgr.rooms[&1]
-        .sim
-        .garbage_in_flight
-        .iter()
-        .all(|g| g.at > sent_at + config::GARBAGE_TRAVEL_TICKS));
+    assert!(mgr.rooms[&1].sim.garbage_in_flight.iter().all(|g| g.at > sent_at + config::GARBAGE_TRAVEL_TICKS));
 }
 
 #[test]
@@ -343,18 +326,14 @@ fn a_restart_clears_attacks_in_flight() {
     for _ in 0..60 {
         mgr.tick(STEP, false);
     }
-    assert_eq!(
-        mgr.rooms[&1].sim.boards[1].pending_garbage, 0,
-        "an attack from the previous game landed in this one"
-    );
+    assert_eq!(mgr.rooms[&1].sim.boards[1].pending_garbage, 0, "an attack from the previous game landed in this one");
 }
 
 fn last_board(rx: &mut mpsc::Receiver<Vec<u8>>, slot: u8) -> Option<shared::Board> {
     drain(rx).into_iter().rev().find_map(|m| match m {
-        ServerMessage::StateUpdate { players, .. } => players
-            .into_iter()
-            .find(|p| p.slot == slot)
-            .map(|p| std::sync::Arc::unwrap_or_clone(p.board)),
+        ServerMessage::StateUpdate { players, .. } => {
+            players.into_iter().find(|p| p.slot == slot).map(|p| std::sync::Arc::unwrap_or_clone(p.board))
+        }
         _ => None,
     })
 }
@@ -373,20 +352,14 @@ fn every_update_carries_the_draws_so_far() {
     let mut server = mgr.rooms[&1].sim.boards[0].clone();
     drop(&mut sent);
     drop(&mut server);
-    assert_eq!(
-        sent.cells(),
-        server.cells(),
-        "the next drop lands elsewhere on the client"
-    );
+    assert_eq!(sent.cells(), server.cells(), "the next drop lands elsewhere on the client");
     assert_eq!(sent.state_hash(), server.state_hash());
 }
 
 #[test]
 fn a_three_player_game_goes_on_until_one_player_is_left() {
     use crate::room::{Member, Phase, Room};
-    let members = (0..3)
-        .map(|i| Member::present(format!("P{i}"), i, None, format!("p{i}")))
-        .collect();
+    let members = (0..3).map(|i| Member::present(format!("P{i}"), i, None, format!("p{i}"))).collect();
     let mut room = Room::new(1, "trio".into(), members, shared::RoomSettings::default(), None);
     room.phase = Phase::CountingDown(0.0);
     let mut out = Vec::new();
@@ -422,12 +395,7 @@ fn a_reconnected_player_numbers_inputs_from_one_again() {
     let (_rx1, _rx2) = running_game(&mut mgr);
     for seq in 1..=5 {
         let tick = mgr.rooms[&1].sim.tick + 1;
-        mgr.handle(Command::Input {
-            conn: 2,
-            kind: InputKind::RotateCW,
-            seq,
-            tick,
-        });
+        mgr.handle(Command::Input { conn: 2, kind: InputKind::RotateCW, seq, tick });
         mgr.tick(STEP, false);
     }
     assert_eq!(mgr.rooms[&1].sim.last_seq[1], 5);
@@ -435,10 +403,7 @@ fn a_reconnected_player_numbers_inputs_from_one_again() {
     let _rx = reg(&mut mgr, 3);
     hello(&mut mgr, 3, "B");
     assert!(!mgr.rooms[&1].sim.paused, "setup: B is back");
-    assert_eq!(
-        mgr.rooms[&1].sim.last_seq[1], 0,
-        "the ack starts over with the new numbering"
-    );
+    assert_eq!(mgr.rooms[&1].sim.last_seq[1], 0, "the ack starts over with the new numbering");
     let col = piece_col(&mgr, 1);
     let tick = mgr.rooms[&1].sim.tick + 1;
     press(&mut mgr, 3, 1, tick);

@@ -41,11 +41,7 @@ impl Triangles {
             let progress = (f64::from(phase) + cycles).fract() as f32;
             let (x, y) = (area.x + u * area.w, area.y + area.h + side - progress * travel);
             let half = side * 0.577;
-            let corners = [
-                (x, y - side / 2.0),
-                (x - half, y + side / 2.0),
-                (x + half, y + side / 2.0),
-            ];
+            let corners = [(x, y - side / 2.0), (x - half, y + side / 2.0), (x + half, y + side / 2.0)];
             let color = self.color.with_alpha(self.color.a * (0.35 + 0.65 * alpha));
             match clip {
                 None => {
@@ -75,11 +71,7 @@ fn fill_polygon(draw: &mut Draw, points: &[(f32, f32)], color: Color) {
 /// The part of `subject` inside the convex polygon `clip` (Sutherland-
 /// Hodgman). `clip`'s corners may run either way round.
 fn clip_convex(subject: &[(f32, f32)], clip: &[(f32, f32)]) -> Vec<(f32, f32)> {
-    let area2: f32 = clip
-        .iter()
-        .zip(clip.iter().cycle().skip(1))
-        .map(|(a, b)| a.0 * b.1 - b.0 * a.1)
-        .sum();
+    let area2: f32 = clip.iter().zip(clip.iter().cycle().skip(1)).map(|(a, b)| a.0 * b.1 - b.0 * a.1).sum();
     let orientation = area2.signum();
     let mut output = subject.to_vec();
     for (&a, &b) in clip.iter().zip(clip.iter().cycle().skip(1)) {
@@ -138,9 +130,7 @@ mod tests {
         for clip in [SQUARE.to_vec(), reversed] {
             let cut = clip_convex(&tri, &clip);
             assert!(cut.len() >= 3);
-            assert!(cut
-                .iter()
-                .all(|&(x, y)| (-1e-4..=10.0001).contains(&x) && (-1e-4..=10.0001).contains(&y)));
+            assert!(cut.iter().all(|&(x, y)| (-1e-4..=10.0001).contains(&x) && (-1e-4..=10.0001).contains(&y)));
         }
     }
 

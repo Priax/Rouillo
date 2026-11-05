@@ -49,17 +49,13 @@ struct Layout {
 impl Layout {
     fn new(view: View) -> Self {
         let screen = Rect::at(0.0, 0.0, view.w, view.h);
-        let modal = Modal {
-            card: screen.pad(40.0, 0.0, 40.0, 0.0).max_width(CARD_W),
-        };
+        let modal = Modal { card: screen.pad(40.0, 0.0, 40.0, 0.0).max_width(CARD_W) };
         let plot = modal.body().pad(0.0, 0.0, FOOTER_H, 0.0);
         let frame = FRAME_PAD / config::CELL_SIZE;
         let (max_columns, max_rows) = (max_of(&BOARD_COLUMNS), max_of(&BOARD_ROWS));
         let (cells_w, cells_h) = (max_columns + 2.0 * frame + OVERHANG, max_rows + 2.0 * frame + OVERHANG);
-        let (fixed_w, fixed_h) = (
-            BUTTON + GAP + Y_LABEL + AXIS_GAP + ARROW_ROOM,
-            TOP + AXIS_GAP + X_LABEL + GAP + BUTTON,
-        );
+        let (fixed_w, fixed_h) =
+            (BUTTON + GAP + Y_LABEL + AXIS_GAP + ARROW_ROOM, TOP + AXIS_GAP + X_LABEL + GAP + BUTTON);
         let cell = ((plot.w - fixed_w) / cells_w).min((plot.h - fixed_h) / cells_h);
         let (total_w, total_h) = (fixed_w + cells_w * cell, fixed_h + cells_h * cell);
         let x0 = plot.x + (plot.w - total_w) / 2.0;
@@ -165,12 +161,7 @@ pub fn draw(draw: &mut Draw, ui: &Ui, fonts: &Fonts, rules: &Rules, editable: bo
     draw_axes(draw, ui, fonts, &layout, rules);
 
     if editable {
-        for (rect, icon) in layout
-            .columns
-            .into_iter()
-            .chain(layout.rows)
-            .zip([Icon::Minus, Icon::Plus].repeat(2))
-        {
+        for (rect, icon) in layout.columns.into_iter().chain(layout.rows).zip([Icon::Minus, Icon::Plus].repeat(2)) {
             ui.button(draw, fonts, rect, icon);
         }
         ui.button_enabled(draw, fonts, layout.standard, "Taille standard", !is_standard(rules));
@@ -201,10 +192,8 @@ fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &Fonts, layout: &Layout, rules: &R
         draw.line(from, to).width(3.0).color(color);
     }
     let head = 7.0;
-    draw.triangle((x_end + head, cy), (x_end - head, cy - head), (x_end - head, cy + head))
-        .color(pal.border);
-    draw.triangle((cx, y_end - head), (cx - head, y_end + head), (cx + head, y_end + head))
-        .color(pal.border);
+    draw.triangle((x_end + head, cy), (x_end - head, cy - head), (x_end - head, cy + head)).color(pal.border);
+    draw.triangle((cx, y_end - head), (cx - head, y_end + head), (cx + head, y_end + head)).color(pal.border);
 
     for c in 0..=*BOARD_COLUMNS.end() {
         let x = well.x + f32::from(c) * layout.cell;

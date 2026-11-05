@@ -20,11 +20,7 @@ pub(super) fn queue_up(mgr: &mut Manager, conn: ConnId, user: u128, elo: i32, ca
     assert_eq!(checks.len(), 1, "setup: one lookup per queue request");
     mgr.handle(Command::RankedCheckDone {
         check: checks[0],
-        profile: Some(db::RankedProfile {
-            elo,
-            casual,
-            avatar_url: Some(format!("/api/users/{user}/avatar?v=1")),
-        }),
+        profile: Some(db::RankedProfile { elo, casual, avatar_url: Some(format!("/api/users/{user}/avatar?v=1")) }),
     });
     rx
 }
@@ -34,11 +30,7 @@ pub(super) fn ranked_id(mgr: &Manager) -> Option<RoomId> {
 }
 
 pub(super) fn accept_all(mgr: &mut Manager) {
-    let conns: Vec<ConnId> = mgr
-        .pending_matches
-        .iter()
-        .flat_map(|m| m.entries.iter().map(|e| e.conn))
-        .collect();
+    let conns: Vec<ConnId> = mgr.pending_matches.iter().flat_map(|m| m.entries.iter().map(|e| e.conn)).collect();
     for conn in conns {
         mgr.handle(Command::AcceptMatch { conn });
     }
@@ -71,10 +63,7 @@ fn guests_cannot_queue() {
     hello(&mut mgr, 1, "A");
     mgr.handle(Command::JoinQueue { conn: 1 });
     assert!(mgr.take_ranked_checks().is_empty());
-    assert!(has(&drain(&mut rx), |m| matches!(
-        m,
-        ServerMessage::QueueRefused { .. }
-    )));
+    assert!(has(&drain(&mut rx), |m| matches!(m, ServerMessage::QueueRefused { .. })));
 }
 
 #[test]
@@ -86,10 +75,7 @@ fn too_few_casual_games_keep_an_account_out_of_the_queue() {
         ServerMessage::QueueRefused { reason } => Some(reason),
         _ => None,
     });
-    assert_eq!(
-        refused.as_deref(),
-        Some("Jouez encore 2 parties amicales avant le classé.")
-    );
+    assert_eq!(refused.as_deref(), Some("Jouez encore 2 parties amicales avant le classé."));
 }
 
 #[test]
@@ -99,10 +85,7 @@ fn close_players_are_matched_into_a_series() {
     let _rx2 = queue_up(&mut mgr, 2, 2, 1050, config::RANKED_MIN_CASUAL);
     let id = match_up(&mut mgr).expect("matched");
     assert!(mgr.queue.is_empty());
-    assert!(
-        mgr.public_room_list().iter().all(|r| r.ranked),
-        "a ranked room is listed, to be watched"
-    );
+    assert!(mgr.public_room_list().iter().all(|r| r.ranked), "a ranked room is listed, to be watched");
     assert!(matches!(mgr.rooms[&id].phase, Phase::CountingDown(_)));
     let lobby = drain(&mut rx1).into_iter().find_map(|m| match m {
         ServerMessage::Lobby { info } => info.ranked,
@@ -139,10 +122,7 @@ async fn a_series_ends_at_three_wins_and_moves_elo_once() {
         }
     }
     assert_eq!(
-        mgr.take_unsaved_series()
-            .iter()
-            .map(|r| (r.winner, r.loser))
-            .collect::<Vec<_>>(),
+        mgr.take_unsaved_series().iter().map(|r| (r.winner, r.loser)).collect::<Vec<_>>(),
         vec![(Uuid::from_u128(1), Uuid::from_u128(2))]
     );
     let recs = mgr.take_unsaved_matches();
@@ -150,10 +130,7 @@ async fn a_series_ends_at_three_wins_and_moves_elo_once() {
     assert!(recs.iter().all(|r| r.ranked));
     let over = |rx: &mut mpsc::Receiver<Vec<u8>>| {
         drain(rx).into_iter().find_map(|m| match m {
-            ServerMessage::SeriesOver {
-                winner_slot,
-                elo_change,
-            } => Some((winner_slot, elo_change)),
+            ServerMessage::SeriesOver { winner_slot, elo_change } => Some((winner_slot, elo_change)),
             _ => None,
         })
     };
@@ -173,23 +150,11 @@ fn leaving_mid_series_loses_it() {
     lose(&mut mgr, id, 0);
     mgr.handle(Command::LeaveRoom { conn: 2 });
     assert_eq!(
-        mgr.take_unsaved_series()
-            .iter()
-            .map(|r| (r.winner, r.loser))
-            .collect::<Vec<_>>(),
+        mgr.take_unsaved_series().iter().map(|r| (r.winner, r.loser)).collect::<Vec<_>>(),
         vec![(Uuid::from_u128(1), Uuid::from_u128(2))]
     );
-    assert!(has(&drain(&mut rx1), |m| matches!(
-        m,
-        ServerMessage::SeriesOver {
-            winner_slot: Some(1),
-            ..
-        }
-    )));
-    assert!(
-        mgr.rooms[&id].members.iter().all(|m| m.token != "P2"),
-        "the leaver cannot come back into it"
-    );
+    assert!(has(&drain(&mut rx1), |m| matches!(m, ServerMessage::SeriesOver { winner_slot: Some(1), .. })));
+    assert!(mgr.rooms[&id].members.iter().all(|m| m.token != "P2"), "the leaver cannot come back into it");
     mgr.handle(Command::LeaveRoom { conn: 1 });
     assert!(!mgr.rooms.contains_key(&id), "the room closes once both left");
 }
@@ -201,10 +166,7 @@ fn room_controls_do_nothing_in_a_series() {
     let _rx2 = queue_up(&mut mgr, 2, 2, 1000, config::RANKED_MIN_CASUAL);
     let id = match_up(&mut mgr).unwrap();
     mgr.handle(Command::ToggleCountdown { conn: 1 });
-    assert!(
-        matches!(mgr.rooms[&id].phase, Phase::CountingDown(_)),
-        "the countdown cannot be stopped"
-    );
+    assert!(matches!(mgr.rooms[&id].phase, Phase::CountingDown(_)), "the countdown cannot be stopped");
     mgr.tick(3.5, false);
     mgr.handle(Command::TogglePause { conn: 1 });
     assert!(!mgr.rooms[&id].sim.paused);
@@ -224,10 +186,7 @@ fn an_account_cannot_queue_twice() {
     hello_as(&mut mgr, 2, "B", 1);
     mgr.handle(Command::JoinQueue { conn: 2 });
     assert!(mgr.take_ranked_checks().is_empty());
-    assert!(has(&drain(&mut rx2), |m| matches!(
-        m,
-        ServerMessage::QueueRefused { .. }
-    )));
+    assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::QueueRefused { .. })));
     mgr.tick(STEP, false);
     assert!(ranked_id(&mgr).is_none());
 }
@@ -251,17 +210,11 @@ fn revoking_a_session_logs_out_the_other_connections_only() {
     hello_session(&mut mgr, 1, "A", 7, 100);
     let mut rx2 = reg(&mut mgr, 2);
     hello_session(&mut mgr, 2, "B", 7, 200);
-    mgr.handle(Command::Revoke {
-        user_id: Uuid::from_u128(7),
-        keep: Some(Uuid::from_u128(100)),
-    });
+    mgr.handle(Command::Revoke { user_id: Uuid::from_u128(7), keep: Some(Uuid::from_u128(100)) });
     assert!(!has(&drain(&mut rx1), |m| matches!(m, ServerMessage::SessionRevoked)));
     assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::SessionRevoked)));
     mgr.handle(Command::JoinQueue { conn: 2 });
-    assert!(
-        mgr.take_ranked_checks().is_empty(),
-        "the revoked connection is a guest now"
-    );
+    assert!(mgr.take_ranked_checks().is_empty(), "the revoked connection is a guest now");
     mgr.handle(Command::JoinQueue { conn: 1 });
     assert_eq!(mgr.take_ranked_checks().len(), 1, "the kept one still is the account");
 }
@@ -286,11 +239,7 @@ async fn a_ranked_draw_scores_nobody_and_is_replayed() {
     assert_eq!(mgr.rooms[&id].series.as_ref().unwrap().wins, [0, 0]);
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
-    assert_eq!(
-        (recs[0].winner_slot(), recs[0].ranked),
-        (None, true),
-        "recorded as a draw"
-    );
+    assert_eq!((recs[0].winner_slot(), recs[0].ranked), (None, true), "recorded as a draw");
     tokio::time::advance(NEXT_GAME_DELAY).await;
     mgr.tick(STEP, false);
     assert!(mgr.rooms[&id].game_running(), "the game is replayed");
@@ -387,21 +336,13 @@ fn coming_back_through_the_queue_button_resumes_the_series() {
     hello_as(&mut mgr, 3, "P2", 2);
     mgr.handle(Command::JoinQueue { conn: 3 });
     assert_eq!(mgr.room_of(3), Some(id));
-    assert!(!has(&drain(&mut rx), |m| matches!(
-        m,
-        ServerMessage::QueueRefused { .. }
-    )));
+    assert!(!has(&drain(&mut rx), |m| matches!(m, ServerMessage::QueueRefused { .. })));
 }
 
 pub(super) fn cancelled(rx: &mut mpsc::Receiver<Vec<u8>>) -> Vec<ServerMessage> {
     drain(rx)
         .into_iter()
-        .filter(|m| {
-            matches!(
-                m,
-                ServerMessage::MatchCancelled { .. } | ServerMessage::QueueCooldown { .. }
-            )
-        })
+        .filter(|m| matches!(m, ServerMessage::MatchCancelled { .. } | ServerMessage::QueueCooldown { .. }))
         .collect()
 }
 
@@ -418,23 +359,12 @@ fn a_match_starts_only_once_both_players_accept() {
     let mut mgr = new_mgr();
     let (mut rx1, _rx2) = found_pair(&mut mgr);
     let found = drain(&mut rx1).into_iter().find_map(|m| match m {
-        ServerMessage::MatchFound {
-            opponent,
-            opponent_elo,
-            opponent_avatar,
-            secs,
-        } => Some((opponent, opponent_elo, opponent_avatar, secs)),
+        ServerMessage::MatchFound { opponent, opponent_elo, opponent_avatar, secs } => {
+            Some((opponent, opponent_elo, opponent_avatar, secs))
+        }
         _ => None,
     });
-    assert_eq!(
-        found,
-        Some((
-            "p2".into(),
-            1050,
-            Some("/api/users/2/avatar?v=1".into()),
-            config::MATCH_ACCEPT_SECS
-        ))
-    );
+    assert_eq!(found, Some(("p2".into(), 1050, Some("/api/users/2/avatar?v=1".into()), config::MATCH_ACCEPT_SECS)));
     assert!(ranked_id(&mgr).is_none());
     mgr.handle(Command::AcceptMatch { conn: 1 });
     mgr.tick(STEP, false);
@@ -454,26 +384,18 @@ async fn an_unanswered_match_requeues_who_accepted_and_holds_back_the_other() {
     mgr.tick(STEP, false);
     assert!(mgr.pending_matches.is_empty());
     assert_eq!(mgr.queue.iter().map(|e| e.conn).collect::<Vec<_>>(), vec![1]);
-    assert!(matches!(
-        cancelled(&mut rx1)[..],
-        [ServerMessage::MatchCancelled { requeued: true }]
-    ));
+    assert!(matches!(cancelled(&mut rx1)[..], [ServerMessage::MatchCancelled { requeued: true }]));
     assert!(matches!(
         cancelled(&mut rx2)[..],
         [
             ServerMessage::MatchCancelled { requeued: false },
-            ServerMessage::QueueCooldown {
-                secs: config::QUEUE_COOLDOWN_SECS
-            }
+            ServerMessage::QueueCooldown { secs: config::QUEUE_COOLDOWN_SECS }
         ]
     ));
 
     mgr.handle(Command::JoinQueue { conn: 2 });
     assert!(mgr.take_ranked_checks().is_empty(), "held back for a minute");
-    assert!(has(&drain(&mut rx2), |m| matches!(
-        m,
-        ServerMessage::QueueCooldown { .. }
-    )));
+    assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::QueueCooldown { .. })));
     tokio::time::advance(QUEUE_COOLDOWN).await;
     mgr.tick(STEP, false);
     mgr.handle(Command::JoinQueue { conn: 2 });
@@ -487,14 +409,8 @@ fn declining_a_match_cancels_it_at_once() {
     mgr.handle(Command::LeaveQueue { conn: 2 });
     assert!(mgr.pending_matches.is_empty());
     assert_eq!(mgr.queue.iter().map(|e| e.conn).collect::<Vec<_>>(), vec![1]);
-    assert!(matches!(
-        cancelled(&mut rx1)[..],
-        [ServerMessage::MatchCancelled { requeued: true }]
-    ));
-    assert!(has(&cancelled(&mut rx2), |m| matches!(
-        m,
-        ServerMessage::QueueCooldown { .. }
-    )));
+    assert!(matches!(cancelled(&mut rx1)[..], [ServerMessage::MatchCancelled { requeued: true }]));
+    assert!(has(&cancelled(&mut rx2), |m| matches!(m, ServerMessage::QueueCooldown { .. })));
 }
 
 #[test]
@@ -505,10 +421,7 @@ fn disconnecting_from_a_proposed_match_declines_it() {
     mgr.handle(Command::Unregister { conn: 2 });
     assert!(mgr.pending_matches.is_empty());
     assert_eq!(mgr.queue.iter().map(|e| e.conn).collect::<Vec<_>>(), vec![1]);
-    assert!(matches!(
-        cancelled(&mut rx1)[..],
-        [ServerMessage::MatchCancelled { requeued: true }]
-    ));
+    assert!(matches!(cancelled(&mut rx1)[..], [ServerMessage::MatchCancelled { requeued: true }]));
     assert!(ranked_id(&mgr).is_none());
 }
 
@@ -520,20 +433,14 @@ fn a_player_in_a_proposed_match_cannot_queue_again() {
     hello_as(&mut mgr, 3, "C", 1);
     mgr.handle(Command::JoinQueue { conn: 3 });
     assert!(mgr.take_ranked_checks().is_empty());
-    assert!(has(&drain(&mut rx3), |m| matches!(
-        m,
-        ServerMessage::QueueRefused { .. }
-    )));
+    assert!(has(&drain(&mut rx3), |m| matches!(m, ServerMessage::QueueRefused { .. })));
 }
 
 #[test]
 fn joining_a_room_takes_a_player_out_of_the_ranked_queue() {
     let mut mgr = new_mgr();
     let _rx1 = queue_up(&mut mgr, 1, 1, 1000, config::RANKED_MIN_CASUAL);
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "r".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "r".into() });
     assert!(mgr.queue.is_empty(), "a player in a room is not searching any more");
     let _rx2 = queue_up(&mut mgr, 2, 2, 1000, config::RANKED_MIN_CASUAL);
     mgr.tick(STEP, false);
@@ -544,18 +451,9 @@ fn joining_a_room_takes_a_player_out_of_the_ranked_queue() {
 fn leaving_for_a_room_while_matched_declines_the_match() {
     let mut mgr = new_mgr();
     let (mut rx1, mut rx2) = found_pair(&mut mgr);
-    mgr.handle(Command::CreateRoom {
-        conn: 2,
-        name: "r".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 2, name: "r".into() });
     assert!(mgr.pending_matches.is_empty());
     assert_eq!(mgr.queue.iter().map(|e| e.conn).collect::<Vec<_>>(), vec![1]);
-    assert!(matches!(
-        cancelled(&mut rx1)[..],
-        [ServerMessage::MatchCancelled { requeued: true }]
-    ));
-    assert!(has(&cancelled(&mut rx2), |m| matches!(
-        m,
-        ServerMessage::QueueCooldown { .. }
-    )));
+    assert!(matches!(cancelled(&mut rx1)[..], [ServerMessage::MatchCancelled { requeued: true }]));
+    assert!(has(&cancelled(&mut rx2), |m| matches!(m, ServerMessage::QueueCooldown { .. })));
 }

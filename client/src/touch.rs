@@ -26,10 +26,7 @@ fn layout(view: View) -> [(Button, Rect); 7] {
         (Button::Act(Action::Left), at(MARGIN, high)),
         (Button::Act(Action::Right), at(MARGIN + 2.0 * (SIZE + GAP), high)),
         (Button::Act(Action::SoftDrop), at(MARGIN + SIZE + GAP, low)),
-        (
-            Button::Act(Action::RotateCcw),
-            at(w - MARGIN - 3.0 * SIZE - 2.0 * GAP, high),
-        ),
+        (Button::Act(Action::RotateCcw), at(w - MARGIN - 3.0 * SIZE - 2.0 * GAP, high)),
         (Button::Act(Action::RotateCw), at(w - MARGIN - SIZE, high)),
         (Button::Act(Action::HardDrop), at(w - MARGIN - 2.0 * SIZE - GAP, low)),
         (Button::Pause, Rect::at(w - MARGIN - 96.0, MARGIN, 96.0, 72.0)),
@@ -54,11 +51,8 @@ impl TouchPad {
         let mut pause = false;
         if self.active && in_game {
             for (button, rect) in layout(view) {
-                let on = |id: &u8| {
-                    touch
-                        .position(*id)
-                        .is_some_and(|(x, y)| rect.contains(x / view.scale, y / view.scale))
-                };
+                let on =
+                    |id: &u8| touch.position(*id).is_some_and(|(x, y)| rect.contains(x / view.scale, y / view.scale));
                 match button {
                     Button::Act(action) => held[action as usize] = touch.down.keys().any(on),
                     Button::Pause => pause = touch.pressed.iter().any(on),
@@ -80,9 +74,7 @@ impl TouchPad {
             let ink = Color::WHITE.with_alpha(if down { 0.95 } else { 0.7 });
             match button {
                 Button::Pause => {
-                    draw.rect((rect.x, rect.y), (rect.w, rect.h))
-                        .corner_radius(16.0)
-                        .color(fill);
+                    draw.rect((rect.x, rect.y), (rect.w, rect.h)).corner_radius(16.0).color(fill);
                     draw.sharp_text(&fonts.display, "II")
                         .position(cx, cy)
                         .size(theme::size::TITLE)
@@ -101,8 +93,7 @@ impl TouchPad {
 
 fn arrow(draw: &mut Draw, cx: f32, cy: f32, r: f32, angle: f32, color: Color) {
     let point = |a: f32, d: f32| (cx + d * a.cos(), cy + d * a.sin());
-    draw.triangle(point(angle, r), point(angle + 2.4, r), point(angle - 2.4, r))
-        .color(color);
+    draw.triangle(point(angle, r), point(angle + 2.4, r), point(angle - 2.4, r)).color(color);
 }
 
 fn curl(draw: &mut Draw, cx: f32, cy: f32, r: f32, clockwise: bool, color: Color) {
@@ -161,11 +152,7 @@ mod tests {
 
     #[test]
     fn buttons_never_overlap_and_stay_on_screen() {
-        for view in [
-            View::fit(1280.0, 800.0),
-            View::fit(844.0, 390.0),
-            View::fit(2400.0, 1080.0),
-        ] {
+        for view in [View::fit(1280.0, 800.0), View::fit(844.0, 390.0), View::fit(2400.0, 1080.0)] {
             let rects = layout(view).map(|(_, r)| r);
             for (i, a) in rects.iter().enumerate() {
                 assert!(a.x >= 0.0 && a.y >= 0.0 && a.x + a.w <= view.w && a.y + a.h <= view.h);

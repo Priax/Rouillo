@@ -97,13 +97,7 @@ impl Sim {
         let n = teams.len();
         let seed = rand::rng().random();
         let board = Board::for_match(seed, &settings.rules);
-        let taken = teams
-            .iter()
-            .map(|&team| ReplayPlayer {
-                team,
-                ..ReplayPlayer::default()
-            })
-            .collect();
+        let taken = teams.iter().map(|&team| ReplayPlayer { team, ..ReplayPlayer::default() }).collect();
         Self {
             boards: vec![SharedBoard(Arc::new(board)); n],
             teams,
@@ -142,12 +136,7 @@ impl Sim {
             player.name = name;
             player.out_at = *out_at;
         }
-        Replay {
-            seed: self.seed,
-            rules: self.rules,
-            ticks: self.tick,
-            players,
-        }
+        Replay { seed: self.seed, rules: self.rules, ticks: self.tick, players }
     }
 
     /// Counts what a slot's step did into the match statistics.
@@ -173,10 +162,7 @@ impl Sim {
 
     /// The teams with a board still playing.
     pub fn teams_alive(&self) -> Vec<u8> {
-        let mut teams: Vec<u8> = (0..self.boards.len())
-            .filter(|&s| self.alive(s))
-            .map(|s| self.teams[s])
-            .collect();
+        let mut teams: Vec<u8> = (0..self.boards.len()).filter(|&s| self.alive(s)).map(|s| self.teams[s]).collect();
         teams.sort_unstable();
         teams.dedup();
         teams
@@ -199,9 +185,7 @@ impl Sim {
     }
 
     fn opponents(&self, slot: usize) -> Vec<usize> {
-        (0..self.boards.len())
-            .filter(|&o| self.alive(o) && self.teams[o] != self.teams[slot])
-            .collect()
+        (0..self.boards.len()).filter(|&o| self.alive(o) && self.teams[o] != self.teams[slot]).collect()
     }
 
     fn pick_target(&mut self, slot: usize) -> Option<usize> {
@@ -266,13 +250,7 @@ impl Sim {
         if amount == 0 {
             return;
         }
-        let Some(to) = self
-            .targets
-            .get(from)
-            .copied()
-            .flatten()
-            .or_else(|| self.pick_target(from))
-        else {
+        let Some(to) = self.targets.get(from).copied().flatten().or_else(|| self.pick_target(from)) else {
             return;
         };
         self.garbage_in_flight.push(GarbageDelivery { at, from, to, amount });
@@ -298,12 +276,7 @@ impl Sim {
 
     /// The nuisance coming to `slot`: waiting on its board, then on its way.
     pub fn threat(&self, slot: usize) -> u32 {
-        let travelling: u32 = self
-            .garbage_in_flight
-            .iter()
-            .filter(|g| g.to == slot)
-            .map(|g| g.amount)
-            .sum();
+        let travelling: u32 = self.garbage_in_flight.iter().filter(|g| g.to == slot).map(|g| g.amount).sum();
         self.boards[slot].pending_garbage + travelling
     }
 
@@ -311,10 +284,7 @@ impl Sim {
         self.garbage_in_flight
             .iter()
             .filter(|g| g.to == slot)
-            .map(|g| IncomingGarbage {
-                at: g.at,
-                amount: g.amount,
-            })
+            .map(|g| IncomingGarbage { at: g.at, amount: g.amount })
             .collect()
     }
 
@@ -400,11 +370,7 @@ impl Sim {
                 target: self.targets[i].map(|t| slot_byte(t + 1)),
             })
             .collect();
-        ServerMessage::StateUpdate {
-            game: self.game,
-            tick: self.tick,
-            players,
-        }
+        ServerMessage::StateUpdate { game: self.game, tick: self.tick, players }
     }
 
     /// Every board small, each stack only if it changed or is due again.
@@ -426,11 +392,7 @@ impl Sim {
                 ..Thumb::of(board, send)
             });
         }
-        ServerMessage::Thumbs {
-            game: self.game,
-            tick: self.tick,
-            thumbs,
-        }
+        ServerMessage::Thumbs { game: self.game, tick: self.tick, thumbs }
     }
 
     pub fn reset_boards(&mut self, s: &RoomSettings, teams: Vec<u8>) {
@@ -614,9 +576,7 @@ mod tests {
     }
 
     fn stacks_sent(s: &mut Sim) -> Vec<bool> {
-        let ServerMessage::Thumbs { thumbs, .. } = s.thumbs() else {
-            unreachable!()
-        };
+        let ServerMessage::Thumbs { thumbs, .. } = s.thumbs() else { unreachable!() };
         thumbs.iter().map(|t| t.cells.is_some()).collect()
     }
 
@@ -640,9 +600,7 @@ mod tests {
     fn the_wire_names_slots_from_one() {
         let mut s = sim(&[0, 1]);
         s.update_targets();
-        let ServerMessage::StateUpdate { players, .. } = s.state_update() else {
-            unreachable!()
-        };
+        let ServerMessage::StateUpdate { players, .. } = s.state_update() else { unreachable!() };
         let seen: Vec<_> = players.iter().map(|p| (p.slot, p.target)).collect();
         assert_eq!(seen, [(1, Some(2)), (2, Some(1))]);
     }

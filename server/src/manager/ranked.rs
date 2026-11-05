@@ -48,9 +48,7 @@ impl Manager {
     pub(super) fn attach_ranked(&mut self, id: RoomId, conn: ConnId) {
         let Some(room) = self.rooms.get(&id) else { return };
         let Some(slot) = room.slot_of_conn(conn) else { return };
-        let lobby = ServerMessage::Lobby {
-            info: room.lobby_info_for(slot),
-        };
+        let lobby = ServerMessage::Lobby { info: room.lobby_info_for(slot) };
         let playing = matches!(room.phase, Phase::Playing);
         let snapshot = playing.then(|| room.sim.state_update());
         let result = room.series.as_ref().and_then(|s| s.result);
@@ -65,25 +63,16 @@ impl Manager {
     }
 
     pub(super) fn refuse_queue(&mut self, conn: ConnId, reason: &str) {
-        self.deliver_msg(
-            conn,
-            &ServerMessage::QueueRefused {
-                reason: reason.to_string(),
-            },
-        );
+        self.deliver_msg(conn, &ServerMessage::QueueRefused { reason: reason.to_string() });
     }
 
     pub(super) fn in_ranked(&self, user: Uuid) -> bool {
         self.queue.iter().any(|e| e.user_id == user)
+            || self.pending_matches.iter().any(|m| m.entries.iter().any(|e| e.user_id == user))
             || self
-                .pending_matches
-                .iter()
-                .any(|m| m.entries.iter().any(|e| e.user_id == user))
-            || self.rooms.values().any(|r| {
-                r.series
-                    .as_ref()
-                    .is_some_and(|s| s.result.is_none() && s.users.contains(&user))
-            })
+                .rooms
+                .values()
+                .any(|r| r.series.as_ref().is_some_and(|s| s.result.is_none() && s.users.contains(&user)))
     }
 
     pub(super) fn join_queue(&mut self, conn: ConnId) {
@@ -91,10 +80,7 @@ impl Manager {
             self.refuse_queue(conn, QUEUE_GUEST);
             return;
         };
-        if self
-            .room_of(conn)
-            .is_some_and(|id| self.series(id).is_some_and(|s| s.result.is_none()))
-        {
+        if self.room_of(conn).is_some_and(|id| self.series(id).is_some_and(|s| s.result.is_none())) {
             return;
         }
         if let Some(reason) = self.queue_blocked(user_id) {
@@ -131,22 +117,14 @@ impl Manager {
         if self.user_of(conn) != Some(user_id) {
             return;
         }
-        let Some(db::RankedProfile {
-            elo,
-            casual,
-            avatar_url: avatar,
-        }) = profile
-        else {
+        let Some(db::RankedProfile { elo, casual, avatar_url: avatar }) = profile else {
             self.refuse_queue(conn, QUEUE_UNKNOWN);
             return;
         };
         if casual < config::RANKED_MIN_CASUAL {
             let left = config::RANKED_MIN_CASUAL - casual;
             let plural = if left > 1 { "s" } else { "" };
-            self.refuse_queue(
-                conn,
-                &format!("Jouez encore {left} partie{plural} amicale{plural} avant le classé."),
-            );
+            self.refuse_queue(conn, &format!("Jouez encore {left} partie{plural} amicale{plural} avant le classé."));
             return;
         }
         if let Some(reason) = self.queue_blocked(user_id) {
@@ -154,13 +132,7 @@ impl Manager {
             return;
         }
         self.leave_current(conn);
-        self.queue.push(QueueEntry {
-            conn,
-            user_id,
-            elo,
-            avatar,
-            since: Instant::now(),
-        });
+        self.queue.push(QueueEntry { conn, user_id, elo, avatar, since: Instant::now() });
     }
 
     pub(super) fn matchmake(&mut self) {
@@ -245,9 +217,7 @@ impl Manager {
     pub(super) fn expire_matches(&mut self) {
         let now = Instant::now();
         self.queue_cooldowns.retain(|_, until| *until > now);
-        let (due, waiting) = std::mem::take(&mut self.pending_matches)
-            .into_iter()
-            .partition(|m| now >= m.deadline);
+        let (due, waiting) = std::mem::take(&mut self.pending_matches).into_iter().partition(|m| now >= m.deadline);
         self.pending_matches = waiting;
         for pending in due {
             let missed = pending.accepted.map(|a| !a);
@@ -258,8 +228,7 @@ impl Manager {
     fn cancel_match(&mut self, pending: PendingMatch, missed: [bool; 2]) {
         for (entry, missed) in pending.entries.into_iter().zip(missed) {
             if missed {
-                self.queue_cooldowns
-                    .insert(entry.user_id, Instant::now() + QUEUE_COOLDOWN);
+                self.queue_cooldowns.insert(entry.user_id, Instant::now() + QUEUE_COOLDOWN);
                 self.deliver_msg(entry.conn, &ServerMessage::MatchCancelled { requeued: false });
                 self.send_cooldown(entry.conn, QUEUE_COOLDOWN);
             } else if self.user_of(entry.conn) == Some(entry.user_id) {
@@ -297,10 +266,7 @@ impl Manager {
         self.leave_current(b.conn);
         let id = self.next_id;
         self.next_id += 1;
-        let settings = RoomSettings {
-            pause: PausePolicy::Nobody,
-            ..RoomSettings::default()
-        };
+        let settings = RoomSettings { pause: PausePolicy::Nobody, ..RoomSettings::default() };
         let members = vec![
             Member::present(token_a, a.conn, Some(a.user_id), names[0].clone()),
             Member::present(token_b, b.conn, Some(b.user_id), names[1].clone()),
@@ -350,9 +316,7 @@ impl Manager {
             .rooms
             .values()
             .filter(|r| {
-                r.series
-                    .as_ref()
-                    .is_some_and(|s| s.result.is_none() && s.next_game_at.is_some_and(|t| now >= t))
+                r.series.as_ref().is_some_and(|s| s.result.is_none() && s.next_game_at.is_some_and(|t| now >= t))
                     && r.all_connected()
             })
             .map(|r| r.id)
@@ -398,13 +362,7 @@ impl Manager {
         let conns: Vec<(usize, ConnId)> = self
             .rooms
             .get(&id)
-            .map(|r| {
-                r.members
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, m)| Some((i, m.conn?)))
-                    .collect()
-            })
+            .map(|r| r.members.iter().enumerate().filter_map(|(i, m)| Some((i, m.conn?))).collect())
             .unwrap_or_default();
         for (slot, conn) in conns {
             self.send_series_over(conn, result, slot);

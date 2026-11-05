@@ -16,12 +16,7 @@ pub struct Rules {
 
 impl Default for Rules {
     fn default() -> Self {
-        Self {
-            columns: small(GRID_WIDTH),
-            rows: small(GRID_HEIGHT - VISIBLE_ROW_OFFSET),
-            starting_level: 1,
-            colors: 5,
-        }
+        Self { columns: small(GRID_WIDTH), rows: small(GRID_HEIGHT - VISIBLE_ROW_OFFSET), starting_level: 1, colors: 5 }
     }
 }
 

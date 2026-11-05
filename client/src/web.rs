@@ -37,11 +37,7 @@ pub fn pick_file() {
     let Some(document) = web_sys::window().and_then(|w| w.document()) else {
         return;
     };
-    let Some(input) = document
-        .create_element("input")
-        .ok()
-        .and_then(|e| e.dyn_into::<HtmlInputElement>().ok())
-    else {
+    let Some(input) = document.create_element("input").ok().and_then(|e| e.dyn_into::<HtmlInputElement>().ok()) else {
         return;
     };
     input.set_type("file");
@@ -275,9 +271,7 @@ pub fn start_text_input() {
             typed(&text);
         }
     });
-    listen(&window, "keyup", |_: KeyboardEvent| {
-        BACKSPACE_DOWN.with(|b| b.set(false))
-    });
+    listen(&window, "keyup", |_: KeyboardEvent| BACKSPACE_DOWN.with(|b| b.set(false)));
     listen(&window, "copy", |e: ClipboardEvent| {
         give_selection(&e);
     });

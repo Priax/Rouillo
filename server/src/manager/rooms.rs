@@ -23,10 +23,8 @@ impl Manager {
             self.join_failed(conn, JOIN_MAINTENANCE);
             return;
         }
-        let Some(room) = self
-            .rooms
-            .get(&id)
-            .filter(|r| r.members.len() < usize::from(r.settings.max_players) && r.series.is_none())
+        let Some(room) =
+            self.rooms.get(&id).filter(|r| r.members.len() < usize::from(r.settings.max_players) && r.series.is_none())
         else {
             self.join_failed(conn, JOIN_UNAVAILABLE);
             return;
@@ -44,14 +42,7 @@ impl Manager {
             return;
         }
         let from = self.room_of(conn);
-        self.friend_checks.push(FriendCheck::Join {
-            conn,
-            room: id,
-            host,
-            from,
-            joiner,
-            host_user,
-        });
+        self.friend_checks.push(FriendCheck::Join { conn, room: id, host, from, joiner, host_user });
     }
 
     pub(super) fn complete_join(&mut self, conn: ConnId, id: RoomId) {
@@ -256,8 +247,7 @@ impl Manager {
             let full = room.members.len() >= usize::from(room.settings.max_players);
             if !full {
                 let style = Style::ALL[room.members.len() % Style::ALL.len()];
-                room.members
-                    .push(Member::cpu(rand::random(), Difficulty::Normal, style));
+                room.members.push(Member::cpu(rand::random(), Difficulty::Normal, style));
             }
             !full
         });
@@ -334,10 +324,8 @@ impl Manager {
                         && room.all_connected()
                     {
                         let now = Instant::now();
-                        let in_cooldown = room
-                            .sim
-                            .last_restart
-                            .is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
+                        let in_cooldown =
+                            room.sim.last_restart.is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
                         if in_cooldown {
                             false
                         } else {

@@ -37,10 +37,7 @@ fn countdown_needs_two_players() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
     mgr.handle(Command::ToggleCountdown { conn: 1 });
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby));
 }
@@ -71,10 +68,7 @@ fn last_member_leaving_closes_room() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
     assert!(mgr.rooms.contains_key(&1));
     mgr.handle(Command::LeaveRoom { conn: 1 });
     assert!(!mgr.rooms.contains_key(&1));
@@ -91,10 +85,7 @@ fn opponent_disconnect_pauses_running_game() {
 
     mgr.handle(Command::Unregister { conn: 2 }); // opponent drops mid-game
     assert!(mgr.rooms[&1].sim.paused, "game should pause when opponent drops");
-    assert!(has(&drain(&mut rx1), |m| matches!(
-        m,
-        ServerMessage::OpponentDisconnected
-    )));
+    assert!(has(&drain(&mut rx1), |m| matches!(m, ServerMessage::OpponentDisconnected)));
 }
 
 pub(super) fn running_game(mgr: &mut Manager) -> (mpsc::Receiver<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
@@ -123,10 +114,7 @@ fn disconnect_during_countdown_cancels_it() {
     mgr.handle(Command::Unregister { conn: 2 });
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby));
     mgr.tick(3.5, false);
-    assert!(
-        matches!(mgr.rooms[&1].phase, Phase::Lobby),
-        "must not start later either"
-    );
+    assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby), "must not start later either");
 }
 
 #[test]
@@ -144,10 +132,7 @@ fn leaving_a_running_game_is_a_forfeit() {
 fn creating_another_room_mid_game_is_a_forfeit() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
-    mgr.handle(Command::CreateRoom {
-        conn: 2,
-        name: "escape".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 2, name: "escape".into() });
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
     assert_eq!(recs[0].winner_slot(), Some(1));
@@ -170,14 +155,7 @@ fn never_coming_back_is_a_forfeit() {
     let (_rx1, _rx2) = running_game(&mut mgr);
     mgr.handle(Command::Unregister { conn: 2 });
     assert!(mgr.take_unsaved_matches().is_empty(), "a drop alone decides nothing");
-    let b = mgr
-        .rooms
-        .get_mut(&1)
-        .unwrap()
-        .members
-        .iter_mut()
-        .find(|m| m.token == "B")
-        .unwrap();
+    let b = mgr.rooms.get_mut(&1).unwrap().members.iter_mut().find(|m| m.token == "B").unwrap();
     b.disconnect_at = Some(Instant::now() - GRACE - Duration::from_secs(1));
     mgr.tick(STEP, false);
     let recs = mgr.take_unsaved_matches();
@@ -242,10 +220,7 @@ fn joining_your_own_room_keeps_it() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
     mgr.handle(Command::JoinRoom { conn: 1, id: 1 });
     assert!(mgr.rooms.contains_key(&1));
     assert_eq!(mgr.room_of(1), Some(1));
@@ -256,16 +231,9 @@ pub(super) fn set_pause_policy(mgr: &mut Manager, policy: PausePolicy) {
         if mgr.rooms[&1].settings.pause == policy {
             return;
         }
-        mgr.handle(Command::SetSetting {
-            conn: 1,
-            setting: RoomSetting::Pause,
-            dir: 1,
-        });
+        mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::Pause, dir: 1 });
     }
-    assert_eq!(
-        mgr.rooms[&1].settings.pause, policy,
-        "host could not set the pause policy"
-    );
+    assert_eq!(mgr.rooms[&1].settings.pause, policy, "host could not set the pause policy");
 }
 
 #[test]
@@ -307,24 +275,12 @@ fn pause_policy_nobody() {
 fn pause_policy_is_host_and_lobby_only() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
-    mgr.handle(Command::SetSetting {
-        conn: 2,
-        setting: RoomSetting::Pause,
-        dir: 1,
-    });
-    assert_eq!(
-        mgr.rooms[&1].settings.pause,
-        PausePolicy::Everyone,
-        "guest cannot change it"
-    );
+    mgr.handle(Command::SetSetting { conn: 2, setting: RoomSetting::Pause, dir: 1 });
+    assert_eq!(mgr.rooms[&1].settings.pause, PausePolicy::Everyone, "guest cannot change it");
 
     mgr.handle(Command::ToggleCountdown { conn: 1 });
     mgr.tick(3.5, false);
-    mgr.handle(Command::SetSetting {
-        conn: 1,
-        setting: RoomSetting::Pause,
-        dir: 1,
-    });
+    mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::Pause, dir: 1 });
     assert_eq!(mgr.rooms[&1].settings.pause, PausePolicy::Everyone, "not mid-game");
 }
 
@@ -332,11 +288,7 @@ fn pause_policy_is_host_and_lobby_only() {
 fn the_host_sets_the_board_size_the_match_is_played_on() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
-    for (setting, dir) in [
-        (RoomSetting::Columns, 1),
-        (RoomSetting::Columns, 1),
-        (RoomSetting::Rows, -1),
-    ] {
+    for (setting, dir) in [(RoomSetting::Columns, 1), (RoomSetting::Columns, 1), (RoomSetting::Rows, -1)] {
         mgr.handle(Command::SetSetting { conn: 1, setting, dir });
     }
     mgr.handle(Command::ToggleCountdown { conn: 1 });
@@ -387,16 +339,9 @@ fn restart_refused_while_opponent_is_disconnected() {
 fn big_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<Vec<u8>>> {
     let mut rxs = vec![reg(mgr, 1)];
     hello(mgr, 1, "P1");
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "big".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "big".into() });
     for _ in 2..max {
-        mgr.handle(Command::SetSetting {
-            conn: 1,
-            setting: RoomSetting::MaxPlayers,
-            dir: 1,
-        });
+        mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::MaxPlayers, dir: 1 });
     }
     for conn in 2..=players as ConnId {
         rxs.push(reg(mgr, conn));
@@ -451,10 +396,7 @@ fn one_team_alone_cannot_start() {
 fn a_team_is_picked_in_the_lobby_only_and_must_exist() {
     let mut mgr = new_mgr();
     let _rxs = big_room(&mut mgr, 3, 3);
-    mgr.handle(Command::SetTeam {
-        conn: 2,
-        team: Some(shared::MAX_TEAMS + 1),
-    });
+    mgr.handle(Command::SetTeam { conn: 2, team: Some(shared::MAX_TEAMS + 1) });
     assert_eq!(mgr.rooms[&1].members[1].team, None);
     mgr.handle(Command::SetTeam { conn: 2, team: Some(1) });
     assert_eq!(mgr.rooms[&1].members[1].team, Some(1));
@@ -468,11 +410,7 @@ fn the_seats_never_drop_below_who_is_seated() {
     let mut mgr = new_mgr();
     let _rxs = big_room(&mut mgr, 4, 3);
     for _ in 0..5 {
-        mgr.handle(Command::SetSetting {
-            conn: 1,
-            setting: RoomSetting::MaxPlayers,
-            dir: -1,
-        });
+        mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::MaxPlayers, dir: -1 });
     }
     assert_eq!(mgr.rooms[&1].settings.max_players, 3);
 }
@@ -490,10 +428,7 @@ fn a_player_leaving_mid_game_is_out_and_the_others_play_on() {
     assert!(!mgr.rooms[&1].sim.alive(1));
     assert!(mgr.take_unsaved_matches().is_empty());
     for i in [0, 2] {
-        assert!(
-            last_lobby(&drain(&mut rxs[i])).is_none(),
-            "nobody is sent back to the lobby"
-        );
+        assert!(last_lobby(&drain(&mut rxs[i])).is_none(), "nobody is sent back to the lobby");
     }
     mgr.handle(Command::LeaveRoom { conn: 3 });
     let recs = mgr.take_unsaved_matches();
@@ -553,10 +488,7 @@ fn a_manual_target_is_a_slot_from_one() {
     let mut mgr = new_mgr();
     let _rxs = big_room(&mut mgr, 3, 3);
     start(&mut mgr);
-    mgr.handle(Command::SetTargeting {
-        conn: 1,
-        targeting: shared::Targeting::Manual(3),
-    });
+    mgr.handle(Command::SetTargeting { conn: 1, targeting: shared::Targeting::Manual(3) });
     mgr.tick(0.02, true);
     assert_eq!(mgr.rooms[&1].sim.targets[0], Some(2));
 }
@@ -572,11 +504,7 @@ fn slots_of(msg: &ServerMessage) -> Option<(char, Vec<u8>)> {
 }
 
 fn update_slots(msgs: &[ServerMessage]) -> Vec<Vec<u8>> {
-    msgs.iter()
-        .filter_map(slots_of)
-        .filter(|(kind, _)| *kind == 'S')
-        .map(|(_, slots)| slots)
-        .collect()
+    msgs.iter().filter_map(slots_of).filter(|(kind, _)| *kind == 'S').map(|(_, slots)| slots).collect()
 }
 
 /// What `rx` got over 12 ticks: how often each board came whole and how
@@ -626,10 +554,7 @@ fn a_late_comer_in_a_big_room_watches_like_a_spectator() {
     let (whole, _) = twelve_ticks(&mut mgr, &mut late);
     assert_eq!(whole, vec![('S', vec![2]); 12]);
     mgr.handle(Command::Follow { conn: 1, slot: 3 });
-    assert!(
-        !mgr.rooms[&1].follows.contains_key(&1),
-        "a player watches their own board"
-    );
+    assert!(!mgr.rooms[&1].follows.contains_key(&1), "a player watches their own board");
 }
 
 #[test]
@@ -700,10 +625,7 @@ fn each_game_of_a_room_has_its_number() {
 }
 
 fn datagram_slots(boards: &[bytes::Bytes]) -> Vec<(char, Vec<u8>)> {
-    boards
-        .iter()
-        .map(|b| shared::decode(b).as_ref().and_then(slots_of).expect("a state"))
-        .collect()
+    boards.iter().map(|b| shared::decode(b).as_ref().and_then(slots_of).expect("a state")).collect()
 }
 
 #[test]
@@ -711,11 +633,7 @@ fn a_datagram_link_gets_its_own_board_alone_and_the_others_small() {
     let mut mgr = new_mgr();
     let (tx, _rx) = mpsc::channel(CLIENT_CHAN_CAP);
     let (states_tx, mut states) = mpsc::channel(64);
-    mgr.handle(Command::Register {
-        conn: 9,
-        sender: tx,
-        states: Some(states_tx),
-    });
+    mgr.handle(Command::Register { conn: 9, sender: tx, states: Some(states_tx) });
     let _rxs = big_room(&mut mgr, 3, 3);
     start(&mut mgr);
     hello(&mut mgr, 9, "W");
@@ -725,19 +643,13 @@ fn a_datagram_link_gets_its_own_board_alone_and_the_others_small() {
     let (pstates_tx, mut pstates) = mpsc::channel(64);
     mgr.handle(Command::Unregister { conn: player });
     player = 10;
-    mgr.handle(Command::Register {
-        conn: player,
-        sender: ptx,
-        states: Some(pstates_tx),
-    });
+    mgr.handle(Command::Register { conn: player, sender: ptx, states: Some(pstates_tx) });
     hello(&mut mgr, player, "P2");
     for _ in 0..6 {
         mgr.tick(1.0 / 60.0, true);
     }
     for (rx, own) in [(&mut states, 1), (&mut pstates, 2)] {
-        let got: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
-            .map(|b| datagram_slots(&b))
-            .collect();
+        let got: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).map(|b| datagram_slots(&b)).collect();
         let alone = [('S', vec![own])];
         let with_thumbs = [('S', vec![own]), ('T', vec![1, 2, 3])];
         assert_eq!(got.iter().filter(|t| t.as_slice() == alone).count(), 5, "{got:?}");
@@ -761,13 +673,7 @@ fn the_thumbnails_of_a_big_room_are_packed_into_datagrams_that_fit() {
         .collect();
     assert_eq!(mgr.rooms[&1].members.len(), usize::from(players), "setup");
     start(&mut mgr);
-    let colours = [
-        PuyoType::Red,
-        PuyoType::Green,
-        PuyoType::Blue,
-        PuyoType::Yellow,
-        PuyoType::Purple,
-    ];
+    let colours = [PuyoType::Red, PuyoType::Green, PuyoType::Blue, PuyoType::Yellow, PuyoType::Purple];
     let mut noise = 7u32;
     for board in &mut sim_of(&mut mgr).boards {
         let h = board.height();
@@ -778,24 +684,16 @@ fn the_thumbnails_of_a_big_room_are_packed_into_datagrams_that_fit() {
     }
     let (tx, _rx) = mpsc::channel(CLIENT_CHAN_CAP);
     let (states_tx, mut states) = mpsc::channel(64);
-    mgr.handle(Command::Register {
-        conn: 500,
-        sender: tx,
-        states: Some(states_tx),
-    });
+    mgr.handle(Command::Register { conn: 500, sender: tx, states: Some(states_tx) });
     hello(&mut mgr, 500, "W");
     mgr.handle(Command::Spectate { conn: 500, id: 1 });
     for _ in 0..6 {
         mgr.tick(1.0 / 60.0, true);
     }
-    let datagrams = std::iter::from_fn(|| states.try_recv().ok())
-        .find(|d| d.len() > 1)
-        .expect("thumbnails within six ticks");
+    let datagrams =
+        std::iter::from_fn(|| states.try_recv().ok()).find(|d| d.len() > 1).expect("thumbnails within six ticks");
     assert!(datagrams.iter().all(|d| d.len() <= DATAGRAM_BUDGET));
-    let thumbs: Vec<_> = datagram_slots(&datagrams)
-        .into_iter()
-        .filter(|(kind, _)| *kind == 'T')
-        .collect();
+    let thumbs: Vec<_> = datagram_slots(&datagrams).into_iter().filter(|(kind, _)| *kind == 'T').collect();
     assert!(thumbs.len() > 1, "99 boards in one datagram");
     let slots: Vec<u8> = thumbs.into_iter().flat_map(|(_, s)| s).collect();
     assert_eq!(slots, (1..=players).collect::<Vec<_>>());
@@ -806,10 +704,7 @@ fn a_new_game_aims_at_random_as_the_client_shows() {
     let mut mgr = new_mgr();
     let _rxs = big_room(&mut mgr, 3, 3);
     start(&mut mgr);
-    mgr.handle(Command::SetTargeting {
-        conn: 1,
-        targeting: shared::Targeting::Danger,
-    });
+    mgr.handle(Command::SetTargeting { conn: 1, targeting: shared::Targeting::Danger });
     assert_eq!(mgr.rooms[&1].sim.targeting[0], shared::Targeting::Danger);
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
     mgr.handle(Command::Restart { conn: 2 });
@@ -837,20 +732,12 @@ fn the_host_changes_and_removes_a_cpu_in_the_lobby() {
     let mut mgr = new_mgr();
     let _rxs = cpu_room(&mut mgr, 3, 2);
     mgr.handle(Command::AddCpu { conn: 1 });
-    let set = |conn, slot, team| Command::SetCpu {
-        conn,
-        slot,
-        difficulty: Difficulty::Pro,
-        style: Style::Counter,
-        team,
-    };
+    let set =
+        |conn, slot, team| Command::SetCpu { conn, slot, difficulty: Difficulty::Pro, style: Style::Counter, team };
     mgr.handle(set(1, 2, Some(1)));
     assert!(mgr.rooms[&1].members[1].cpu.is_none(), "slot 2 is a player, not a CPU");
     mgr.handle(set(2, 3, Some(1)));
-    assert_eq!(
-        mgr.rooms[&1].spectator_info().cpus[2],
-        Some((Difficulty::Normal, Style::ALL[2]))
-    );
+    assert_eq!(mgr.rooms[&1].spectator_info().cpus[2], Some((Difficulty::Normal, Style::ALL[2])));
     mgr.handle(set(1, 3, Some(1)));
     let info = mgr.rooms[&1].spectator_info();
     assert_eq!(info.cpus[2], Some((Difficulty::Pro, Style::Counter)));
@@ -879,10 +766,7 @@ fn a_cpu_plays_its_seat_and_the_game_is_not_kept() {
     assert!(room.sim.boards[1].piece_id > first + 3, "the CPU placed no pairs");
     assert!(room.sim.finished, "the idle player never lost");
     assert!(room.sim.won(1) && !room.sim.won(0));
-    assert!(
-        mgr.take_unsaved_matches().is_empty(),
-        "a game against a CPU was recorded"
-    );
+    assert!(mgr.take_unsaved_matches().is_empty(), "a game against a CPU was recorded");
     let last = drain(&mut rxs[0])
         .into_iter()
         .rev()
@@ -918,13 +802,7 @@ fn report_cpu_room_cost() {
             mgr.handle(Command::AddCpu { conn: 1 });
         }
         for slot in 2..=16 {
-            mgr.handle(Command::SetCpu {
-                conn: 1,
-                slot,
-                difficulty,
-                style: Style::Balanced,
-                team: None,
-            });
+            mgr.handle(Command::SetCpu { conn: 1, slot, difficulty, style: Style::Balanced, team: None });
         }
         start(&mut mgr);
         let ticks = 60 * 60;
@@ -938,12 +816,7 @@ fn report_cpu_room_cost() {
         let average = times.iter().map(|t| t.0).sum::<f64>() / f64::from(ticks);
         times.sort_by(|a, b| a.0.total_cmp(&b.0));
         let at = |q: f64| times[((times.len() - 1) as f64 * q) as usize].0;
-        let worst: Vec<String> = times
-            .iter()
-            .rev()
-            .take(5)
-            .map(|(ms, i)| format!("{ms:.1} ms at tick {i}"))
-            .collect();
+        let worst: Vec<String> = times.iter().rev().take(5).map(|(ms, i)| format!("{ms:.1} ms at tick {i}")).collect();
         println!(
             "{difficulty:?}: {average:.2} ms per tick on average, p99 {:.2} ms, p99.9 {:.2} ms, worst {worst:?}",
             at(0.99),
@@ -959,11 +832,7 @@ fn a_release_server_seats_no_cpu() {
     mgr.rooms.get_mut(&1).expect("the room").cpu_seats = false;
     mgr.handle(Command::AddCpu { conn: 1 });
     assert_eq!(mgr.rooms[&1].members.len(), 1, "a CPU was seated");
-    mgr.handle(Command::SetSetting {
-        conn: 1,
-        setting: RoomSetting::MaxPlayers,
-        dir: 1,
-    });
+    mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::MaxPlayers, dir: 1 });
     let lobby = last_lobby(&drain(&mut rxs[0])).expect("a lobby");
     assert!(!lobby.cpu_seats, "the client was offered CPUs");
 }

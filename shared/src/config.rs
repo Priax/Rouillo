@@ -50,9 +50,8 @@ pub const DAS_SPEED: f32 = 2.0 / 60.0;
 pub const ALL_CLEAR_BONUS: u32 = 30;
 pub const MAX_GARBAGE_DROP: u32 = 30;
 
-pub const CHAIN_POWERS: [u32; 20] = [
-    0, 0, 8, 16, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,
-];
+pub const CHAIN_POWERS: [u32; 20] =
+    [0, 0, 8, 16, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512];
 pub const COLOR_BONUS: [u32; 6] = [0, 0, 3, 6, 12, 24];
 pub const GROUP_BONUS: [u32; 8] = [0, 2, 3, 4, 5, 6, 7, 10];
 

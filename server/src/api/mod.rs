@@ -165,15 +165,11 @@ pub fn routes(pool: DbPool, cmd_tx: mpsc::Sender<Command>) -> Router {
         .route("/api/me/solo-best", post(handle_solo_best))
         .route(
             "/api/me/avatar",
-            put(handle_avatar_upload)
-                .delete(handle_avatar_delete)
-                .layer(DefaultBodyLimit::max(images::MAX_UPLOAD)),
+            put(handle_avatar_upload).delete(handle_avatar_delete).layer(DefaultBodyLimit::max(images::MAX_UPLOAD)),
         )
         .route(
             "/api/me/banner",
-            put(handle_banner_upload)
-                .delete(handle_banner_delete)
-                .layer(DefaultBodyLimit::max(images::MAX_UPLOAD)),
+            put(handle_banner_upload).delete(handle_banner_delete).layer(DefaultBodyLimit::max(images::MAX_UPLOAD)),
         )
         .route("/api/users/{id}/avatar", get(handle_avatar_get))
         .route("/api/users/{id}/banner", get(handle_banner_get))
@@ -183,14 +179,8 @@ pub fn routes(pool: DbPool, cmd_tx: mpsc::Sender<Command>) -> Router {
         .route("/api/users/{id}", get(handle_user_profile))
         .route("/api/users/{id}/matches", get(handle_match_history))
         .route("/api/matches/{id}/replay", get(handle_match_replay))
-        .route(
-            "/api/matches/{id}/favorite",
-            post(handle_favorite_add).delete(handle_favorite_remove),
-        )
-        .route(
-            "/api/friends",
-            get(handle_list_friends).post(handle_send_friend_request),
-        )
+        .route("/api/matches/{id}/favorite", post(handle_favorite_add).delete(handle_favorite_remove))
+        .route("/api/friends", get(handle_list_friends).post(handle_send_friend_request))
         .route("/api/friends/{id}", delete(handle_remove_friend))
         .route("/api/friends/{id}/accept", post(handle_accept_friend))
         .route("/api/version", get(handle_version))
@@ -219,8 +209,7 @@ pub(crate) mod tests {
         }
         let mut req = req.body(Body::from(body)).unwrap();
         if let Some(p) = peer {
-            req.extensions_mut()
-                .insert(ConnectInfo(p.parse::<SocketAddr>().unwrap()));
+            req.extensions_mut().insert(ConnectInfo(p.parse::<SocketAddr>().unwrap()));
         }
         req
     }
@@ -251,14 +240,9 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn errors_carry_a_stable_code() {
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
-            .unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap();
         let body = serde_json::json!({ "username": "a", "password": "password123" }).to_string();
-        let res = routes(pool, mpsc::channel(8).0)
-            .oneshot(post_json("/api/register", None, None, body))
-            .await
-            .unwrap();
+        let res = routes(pool, mpsc::channel(8).0).oneshot(post_json("/api/register", None, None, body)).await.unwrap();
         assert_eq!(res.status(), 400);
         let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
@@ -267,13 +251,8 @@ pub(crate) mod tests {
     }
 
     async fn post(path: &str, body: String) -> (u16, String) {
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
-            .unwrap();
-        let res = routes(pool, mpsc::channel(8).0)
-            .oneshot(post_json(path, None, None, body))
-            .await
-            .unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap();
+        let res = routes(pool, mpsc::channel(8).0).oneshot(post_json(path, None, None, body)).await.unwrap();
         let status = res.status().as_u16();
         let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();

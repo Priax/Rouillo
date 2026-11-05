@@ -22,13 +22,10 @@ pub(super) async fn upload(
     if !rate_take(&api.upload_limit, &user.id.to_string(), MAX_UPLOADS, UPLOAD_WINDOW) {
         return Err(ApiError::TooManyRequests);
     }
-    let image = db::run_heavy(move || images::process(kind, &body))
-        .await
-        .map_err(internal)?
-        .map_err(|e| match e {
-            ImageError::Unreadable => ApiError::BadImage,
-            ImageError::TooBig => ApiError::ImageTooLarge,
-        })?;
+    let image = db::run_heavy(move || images::process(kind, &body)).await.map_err(internal)?.map_err(|e| match e {
+        ImageError::Unreadable => ApiError::BadImage,
+        ImageError::TooBig => ApiError::ImageTooLarge,
+    })?;
     let user = db::set_image(&api.pool, user.id, kind, image).await.map_err(internal)?;
     Ok(Json(UserProfile::from(user)))
 }
@@ -69,14 +66,9 @@ pub(super) async fn handle_banner_delete(
 }
 
 pub(super) async fn serve_image(api: &Api, user_id: Uuid, kind: Kind) -> Result<Response, ApiError> {
-    let data = db::get_image(&api.pool, user_id, kind)
-        .await
-        .map_err(internal)?
-        .ok_or(ApiError::NotFound)?;
-    let headers = [
-        (header::CONTENT_TYPE, kind.content_type()),
-        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-    ];
+    let data = db::get_image(&api.pool, user_id, kind).await.map_err(internal)?.ok_or(ApiError::NotFound)?;
+    let headers =
+        [(header::CONTENT_TYPE, kind.content_type()), (header::CACHE_CONTROL, "public, max-age=31536000, immutable")];
     Ok((headers, data).into_response())
 }
 
@@ -85,10 +77,7 @@ pub(super) async fn handle_match_replay(
     State(Api { pool, .. }): State<Api>,
     PathParam(match_id): PathParam<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let data = db::get_replay(&pool, match_id)
-        .await
-        .map_err(internal)?
-        .ok_or(ApiError::NotFound)?;
+    let data = db::get_replay(&pool, match_id).await.map_err(internal)?.ok_or(ApiError::NotFound)?;
     let headers = [
         (header::CONTENT_TYPE, "application/octet-stream"),
         (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
@@ -164,9 +153,7 @@ pub(super) async fn handle_patch_me(
         return Err(ApiError::MusicTooLong);
     }
 
-    let updated = db::update_profile(&pool, user.id, body.bio, body.favorite_music)
-        .await
-        .map_err(internal)?;
+    let updated = db::update_profile(&pool, user.id, body.bio, body.favorite_music).await.map_err(internal)?;
 
     Ok(Json(UserProfile::from(updated)))
 }
@@ -178,19 +165,14 @@ pub(super) struct MatchHistoryQuery {
 }
 
 pub(super) fn int_param(value: Option<&str>, default: i64) -> Result<i64, ApiError> {
-    value.map_or(Ok(default), |s| {
-        s.parse::<i64>().ok().filter(|&n| n >= 0).ok_or(ApiError::BadQuery)
-    })
+    value.map_or(Ok(default), |s| s.parse::<i64>().ok().filter(|&n| n >= 0).ok_or(ApiError::BadQuery))
 }
 
 pub(super) async fn handle_user_profile(
     State(Api { pool, .. }): State<Api>,
     PathParam(user_id): PathParam<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let row = db::get_user_profile(&pool, user_id)
-        .await
-        .map_err(internal)?
-        .ok_or(ApiError::NotFound)?;
+    let row = db::get_user_profile(&pool, user_id).await.map_err(internal)?.ok_or(ApiError::NotFound)?;
 
     Ok(Json(row))
 }
@@ -206,9 +188,7 @@ pub(super) async fn handle_match_history(
     }
     let limit = int_param(query.limit.as_deref(), 20)?.clamp(1, 100);
     let offset = int_param(query.offset.as_deref(), 0)?;
-    let rows = db::get_match_history(&pool, user_id, limit, offset)
-        .await
-        .map_err(internal)?;
+    let rows = db::get_match_history(&pool, user_id, limit, offset).await.map_err(internal)?;
 
     Ok(Json(rows))
 }
@@ -224,9 +204,7 @@ pub(super) async fn handle_solo_best(
     Authed(user): Authed,
     JsonBody(body): JsonBody<SoloBestBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let best = db::raise_solo_best(&pool, user.id, body.score)
-        .await
-        .map_err(internal)?;
+    let best = db::raise_solo_best(&pool, user.id, body.score).await.map_err(internal)?;
     Ok(Json(serde_json::json!({ "solo_best": best })))
 }
 

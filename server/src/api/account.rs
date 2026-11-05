@@ -40,13 +40,7 @@ pub(super) struct AuthResponse {
 
 impl AuthResponse {
     fn new(user: db::User, token: Uuid) -> Self {
-        Self {
-            token,
-            user_id: user.id,
-            username: user.username,
-            elo: user.elo,
-            avatar_url: user.avatar_url,
-        }
+        Self { token, user_id: user.id, username: user.username, elo: user.elo, avatar_url: user.avatar_url }
     }
 }
 
@@ -56,9 +50,7 @@ pub(super) fn validate_password(p: &str) -> bool {
 }
 
 pub(super) async fn handle_register(
-    State(Api {
-        pool, registrations, ..
-    }): State<Api>,
+    State(Api { pool, registrations, .. }): State<Api>,
     ClientAddr(client): ClientAddr,
     JsonBody(body): JsonBody<RegisterBody>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -88,11 +80,7 @@ pub(super) async fn handle_register(
 }
 
 pub(super) async fn handle_login(
-    State(Api {
-        pool,
-        login_limits: limits,
-        ..
-    }): State<Api>,
+    State(Api { pool, login_limits: limits, .. }): State<Api>,
     ClientAddr(client): ClientAddr,
     JsonBody(body): JsonBody<LoginBody>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -105,17 +93,11 @@ pub(super) async fn handle_login(
         return Err(ApiError::TooManyRequests);
     }
 
-    let user = db::find_user_by_username(&pool, &body.username)
-        .await
-        .map_err(internal)?;
+    let user = db::find_user_by_username(&pool, &body.username).await.map_err(internal)?;
 
-    let hash = user
-        .as_ref()
-        .map_or_else(|| db::dummy_hash().to_owned(), |u| u.password_hash().to_owned());
+    let hash = user.as_ref().map_or_else(|| db::dummy_hash().to_owned(), |u| u.password_hash().to_owned());
     let password = body.password.clone();
-    let ok = db::run_heavy(move || db::verify_password(&password, &hash))
-        .await
-        .map_err(internal)?;
+    let ok = db::run_heavy(move || db::verify_password(&password, &hash)).await.map_err(internal)?;
 
     let (Some(user), true) = (user, ok) else {
         return Err(ApiError::BadCredentials);
@@ -142,9 +124,7 @@ pub(super) async fn check_password(user: &db::User, password: String, checks: &P
         return Err(ApiError::TooManyRequests);
     }
     let hash = user.password_hash().to_owned();
-    let ok = db::run_heavy(move || db::verify_password(&password, &hash))
-        .await
-        .map_err(internal)?;
+    let ok = db::run_heavy(move || db::verify_password(&password, &hash)).await.map_err(internal)?;
     if !ok {
         return Err(ApiError::WrongPassword);
     }
@@ -153,12 +133,7 @@ pub(super) async fn check_password(user: &db::User, password: String, checks: &P
 }
 
 pub(super) async fn handle_change_password(
-    State(Api {
-        pool,
-        password_checks: checks,
-        cmd_tx,
-        ..
-    }): State<Api>,
+    State(Api { pool, password_checks: checks, cmd_tx, .. }): State<Api>,
     Session(user, token): Session,
     JsonBody(body): JsonBody<ChangePasswordBody>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -167,22 +142,14 @@ pub(super) async fn handle_change_password(
     }
     check_password(&user, body.current, &checks).await?;
     let new = body.new;
-    let hash = db::run_heavy(move || db::hash_password(&new))
-        .await
-        .map_err(internal)?
-        .map_err(internal)?;
+    let hash = db::run_heavy(move || db::hash_password(&new)).await.map_err(internal)?.map_err(internal)?;
     db::set_password(&pool, user.id, hash, token).await.map_err(internal)?;
     revoke(&cmd_tx, user.id, token).await;
     Ok(done())
 }
 
 pub(super) async fn handle_rename(
-    State(Api {
-        pool,
-        password_checks: checks,
-        cmd_tx,
-        ..
-    }): State<Api>,
+    State(Api { pool, password_checks: checks, cmd_tx, .. }): State<Api>,
     Authed(user): Authed,
     JsonBody(body): JsonBody<RenameBody>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -197,12 +164,7 @@ pub(super) async fn handle_rename(
         }
         Err(e) => return Err(internal(e)),
     };
-    let _ = cmd_tx
-        .send(Command::Rename {
-            user_id: renamed.id,
-            username: renamed.username.clone(),
-        })
-        .await;
+    let _ = cmd_tx.send(Command::Rename { user_id: renamed.id, username: renamed.username.clone() }).await;
     Ok(Json(UserProfile::from(renamed)))
 }
 
@@ -216,12 +178,7 @@ pub(super) async fn handle_logout_all(
 }
 
 pub(super) async fn handle_delete_account(
-    State(Api {
-        pool,
-        password_checks: checks,
-        cmd_tx,
-        ..
-    }): State<Api>,
+    State(Api { pool, password_checks: checks, cmd_tx, .. }): State<Api>,
     Session(user, token): Session,
     JsonBody(body): JsonBody<DeleteAccountBody>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -232,10 +189,5 @@ pub(super) async fn handle_delete_account(
 }
 
 pub(super) async fn revoke(cmd_tx: &mpsc::Sender<Command>, user_id: Uuid, keep: Uuid) {
-    let _ = cmd_tx
-        .send(Command::Revoke {
-            user_id,
-            keep: Some(keep),
-        })
-        .await;
+    let _ = cmd_tx.send(Command::Revoke { user_id, keep: Some(keep) }).await;
 }

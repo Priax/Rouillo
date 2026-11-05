@@ -292,11 +292,7 @@ impl Ui {
         let factor = view.scale * supersample(view);
         let size = ((view.w * factor).ceil() as u32, (view.h * factor).ceil() as u32);
         let mut inner = self.inner.borrow_mut();
-        if let Some(target) = inner
-            .target
-            .as_ref()
-            .filter(|t| t.size() == (size.0 as f32, size.1 as f32))
-        {
+        if let Some(target) = inner.target.as_ref().filter(|t| t.size() == (size.0 as f32, size.1 as f32)) {
             return target.clone();
         }
         let target = gfx
@@ -325,11 +321,7 @@ impl Ui {
     pub fn pressed(&self, label: &str) -> bool {
         let inner = self.inner.borrow();
         let (m, label) = (inner.mouse, hash_of(label));
-        m.pressed
-            && inner
-                .widgets
-                .iter()
-                .any(|(&(l, _), w)| l == label && w.live && w.contains(m.x, m.y))
+        m.pressed && inner.widgets.iter().any(|(&(l, _), w)| l == label && w.live && w.contains(m.x, m.y))
     }
 
     pub fn bar_clicked(&self, row: Rect) -> bool {
@@ -354,12 +346,7 @@ impl Ui {
         let inner = self.inner.borrow();
         let w = inner.widgets.get(&inner.focus?).filter(|w| inner.pad && w.live)?;
         let (x, y) = w.rect.center();
-        Some(Mouse {
-            x,
-            y,
-            down: true,
-            pressed: true,
-        })
+        Some(Mouse { x, y, down: true, pressed: true })
     }
 
     /// Moves the gamepad's pointer to the nearest live widget in `dir`, or
@@ -376,11 +363,7 @@ impl Ui {
         let next = match current.filter(|_| inner.pad) {
             None => live
                 .iter()
-                .min_by(|a, b| {
-                    (a.1 .1, a.1 .0)
-                        .partial_cmp(&(b.1 .1, b.1 .0))
-                        .unwrap_or(Ordering::Equal)
-                })
+                .min_by(|a, b| (a.1 .1, a.1 .0).partial_cmp(&(b.1 .1, b.1 .0)).unwrap_or(Ordering::Equal))
                 .map(|(k, _)| *k),
             Some((_, (cx, cy))) => live
                 .iter()
@@ -458,25 +441,11 @@ impl Ui {
         let mut fresh = false;
         let w = widgets.entry(key).or_insert_with(|| {
             fresh = true;
-            Widget {
-                rect,
-                area,
-                live,
-                hover: 0.0,
-                press: 0.0,
-                flash: 0.0,
-                hovered: false,
-                touched: false,
-            }
+            Widget { rect, area, live, hover: 0.0, press: 0.0, flash: 0.0, hovered: false, touched: false }
         });
         w.rect = rect;
         w.area = area;
-        let over = live
-            && if *pad {
-                *focus == Some(key)
-            } else {
-                w.contains(mouse.x, mouse.y)
-            };
+        let over = live && if *pad { *focus == Some(key) } else { w.contains(mouse.x, mouse.y) };
         let entered = over && !w.hovered && !fresh;
         w.live = live;
         w.hovered = over;
@@ -485,12 +454,7 @@ impl Ui {
         w.press = approach(w.press, f32::from(u8::from(over && mouse.down)), PRESS_SPEED, *dt);
         w.flash = approach(w.flash, 0.0, FLASH_SPEED, *dt);
 
-        Response {
-            hover: w.hover,
-            press: w.press,
-            flash: w.flash,
-            entered,
-        }
+        Response { hover: w.hover, press: w.press, flash: w.flash, entered }
     }
 }
 
@@ -523,23 +487,9 @@ mod tests {
 
     const A: Rect = Rect::at(0.0, 0.0, 100.0, 40.0);
     const B: Rect = Rect::at(0.0, 100.0, 100.0, 40.0);
-    const ON_A: Mouse = Mouse {
-        x: 50.0,
-        y: 20.0,
-        down: false,
-        pressed: false,
-    };
-    const AWAY: Mouse = Mouse {
-        x: 500.0,
-        y: 500.0,
-        down: false,
-        pressed: false,
-    };
-    const CLICK_A: Mouse = Mouse {
-        down: true,
-        pressed: true,
-        ..ON_A
-    };
+    const ON_A: Mouse = Mouse { x: 50.0, y: 20.0, down: false, pressed: false };
+    const AWAY: Mouse = Mouse { x: 500.0, y: 500.0, down: false, pressed: false };
+    const CLICK_A: Mouse = Mouse { down: true, pressed: true, ..ON_A };
 
     fn frame(ui: &mut Ui, mouse: Mouse, draws: &[(&str, Rect)]) -> Vec<Response> {
         ui.begin_frame(1.0 / 60.0, View::default(), mouse);
@@ -566,20 +516,14 @@ mod tests {
         assert!(grid[1].1.contains(click.x, click.y), "right goes to b");
         ui.move_focus((0.0, 1.0));
         let click = ui.pad_click().unwrap();
-        assert!(
-            grid[2].1.contains(click.x, click.y),
-            "down from b lands on c, the nearest below"
-        );
+        assert!(grid[2].1.contains(click.x, click.y), "down from b lands on c, the nearest below");
         ui.move_focus((0.0, -1.0));
         ui.move_focus((0.0, -1.0));
         let click = ui.pad_click().unwrap();
         assert!(grid[0].1.contains(click.x, click.y), "nothing above a: the focus stays");
 
         let hovered = frame(&mut ui, AWAY, &grid);
-        assert!(
-            hovered[0].hover > 0.0 && hovered[1].hover == 0.0,
-            "the focus shows as a hover"
-        );
+        assert!(hovered[0].hover > 0.0 && hovered[1].hover == 0.0, "the focus shows as a hover");
         ui.note_pointer(ON_A);
         assert!(ui.pad_click().is_none(), "moving the mouse hands control back");
     }
@@ -614,15 +558,9 @@ mod tests {
 
     #[test]
     fn a_dense_screen_is_drawn_at_its_own_resolution() {
-        let phone = View {
-            dpi: 3.0,
-            ..View::fit(393.0, 852.0)
-        };
+        let phone = View { dpi: 3.0, ..View::fit(393.0, 852.0) };
         assert!((supersample(phone) - 3.0).abs() < f32::EPSILON);
-        let scaled = View {
-            dpi: 1.25,
-            ..View::fit(1536.0, 864.0)
-        };
+        let scaled = View { dpi: 1.25, ..View::fit(1536.0, 864.0) };
         assert!((supersample(scaled) - 2.0).abs() < f32::EPSILON);
     }
 
@@ -721,10 +659,7 @@ mod tests {
     #[test]
     fn entering_is_reported_once_and_not_on_appearance() {
         let mut ui = Ui::default();
-        assert!(
-            !frame(&mut ui, ON_A, &[("Amis", A)])[0].entered,
-            "appeared under the pointer"
-        );
+        assert!(!frame(&mut ui, ON_A, &[("Amis", A)])[0].entered, "appeared under the pointer");
         frame(&mut ui, AWAY, &[("Amis", A)]);
         assert!(frame(&mut ui, ON_A, &[("Amis", A)])[0].entered);
         assert!(!frame(&mut ui, ON_A, &[("Amis", A)])[0].entered);
@@ -734,10 +669,7 @@ mod tests {
     fn a_click_lands_on_what_was_drawn_before_it() {
         let mut ui = Ui::default();
         frame(&mut ui, ON_A, &[("Jouer", A)]);
-        assert!(
-            ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A),
-            "the button under the click"
-        );
+        assert!(ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A), "the button under the click");
         let flash = ui.interact("Jouer", A, true).flash;
         assert!(flash > 0.8, "flashes, got {flash}");
     }
@@ -762,12 +694,7 @@ mod tests {
     const ROW: Rect = Rect::at(0.0, 0.0, 1000.0, 60.0);
 
     fn at(x: f32, y: f32) -> Mouse {
-        Mouse {
-            x,
-            y,
-            down: false,
-            pressed: false,
-        }
+        Mouse { x, y, down: false, pressed: false }
     }
 
     fn bar_frame(ui: &mut Ui, mouse: Mouse) -> Response {
@@ -782,22 +709,13 @@ mod tests {
             bar_frame(&mut ui, at(100.0, 30.0));
         }
         let band = bar_frame(&mut ui, at(100.0, 30.0));
-        assert!(
-            band.hover.abs() < f32::EPSILON,
-            "the band beside the bar is not the button"
-        );
-        let click = Mouse {
-            pressed: true,
-            ..at(100.0, 30.0)
-        };
+        assert!(band.hover.abs() < f32::EPSILON, "the band beside the bar is not the button");
+        let click = Mouse { pressed: true, ..at(100.0, 30.0) };
         assert!(!ui.begin_frame(1.0 / 60.0, View::default(), click));
         assert!(!ui.bar_clicked(ROW));
 
         assert!(bar_frame(&mut ui, at(500.0, 30.0)).hover > 0.0);
-        let click = Mouse {
-            pressed: true,
-            ..at(500.0, 30.0)
-        };
+        let click = Mouse { pressed: true, ..at(500.0, 30.0) };
         assert!(ui.begin_frame(1.0 / 60.0, View::default(), click));
         assert!(ui.bar_clicked(ROW));
     }
@@ -822,14 +740,7 @@ mod tests {
             bar_frame(&mut ui, margin);
         }
         assert!(bar_frame(&mut ui, margin).hover < 0.01);
-        ui.begin_frame(
-            1.0 / 60.0,
-            View::default(),
-            Mouse {
-                pressed: true,
-                ..margin
-            },
-        );
+        ui.begin_frame(1.0 / 60.0, View::default(), Mouse { pressed: true, ..margin });
         assert!(!ui.bar_clicked(ROW));
     }
 
@@ -880,14 +791,8 @@ mod tests {
         ui.set_input(true);
         ui.interact("Off", A, false);
         assert!(under.hover.abs() < f32::EPSILON);
-        assert!(
-            !ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A),
-            "neither was clickable"
-        );
+        assert!(!ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A), "neither was clickable");
         ui.interact("Leave", A, true);
-        assert!(
-            ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A),
-            "input comes back the next frame"
-        );
+        assert!(ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A), "input comes back the next frame");
     }
 }

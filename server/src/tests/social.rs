@@ -15,33 +15,19 @@ fn a_spectator_sees_the_game_and_cannot_touch_it() {
     let mut rx3 = spectator(&mut mgr, 3);
     assert_eq!(mgr.room_of(3), Some(1));
     let got = drain(&mut rx3);
-    assert!(has(
-        &got,
-        |m| matches!(m, ServerMessage::Lobby { info } if info.your_slot == 0 && !info.is_host)
-    ));
+    assert!(has(&got, |m| matches!(m, ServerMessage::Lobby { info } if info.your_slot == 0 && !info.is_host)));
     assert!(has(&got, |m| matches!(m, ServerMessage::GameStart { .. })));
     assert!(has(&got, |m| matches!(m, ServerMessage::StateUpdate { .. })));
 
     mgr.handle(Command::TogglePause { conn: 3 });
     assert!(!mgr.rooms[&1].sim.paused, "a spectator paused the game");
-    mgr.handle(Command::Input {
-        conn: 3,
-        kind: InputKind::HardDrop,
-        seq: 1,
-        tick: 1,
-    });
+    mgr.handle(Command::Input { conn: 3, kind: InputKind::HardDrop, seq: 1, tick: 1 });
     assert!(mgr.rooms[&1].sim.queued_inputs.iter().all(Vec::is_empty));
-    mgr.handle(Command::InviteFriend {
-        conn: 3,
-        target_user_id: Uuid::from_u128(2).to_string(),
-    });
+    mgr.handle(Command::InviteFriend { conn: 3, target_user_id: Uuid::from_u128(2).to_string() });
     assert!(mgr.take_friend_checks().is_empty());
 
     mgr.tick(STEP, true);
-    assert!(has(&drain(&mut rx3), |m| matches!(
-        m,
-        ServerMessage::StateUpdate { .. }
-    )));
+    assert!(has(&drain(&mut rx3), |m| matches!(m, ServerMessage::StateUpdate { .. })));
 }
 
 #[test]
@@ -55,10 +41,7 @@ fn spectators_leave_and_are_sent_back_when_the_room_closes() {
     mgr.handle(Command::LeaveRoom { conn: 3 });
     assert_eq!((mgr.room_of(3), mgr.rooms[&1].spectators.len()), (None, 1));
     assert!(has(&drain(&mut rx3), |m| matches!(m, ServerMessage::RoomList { .. })));
-    assert!(
-        mgr.take_unsaved_matches().is_empty(),
-        "a spectator leaving is no forfeit"
-    );
+    assert!(mgr.take_unsaved_matches().is_empty(), "a spectator leaving is no forfeit");
 
     drain(&mut rx4);
     mgr.handle(Command::LeaveRoom { conn: 1 });
@@ -125,19 +108,13 @@ fn the_friend_list_learns_who_is_in_a_room() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
     let _rx2 = reg(&mut mgr, 2);
     hello_as(&mut mgr, 2, "B", 2);
     let (u1, u2, u3) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
     assert_eq!(playing(&mut mgr, vec![u1, u2, u3]), vec![u1]);
     mgr.handle(Command::Unregister { conn: 1 });
-    assert!(
-        playing(&mut mgr, vec![u1]).is_empty(),
-        "gone players are not shown as playing"
-    );
+    assert!(playing(&mut mgr, vec![u1]).is_empty(), "gone players are not shown as playing");
 }
 
 pub(super) fn watch_check(mgr: &mut Manager) -> FriendCheck {
@@ -153,24 +130,14 @@ fn a_friends_only_room_is_watched_by_the_hosts_friends_only() {
     let (_rx1, _rx2) = friends_only_room(&mut mgr);
     let mut guest = spectator(&mut mgr, 3);
     assert!(mgr.rooms[&1].spectators.is_empty(), "a guest has no friends");
-    assert!(has(&drain(&mut guest), |m| matches!(
-        m,
-        ServerMessage::JoinFailed { .. }
-    )));
+    assert!(has(&drain(&mut guest), |m| matches!(m, ServerMessage::JoinFailed { .. })));
 
     let mut rx4 = reg(&mut mgr, 4);
     hello_as(&mut mgr, 4, "F", 4);
     mgr.handle(Command::Spectate { conn: 4, id: 1 });
     let check = watch_check(&mut mgr);
-    assert_eq!(
-        check.users(),
-        (Uuid::from_u128(4), Uuid::from_u128(1)),
-        "asked about the host"
-    );
-    mgr.handle(Command::FriendCheckDone {
-        check: check.clone(),
-        friends: false,
-    });
+    assert_eq!(check.users(), (Uuid::from_u128(4), Uuid::from_u128(1)), "asked about the host");
+    mgr.handle(Command::FriendCheckDone { check: check.clone(), friends: false });
     assert!(mgr.rooms[&1].spectators.is_empty());
     assert!(has(&drain(&mut rx4), |m| matches!(m, ServerMessage::JoinFailed { .. })));
     mgr.handle(Command::Spectate { conn: 4, id: 1 });
@@ -184,21 +151,12 @@ fn a_late_watch_answer_leaves_a_player_who_moved_on_alone() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
     let _rx4 = reg(&mut mgr, 4);
     hello_as(&mut mgr, 4, "F", 4);
-    mgr.handle(Command::WatchFriend {
-        conn: 4,
-        user_id: Uuid::from_u128(1).to_string(),
-    });
+    mgr.handle(Command::WatchFriend { conn: 4, user_id: Uuid::from_u128(1).to_string() });
     let check = watch_check(&mut mgr);
-    mgr.handle(Command::CreateRoom {
-        conn: 4,
-        name: "own".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 4, name: "own".into() });
     mgr.handle(Command::FriendCheckDone { check, friends: true });
     assert_eq!(mgr.room_of(4), Some(2), "pulled out of the room it made meanwhile");
 }
@@ -208,20 +166,12 @@ fn watching_through_a_friend_respects_the_spectator_limit() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
-    let _watchers: Vec<_> = (0..shared::MAX_SPECTATORS as u64)
-        .map(|i| spectator(&mut mgr, 100 + i))
-        .collect();
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    let _watchers: Vec<_> = (0..shared::MAX_SPECTATORS as u64).map(|i| spectator(&mut mgr, 100 + i)).collect();
     assert_eq!(mgr.rooms[&1].spectators.len(), shared::MAX_SPECTATORS, "setup");
     let _rx4 = reg(&mut mgr, 4);
     hello_as(&mut mgr, 4, "F", 4);
-    mgr.handle(Command::WatchFriend {
-        conn: 4,
-        user_id: Uuid::from_u128(1).to_string(),
-    });
+    mgr.handle(Command::WatchFriend { conn: 4, user_id: Uuid::from_u128(1).to_string() });
     let check = watch_check(&mut mgr);
     mgr.handle(Command::FriendCheckDone { check, friends: true });
     assert_eq!(mgr.rooms[&1].spectators.len(), shared::MAX_SPECTATORS);
@@ -266,23 +216,11 @@ fn watching_a_friend_finds_their_room_after_checking_the_friendship() {
     let mut rx4 = reg(&mut mgr, 4);
     hello_as(&mut mgr, 4, "F", 4);
     let friend = Uuid::from_u128(1).to_string();
-    mgr.handle(Command::WatchFriend {
-        conn: 4,
-        user_id: friend.clone(),
-    });
-    assert!(
-        has(&drain(&mut rx4), |m| matches!(m, ServerMessage::JoinFailed { .. })),
-        "not playing"
-    );
+    mgr.handle(Command::WatchFriend { conn: 4, user_id: friend.clone() });
+    assert!(has(&drain(&mut rx4), |m| matches!(m, ServerMessage::JoinFailed { .. })), "not playing");
 
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
-    mgr.handle(Command::WatchFriend {
-        conn: 4,
-        user_id: friend,
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
+    mgr.handle(Command::WatchFriend { conn: 4, user_id: friend });
     let check = watch_check(&mut mgr);
     assert_eq!(check.users(), (Uuid::from_u128(4), Uuid::from_u128(1)));
     mgr.handle(Command::FriendCheckDone { check, friends: true });
@@ -300,10 +238,7 @@ fn chat_stays_in_the_room_and_is_rate_limited() {
     for rx in [&mut rx2, &mut rx3, &mut outside] {
         drain(rx);
     }
-    mgr.handle(Command::Chat {
-        conn: 1,
-        text: "  salut\tà tous \u{7}".into(),
-    });
+    mgr.handle(Command::Chat { conn: 1, text: "  salut\tà tous \u{7}".into() });
     let chats = |rx: &mut mpsc::Receiver<Vec<u8>>| {
         drain(rx)
             .into_iter()
@@ -313,23 +248,14 @@ fn chat_stays_in_the_room_and_is_rate_limited() {
             })
             .collect::<Vec<_>>()
     };
-    assert_eq!(
-        chats(&mut rx2),
-        [("Invité".to_owned(), "salut à tous".to_owned(), false)]
-    );
+    assert_eq!(chats(&mut rx2), [("Invité".to_owned(), "salut à tous".to_owned(), false)]);
     assert_eq!(chats(&mut rx3).len(), 1);
     assert!(chats(&mut outside).is_empty());
 
-    mgr.handle(Command::Chat {
-        conn: 3,
-        text: "vu".into(),
-    });
+    mgr.handle(Command::Chat { conn: 3, text: "vu".into() });
     assert!(chats(&mut rx2)[0].2, "marked as a spectator's");
     for i in 0..20 {
-        mgr.handle(Command::Chat {
-            conn: 1,
-            text: format!("spam {i}"),
-        });
+        mgr.handle(Command::Chat { conn: 1, text: format!("spam {i}") });
     }
     let got = chats(&mut rx2).len();
     assert!((4..=5).contains(&got), "{got} messages got through a burst of 20");
@@ -347,20 +273,14 @@ fn a_room_name_is_one_printable_line() {
 fn chat_text_is_one_bounded_printable_line() {
     assert_eq!(clean_chat("a\nb\r\nc"), Some("a b  c".to_owned()));
     assert_eq!(clean_chat(" \u{0}\u{7f} "), None);
-    assert_eq!(
-        clean_chat(&"é".repeat(500)).map(|s| s.chars().count()),
-        Some(shared::MAX_CHAT_CHARS)
-    );
+    assert_eq!(clean_chat(&"é".repeat(500)).map(|s| s.chars().count()), Some(shared::MAX_CHAT_CHARS));
 }
 
 #[test]
 fn a_rename_shows_in_the_next_invitation() {
     let mut mgr = new_mgr();
     let mut rx2 = inviter_and_target(&mut mgr);
-    mgr.handle(Command::Rename {
-        user_id: Uuid::from_u128(1),
-        username: "Alicia".into(),
-    });
+    mgr.handle(Command::Rename { user_id: Uuid::from_u128(1), username: "Alicia".into() });
     invite_b(&mut mgr);
     let check = mgr.take_friend_checks().pop().expect("an invite check");
     mgr.handle(Command::FriendCheckDone { check, friends: true });

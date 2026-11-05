@@ -62,12 +62,8 @@ impl OpponentView {
     }
 
     pub fn delay_ticks(&self) -> f64 {
-        let (min, max) = self
-            .arrivals
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &a| {
-                (lo.min(a), hi.max(a))
-            });
+        let (min, max) =
+            self.arrivals.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &a| (lo.min(a), hi.max(a)));
         let jitter = if min.is_finite() { max - min } else { 0.0 };
         let gap = self.gaps.iter().max().map_or(1.0, |&g| f64::from(g));
         (jitter.ceil() + gap).clamp(MIN_DELAY_TICKS, MAX_DELAY_TICKS)
@@ -207,12 +203,7 @@ mod tests {
     fn a_falling_piece_is_drawn_to_the_pixel() {
         let mut b = board_at(2, 1);
         let px = config::CELL_UNITS / config::CELL_PX;
-        for (offset, drawn) in [
-            (0, 0.0),
-            (px - 1, 0.0),
-            (px, 1.0 / 16.0),
-            (config::CELL_UNITS - 1, 15.0 / 16.0),
-        ] {
+        for (offset, drawn) in [(0, 0.0), (px - 1, 0.0), (px, 1.0 / 16.0), (config::CELL_UNITS - 1, 15.0 / 16.0)] {
             b.pair_mut().expect("a pair").fall_offset = offset;
             assert_eq!(crate::draw::fall_step(&b), drawn, "at offset {offset:#x}");
         }

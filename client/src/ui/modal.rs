@@ -14,19 +14,12 @@ pub struct Modal {
 
 impl Modal {
     pub fn new(view: View, width: f32) -> Self {
-        Self {
-            card: Rect::at(0.0, 0.0, view.w, view.h)
-                .pad(MARGIN, 0.0, MARGIN, 0.0)
-                .max_width(width),
-        }
+        Self { card: Rect::at(0.0, 0.0, view.w, view.h).pad(MARGIN, 0.0, MARGIN, 0.0).max_width(width) }
     }
 
     fn close(self) -> Rect {
         let size = 36.0;
-        self.card
-            .pad((TITLE_H - size) / 2.0, PADDING, 0.0, 0.0)
-            .right(size)
-            .top(size)
+        self.card.pad((TITLE_H - size) / 2.0, PADDING, 0.0, 0.0).right(size).top(size)
     }
 
     pub fn body(self) -> Rect {

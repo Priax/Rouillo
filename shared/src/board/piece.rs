@@ -94,10 +94,6 @@ impl ActivePuyo {
     }
 
     pub(super) const fn shifted(self, rows: i32, cols: i32) -> Self {
-        Self {
-            row: self.row + rows,
-            col: self.col + cols,
-            ..self
-        }
+        Self { row: self.row + rows, col: self.col + cols, ..self }
     }
 }

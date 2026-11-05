@@ -4,10 +4,7 @@ use shared::{config, ClientMessage, ServerMessage};
 pub fn now_secs() -> f64 {
     #[cfg(target_arch = "wasm32")]
     {
-        web_sys::window()
-            .and_then(|w| w.performance())
-            .map(|p| p.now() / 1000.0)
-            .unwrap_or(0.0)
+        web_sys::window().and_then(|w| w.performance()).map(|p| p.now() / 1000.0).unwrap_or(0.0)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -158,12 +155,7 @@ struct Heartbeat {
 
 impl Heartbeat {
     fn new(now: f64) -> Self {
-        Self {
-            next_ping_at: now,
-            inflight: None,
-            seq: 0,
-            rtt_ms: None,
-        }
+        Self { next_ping_at: now, inflight: None, seq: 0, rtt_ms: None }
     }
 
     fn due(&mut self, now: f64) -> Option<ClientMessage> {
@@ -254,9 +246,7 @@ impl Connection {
             crate::http::get(crate::http::api_url("transport"), None, std::sync::Arc::clone(&slot));
             self.transport = Transport::Asking { slot, since: now };
         }
-        self.link = Link::Waiting {
-            retry: Retry::initial(now),
-        };
+        self.link = Link::Waiting { retry: Retry::initial(now) };
     }
 
     /// The WebTransport offer to dial now, or `Err` while the server has
@@ -293,9 +283,7 @@ impl Connection {
         let (Link::Dialing { retry, .. } | Link::Waiting { retry }) = &self.link else {
             return None;
         };
-        retry
-            .recovering
-            .then(|| (retry.attempts, (retry.deadline - now).max(0.0)))
+        retry.recovering.then(|| (retry.attempts, (retry.deadline - now).max(0.0)))
     }
 
     pub fn take_unreported_drop(&mut self) -> Option<String> {
@@ -339,19 +327,11 @@ impl Connection {
                 };
                 retry.record_dial(now, next_frac(&mut self.jitter));
                 if let Some(offer) = offer {
-                    return Link::Dialing {
-                        net: Net::Wt(crate::wt::Link::dial(&offer)),
-                        retry,
-                        since: now,
-                    };
+                    return Link::Dialing { net: Net::Wt(crate::wt::Link::dial(&offer)), retry, since: now };
                 }
                 let url = format!("{}?v={}", crate::server_url(), shared::PROTOCOL_VERSION);
                 match ewebsock::connect(url, ewebsock::Options::default()) {
-                    Ok((sender, receiver)) => Link::Dialing {
-                        net: Net::Ws { sender, receiver },
-                        retry,
-                        since: now,
-                    },
+                    Ok((sender, receiver)) => Link::Dialing { net: Net::Ws { sender, receiver }, retry, since: now },
                     Err(e) => {
                         eprintln!("[ws] tentative {} impossible: {e}", retry.attempts);
                         Link::Waiting { retry }
@@ -436,9 +416,7 @@ fn dial_decision(retry: &Retry, outcome: Drained, now: f64) -> DialOutcome {
     match outcome {
         Drained::Outdated => DialOutcome::Outdated,
         Drained::Dropped(reason) => DialOutcome::Drop(reason),
-        Drained::Opened => DialOutcome::GoLive {
-            recovered: retry.recovering,
-        },
+        Drained::Opened => DialOutcome::GoLive { recovered: retry.recovering },
         Drained::Quiet if retry.expired(now) => DialOutcome::GiveUp,
         Drained::Quiet => DialOutcome::KeepWaiting,
     }
@@ -586,14 +564,8 @@ mod tests {
     #[test]
     fn hanging_dial_gives_up_at_deadline() {
         let retry = Retry::initial(0.0);
-        assert!(matches!(
-            dial_decision(&retry, Drained::Quiet, INITIAL_WINDOW - 1.0),
-            DialOutcome::KeepWaiting
-        ));
-        assert!(matches!(
-            dial_decision(&retry, Drained::Quiet, INITIAL_WINDOW),
-            DialOutcome::GiveUp
-        ));
+        assert!(matches!(dial_decision(&retry, Drained::Quiet, INITIAL_WINDOW - 1.0), DialOutcome::KeepWaiting));
+        assert!(matches!(dial_decision(&retry, Drained::Quiet, INITIAL_WINDOW), DialOutcome::GiveUp));
     }
 
     #[test]
@@ -651,9 +623,7 @@ mod tests {
         c.connect(now);
         assert_eq!(c.recovering(now), None, "first connect shows nothing");
 
-        c.link = Link::Waiting {
-            retry: Retry::recovering(now),
-        };
+        c.link = Link::Waiting { retry: Retry::recovering(now) };
         let (attempts, left) = c.recovering(now).expect("recovery must show a banner");
         assert_eq!(attempts, 0);
         assert!((left - RECOVER_WINDOW).abs() < 1e-9);
@@ -663,9 +633,7 @@ mod tests {
     fn disconnect_clears_everything() {
         let now = 3.0;
         let mut c = Connection::new("test-player");
-        c.link = Link::Waiting {
-            retry: Retry::recovering(now),
-        };
+        c.link = Link::Waiting { retry: Retry::recovering(now) };
         c.unreported_drop = Some("boom".to_string());
 
         c.disconnect();
@@ -713,10 +681,7 @@ mod tests {
         assert!(matches!(link, Link::Offline), "a retry would be refused again");
         assert!(matches!(events.as_slice(), [ConnEvent::Outdated]));
         assert_eq!(c.take_unreported_drop(), None);
-        assert!(matches!(
-            dial_decision(&Retry::initial(now), Drained::Outdated, now),
-            DialOutcome::Outdated
-        ));
+        assert!(matches!(dial_decision(&Retry::initial(now), Drained::Outdated, now), DialOutcome::Outdated));
     }
 
     #[test]
@@ -732,10 +697,7 @@ mod tests {
 
     fn asking(c: &mut Connection, since: f64) -> crate::http::HttpSlot {
         let slot = crate::http::new_slot();
-        c.transport = Transport::Asking {
-            slot: std::sync::Arc::clone(&slot),
-            since,
-        };
+        c.transport = Transport::Asking { slot: std::sync::Arc::clone(&slot), since };
         slot
     }
 
@@ -771,10 +733,7 @@ mod tests {
         let slot = asking(&mut c, 0.0);
         answered(&slot, 502, "Bad Gateway");
         assert!(matches!(c.offer(0.5), Ok(None)));
-        assert!(
-            matches!(c.transport, Transport::Unknown),
-            "a server being restarted is no answer"
-        );
+        assert!(matches!(c.transport, Transport::Unknown), "a server being restarted is no answer");
         let slot = asking(&mut c, 1.0);
         answered(&slot, 200, "null");
         assert!(matches!(c.offer(1.5), Ok(None)));

@@ -72,10 +72,7 @@ fn no_new_room_and_no_join_during_a_shutdown() {
     let mut mgr = new_mgr();
     let mut rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
     let mut rx2 = reg(&mut mgr, 2);
     hello(&mut mgr, 2, "B");
     mgr.handle(Command::Shutdown);
@@ -86,10 +83,7 @@ fn no_new_room_and_no_join_during_a_shutdown() {
     assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::JoinFailed { .. })));
     assert_eq!(mgr.rooms[&1].members.len(), 1);
 
-    mgr.handle(Command::CreateRoom {
-        conn: 2,
-        name: "S".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 2, name: "S".into() });
     assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::JoinFailed { .. })));
     assert_eq!(mgr.rooms.len(), 1);
 }
@@ -120,10 +114,7 @@ fn a_player_can_still_come_back_during_a_shutdown() {
     hello(&mut mgr, 3, "B");
     assert_eq!(mgr.room_of(3), Some(1));
     assert!(!mgr.rooms[&1].sim.paused, "the game resumes");
-    assert!(
-        told_of_maintenance(&mut rx3),
-        "a client that connects late must learn of it too"
-    );
+    assert!(told_of_maintenance(&mut rx3), "a client that connects late must learn of it too");
 }
 
 #[test]
@@ -184,22 +175,12 @@ async fn the_manager_loop_outlives_a_shutdown_while_a_game_runs() {
             username: None,
             session: None,
         };
-        for cmd in [
-            Command::Register {
-                conn,
-                sender,
-                states: None,
-            },
-            hello,
-        ] {
+        for cmd in [Command::Register { conn, sender, states: None }, hello] {
             tx.send(cmd).await.expect("manager gone");
         }
     }
     let start = [
-        Command::CreateRoom {
-            conn: 1,
-            name: "R".into(),
-        },
+        Command::CreateRoom { conn: 1, name: "R".into() },
         Command::JoinRoom { conn: 2, id: 1 },
         Command::ToggleCountdown { conn: 1 },
     ];
@@ -222,10 +203,7 @@ fn an_account_cannot_take_both_slots() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
     let mut rx2 = reg(&mut mgr, 2);
     hello_as(&mut mgr, 2, "B", 1);
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });

@@ -44,13 +44,8 @@ pub enum ImageError {
 /// Decodes an uploaded picture with bounded memory, then redraws it at a fixed
 /// size: nothing of the original file (metadata, odd encodings) is kept.
 pub fn process(kind: Kind, bytes: &[u8]) -> Result<Vec<u8>, ImageError> {
-    let mut reader = ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|_| ImageError::Unreadable)?;
-    if !matches!(
-        reader.format(),
-        Some(ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::WebP | ImageFormat::Gif)
-    ) {
+    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format().map_err(|_| ImageError::Unreadable)?;
+    if !matches!(reader.format(), Some(ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::WebP | ImageFormat::Gif)) {
         return Err(ImageError::Unreadable);
     }
     let mut limits = Limits::default();
@@ -68,9 +63,7 @@ pub fn process(kind: Kind, bytes: &[u8]) -> Result<Vec<u8>, ImageError> {
             let side = img.width().min(img.height());
             let square = crop_center(&img, side, side).resize_exact(AVATAR_SIDE, AVATAR_SIDE, FilterType::CatmullRom);
             let round = round_mask(square.to_rgba8());
-            round
-                .write_to(&mut Cursor::new(&mut out), ImageFormat::Png)
-                .map_err(|_| ImageError::Unreadable)?;
+            round.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).map_err(|_| ImageError::Unreadable)?;
         }
         Kind::Banner => {
             let (w, h) = fit_ratio(img.width(), img.height(), BANNER_W, BANNER_H);
@@ -163,11 +156,7 @@ mod tests {
         for &b in bytes {
             crc ^= u32::from(b);
             for _ in 0..8 {
-                crc = if crc & 1 == 1 {
-                    (crc >> 1) ^ 0xEDB8_8320
-                } else {
-                    crc >> 1
-                };
+                crc = if crc & 1 == 1 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
             }
         }
         !crc

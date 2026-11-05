@@ -31,13 +31,7 @@ fn falling_frames(b: &Board) -> u32 {
 }
 
 fn piece(row: i32, col: i32, rotation: Rotation) -> ActivePuyo {
-    ActivePuyo {
-        row,
-        col,
-        rotation,
-        axis_type: PuyoType::Red,
-        sat_type: PuyoType::Blue,
-    }
+    ActivePuyo { row, col, rotation, axis_type: PuyoType::Red, sat_type: PuyoType::Blue }
 }
 
 #[test]
@@ -80,19 +74,12 @@ fn garbage_placement_leaves_the_piece_sequence_alone() {
 #[test]
 fn the_default_room_plays_on_the_standard_board() {
     let board = Board::for_match(1, &RoomSettings::default().rules);
-    assert_eq!(
-        (board.width(), board.height(), board.spawn_col()),
-        (GRID_WIDTH, GRID_HEIGHT, SPAWN_COL)
-    );
+    assert_eq!((board.width(), board.height(), board.spawn_col()), (GRID_WIDTH, GRID_HEIGHT, SPAWN_COL));
 }
 
 #[test]
 fn a_custom_room_sets_the_board_size_and_spawns_in_the_middle() {
-    let rules = Rules {
-        columns: 9,
-        rows: 15,
-        ..Rules::default()
-    };
+    let rules = Rules { columns: 9, rows: 15, ..Rules::default() };
     let board = Board::for_match(1, &rules);
     assert_eq!((board.width(), board.height()), (9, 16));
     assert_eq!(board.piece().map(|p| p.col), Some(4));
@@ -140,11 +127,7 @@ fn adjacent_garbage_is_cleared() {
     b.cells[(5, 5)] = Some(PuyoType::Garbage); // far away
     b.check_matches();
     assert!(b.cells[(9, 1)].is_none(), "adjacent garbage should clear");
-    assert_eq!(
-        b.cells[(5, 5)],
-        Some(PuyoType::Garbage),
-        "distant garbage should remain"
-    );
+    assert_eq!(b.cells[(5, 5)], Some(PuyoType::Garbage), "distant garbage should remain");
 }
 
 #[test]
@@ -283,11 +266,7 @@ fn soft_drop_takes_two_frames_per_cell_and_the_natural_fall_sixteen() {
 fn free_fall_matches_the_tsu_table() {
     let tsu = [10, 15, 19, 22, 25, 28, 31, 33, 35, 37, 39, 41, 43];
     for (cells, frames) in (1..).zip(tsu) {
-        assert_eq!(
-            frames_to_fall(cells, config::FREE_FALL_START, config::FREE_FALL_ACCEL),
-            frames,
-            "{cells} cells"
-        );
+        assert_eq!(frames_to_fall(cells, config::FREE_FALL_START, config::FREE_FALL_ACCEL), frames, "{cells} cells");
     }
 }
 
@@ -303,11 +282,7 @@ fn ojama_fall_matches_the_tsu_table_in_every_column() {
     ];
     for (col, frames) in tsu.iter().enumerate() {
         for (cells, &expected) in (1..).zip(frames) {
-            assert_eq!(
-                frames_to_fall(cells, 0, config::OJAMA_ACCEL[col]),
-                expected,
-                "column {col}, {cells} cells"
-            );
+            assert_eq!(frames_to_fall(cells, 0, config::OJAMA_ACCEL[col]), expected, "column {col}, {cells} cells");
         }
     }
 }
@@ -349,10 +324,7 @@ fn a_split_pair_falls_before_anything_pops() {
     let hanging = falls(&b).iter().find(|f| f.col == 3).expect("the satellite falls");
     assert_eq!(hanging.cells_fallen, 1);
     let frames = falling_frames(&b);
-    assert_eq!(
-        frames,
-        config::SPLIT_DELAY_SATELLITE as u32 + 10 + config::BOUNCE_FRAMES
-    );
+    assert_eq!(frames, config::SPLIT_DELAY_SATELLITE as u32 + 10 + config::BOUNCE_FRAMES);
     for _ in 0..frames - 1 {
         b.tick();
         assert_eq!(b.state(), GameState::ResolvingMatches);
@@ -434,12 +406,7 @@ fn run_script(seed: u64, ticks: u64, skip_input_at: Option<u64>) -> Run {
         b
     };
     let mut board = fresh(seed);
-    let mut run = Run {
-        hashes: Vec::with_capacity(ticks as usize),
-        boards: 1,
-        max_chain: 0,
-        garbage_dropped: 0,
-    };
+    let mut run = Run { hashes: Vec::with_capacity(ticks as usize), boards: 1, max_chain: 0, garbage_dropped: 0 };
 
     for step in 0..ticks {
         if board.state() == GameState::GameOver {
@@ -486,11 +453,7 @@ fn events_tell_what_the_board_shows() {
         let became = |state: GameState| board.state() == state && before.state() != state;
         assert_eq!(events.spawned, board.piece_id != before.piece_id, "spawned at {step}");
         assert_eq!(events.topped_out, became(GameState::GameOver), "topped out at {step}");
-        assert_eq!(
-            events.ojama_dropped,
-            became(GameState::DroppingGarbage),
-            "ojama at {step}"
-        );
+        assert_eq!(events.ojama_dropped, became(GameState::DroppingGarbage), "ojama at {step}");
         assert_eq!(
             events.locked,
             before.pair().is_some() && matches!(board.phase(), Phase::Falling(fall) if !fall.ojama),
@@ -498,11 +461,7 @@ fn events_tell_what_the_board_shows() {
         );
         let link = (board.chain_count > before.chain_count).then_some(board.chain_count);
         assert_eq!(events.link, link, "link at {step}");
-        assert_eq!(
-            events.all_clear,
-            board.last_was_all_clear && !before.last_was_all_clear,
-            "all clear at {step}"
-        );
+        assert_eq!(events.all_clear, board.last_was_all_clear && !before.last_was_all_clear, "all clear at {step}");
         links += u32::from(events.link.is_some());
         longest = longest.max(events.link.unwrap_or(0));
         seen.merge(events);
@@ -526,11 +485,7 @@ fn first_divergence(a: &[u64], b: &[u64]) -> Option<usize> {
 fn the_same_script_replays_to_the_same_states() {
     let a = run_script(SCRIPT_SEED, 6_000, None);
     let b = run_script(SCRIPT_SEED, 6_000, None);
-    assert_eq!(
-        first_divergence(&a.hashes, &b.hashes),
-        None,
-        "two identical runs diverged"
-    );
+    assert_eq!(first_divergence(&a.hashes, &b.hashes), None, "two identical runs diverged");
 }
 
 /// The script has to actually reach the interesting code, or the test above
@@ -551,16 +506,11 @@ fn the_script_exercises_the_whole_simulation() {
 fn one_dropped_input_diverges() {
     // Skipping a step the schedule leaves empty would prove nothing, so pick a
     // real one: a hard drop, which cannot fail to change the board.
-    let at = (0..100)
-        .find(|s| scripted_input(*s) == Some(InputKind::HardDrop))
-        .expect("the schedule never hard drops");
+    let at = (0..100).find(|s| scripted_input(*s) == Some(InputKind::HardDrop)).expect("the schedule never hard drops");
     let base = run_script(SCRIPT_SEED, 6_000, None);
     let altered = run_script(SCRIPT_SEED, 6_000, Some(at));
     let diverged = first_divergence(&base.hashes, &altered.hashes).expect("a dropped input went unnoticed");
-    assert_eq!(
-        diverged as u64, at,
-        "the divergence should surface on the very tick it was caused"
-    );
+    assert_eq!(diverged as u64, at, "the divergence should surface on the very tick it was caused");
 }
 
 /// Pins the script's outcome to a literal.
@@ -603,21 +553,9 @@ fn the_digest_notices_fields_the_script_never_varies() {
 
     // Room settings reach the simulation through the fall speed and the piece
     // palette, so two boards set up differently must not look alike either.
-    let faster = Board::new(
-        1,
-        &Rules {
-            starting_level: 4,
-            ..Rules::default()
-        },
-    );
+    let faster = Board::new(1, &Rules { starting_level: 4, ..Rules::default() });
     assert_ne!(faster.state_hash(), base.state_hash(), "start_level");
-    let four_colours = Board::new(
-        1,
-        &Rules {
-            colors: 4,
-            ..Rules::default()
-        },
-    );
+    let four_colours = Board::new(1, &Rules { colors: 4, ..Rules::default() });
     assert_ne!(four_colours.state_hash(), base.state_hash(), "colors");
 }
 
@@ -661,16 +599,11 @@ fn timeline_from(seed: u64, ticks: u32, inputs: &[StampedInput], incoming: &[Inc
 }
 
 fn scripted_stamps(ticks: u32) -> Vec<StampedInput> {
-    (1..=ticks)
-        .filter_map(|t| scripted_input(t as u64 - 1).map(|kind| StampedInput { tick: t, kind }))
-        .collect()
+    (1..=ticks).filter_map(|t| scripted_input(t as u64 - 1).map(|kind| StampedInput { tick: t, kind })).collect()
 }
 
 fn scripted_attacks(ticks: u32) -> Vec<IncomingGarbage> {
-    (1..=ticks)
-        .filter(|t| t % 240 == 0)
-        .map(|at| IncomingGarbage { at, amount: 9 })
-        .collect()
+    (1..=ticks).filter(|t| t % 240 == 0).map(|at| IncomingGarbage { at, amount: 9 }).collect()
 }
 
 /// The contract stage 5 rests on: from the server's state after any tick,
@@ -683,10 +616,7 @@ fn replaying_from_any_server_state_lands_on_the_server_future() {
     let inputs = scripted_stamps(ticks);
     let attacks = scripted_attacks(ticks);
     let states = server_timeline(ticks, &inputs, &attacks);
-    assert!(
-        states.iter().any(|(_, b)| b.chain_count >= 2),
-        "the timeline never chained, the replay is under-tested"
-    );
+    assert!(states.iter().any(|(_, b)| b.chain_count >= 2), "the timeline never chained, the replay is under-tested");
     assert!(
         states.iter().any(|(_, b)| b.state() == GameState::DroppingGarbage),
         "the timeline never dropped garbage, the replay is under-tested"
@@ -724,10 +654,7 @@ fn replaying_from_any_server_state_lands_on_the_server_future() {
 #[test]
 fn a_late_input_replays_on_the_first_tick_after_the_snapshot() {
     let states: Vec<_> = server_timeline(10, &[], &[]).into_iter().map(|(_, b)| b).collect();
-    let late = [StampedInput {
-        tick: 3,
-        kind: InputKind::MoveLeft,
-    }];
+    let late = [StampedInput { tick: 3, kind: InputKind::MoveLeft }];
     let replayed = states[8].replay(8, 10, &late, &[]);
 
     let mut expected = states[8].clone();
@@ -739,10 +666,7 @@ fn a_late_input_replays_on_the_first_tick_after_the_snapshot() {
 #[test]
 fn an_input_pressed_after_the_last_step_is_applied_without_a_tick() {
     let states: Vec<_> = server_timeline(5, &[], &[]).into_iter().map(|(_, b)| b).collect();
-    let pressed = [StampedInput {
-        tick: 6,
-        kind: InputKind::MoveRight,
-    }];
+    let pressed = [StampedInput { tick: 6, kind: InputKind::MoveRight }];
     let replayed = states[5].replay(5, 5, &pressed, &[]);
 
     let mut expected = states[5].clone();
@@ -891,13 +815,7 @@ fn margin_time_follows_the_level() {
 /// A room started at a high level begins with its margin already spent.
 #[test]
 fn the_starting_level_counts_towards_the_margin() {
-    let b = Board::new(
-        1,
-        &Rules {
-            starting_level: 8,
-            ..Rules::default()
-        },
-    );
+    let b = Board::new(1, &Rules { starting_level: 8, ..Rules::default() });
     assert_eq!(b.target_points(), 39);
 }
 
@@ -927,53 +845,22 @@ fn the_match_clock_only_runs_during_play() {
 #[test]
 fn a_higher_starting_level_starts_buried() {
     let rows_of_garbage = |level: u32| {
-        let b = Board::new(
-            1,
-            &Rules {
-                starting_level: level,
-                ..Rules::default()
-            },
-        );
-        b.cells
-            .rows()
-            .filter(|row| row.iter().all(|c| *c == Some(PuyoType::Garbage)))
-            .count()
+        let b = Board::new(1, &Rules { starting_level: level, ..Rules::default() });
+        b.cells.rows().filter(|row| row.iter().all(|c| *c == Some(PuyoType::Garbage))).count()
     };
     assert_eq!(rows_of_garbage(1), 0);
     assert_eq!(rows_of_garbage(3), 0);
     assert_eq!(rows_of_garbage(4), 1);
     assert_eq!(rows_of_garbage(7), 2);
     assert_eq!(rows_of_garbage(15), 4, "capped");
-    let b = Board::new(
-        1,
-        &Rules {
-            starting_level: 4,
-            ..Rules::default()
-        },
-    );
-    assert!(
-        b.cells
-            .rows()
-            .last()
-            .unwrap()
-            .iter()
-            .all(|c| *c == Some(PuyoType::Garbage)),
-        "not at the bottom"
-    );
+    let b = Board::new(1, &Rules { starting_level: 4, ..Rules::default() });
+    assert!(b.cells.rows().last().unwrap().iter().all(|c| *c == Some(PuyoType::Garbage)), "not at the bottom");
 }
 
 #[test]
 fn the_fall_speeds_up_one_frame_every_two_levels() {
-    let frames = |level: u32| {
-        Board::new(
-            1,
-            &Rules {
-                starting_level: level,
-                ..Rules::default()
-            },
-        )
-        .fall_frames_per_cell()
-    };
+    let frames =
+        |level: u32| Board::new(1, &Rules { starting_level: level, ..Rules::default() }).fall_frames_per_cell();
     assert_eq!(frames(1), 16);
     assert_eq!(frames(2), 16);
     assert_eq!(frames(3), 15);
@@ -1032,12 +919,7 @@ fn a_held_pair_reaches_the_sides_over_eleven_high_columns() {
 #[test]
 fn a_floor_kick_climbs_over_a_full_column() {
     let mut board = stacked([0, 0, 11, 12, 0, 0]);
-    for input in [
-        InputKind::RotateCCW,
-        InputKind::RotateCCW,
-        InputKind::RotateCCW,
-        InputKind::MoveRight,
-    ] {
+    for input in [InputKind::RotateCCW, InputKind::RotateCCW, InputKind::RotateCCW, InputKind::MoveRight] {
         board.step([input], 0);
     }
     assert_eq!(board.piece().map(|p| (p.row, p.col)), Some((0, 3)));
@@ -1053,11 +935,7 @@ fn nothing_turns_into_the_fourteenth_row() {
     board.step([InputKind::RotateCCW], 0);
     board.step([InputKind::RotateCCW], 0);
     let piece = board.piece().expect("still in play");
-    assert!(
-        piece.positions().iter().all(|&(r, _)| r >= 0),
-        "{:?}",
-        piece.positions()
-    );
+    assert!(piece.positions().iter().all(|&(r, _)| r >= 0), "{:?}", piece.positions());
 }
 
 #[test]

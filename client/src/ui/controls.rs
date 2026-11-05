@@ -23,11 +23,7 @@ impl Ui {
                 .corner_radius(UNDERLINE / 2.0)
                 .color(pal.accent);
         }
-        let color = if active {
-            pal.text
-        } else {
-            theme::mix(pal.text_muted, pal.text, r.hover)
-        };
+        let color = if active { pal.text } else { theme::mix(pal.text_muted, pal.text, r.hover) };
         draw.sharp_text(&fonts.display, label)
             .position(cx, rect.y + rect.h / 2.0 - UNDERLINE)
             .size(theme::size::HEADING)
@@ -45,11 +41,7 @@ impl Ui {
         }
         let center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
         let radius = rect.w.min(rect.h) / 2.0 * (1.0 + 0.05 * r.hover);
-        let who = Persona {
-            name,
-            glow: r.hover,
-            picture,
-        };
+        let who = Persona { name, glow: r.hover, picture };
         portrait(draw, &pal, fonts, center, radius, &who);
     }
 
@@ -70,8 +62,7 @@ impl Ui {
             .color(theme::mix(pal.text, theme::LINK, r.hover));
         if r.hover > 0.01 {
             let w = rect.w * 0.6 * r.hover;
-            draw.rect((cx - w / 2.0, cy + 12.0), (w, 1.5))
-                .color(theme::LINK.with_alpha(r.hover));
+            draw.rect((cx - w / 2.0, cy + 12.0), (w, 1.5)).color(theme::LINK.with_alpha(r.hover));
         }
     }
 
@@ -85,13 +76,11 @@ impl Ui {
         }
         list_row(draw, &pal, rect, index);
         if r.hover > 0.0 {
-            draw.rect((rect.x, rect.y), (rect.w, rect.h))
-                .color(pal.raised_hover.with_alpha(0.7 * r.hover));
+            draw.rect((rect.x, rect.y), (rect.w, rect.h)).color(pal.raised_hover.with_alpha(0.7 * r.hover));
             draw.rect((rect.x, rect.y), (4.0 * r.hover, rect.h)).color(pal.accent);
         }
         if r.flash > 0.0 {
-            draw.rect((rect.x, rect.y), (rect.w, rect.h))
-                .color(notan::prelude::Color::WHITE.with_alpha(0.2 * r.flash));
+            draw.rect((rect.x, rect.y), (rect.w, rect.h)).color(notan::prelude::Color::WHITE.with_alpha(0.2 * r.flash));
         }
     }
 }

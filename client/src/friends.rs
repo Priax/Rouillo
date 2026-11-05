@@ -33,11 +33,7 @@ const COL_GAP_UPRIGHT: f32 = 16.0;
 /// columns are stacked and share that height.
 pub fn rows_for(view: View) -> usize {
     let room = back_btn(view).y - 8.0 - COLUMNS_TOP;
-    let card_h = if view.portrait() {
-        (room - 2.0 * COL_GAP_UPRIGHT) / 3.0
-    } else {
-        room
-    };
+    let card_h = if view.portrait() { (room - 2.0 * COL_GAP_UPRIGHT) / 3.0 } else { room };
     let list_h = card_h - CARD_TITLE_H - 6.0 - 10.0;
     ((list_h / ROW_H) as usize).saturating_sub(1).clamp(1, MAX_ROWS)
 }
@@ -95,9 +91,7 @@ fn search_box(view: View) -> Rect {
 
 fn results_card(view: View) -> Rect {
     let h = 16.0 + MAX_SEARCH_RESULTS as f32 * RESULT_ROW_H;
-    Rect::at(0.0, RESULTS_TOP, view.w, h)
-        .pad(0.0, 20.0, 0.0, 20.0)
-        .max_width(840.0)
+    Rect::at(0.0, RESULTS_TOP, view.w, h).pad(0.0, 20.0, 0.0, 20.0).max_width(840.0)
 }
 
 fn result_row(view: View, row: usize) -> Rect {
@@ -123,9 +117,7 @@ fn watch_btn(view: View, row: usize) -> Rect {
 type Pictures = HashMap<String, Texture>;
 
 fn pictures<'a>(gfx: &mut Graphics, images: &Images, urls: impl Iterator<Item = &'a Option<String>>) -> Pictures {
-    urls.flatten()
-        .filter_map(|url| Some((url.clone(), images.get(gfx, url)?)))
-        .collect()
+    urls.flatten().filter_map(|url| Some((url.clone(), images.get(gfx, url)?))).collect()
 }
 
 fn avatar(
@@ -137,11 +129,7 @@ fn avatar(
     url: Option<&String>,
     pics: &Pictures,
 ) {
-    let who = ui::Persona {
-        name,
-        glow: 0.0,
-        picture: url.and_then(|u| pics.get(u)),
-    };
+    let who = ui::Persona { name, glow: 0.0, picture: url.and_then(|u| pics.get(u)) };
     ui::portrait(draw, &ui.palette(), fonts, (x + AVATAR_R, cy), AVATAR_R, &who);
 }
 
@@ -151,11 +139,7 @@ const AVATAR_ROOM: f32 = 2.0 * AVATAR_R + 10.0;
 /// Up to the row's first button: "Regarder" only shows while the friend plays.
 fn name_zone(view: View, col: usize, row: usize, playing: bool) -> Rect {
     let rect = list_row_rect(view, col, row);
-    let friend = if playing {
-        watch_btn(view, row)
-    } else {
-        remove_btn(view, 0, row)
-    };
+    let friend = if playing { watch_btn(view, row) } else { remove_btn(view, 0, row) };
     let first_button = [friend, accept_btn(view, row), remove_btn(view, 2, row)][col];
     rect.left(first_button.x - rect.x - 8.0)
 }
@@ -203,9 +187,7 @@ pub fn enter_friends(state: &State) -> Transition {
         received: Vec::new(),
         list_slot: Some(slot),
         search_focused: false,
-        search_input: TextInput::default()
-            .max_chars(36)
-            .only(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | ' ')),
+        search_input: TextInput::default().max_chars(36).only(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | ' ')),
         search_results: Vec::new(),
         search_slot: None,
         search_status: Status::Empty,
@@ -228,13 +210,15 @@ fn refresh_list(state: &State, f: &mut FriendsData) {
 fn looks_like_uuid(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 36
-        && b.iter().enumerate().all(|(i, &c)| {
-            if [8, 13, 18, 23].contains(&i) {
-                c == b'-'
-            } else {
-                c.is_ascii_hexdigit()
-            }
-        })
+        && b.iter().enumerate().all(
+            |(i, &c)| {
+                if [8, 13, 18, 23].contains(&i) {
+                    c == b'-'
+                } else {
+                    c.is_ascii_hexdigit()
+                }
+            },
+        )
 }
 
 fn search_query(f: &FriendsData) -> String {
@@ -253,11 +237,7 @@ fn try_search(state: &State, f: &mut FriendsData) {
     }
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let slot = http::new_slot();
-    http::get(
-        http::api_url(&format!("users/search?q={}", http::encode_query(&q))),
-        token,
-        Arc::clone(&slot),
-    );
+    http::get(http::api_url(&format!("users/search?q={}", http::encode_query(&q))), token, Arc::clone(&slot));
     f.search_slot = Some(slot);
     f.search_status.clear();
     f.search_results.clear();
@@ -354,14 +334,7 @@ pub fn update_friends(app: &mut App, state: &mut State, f: &mut FriendsData) -> 
     for col in 0..3 {
         let pages = page_count(lists(f)[col].len(), rows_for(view));
         f.pages[col].clamp(pages);
-        f.pages[col].update(
-            app,
-            &state.ui,
-            &state.fonts,
-            &state.input.keys,
-            pager_area(view, col),
-            pages,
-        );
+        f.pages[col].update(app, &state.ui, &state.fonts, &state.input.keys, pager_area(view, col), pages);
     }
 
     if state.ui.clicked(search_submit_btn(view)) || (searching && app.keyboard.was_pressed(KeyCode::Enter)) {
@@ -440,9 +413,7 @@ fn clicked_action(f: &FriendsData, ui: &Ui, view: View) -> Option<FriendAction> 
         return None;
     }
     if let Some(confirm_id) = &f.confirm_remove {
-        let (row, _) = f.pages[0]
-            .shown(&f.friends, rows_for(view))
-            .find(|(_, e)| &e.user_id == confirm_id)?;
+        let (row, _) = f.pages[0].shown(&f.friends, rows_for(view)).find(|(_, e)| &e.user_id == confirm_id)?;
         if ui.clicked(confirm_yes_btn(view, row)) {
             return Some(FriendAction::ConfirmRemove(confirm_id.clone()));
         }
@@ -515,9 +486,7 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State, f: &FriendsData) {
     let view = state.ui.view();
 
     let mut draw = state.ui.screen_canvas(gfx);
-    state
-        .ui
-        .header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    state.ui.header_band(&mut draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     draw.sharp_text(&state.fonts.display, "Amis")
         .position(60.0, theme::HEADER_H / 2.0)
         .size(theme::size::TITLE)
@@ -525,23 +494,13 @@ pub fn draw_friends(gfx: &mut Graphics, state: &State, f: &FriendsData) {
         .color(pal.text);
 
     let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
-    let pics = pictures(
-        gfx,
-        &state.images,
-        urls.chain(f.search_results.iter().map(|e| &e.avatar_url)),
-    );
+    let pics = pictures(gfx, &state.images, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
     draw_search(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
     draw_lists(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
 
     state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
-    let label = if f.list_slot.is_some() {
-        Label::from(Icon::Busy)
-    } else {
-        Label::from("Rafraîchir")
-    };
-    state
-        .ui
-        .button_enabled(&mut draw, &state.fonts, refresh_btn(view), label, can_refresh(f));
+    let label = if f.list_slot.is_some() { Label::from(Icon::Busy) } else { Label::from("Rafraîchir") };
+    state.ui.button_enabled(&mut draw, &state.fonts, refresh_btn(view), label, can_refresh(f));
 
     state.ui.render(gfx, &draw);
 }
@@ -556,21 +515,13 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, 
         .color(pal.text_dim);
 
     let searching = f.search_slot.is_some();
-    let search = Field {
-        placeholder: "Pseudo ou UUID",
-        input: &f.search_input,
-        focused: f.search_focused,
-    };
+    let search = Field { placeholder: "Pseudo ou UUID", input: &f.search_input, focused: f.search_focused };
     text_field(draw, ui, fonts, field, &search);
     ui.button_enabled(
         draw,
         fonts,
         search_submit_btn(view),
-        if searching {
-            Label::from(Icon::Busy)
-        } else {
-            Label::from("Rechercher")
-        },
+        if searching { Label::from(Icon::Busy) } else { Label::from("Rechercher") },
         !searching,
     );
 
@@ -593,26 +544,14 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, 
         let row = result_row(view, i);
         let mid = row.y + row.h / 2.0;
         list_row(draw, &pal, row, i);
-        avatar(
-            draw,
-            ui,
-            fonts,
-            (row.x + 10.0, mid),
-            &e.username,
-            e.avatar_url.as_ref(),
-            pics,
-        );
+        avatar(draw, ui, fonts, (row.x + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
         draw.sharp_text(&fonts.text, &e.username)
             .position(row.x + 10.0 + AVATAR_ROOM, mid)
             .size(theme::size::LABEL)
             .v_align_middle()
             .color(pal.text);
         let elo = format!("ELO {}", e.elo);
-        let rating = Pill {
-            text: &elo,
-            color: theme::GOLD,
-            size: theme::size::SMALL,
-        };
+        let rating = Pill { text: &elo, color: theme::GOLD, size: theme::size::SMALL };
         rating.draw(draw, fonts, (row.x + 260.0, mid));
         if !f.friends.iter().any(|fr| fr.user_id == e.user_id) {
             ui.button_enabled(draw, fonts, result_add_btn(view, i), "Ajouter", !adding);
@@ -647,11 +586,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, p
             .v_align_middle()
             .color(pal.text);
         let count = list.len().to_string();
-        let tally = Pill {
-            text: &count,
-            color: pal.accent,
-            size: theme::size::SMALL,
-        };
+        let tally = Pill { text: &count, color: pal.accent, size: theme::size::SMALL };
         tally.draw(draw, fonts, (card.x + card.w - 16.0 - tally.width(fonts), mid));
         divider(draw, &pal, card.x + 16.0, card.y + CARD_TITLE_H, card.w - 32.0);
     }
@@ -686,29 +621,13 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, p
                 }
             },
         );
-        draw_col(
-            draw,
-            ui,
-            fonts,
-            (view, 1),
-            (columns[1].1, &f.pages[1], pics),
-            columns[1].2,
-            |draw, fonts, _, i| {
-                ui.button_enabled(draw, fonts, accept_btn(view, i), "Accepter", !busy);
-                ui.button_enabled(draw, fonts, reject_btn(view, i), "Refuser", !busy);
-            },
-        );
-        draw_col(
-            draw,
-            ui,
-            fonts,
-            (view, 2),
-            (columns[2].1, &f.pages[2], pics),
-            columns[2].2,
-            |draw, fonts, _, i| {
-                ui.button_enabled(draw, fonts, remove_btn(view, 2, i), "Annuler", !busy);
-            },
-        );
+        draw_col(draw, ui, fonts, (view, 1), (columns[1].1, &f.pages[1], pics), columns[1].2, |draw, fonts, _, i| {
+            ui.button_enabled(draw, fonts, accept_btn(view, i), "Accepter", !busy);
+            ui.button_enabled(draw, fonts, reject_btn(view, i), "Refuser", !busy);
+        });
+        draw_col(draw, ui, fonts, (view, 2), (columns[2].1, &f.pages[2], pics), columns[2].2, |draw, fonts, _, i| {
+            ui.button_enabled(draw, fonts, remove_btn(view, 2, i), "Annuler", !busy);
+        });
     }
 
     for (col, list) in lists(f).into_iter().enumerate() {
@@ -757,24 +676,13 @@ fn draw_col<F>(
         let room = zone.w - 12.0 - AVATAR_ROOM;
         ui.row(draw, zone, i, &format!("friend:{col}:{}", e.user_id));
         let mid = row.y + row.h / 2.0;
-        avatar(
-            draw,
-            ui,
-            fonts,
-            (row.x + 8.0, mid),
-            &e.username,
-            e.avatar_url.as_ref(),
-            pics,
-        );
+        avatar(draw, ui, fonts, (row.x + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
         let text_x = row.x + 8.0 + AVATAR_ROOM;
-        draw.sharp_text(
-            &fonts.text,
-            &fonts.fit(Face::Text, &e.username, theme::size::BODY, room),
-        )
-        .position(text_x, mid - 8.0)
-        .size(theme::size::BODY)
-        .v_align_middle()
-        .color(pal.text);
+        draw.sharp_text(&fonts.text, &fonts.fit(Face::Text, &e.username, theme::size::BODY, room))
+            .position(text_x, mid - 8.0)
+            .size(theme::size::BODY)
+            .v_align_middle()
+            .color(pal.text);
         draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
             .position(text_x, mid + 10.0)
             .size(theme::size::SMALL)
@@ -790,25 +698,12 @@ mod tests {
 
     #[test]
     fn the_columns_stay_above_the_bottom_buttons() {
-        assert_eq!(
-            rows_for(View::fit(1280.0, 800.0)),
-            MAX_ROWS,
-            "a desktop window keeps every row"
-        );
-        for (w, h) in [
-            (852.0, 300.0),
-            (852.0, 340.0),
-            (1280.0, 800.0),
-            (393.0, 740.0),
-            (393.0, 600.0),
-        ] {
+        assert_eq!(rows_for(View::fit(1280.0, 800.0)), MAX_ROWS, "a desktop window keeps every row");
+        for (w, h) in [(852.0, 300.0), (852.0, 340.0), (1280.0, 800.0), (393.0, 740.0), (393.0, 600.0)] {
             let view = View::fit(w, h);
             let last = column_card(view, 2);
             assert!(rows_for(view) >= 1);
-            assert!(
-                last.bottom() < back_btn(view).y,
-                "{w}x{h}: the columns reach the buttons"
-            );
+            assert!(last.bottom() < back_btn(view).y, "{w}x{h}: the columns reach the buttons");
             assert!(last.x + last.w <= view.w, "{w}x{h}: a column is cut on the right");
         }
     }

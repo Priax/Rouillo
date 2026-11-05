@@ -44,9 +44,7 @@ pub(super) async fn connect_to(path: &str) -> (WsClient, mpsc::Receiver<Command>
     let app = ws_route(tx, lazy_pool(), crate::ws::Conns::new())
         .into_make_service_with_connect_info::<std::net::SocketAddr>();
     tokio::spawn(async move { axum::serve(listener, app).await });
-    let (client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}{path}"))
-        .await
-        .expect("handshake");
+    let (client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}{path}")).await.expect("handshake");
     (client, rx)
 }
 
@@ -108,11 +106,7 @@ pub(super) async fn commands_until(rx: &mut mpsc::Receiver<Command>, stop: impl 
 #[tokio::test]
 async fn flooding_client_is_throttled_then_disconnected() {
     let (mut client, mut rx) = connect().await;
-    let input = frame(&ClientMessage::Input {
-        kind: InputKind::MoveLeft,
-        seq: 1,
-        tick: 0,
-    });
+    let input = frame(&ClientMessage::Input { kind: InputKind::MoveLeft, seq: 1, tick: 0 });
     let started = Instant::now();
     for _ in 0..3_000 {
         if client.send(input.clone()).await.is_err() {
@@ -127,14 +121,8 @@ async fn flooding_client_is_throttled_then_disconnected() {
     let cmds = commands_until(&mut rx, |c| matches!(c, Command::Unregister { .. })).await;
     let inputs = cmds.iter().filter(|c| matches!(c, Command::Input { .. })).count();
     let most = (CLIENT_MSG_BURST + refill).ceil() as usize;
-    assert!(
-        inputs <= most,
-        "{inputs} inputs reached the manager, at most {most} allowed"
-    );
-    assert!(
-        inputs >= CLIENT_MSG_BURST as usize,
-        "only {inputs}: the burst was not honoured"
-    );
+    assert!(inputs <= most, "{inputs} inputs reached the manager, at most {most} allowed");
+    assert!(inputs >= CLIENT_MSG_BURST as usize, "only {inputs}: the burst was not honoured");
 }
 
 #[tokio::test]
@@ -159,14 +147,7 @@ async fn only_the_first_hello_per_connection_counts() {
 async fn a_normal_session_gets_everything_through() {
     let (mut client, mut rx) = connect().await;
     for seq in 1..=100 {
-        client
-            .send(frame(&ClientMessage::Input {
-                kind: InputKind::RotateCW,
-                seq,
-                tick: 0,
-            }))
-            .await
-            .expect("send");
+        client.send(frame(&ClientMessage::Input { kind: InputKind::RotateCW, seq, tick: 0 })).await.expect("send");
     }
     client.send(frame(&ClientMessage::RequestRoomList)).await.expect("send");
     let cmds = commands_until(&mut rx, |c| matches!(c, Command::RequestRoomList { .. })).await;
@@ -202,10 +183,7 @@ fn late_commands_from_a_dead_connection_are_ignored() {
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
     mgr.handle(Command::Unregister { conn: 1 });
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "ghost".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "ghost".into() });
     assert!(mgr.rooms.is_empty());
     assert!(!mgr.clients.contains_key(&1));
 }
@@ -253,10 +231,7 @@ fn the_same_account_still_gets_its_seat_back() {
     let mut mgr = new_mgr();
     let _rx1 = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
     let _rx2 = reg(&mut mgr, 2);
     hello_as(&mut mgr, 2, "B", 2);
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
@@ -277,17 +252,11 @@ async fn a_ping_is_answered_without_reaching_the_manager() {
         .expect("no pong came back")
         .expect("stream ended")
         .expect("socket error");
-    assert!(matches!(
-        shared::decode::<ServerMessage>(&reply.into_data()),
-        Some(ServerMessage::Pong { id: 7 })
-    ));
+    assert!(matches!(shared::decode::<ServerMessage>(&reply.into_data()), Some(ServerMessage::Pong { id: 7 })));
 
     client.send(frame(&ClientMessage::RequestRoomList)).await.expect("send");
     let cmds = commands_until(&mut rx, |c| matches!(c, Command::RequestRoomList { .. })).await;
-    assert!(
-        matches!(cmds.first(), Some(Command::Register { .. })),
-        "expected the socket's own Register first"
-    );
+    assert!(matches!(cmds.first(), Some(Command::Register { .. })), "expected the socket's own Register first");
     assert_eq!(cmds.len(), 2, "the ping reached the manager");
 }
 
@@ -297,10 +266,7 @@ async fn accepted_sockets_inherit_nodelay() {
     let addr = listener.local_addr().expect("local_addr");
     let _client = tokio::net::TcpStream::connect(addr).await.expect("connect");
     let (accepted, _) = listener.accept().await.expect("accept");
-    assert!(
-        accepted.nodelay().expect("nodelay"),
-        "TCP_NODELAY did not survive accept()"
-    );
+    assert!(accepted.nodelay().expect("nodelay"), "TCP_NODELAY did not survive accept()");
 }
 
 #[tokio::test(start_paused = true)]
@@ -321,9 +287,7 @@ fn logged_reasons_are_bounded_and_single_line() {
 fn ws_connections_are_capped_per_ip_and_freed_on_drop() {
     let conns = IpConns::default();
     let ip = || Some("203.0.113.7".to_string());
-    let slots: Vec<_> = (0..MAX_WS_PER_IP)
-        .map(|_| IpSlot::take(&conns, ip()).unwrap())
-        .collect();
+    let slots: Vec<_> = (0..MAX_WS_PER_IP).map(|_| IpSlot::take(&conns, ip()).unwrap()).collect();
     assert!(IpSlot::take(&conns, ip()).is_err());
     assert!(IpSlot::take(&conns, Some("198.51.100.1".into())).is_ok());
     drop(slots);
@@ -359,11 +323,7 @@ async fn inputs_sent_again_each_count_against_the_limit() {
     let (pong_tx, _pong_rx) = mpsc::channel(8);
     let mut inbox = Inbox::new(1, tx, lazy_pool(), pong_tx);
     let inputs = (1..=shared::MAX_RESENT_INPUTS as u32)
-        .map(|seq| shared::SentInput {
-            seq,
-            tick: 1,
-            kind: InputKind::MoveLeft,
-        })
+        .map(|seq| shared::SentInput { seq, tick: 1, kind: InputKind::MoveLeft })
         .collect();
     let datagram = shared::encode(&ClientMessage::Inputs { inputs });
     let sent = 100;
@@ -374,10 +334,7 @@ async fn inputs_sent_again_each_count_against_the_limit() {
     while rx.try_recv().is_ok() {
         taken += 1;
     }
-    assert!(
-        taken <= CLIENT_MSG_BURST as usize,
-        "{taken} inputs went through a burst of {CLIENT_MSG_BURST}"
-    );
+    assert!(taken <= CLIENT_MSG_BURST as usize, "{taken} inputs went through a burst of {CLIENT_MSG_BURST}");
     assert!(taken > 1000, "the burst itself was refused: {taken}");
 }
 
@@ -386,10 +343,7 @@ fn a_background_connection_leaves_a_used_seat_alone() {
     let mut mgr = Manager::new();
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom {
-        conn: 1,
-        name: "R".into(),
-    });
+    mgr.handle(Command::CreateRoom { conn: 1, name: "R".into() });
     let mut rx2 = reg(&mut mgr, 2);
     mgr.handle(Command::Hello {
         conn: 2,

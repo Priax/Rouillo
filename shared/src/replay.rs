@@ -40,13 +40,7 @@ impl Replay {
     pub fn play(self) -> Playback {
         let boards = vec![Board::for_match(self.seed, &self.rules); self.players.len()];
         let n = self.players.len();
-        let mut playback = Playback {
-            replay: self,
-            boards,
-            tick: 0,
-            next_input: vec![0; n],
-            next_garbage: vec![0; n],
-        };
+        let mut playback = Playback { replay: self, boards, tick: 0, next_input: vec![0; n], next_garbage: vec![0; n] };
         playback.forfeits();
         playback
     }

@@ -168,11 +168,7 @@ export class WtLink {
                 };
                 queue.borrow_mut().push_back(event);
             });
-            Self {
-                js: WtLink::new(url, hash, &callback),
-                events,
-                _callback: callback,
-            }
+            Self { js: WtLink::new(url, hash, &callback), events, _callback: callback }
         }
 
         pub fn send(&mut self, bytes: Vec<u8>) {
