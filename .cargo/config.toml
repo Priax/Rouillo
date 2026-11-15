@@ -36,3 +36,7 @@ strict = [
     "-A", "clippy::option_if_let_else",
     "-A", "clippy::assigning_clones",
 ]
+
+# strip = true removes the section wasm-bindgen reads to know the enabled Wasm features
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=--keep-section=target_features"]
