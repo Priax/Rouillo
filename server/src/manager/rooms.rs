@@ -1,0 +1,336 @@
+use super::*;
+
+pub(crate) fn clean_name(name: &str) -> String {
+    super::social::one_line(name, 24).unwrap_or_else(|| "Room".to_string())
+}
+
+impl Manager {
+    pub(super) fn record_forfeit(&mut self, id: RoomId, slot: usize, why: &str) {
+        if let Some(rec) = self.rooms.get_mut(&id).and_then(|r| r.forfeit(slot)) {
+            info!("Forfait room #{id}: slot {} perd ({why})", slot + 1);
+            self.unsaved_matches.push(rec);
+        }
+    }
+
+    pub(super) fn request_join(&mut self, conn: ConnId, id: RoomId) {
+        if self.token_of(conn).is_none() {
+            return;
+        }
+        if self.rooms.get(&id).is_some_and(|r| r.slot_of_conn(conn).is_some()) {
+            return;
+        }
+        if self.closing {
+            self.join_failed(conn, JOIN_MAINTENANCE);
+            return;
+        }
+        let Some(room) =
+            self.rooms.get(&id).filter(|r| r.members.len() < usize::from(r.settings.max_players) && r.series.is_none())
+        else {
+            self.join_failed(conn, JOIN_UNAVAILABLE);
+            return;
+        };
+        if !room.settings.friends_only {
+            self.complete_join(conn, id);
+            return;
+        }
+        let host = room.host.clone();
+        let (Some(host_user), Some(joiner)) = (room.host_user(), self.user_of(conn)) else {
+            self.join_failed(conn, JOIN_FRIENDS_ONLY);
+            return;
+        };
+        if !self.begin_friend_check(conn) {
+            return;
+        }
+        let from = self.room_of(conn);
+        self.friend_checks.push(FriendCheck::Join { conn, room: id, host, from, joiner, host_user });
+    }
+
+    pub(super) fn complete_join(&mut self, conn: ConnId, id: RoomId) {
+        let Some(token) = self.token_of(conn).cloned() else {
+            return;
+        };
+        if self.closing {
+            self.join_failed(conn, JOIN_MAINTENANCE);
+            return;
+        }
+        if self
+            .rooms
+            .get(&id)
+            .is_none_or(|r| r.members.len() >= usize::from(r.settings.max_players) || r.series.is_some())
+        {
+            self.join_failed(conn, JOIN_UNAVAILABLE);
+            return;
+        }
+        let user_id = self.user_of(conn);
+        if user_id.is_some() && self.rooms[&id].members.iter().any(|m| m.user_id == user_id) {
+            self.join_failed(conn, JOIN_SAME_ACCOUNT);
+            return;
+        }
+        self.leave_current(conn);
+        let name = self.display_name(conn);
+        if let Some(room) = self.rooms.get_mut(&id) {
+            room.members.push(Member::present(token, conn, user_id, name));
+        }
+        self.set_room(conn, Some(id));
+        self.sync_after_attach(id, conn);
+    }
+
+    pub(super) fn finish_join_check(
+        &mut self,
+        conn: ConnId,
+        room: RoomId,
+        host: &str,
+        from: Option<RoomId>,
+        friends: bool,
+    ) {
+        if !self.clients.contains_key(&conn) || self.room_of(conn) != from {
+            return;
+        }
+        let Some(r) = self.rooms.get(&room) else {
+            self.join_failed(conn, JOIN_UNAVAILABLE);
+            return;
+        };
+        if r.settings.friends_only {
+            if r.host != host {
+                self.request_join(conn, room);
+                return;
+            }
+            if !friends {
+                self.join_failed(conn, JOIN_FRIENDS_ONLY);
+                return;
+            }
+        }
+        self.complete_join(conn, room);
+    }
+
+    pub(super) fn create_room(&mut self, conn: ConnId, name: &str) {
+        let Some(token) = self.token_of(conn).cloned() else {
+            return;
+        };
+        if self.closing {
+            self.join_failed(conn, JOIN_MAINTENANCE);
+            return;
+        }
+        self.leave_current(conn);
+        let id = self.next_id;
+        self.next_id += 1;
+        let user_id = self.user_of(conn);
+        let member = Member::present(token, conn, user_id, self.display_name(conn));
+        let room = Room::new(id, clean_name(name), vec![member], RoomSettings::default(), None);
+        self.rooms.insert(id, room);
+        self.set_room(conn, Some(id));
+        self.send_lobby(id);
+        self.room_list_dirty = true;
+        info!("Room #{id} créée (conn {conn})");
+    }
+
+    pub(super) fn set_setting(&mut self, conn: ConnId, setting: RoomSetting, dir: i32) {
+        if let Some(id) = self.room_of(conn) {
+            let changed = self
+                .with_room(id, |room| {
+                    if room.series.is_none() && room.is_host_conn(conn) && matches!(room.phase, Phase::Lobby) {
+                        room.settings.adjust(setting, dir);
+                        let seated = u8::try_from(room.members.len()).unwrap_or(u8::MAX);
+                        room.settings.max_players = room.settings.max_players.max(seated);
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false);
+            if changed {
+                self.send_lobby(id);
+            }
+        }
+    }
+
+    pub(super) fn toggle_countdown(&mut self, conn: ConnId) {
+        let closing = self.closing;
+        let Some(id) = self.room_of(conn) else { return };
+        let toggled = self
+            .with_room(id, |room| {
+                if room.series.is_some() || !room.is_host_conn(conn) {
+                    return false;
+                }
+                room.phase = match room.phase {
+                    Phase::Lobby if !closing && room.has_sides() && room.all_connected() => {
+                        Phase::CountingDown(COUNTDOWN_SECS)
+                    }
+                    Phase::Lobby | Phase::CountingDown(_) => Phase::Lobby,
+                    Phase::Playing => Phase::Playing,
+                };
+                true
+            })
+            .unwrap_or(false);
+        if toggled {
+            self.send_lobby(id);
+            self.room_list_dirty = true;
+        }
+    }
+
+    pub(super) fn return_to_lobby(&mut self, conn: ConnId) {
+        let Some(id) = self.room_of(conn) else { return };
+        let host_slot = self
+            .rooms
+            .get(&id)
+            .filter(|room| room.series.is_none() && room.is_host_conn(conn))
+            .and_then(|room| room.slot_of_conn(conn));
+        let Some(slot) = host_slot else { return };
+        self.record_forfeit(id, slot, "l'hôte a interrompu la partie");
+        if let Some(room) = self.rooms.get_mut(&id) {
+            room.back_to_lobby();
+        }
+        self.send_lobby(id);
+        self.room_list_dirty = true;
+    }
+
+    pub(super) fn on_input(&mut self, conn: ConnId, kind: InputKind, seq: u32, tick: u32) {
+        if let Some(id) = self.room_of(conn) {
+            self.with_room(id, |room| {
+                let Some(idx) = room.game_slot_of_conn(conn) else {
+                    return;
+                };
+                if !room.sim.take_seq(idx, seq) {
+                    return;
+                }
+                if matches!(room.phase, Phase::Playing) && !room.sim.paused && !room.sim.finished {
+                    room.sim.queue_input(idx, tick, seq, kind);
+                } else {
+                    room.sim.last_seq[idx] = seq;
+                }
+            });
+        }
+    }
+
+    /// A player picks a team in the lobby, or none to play for themselves.
+    pub(super) fn set_team(&mut self, conn: ConnId, team: Option<u8>) {
+        let Some(id) = self.room_of(conn) else { return };
+        let team = team.filter(|t| (1..=shared::MAX_TEAMS).contains(t));
+        let changed = self
+            .with_room(id, |room| {
+                let lobby = matches!(room.phase, Phase::Lobby) && room.series.is_none();
+                match room.slot_of_conn(conn).filter(|_| lobby) {
+                    Some(i) if room.members[i].team != team => {
+                        room.members[i].team = team;
+                        true
+                    }
+                    _ => false,
+                }
+            })
+            .unwrap_or(false);
+        if changed {
+            self.send_lobby(id);
+        }
+    }
+
+    /// What the host of a lobby may change about its CPUs, through `f`:
+    /// whether it changed anything.
+    fn edit_cpus(&mut self, conn: ConnId, f: impl FnOnce(&mut Room) -> bool) {
+        let Some(id) = self.room_of(conn) else { return };
+        let changed = self
+            .with_room(id, |room| {
+                let lobby = matches!(room.phase, Phase::Lobby) && room.series.is_none();
+                lobby && room.cpu_seats && room.is_host_conn(conn) && f(room)
+            })
+            .unwrap_or(false);
+        if changed {
+            self.send_lobby(id);
+            self.room_list_dirty = true;
+        }
+    }
+
+    pub(super) fn add_cpu(&mut self, conn: ConnId) {
+        self.edit_cpus(conn, |room| {
+            let full = room.members.len() >= usize::from(room.settings.max_players);
+            if !full {
+                let style = Style::ALL[room.members.len() % Style::ALL.len()];
+                room.members.push(Member::cpu(rand::random(), Difficulty::Normal, style));
+            }
+            !full
+        });
+    }
+
+    pub(super) fn set_cpu(&mut self, conn: ConnId, slot: u8, difficulty: Difficulty, style: Style, team: Option<u8>) {
+        let team = team.filter(|t| (1..=shared::MAX_TEAMS).contains(t));
+        self.edit_cpus(conn, |room| {
+            let Some(member) = room.cpu_member(slot) else {
+                return false;
+            };
+            member.set_cpu(difficulty, style);
+            member.team = team;
+            true
+        });
+    }
+
+    pub(super) fn remove_cpu(&mut self, conn: ConnId, slot: u8) {
+        self.edit_cpus(conn, |room| {
+            if room.cpu_member(slot).is_none() {
+                return false;
+            }
+            room.members.remove(usize::from(slot) - 1);
+            true
+        });
+    }
+
+    pub(super) fn set_targeting(&mut self, conn: ConnId, targeting: Targeting) {
+        let Some(id) = self.room_of(conn) else { return };
+        let targeting = match targeting {
+            Targeting::Manual(slot) => slot.checked_sub(1).map_or(Targeting::Random, Targeting::Manual),
+            other => other,
+        };
+        self.with_room(id, |room| {
+            if let Some(slot) = room.game_slot_of_conn(conn) {
+                room.sim.set_targeting(slot, targeting);
+            }
+        });
+    }
+
+    pub(super) fn toggle_pause(&mut self, conn: ConnId) {
+        if let Some(id) = self.room_of(conn) {
+            let toggled = self
+                .with_room(id, |room| {
+                    let allowed = room.slot_of_conn(conn).is_some()
+                        && room.game_running()
+                        && room.all_connected()
+                        && room.settings.pause.allows(room.is_host_conn(conn));
+                    if allowed {
+                        room.sim.set_paused(!room.sim.paused);
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false);
+            if toggled {
+                self.send_snapshot(id);
+            }
+        }
+    }
+
+    pub(super) fn restart(&mut self, conn: ConnId) {
+        if self.closing {
+            return;
+        }
+        let Some(id) = self.room_of(conn) else { return };
+        let restarted = self
+            .with_room(id, |room| {
+                let ready = room.series.is_none()
+                    && room.slot_of_conn(conn).is_some()
+                    && matches!(room.phase, Phase::Playing)
+                    && room.sim.finished
+                    && room.all_connected();
+                let now = Instant::now();
+                let in_cooldown = room.sim.last_restart.is_some_and(|t| now.duration_since(t) < Duration::from_secs(2));
+                if !ready || in_cooldown {
+                    return false;
+                }
+                room.sim.last_restart = Some(now);
+                room.start_game();
+                true
+            })
+            .unwrap_or(false);
+        if restarted {
+            self.send_game_start(id);
+        }
+    }
+}

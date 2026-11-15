@@ -1,0 +1,927 @@
+use shared::{
+    config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, Rotation, Rules, StampedInput, Targeting,
+};
+
+use crate::connection::Connection;
+pub use crate::http::HttpSlot;
+use crate::interp::OpponentView;
+use crate::storage;
+use crate::theme::hue;
+use crate::ui::{Status, TextInput};
+
+pub const MAX_PASSWORD_CHARS: usize = 64;
+
+/// A screen, with what it holds for as long as it lasts.
+pub enum Screen {
+    Title,
+    Auth,
+    Menu,
+    PlayMenu,
+    Settings,
+    RoomBrowser,
+    CreateRoom,
+    JoinById,
+    RoomLobby,
+    Game,
+    Profile(Box<ProfileData>),
+    Friends(Box<FriendsData>),
+    OtherProfile(Box<OtherProfileData>),
+    SoloSetup,
+    Solo(Box<crate::solo::SoloGame>),
+    Ranked,
+    Leaderboard(Box<crate::leaderboard::Leaderboard>),
+    Help(Box<crate::help::HelpView>),
+    Replay(Box<crate::replay::ReplayViewer>),
+}
+
+impl Screen {
+    /// Tells screens of different kinds apart.
+    pub fn id(&self) -> usize {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::mem::discriminant(self).hash(&mut hasher);
+        hasher.finish() as usize
+    }
+
+    pub fn hue(&self) -> f32 {
+        match self {
+            Self::Title | Self::Auth | Self::Menu | Self::PlayMenu | Self::Help(_) => hue::PURPLE,
+            Self::RoomBrowser
+            | Self::CreateRoom
+            | Self::JoinById
+            | Self::RoomLobby
+            | Self::Game
+            | Self::SoloSetup
+            | Self::Solo(_)
+            | Self::Ranked
+            | Self::Replay(_) => hue::BLUE,
+            Self::Friends(_) => hue::GREEN,
+            Self::Profile(_) | Self::OtherProfile(_) => hue::PINK,
+            Self::Settings | Self::Leaderboard(_) => hue::ORANGE,
+        }
+    }
+
+    /// The history of the profile on screen.
+    pub fn history_mut(&mut self) -> Option<&mut ProfileCore> {
+        match self {
+            Self::Profile(p) => Some(&mut p.core),
+            Self::OtherProfile(p) => Some(&mut p.core),
+            _ => None,
+        }
+    }
+
+    /// Whether this screen means nothing without a signed-in account.
+    pub fn needs_account(&self) -> bool {
+        matches!(self, Self::Profile(_) | Self::Friends(_) | Self::OtherProfile(_) | Self::Ranked)
+    }
+
+    pub fn needs_connection(&self) -> bool {
+        matches!(
+            self,
+            Self::RoomBrowser | Self::CreateRoom | Self::JoinById | Self::RoomLobby | Self::Game | Self::Ranked
+        )
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AuthMode {
+    Login,
+    Register,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AuthField {
+    Username,
+    Password,
+}
+
+pub struct AuthForm {
+    pub username: TextInput,
+    pub password: TextInput,
+    pub focused: AuthField,
+    pub mode: AuthMode,
+    pub status: Status,
+    pub pending: Option<HttpSlot>,
+}
+
+impl Default for AuthForm {
+    fn default() -> Self {
+        Self {
+            username: TextInput::default().max_chars(shared::MAX_USERNAME_CHARS),
+            password: TextInput::masked().max_chars(MAX_PASSWORD_CHARS),
+            focused: AuthField::Username,
+            mode: AuthMode::Login,
+            status: Status::Empty,
+            pending: None,
+        }
+    }
+}
+
+impl AuthForm {
+    pub const fn focused_input(&mut self) -> &mut TextInput {
+        match self.focused {
+            AuthField::Username => &mut self.username,
+            AuthField::Password => &mut self.password,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct AuthInfo {
+    pub token: String,
+    pub user_id: String,
+    pub username: String,
+    pub elo: i32,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiMeResponse {
+    pub id: String,
+    pub username: String,
+    pub elo: i32,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct ApiUserProfile {
+    pub username: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub banner_url: Option<String>,
+    pub elo: i32,
+    pub bio: Option<String>,
+    pub favorite_music: Option<String>,
+    pub total_matches: i64,
+    pub casual_matches: i64,
+    pub casual_wins: i64,
+    pub ranked_series: i64,
+    pub ranked_series_won: i64,
+    pub all_time_max_chain: i32,
+    pub total_nuisance_sent: i64,
+}
+
+#[derive(serde::Deserialize, Clone)]
+pub struct FriendEntry {
+    pub user_id: String,
+    pub username: String,
+    pub elo: i32,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub playing: bool,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiFriendsResponse {
+    pub friends: Vec<FriendEntry>,
+    pub sent: Vec<FriendEntry>,
+    pub received: Vec<FriendEntry>,
+}
+
+pub struct FriendsData {
+    pub friends: Vec<FriendEntry>,
+    pub sent: Vec<FriendEntry>,
+    pub received: Vec<FriendEntry>,
+    pub list_slot: Option<HttpSlot>,
+    pub search_input: TextInput,
+    /// Off on arrival: a phone would otherwise open its keyboard at once.
+    pub search_focused: bool,
+    pub search_results: Vec<FriendEntry>,
+    pub search_slot: Option<HttpSlot>,
+    pub search_status: Status,
+    pub add_pending: Option<HttpSlot>,
+    pub add_status: Status,
+    pub confirm_remove: Option<String>,
+    pub action_pending: Option<HttpSlot>,
+    pub action_status: Status,
+    pub pages: [crate::ui::Pager; 3],
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FriendshipStatus {
+    Unknown,
+    NotFriends,
+    Friends,
+    RequestSent,
+    RequestReceived,
+}
+
+pub struct OtherProfileData {
+    pub core: ProfileCore,
+    pub friendship_check_slot: Option<HttpSlot>,
+    pub load_failed: bool,
+    pub friendship: FriendshipStatus,
+    pub friend_slot: Option<HttpSlot>,
+    pub friend_status: Status,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiMatchPlayer {
+    pub user_id: Option<String>,
+    pub username: Option<String>,
+    #[serde(default)]
+    pub slot: i16,
+    pub place: i16,
+    pub won: bool,
+    pub max_chain: i16,
+    pub nuisance_sent: i32,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApiMatchEntry {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub ranked: bool,
+    #[serde(default)]
+    pub has_replay: bool,
+    #[serde(default)]
+    pub favorite: bool,
+    pub duration_secs: f64,
+    pub players: Vec<ApiMatchPlayer>,
+}
+
+impl ApiMatchEntry {
+    pub fn me(&self, user_id: &str) -> Option<&ApiMatchPlayer> {
+        self.players.iter().find(|p| p.user_id.as_deref() == Some(user_id))
+    }
+
+    /// The other player of a one against one.
+    pub fn opponent(&self, user_id: &str) -> Option<&ApiMatchPlayer> {
+        let [a, b] = self.players.as_slice() else {
+            return None;
+        };
+        Some(if a.user_id.as_deref() == Some(user_id) { b } else { a })
+    }
+
+    pub fn drawn(&self) -> bool {
+        self.players.iter().all(|p| !p.won)
+    }
+}
+
+pub struct ProfileCore {
+    pub user_id: String,
+    pub info: ApiUserProfile,
+    pub history: crate::history::History,
+    pub about_open: bool,
+    pub profile_slot: Option<HttpSlot>,
+    /// Why a replay asked from the history did not come, or could not be kept.
+    pub replay_status: Status,
+    pub favorite_slot: Option<HttpSlot>,
+}
+
+pub struct ProfileData {
+    pub core: ProfileCore,
+    pub edit: Option<crate::profile_edit::EditForm>,
+    pub account: Option<crate::account::AccountForm>,
+}
+
+const TOKEN_KEY: &str = "puyorust_token";
+const BEST_SCORE_KEY: &str = "rouillo_solo_best";
+const PLAYER_ID_KEY: &str = "puyorust_player_id";
+
+pub fn load_stored_token() -> Option<String> {
+    storage::get(TOKEN_KEY)
+}
+
+pub fn save_token(token: &str) {
+    storage::set(TOKEN_KEY, token);
+}
+
+pub fn clear_stored_token() {
+    storage::remove(TOKEN_KEY);
+}
+
+pub fn load_best_score() -> u32 {
+    storage::get(BEST_SCORE_KEY).and_then(|v| v.parse().ok()).unwrap_or(0)
+}
+
+pub fn save_best_score(score: u32) {
+    storage::set(BEST_SCORE_KEY, &score.to_string());
+}
+
+pub fn clear_best_score() {
+    storage::remove(BEST_SCORE_KEY);
+}
+
+struct Setting {
+    label: &'static str,
+    key: &'static str,
+    step: f32,
+    range: (f32, f32),
+    default: f32,
+}
+
+const SETTINGS: [Setting; 2] = [
+    Setting {
+        label: "Délai DAS",
+        key: "rouillo_das_delay",
+        step: 0.01,
+        range: (0.05, 0.50),
+        default: config::DAS_DELAY,
+    },
+    Setting {
+        label: "Vitesse DAS",
+        key: "rouillo_das_speed",
+        step: 0.005,
+        range: (0.005, 0.20),
+        default: config::DAS_SPEED,
+    },
+];
+
+/// The DAS delay, then its speed.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Settings([f32; 2]);
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self(SETTINGS.map(|s| s.default))
+    }
+}
+
+impl Settings {
+    pub const COUNT: usize = SETTINGS.len();
+
+    pub const fn das_delay(self) -> f32 {
+        self.0[0]
+    }
+
+    pub const fn das_speed(self) -> f32 {
+        self.0[1]
+    }
+
+    pub const fn label(i: usize) -> &'static str {
+        SETTINGS[i].label
+    }
+
+    pub const fn value(self, i: usize) -> f32 {
+        self.0[i]
+    }
+
+    fn set(&mut self, i: usize, value: f32) {
+        let (min, max) = SETTINGS[i].range;
+        self.0[i] = value.clamp(min, max);
+    }
+
+    pub fn adjust(&mut self, i: usize, dir: i32) {
+        self.set(i, self.0[i] + dir as f32 * SETTINGS[i].step);
+    }
+
+    pub fn load() -> Self {
+        let mut settings = Self::default();
+        for (i, s) in SETTINGS.iter().enumerate() {
+            if let Some(value) = storage::get(s.key).and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite()) {
+                settings.set(i, value);
+            }
+        }
+        settings
+    }
+
+    pub fn save(self) {
+        for (s, value) in SETTINGS.iter().zip(self.0) {
+            storage::set(s.key, &value.to_string());
+        }
+    }
+}
+
+impl State {
+    /// The online game being played or watched.
+    pub fn session(&self) -> Option<&GameSession> {
+        self.room.as_ref()?.session.as_ref()
+    }
+
+    pub fn session_mut(&mut self) -> Option<&mut GameSession> {
+        self.room.as_mut()?.session.as_mut()
+    }
+}
+
+/// Everything that lasts as long as a stay in one room.
+pub struct Room {
+    pub info: LobbyInfo,
+    pub session: Option<GameSession>,
+    pub chat: crate::chat::Chat,
+    pub series_over: Option<(Option<u8>, i32)>,
+    pub keep: Option<crate::replay::KeepOffer>,
+    pub invite: Invite,
+    pub sizing: bool,
+    /// The lobby seat whose CPU the host is changing, and how many seats
+    /// were taken then: one coming or going shifts the seats.
+    pub cpu_edit: Option<(usize, usize)>,
+    /// The first row in sight of the lobby's players list.
+    pub players_first: usize,
+}
+
+impl Room {
+    pub fn new(info: LobbyInfo) -> Self {
+        Self {
+            info,
+            session: None,
+            chat: crate::chat::Chat::default(),
+            series_over: None,
+            keep: None,
+            invite: Invite::default(),
+            sizing: false,
+            cpu_edit: None,
+            players_first: 0,
+        }
+    }
+
+    /// Whether the game on screen is over, or the whole series.
+    pub fn finished(&self) -> bool {
+        self.session.as_ref().is_some_and(GameSession::decided) || self.series_over.is_some()
+    }
+}
+
+/// The lobby's list of friends to invite.
+#[derive(Default)]
+pub struct Invite {
+    pub open: bool,
+    pub slot: Option<HttpSlot>,
+    pub friends: Vec<FriendEntry>,
+    pub pager: crate::ui::Pager,
+}
+
+/// Another board of the game, as received from the server.
+pub struct Rival {
+    pub slot: u8,
+    pub team: u8,
+    pub board: Board,
+    pub view: OpponentView,
+    pub turn: TurnAnim,
+    pub incoming: Vec<IncomingGarbage>,
+    pub target: Option<u8>,
+}
+
+impl Rival {
+    pub fn new(slot: u8, team: u8, board: Board) -> Self {
+        Self {
+            slot,
+            team,
+            board,
+            view: OpponentView::default(),
+            turn: TurnAnim::default(),
+            incoming: Vec::new(),
+            target: None,
+        }
+    }
+
+    pub fn nuisance(&self) -> u32 {
+        let travelling: u32 = self.incoming.iter().map(|g| g.amount).sum();
+        self.board.pending_garbage + travelling
+    }
+
+    pub fn out(&self) -> bool {
+        self.board.state() == GameState::GameOver
+    }
+
+    /// The board to draw, smoothed between updates, and its piece's offset.
+    pub fn shown(&self) -> (&Board, (f32, f32)) {
+        self.view.frame().unwrap_or((&self.board, (crate::draw::fall_step(&self.board), 0.0)))
+    }
+}
+
+/// What is held down between frames, for the keys that repeat.
+#[derive(Default)]
+pub struct HeldKeys {
+    pub key_timer_left: f32,
+    pub key_timer_right: f32,
+    pub soft_drop_held: bool,
+}
+
+/// What only shows: smoothed movement, and chains and all clears on screen.
+#[derive(Default)]
+pub struct Effects {
+    pub my_turn: TurnAnim,
+    pub piece_visual_offset: (f32, f32),
+    pub chain_display: Option<(u32, f32)>,
+    pub all_clear_timer: f32,
+    pub announced_chain: (u32, u32),
+    pub announced_all_clear: u32,
+}
+
+/// An input the server has not acknowledged yet.
+pub struct PendingInput {
+    pub seq: u32,
+    pub input: StampedInput,
+    /// When it left, on the session's clock.
+    pub sent: f64,
+}
+
+/// How this client stays on the server's time, with its inputs on the way.
+#[derive(Default)]
+pub struct Netcode {
+    pub input_seq: u32,
+    pub my_ack: u32,
+    pub pending_inputs: Vec<PendingInput>,
+    pub clock: f64,
+    pub ping_rtt_ms: Option<f32>,
+    pub sim_accumulator: f32,
+    pub server_tick: u32,
+    pub local_tick: u32,
+    pub synced: bool,
+    pub clock_correction: i32,
+    pub drift_min: Option<i32>,
+    pub drift_samples: u32,
+}
+
+/// What the debug display shows of the connection.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+pub struct NetDebug {
+    pub last_server_msg: String,
+    pub last_rtt_ms: f32,
+    pub via: &'static str,
+}
+
+impl Default for NetDebug {
+    fn default() -> Self {
+        Self { last_server_msg: String::new(), last_rtt_ms: 0.0, via: "-" }
+    }
+}
+
+pub struct GameSession {
+    pub board: Board,
+    pub predicted_board: Board,
+    /// Played here, with no server: `predicted_board` is all there is.
+    pub local: bool,
+    /// The other boards, by slot; the first is the one a duel shows.
+    pub rivals: Vec<Rival>,
+    pub my_slot: u8,
+    /// The slot of the large board: one's own, or the one a spectator follows.
+    pub focus: u8,
+    pub team: u8,
+    pub targeting: Targeting,
+    pub target: Option<u8>,
+    /// Each slot's player, from slot 1.
+    pub names: Vec<String>,
+    /// The room's game this session plays, and the tick of its last update:
+    /// an update can come late, or from the game before.
+    pub game: u32,
+    pub applied: Option<u32>,
+
+    /// Knocked out while others still played: a draw at the end is theirs.
+    pub out_early: bool,
+    pub opponent_disconnected: bool,
+    pub quit_menu: bool,
+
+    pub keys: HeldKeys,
+    pub fx: Effects,
+    pub net: Netcode,
+    pub debug: NetDebug,
+
+    pub incoming: Vec<IncomingGarbage>,
+}
+
+impl GameSession {
+    pub fn new(my_slot: u8, names: Vec<String>) -> Self {
+        let board = Board::new(0, &Rules::default());
+        Self {
+            predicted_board: board.clone(),
+            board,
+            local: false,
+            rivals: Vec::new(),
+            my_slot,
+            focus: my_slot.max(1),
+            team: 0,
+            targeting: Targeting::default(),
+            target: None,
+            names,
+            game: 0,
+            applied: None,
+            out_early: false,
+            opponent_disconnected: false,
+            quit_menu: false,
+            keys: HeldKeys::default(),
+            fx: Effects::default(),
+            net: Netcode::default(),
+            debug: NetDebug::default(),
+            incoming: Vec::new(),
+        }
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct TurnAnim {
+    piece_id: u32,
+    shown: f32,
+}
+
+const TURN_FRAMES: f32 = 7.0;
+
+impl TurnAnim {
+    pub fn update(&mut self, piece_id: u32, rotation: Rotation, dt: f32) {
+        let target = f32::from(rotation.quarter_turns());
+        if piece_id != self.piece_id {
+            *self = Self { piece_id, shown: target };
+            return;
+        }
+        let diff = (target - self.shown + 2.0).rem_euclid(4.0) - 2.0;
+        let step = dt * 60.0 / TURN_FRAMES;
+        self.shown = if diff.abs() <= step { target } else { (self.shown + step * diff.signum()).rem_euclid(4.0) };
+    }
+
+    pub fn satellite(self) -> (f32, f32) {
+        let angle = self.shown * std::f32::consts::FRAC_PI_2;
+        (-angle.cos(), angle.sin())
+    }
+}
+
+impl GameSession {
+    pub const fn spectating(&self) -> bool {
+        self.my_slot == 0
+    }
+
+    /// The teams still playing, own team first when it is.
+    pub fn teams_alive(&self, me_out: bool) -> Vec<u8> {
+        let mut alive = Vec::new();
+        let me = (!me_out).then_some(self.team);
+        let others = self.rivals.iter().filter(|r| !r.out()).map(|r| r.team);
+        for team in me.into_iter().chain(others) {
+            if !alive.contains(&team) {
+                alive.push(team);
+            }
+        }
+        alive
+    }
+
+    /// Once the game is over, the teams left: one at most, none for a
+    /// draw or for a game without opponents.
+    pub fn outcome(&self, me_out: bool) -> Option<Vec<u8>> {
+        if self.rivals.is_empty() {
+            return me_out.then(Vec::new);
+        }
+        Some(self.teams_alive(me_out)).filter(|alive| alive.len() <= 1)
+    }
+
+    /// This player's board as it stands for sure, for deciding the game.
+    pub const fn own_board(&self) -> &Board {
+        if self.local {
+            &self.predicted_board
+        } else {
+            &self.board
+        }
+    }
+
+    pub fn own_board_out(&self) -> bool {
+        self.own_board().state() == GameState::GameOver
+    }
+
+    pub fn decided(&self) -> bool {
+        self.outcome(self.own_board_out()).is_some()
+    }
+
+    /// Out of a game that goes on without this player.
+    pub fn eliminated(&self) -> bool {
+        !self.spectating() && self.own_board_out() && !self.decided()
+    }
+
+    pub fn name_of(&self, slot: u8) -> &str {
+        usize::from(slot).checked_sub(1).and_then(|i| self.names.get(i)).map_or("", String::as_str)
+    }
+
+    /// A spectator's switch of the large board to another player.
+    pub fn follow(&mut self, slot: u8) {
+        let Some(i) = self.rivals.iter().position(|r| r.slot == slot).filter(|_| self.spectating()) else {
+            return;
+        };
+        let next = self.rivals.remove(i);
+        let mut left = Rival::new(self.focus, self.team, self.board.clone());
+        left.incoming = std::mem::take(&mut self.incoming);
+        left.target = self.target;
+        self.add_rival(left);
+        self.focus = next.slot;
+        self.team = next.team;
+        self.target = next.target;
+        self.incoming = next.incoming;
+        self.predicted_board = next.board.clone();
+        self.board = next.board;
+        self.fx.announced_chain = (self.board.piece_id, self.board.chain_count);
+        self.fx.announced_all_clear = self.board.piece_id;
+        self.fx.chain_display = None;
+        self.fx.all_clear_timer = 0.0;
+    }
+
+    pub fn add_rival(&mut self, rival: Rival) {
+        let at = self.rivals.partition_point(|r| r.slot < rival.slot);
+        self.rivals.insert(at, rival);
+    }
+
+    pub fn my_nuisance(&self) -> u32 {
+        let travelling: u32 = self.incoming.iter().filter(|g| g.at > self.net.local_tick).map(|g| g.amount).sum();
+        self.predicted_board.pending_garbage + travelling
+    }
+}
+
+fn gen_player_id() -> String {
+    format!("{:032x}", rand::random::<u128>())
+}
+
+pub fn load_or_create_player_id() -> String {
+    storage::get(PLAYER_ID_KEY).unwrap_or_else(|| {
+        let id = gen_player_id();
+        storage::set(PLAYER_ID_KEY, &id);
+        id
+    })
+}
+
+/// The check of a stored session when the game opens, and the title screen.
+#[derive(Default)]
+pub struct Startup {
+    pub check: Option<HttpSlot>,
+    pub retry_at: Option<f64>,
+    pub title_seen: bool,
+}
+
+/// All that reaches the game from the player's hands.
+pub struct Input {
+    pub keys: crate::ui::EditKeys,
+    pub controls: crate::controls::Controls,
+    pub pads: crate::pads::Pads,
+    pub touch: crate::touch::TouchPad,
+}
+
+/// The link to the server, and what waits for it to open.
+pub struct Network {
+    pub player_id: String,
+    pub conn: Connection,
+    pub pending_join: Option<RoomId>,
+    pub pending_watch: Option<String>,
+    /// The time before which no background connection is tried.
+    pub next_link_at: f64,
+    /// Whether the server pushes the room list on this connection.
+    pub rooms_listed: bool,
+    /// Another tab took over: this one stays off, or they would take turns.
+    pub opened_elsewhere: bool,
+    /// The server refused this version: online play waits for an update.
+    pub too_old: bool,
+    pub maintenance: bool,
+}
+
+/// What the screens share.
+pub struct State {
+    pub settings: Settings,
+    pub rooms: Vec<RoomInfo>,
+    /// The room this player is in: dropped as a whole on leaving it.
+    pub room: Option<Room>,
+    pub room_pager: crate::ui::Pager,
+    pub text_input: TextInput,
+    pub notice: Status,
+    pub fonts: crate::ui::Fonts,
+    pub images: crate::images::Images,
+    pub auth: Option<AuthInfo>,
+    pub auth_form: AuthForm,
+    pub startup: Startup,
+    pub pending_invitation: Option<(String, RoomId, String)>,
+    pub ranked: crate::ranked::RankedView,
+    pub outdated: bool,
+    pub ui: crate::ui::Ui,
+    pub input: Input,
+    pub net: Network,
+    pub bindings_panel: crate::bindings_panel::BindingsPanel,
+    pub solo: crate::solo::Solo,
+    pub replay_loading: Option<crate::replay::Loading>,
+}
+
+impl State {
+    pub fn new(fonts: crate::ui::Fonts) -> Self {
+        let player_id = load_or_create_player_id();
+        Self {
+            settings: Settings::load(),
+            rooms: Vec::new(),
+            room: None,
+            room_pager: crate::ui::Pager::default(),
+            text_input: TextInput::default(),
+            notice: Status::Empty,
+            fonts,
+            images: crate::images::Images::default(),
+            auth: None,
+            auth_form: AuthForm::default(),
+            startup: Startup::default(),
+            pending_invitation: None,
+            ranked: crate::ranked::RankedView::default(),
+            outdated: false,
+            ui: crate::ui::Ui::default(),
+            input: Input {
+                keys: crate::ui::EditKeys::default(),
+                controls: crate::controls::Controls::load(),
+                pads: crate::pads::Pads::new(),
+                touch: crate::touch::TouchPad::default(),
+            },
+            net: Network {
+                conn: Connection::new(&player_id),
+                player_id,
+                pending_join: None,
+                pending_watch: None,
+                next_link_at: 0.0,
+                rooms_listed: true,
+                opened_elsewhere: false,
+                too_old: false,
+                maintenance: false,
+            },
+            bindings_panel: crate::bindings_panel::BindingsPanel::default(),
+            solo: crate::solo::Solo::new(),
+            replay_loading: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn saved_settings_come_back_and_bad_ones_are_kept_in_range() {
+        let mut settings = Settings::default();
+        settings.adjust(0, 3);
+        settings.adjust(1, -1);
+        settings.save();
+        assert_eq!(Settings::load(), settings);
+
+        storage::set(SETTINGS[0].key, "99");
+        storage::set(SETTINGS[1].key, "NaN");
+        let loaded = Settings::load();
+        assert_eq!(loaded.das_delay(), SETTINGS[0].range.1, "clamped to the slowest allowed");
+        assert_eq!(loaded.das_speed(), Settings::default().das_speed(), "garbage is ignored");
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    #[test]
+    fn a_local_game_is_decided_by_the_board_played_here() {
+        let mut s = GameSession::new(1, Vec::new());
+        s.predicted_board.lose();
+        assert!(!s.decided(), "online, only the server's board counts");
+        s.local = true;
+        assert!(s.decided());
+    }
+
+    fn session(my_team: u8, rivals: &[(u8, u8)]) -> GameSession {
+        let mut s = GameSession::new(1, vec!["me".into(), "b".into(), "c".into(), "d".into()]);
+        s.team = my_team;
+        for &(slot, team) in rivals {
+            s.add_rival(Rival::new(slot, team, s.board.clone()));
+        }
+        s
+    }
+
+    fn knock_out(s: &mut GameSession, slot: u8) {
+        if slot == s.focus {
+            s.board.lose();
+        } else if let Some(r) = s.rivals.iter_mut().find(|r| r.slot == slot) {
+            r.board.lose();
+        }
+    }
+
+    #[test]
+    fn everyone_for_themselves_ends_with_one_left() {
+        let mut s = session(10, &[(2, 11), (3, 12)]);
+        knock_out(&mut s, 1);
+        assert!(s.eliminated() && !s.decided(), "the other two play on");
+        knock_out(&mut s, 3);
+        assert_eq!(s.outcome(true), Some(vec![11]));
+        assert!(!s.eliminated());
+    }
+
+    #[test]
+    fn a_team_wins_with_a_player_down() {
+        let mut s = session(1, &[(2, 1), (3, 2), (4, 2)]);
+        knock_out(&mut s, 1);
+        knock_out(&mut s, 3);
+        assert!(!s.decided());
+        knock_out(&mut s, 4);
+        assert_eq!(s.outcome(true), Some(vec![1]), "the partner won it for both");
+    }
+
+    #[test]
+    fn a_game_alone_ends_with_the_board() {
+        let s = session(0, &[]);
+        assert_eq!(s.outcome(false), None);
+        assert_eq!(s.outcome(true), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_spectator_switches_boards() {
+        let mut s = session(5, &[(2, 6), (3, 7)]);
+        s.my_slot = 0;
+        s.board.score = 111;
+        s.follow(3);
+        assert_eq!((s.focus, s.team), (3, 7));
+        let slots: Vec<u8> = s.rivals.iter().map(|r| r.slot).collect();
+        assert_eq!(slots, [1, 2]);
+        assert_eq!(s.rivals[0].board.score, 111, "the board left keeps its state");
+    }
+
+    #[test]
+    fn a_player_cannot_switch_boards() {
+        let mut s = session(5, &[(2, 6), (3, 7)]);
+        s.follow(3);
+        assert_eq!(s.focus, 1);
+        assert_eq!(s.rivals.len(), 2);
+    }
+}

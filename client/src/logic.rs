@@ -1,0 +1,603 @@
+use notan::prelude::*;
+use shared::{config, ClientMessage, GameState, InputKind, SentInput, StampedInput, Targeting};
+
+use crate::connection::Connection;
+use crate::controls::{Action, Frame};
+use crate::state::{GameSession, PendingInput, Settings};
+use crate::ui::Ui;
+
+#[derive(Clone, Copy, Default)]
+pub struct Online {
+    pub is_host: bool,
+    pub ranked: bool,
+    pub ended: bool,
+}
+
+pub fn update_game(
+    app: &mut App,
+    input: &Frame,
+    ui: &Ui,
+    session: &mut GameSession,
+    settings: Settings,
+    conn: &mut Connection,
+    online: Online,
+) -> bool {
+    if !conn.is_live() {
+        return false;
+    }
+
+    let game_over = session.decided() || online.ended;
+    let paused = session.board.state() == GameState::Paused;
+    let is_host = online.is_host;
+    let menu = paused || game_over || session.opponent_disconnected || session.quit_menu;
+
+    if menu || session.eliminated() {
+        let with_back = menu && is_host && !online.ranked;
+        let (leave_row, back_row) = crate::draw::exit_rows(ui.view(), with_back);
+        if ui.bar_clicked(leave_row) {
+            conn.send(&ClientMessage::LeaveRoom);
+            return true;
+        }
+        if with_back && ui.bar_clicked(back_row) {
+            conn.send(&ClientMessage::ReturnToLobby);
+            return false;
+        }
+    }
+
+    let dt = app.timer.delta_f32();
+    let click = crate::draw::game_click(ui, session);
+    if session.spectating() {
+        if let Some(crate::draw::GameClick::Board(slot)) = click {
+            session.follow(slot);
+            conn.send(&ClientMessage::Follow { slot });
+        }
+        if input.pause {
+            conn.send(&ClientMessage::LeaveRoom);
+            return true;
+        }
+        animate(session, dt);
+        return false;
+    }
+
+    if session.opponent_disconnected {
+        return false;
+    }
+
+    handle_global_input(input, session, conn, online.ranked);
+    if !menu && !session.eliminated() {
+        if let Some(targeting) = choose_target(input, click, session) {
+            conn.send(&ClientMessage::SetTargeting { targeting });
+        }
+    }
+
+    if !game_over && !paused && !session.quit_menu {
+        read_controls(input, session, settings, Some(conn), dt);
+        step_simulation(session, dt);
+    } else {
+        hold(session);
+    }
+
+    animate(session, dt);
+    false
+}
+
+pub fn animate(session: &mut GameSession, dt: f32) {
+    if let Some(p) = session.predicted_board.piece() {
+        session.fx.my_turn.update(session.predicted_board.piece_id, p.rotation, dt);
+    }
+    for rival in &mut session.rivals {
+        rival.view.advance(dt);
+        let shown = rival.view.frame().map_or(&rival.board, |(board, _)| board);
+        if let Some(p) = shown.piece() {
+            let (id, rotation) = (shown.piece_id, p.rotation);
+            rival.turn.update(id, rotation, dt);
+        }
+    }
+
+    let off = &mut session.fx.piece_visual_offset;
+    let decay = (-PIECE_SMOOTH_RATE * dt).exp();
+    off.0 *= decay;
+    off.1 *= decay;
+    if off.0.abs() < 0.001 {
+        off.0 = 0.0;
+    }
+    if off.1.abs() < 0.001 {
+        off.1 = 0.0;
+    }
+
+    if let Some((_, ref mut t)) = session.fx.chain_display {
+        *t -= dt;
+        if *t <= 0.0 {
+            session.fx.chain_display = None;
+        }
+    }
+    if session.fx.all_clear_timer > 0.0 {
+        session.fx.all_clear_timer -= dt;
+    }
+}
+
+const PIECE_SMOOTH_RATE: f32 = 22.0;
+
+pub fn read_controls(
+    input: &Frame,
+    session: &mut GameSession,
+    settings: Settings,
+    mut conn: Option<&mut Connection>,
+    dt: f32,
+) {
+    handle_soft_drop_key(input, session, conn.as_deref_mut());
+    if session.predicted_board.state() == GameState::Playing {
+        handle_game_input(input, session, settings, conn, dt);
+    } else {
+        release_keys(session);
+    }
+}
+
+pub fn hold(session: &mut GameSession) {
+    session.net.sim_accumulator = 0.0;
+    release_keys(session);
+}
+
+fn release_keys(session: &mut GameSession) {
+    session.keys.key_timer_left = 0.0;
+    session.keys.key_timer_right = 0.0;
+}
+
+fn step_simulation(session: &mut GameSession, dt: f32) {
+    if !session.net.synced {
+        return;
+    }
+    for _ in 0..take_steps(session, dt) {
+        match session.net.clock_correction.signum() {
+            -1 => {
+                session.net.clock_correction += 1;
+                continue;
+            }
+            1 => {
+                session.net.clock_correction -= 1;
+                advance_one(session);
+            }
+            _ => {}
+        }
+        advance_one(session);
+    }
+}
+
+pub fn take_steps(session: &mut GameSession, dt: f32) -> u32 {
+    session.net.sim_accumulator += dt;
+    let mut steps = 0;
+    while session.net.sim_accumulator >= config::CLIENT_SIM_DT && steps < config::MAX_SIM_STEPS_PER_FRAME {
+        session.net.sim_accumulator -= config::CLIENT_SIM_DT;
+        steps += 1;
+    }
+    if steps == config::MAX_SIM_STEPS_PER_FRAME {
+        session.net.sim_accumulator = 0.0;
+    }
+    steps
+}
+
+pub(crate) fn advance_one(session: &mut GameSession) -> u32 {
+    session.net.local_tick = session.net.local_tick.wrapping_add(1);
+    let now = session.net.local_tick;
+    let landed = session.incoming.iter().filter(|g| g.at == now).map(|g| g.amount).sum();
+    let events = session.predicted_board.step([], landed);
+    if events.locked {
+        crate::audio::play_lock();
+    }
+    announce_events(session);
+    events.sent
+}
+
+pub fn announce_events(session: &mut GameSession) {
+    let board = &session.predicted_board;
+    let chain = (board.piece_id, board.chain_count);
+    if board.chain_count > 0 && chain > session.fx.announced_chain {
+        session.fx.announced_chain = chain;
+        crate::audio::play_pop(board.chain_count);
+        session.fx.chain_display = Some((board.chain_count, 2.0));
+    }
+    let board = &session.predicted_board;
+    if board.last_was_all_clear && board.piece_id != session.fx.announced_all_clear {
+        session.fx.announced_all_clear = board.piece_id;
+        crate::audio::play_all_clear();
+        session.fx.all_clear_timer = 3.0;
+    }
+}
+
+/// The oldest inputs the server has not acknowledged. The oldest, since
+/// it takes an input only if newer than all it took: one sent again must
+/// not overtake an older one still on its way.
+fn unacknowledged(session: &GameSession) -> Vec<SentInput> {
+    let pending = session.net.pending_inputs.iter().take(shared::MAX_RESENT_INPUTS);
+    pending.map(|p| SentInput { seq: p.seq, tick: p.input.tick, kind: p.input.kind }).collect()
+}
+
+fn send_input(session: &mut GameSession, conn: Option<&mut Connection>, kind: InputKind) -> bool {
+    let before = session.predicted_board.piece().copied();
+    let events = session.predicted_board.apply_input(kind);
+    let moved = session.predicted_board.piece().copied() != before;
+    if events.locked {
+        crate::audio::play_lock();
+    } else if moved && matches!(kind, InputKind::RotateCW | InputKind::RotateCCW) {
+        crate::audio::play_rotate();
+    }
+    if let Some(conn) = conn {
+        session.net.input_seq += 1;
+        let seq = session.net.input_seq;
+        let tick = session.net.local_tick.wrapping_add(1);
+        session.net.pending_inputs.push(PendingInput {
+            seq,
+            input: StampedInput { tick, kind },
+            sent: session.net.clock,
+        });
+        conn.send(&ClientMessage::Input { kind, seq, tick });
+        conn.send_datagram(&ClientMessage::Inputs { inputs: unacknowledged(session) });
+    }
+    moved
+}
+
+fn handle_global_input(input: &Frame, session: &mut GameSession, conn: &mut Connection, ranked: bool) {
+    if !ranked && input.restart && session.decided() {
+        conn.send(&ClientMessage::RequestRestart);
+    }
+
+    if input.pause {
+        if ranked {
+            session.quit_menu = !session.quit_menu && !session.decided();
+        } else {
+            conn.send(&ClientMessage::TogglePause);
+        }
+    }
+}
+
+/// The opponents one may aim at, by slot.
+fn opponents(session: &GameSession) -> Vec<u8> {
+    let foes = session.rivals.iter().filter(|r| !r.out() && r.team != session.team);
+    foes.map(|r| r.slot).collect()
+}
+
+/// The way of aiming the player switches to, by key or click: the session
+/// takes it, the caller tells the server if there is one.
+pub fn choose_target(
+    input: &Frame,
+    click: Option<crate::draw::GameClick>,
+    session: &mut GameSession,
+) -> Option<Targeting> {
+    if session.rivals.len() < 2 {
+        return None;
+    }
+    let foes = opponents(session);
+    let current = match session.targeting {
+        Targeting::Manual(slot) => Some(slot),
+        _ => session.target,
+    };
+    let after = |slot: Option<u8>| {
+        let i = slot.and_then(|s| foes.iter().position(|&f| f == s)).map_or(0, |i| i + 1);
+        foes.get(i % foes.len().max(1)).copied()
+    };
+    let manual = |slot: Option<u8>| slot.filter(|s| foes.contains(s)).or_else(|| foes.first().copied());
+    let strategy = |i: usize| crate::draw::strategy_at(i, manual(current));
+    let chosen = match click {
+        Some(crate::draw::GameClick::Strategy(i)) => strategy(i),
+        Some(crate::draw::GameClick::Board(slot)) => foes.contains(&slot).then_some(Targeting::Manual(slot)),
+        None if input.pressed(Action::Strategy) => {
+            let next = (crate::draw::strategy_index(session.targeting) + 1) % crate::draw::STRATEGIES.len();
+            strategy(next).or(Some(Targeting::Random))
+        }
+        None if input.pressed(Action::NextTarget) => after(current).map(Targeting::Manual),
+        None => None,
+    };
+    let targeting = chosen.filter(|&t| t != session.targeting || matches!(t, Targeting::Manual(_)))?;
+    session.targeting = targeting;
+    if let Targeting::Manual(slot) = targeting {
+        session.target = Some(slot);
+    }
+    Some(targeting)
+}
+
+fn handle_game_input(
+    input: &Frame,
+    session: &mut GameSession,
+    settings: Settings,
+    mut conn: Option<&mut Connection>,
+    delta_time: f32,
+) {
+    if input.pressed(Action::RotateCw) {
+        send_input(session, conn.as_deref_mut(), InputKind::RotateCW);
+    }
+    if input.pressed(Action::RotateCcw) {
+        send_input(session, conn.as_deref_mut(), InputKind::RotateCCW);
+    }
+
+    if input.pressed(Action::HardDrop) {
+        send_input(session, conn, InputKind::HardDrop);
+        return;
+    }
+
+    for (action, kind) in [(Action::Left, InputKind::MoveLeft), (Action::Right, InputKind::MoveRight)] {
+        let timer = if kind == InputKind::MoveLeft {
+            &mut session.keys.key_timer_left
+        } else {
+            &mut session.keys.key_timer_right
+        };
+        let first = *timer == 0.0;
+        let moves = autorepeat(timer, input.held(action), delta_time, settings);
+        for i in 0..moves {
+            if send_input(session, conn.as_deref_mut(), kind) && i == 0 && first {
+                crate::audio::play_move();
+            }
+        }
+    }
+}
+
+fn autorepeat(timer: &mut f32, held: bool, dt: f32, settings: Settings) -> u32 {
+    if !held {
+        *timer = 0.0;
+        return 0;
+    }
+    if *timer == 0.0 {
+        *timer = f32::MIN_POSITIVE;
+        return 1;
+    }
+    *timer += dt;
+    let mut moves = 0;
+    while *timer + 1e-4 >= settings.das_delay() && moves < config::GRID_WIDTH as u32 {
+        *timer -= settings.das_speed();
+        moves += 1;
+    }
+    if moves == config::GRID_WIDTH as u32 {
+        *timer = settings.das_delay();
+    }
+    moves
+}
+
+fn handle_soft_drop_key(input: &Frame, session: &mut GameSession, conn: Option<&mut Connection>) {
+    let down = input.held(Action::SoftDrop);
+    if down != session.keys.soft_drop_held {
+        session.keys.soft_drop_held = down;
+        let kind = if down { InputKind::SoftDropPress } else { InputKind::SoftDropRelease };
+        send_input(session, conn, kind);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use shared::{IncomingGarbage, Rotation};
+
+    use super::*;
+
+    fn synced_session() -> GameSession {
+        let mut session = GameSession::new(1, Vec::new());
+        session.predicted_board.spawn_piece();
+        session.net.synced = true;
+        session
+    }
+
+    fn rows_fallen(frame_dts: &[f32], secs: f32) -> i32 {
+        let mut session = synced_session();
+        let start = session.predicted_board.piece().expect("a piece").row;
+
+        let mut elapsed = 0.0;
+        for dt in frame_dts.iter().cycle() {
+            if elapsed >= secs {
+                break;
+            }
+            step_simulation(&mut session, *dt);
+            elapsed += dt;
+        }
+        session.predicted_board.piece().expect("a piece").row - start
+    }
+
+    #[test]
+    fn prediction_is_independent_of_the_frame_rate() {
+        let secs = 3.0;
+        let at_60 = rows_fallen(&[1.0 / 60.0], secs);
+        assert!(at_60 > 0, "the piece never fell, the test proves nothing");
+
+        for (name, dts) in [
+            ("144 Hz", vec![1.0 / 144.0]),
+            ("30 Hz", vec![1.0 / 30.0]),
+            ("jittery", vec![1.0 / 61.0, 1.0 / 58.0, 1.0 / 144.0, 1.0 / 45.0]),
+        ] {
+            let rows = rows_fallen(&dts, secs);
+            assert!((rows - at_60).abs() <= 1, "{name} fell {rows} rows where 60 Hz fell {at_60}");
+        }
+    }
+
+    #[test]
+    fn a_long_stall_does_not_replay_as_a_burst() {
+        let mut session = synced_session();
+        let start = session.predicted_board.piece().expect("a piece").row;
+
+        step_simulation(&mut session, 30.0);
+
+        let fell = session.predicted_board.piece().expect("a piece").row - start;
+        assert!(
+            fell <= config::MAX_SIM_STEPS_PER_FRAME as i32,
+            "{fell} rows in one frame, at most {} allowed",
+            config::MAX_SIM_STEPS_PER_FRAME
+        );
+        assert_eq!(session.net.sim_accumulator, 0.0, "the backlog was kept to be replayed");
+    }
+
+    fn run_steps(session: &mut GameSession, n: u32) {
+        for _ in 0..n {
+            step_simulation(session, config::CLIENT_SIM_DT);
+        }
+    }
+
+    #[test]
+    fn the_board_waits_for_the_first_update() {
+        let mut session = GameSession::new(1, Vec::new());
+        run_steps(&mut session, 10);
+        assert_eq!(session.net.local_tick, 0);
+    }
+
+    #[test]
+    fn each_step_advances_the_local_clock_by_one_tick() {
+        let mut session = synced_session();
+        run_steps(&mut session, 10);
+        assert_eq!(session.net.local_tick, 10);
+    }
+
+    #[test]
+    fn a_correction_is_spent_one_tick_per_step() {
+        let mut session = synced_session();
+        session.net.clock_correction = -3;
+        run_steps(&mut session, 10);
+        assert_eq!(session.net.local_tick, 7, "held back");
+        assert_eq!(session.net.clock_correction, 0);
+
+        let mut session = synced_session();
+        session.net.clock_correction = 3;
+        run_steps(&mut session, 10);
+        assert_eq!(session.net.local_tick, 13, "caught up");
+        assert_eq!(session.net.clock_correction, 0);
+    }
+
+    #[test]
+    fn a_chain_step_is_announced_once_however_often_it_is_replayed() {
+        let mut session = synced_session();
+        session.predicted_board.chain_count = 2;
+        announce_events(&mut session);
+        assert_eq!(session.fx.chain_display.map(|(c, _)| c), Some(2));
+
+        session.fx.chain_display = None;
+        announce_events(&mut session);
+        assert_eq!(session.fx.chain_display, None, "announced twice");
+
+        session.predicted_board.chain_count = 3;
+        announce_events(&mut session);
+        assert_eq!(session.fx.chain_display.map(|(c, _)| c), Some(3), "the next step was missed");
+    }
+
+    #[test]
+    fn landing_garbage_moves_from_travelling_to_queued() {
+        let mut session = synced_session();
+        session.incoming = vec![IncomingGarbage { at: 3, amount: 5 }];
+        assert_eq!(session.my_nuisance(), 5);
+        run_steps(&mut session, 2);
+        assert_eq!(session.predicted_board.pending_garbage, 0);
+        run_steps(&mut session, 1);
+        assert_eq!(session.predicted_board.pending_garbage, 5);
+        assert_eq!(session.my_nuisance(), 5, "counted twice or lost on landing");
+    }
+
+    #[test]
+    fn the_satellite_turns_the_short_way_in_seven_frames() {
+        let mut turn = crate::state::TurnAnim::default();
+        turn.update(1, Rotation::Left, 0.0);
+        for _ in 0..7 {
+            turn.update(1, Rotation::Up, 1.0 / 60.0);
+        }
+        let (dr, dc) = turn.satellite();
+        assert!((dr + 1.0).abs() < 1e-4 && dc.abs() < 1e-4, "not pointing up: {dr} {dc}");
+
+        turn.update(1, Rotation::Right, 3.0 / 60.0);
+        let (_, dc) = turn.satellite();
+        assert!(dc > 0.1 && dc < 0.95, "mid-turn should be part way right: {dc}");
+    }
+
+    #[test]
+    fn a_new_pair_shows_its_rotation_at_once() {
+        let mut turn = crate::state::TurnAnim::default();
+        turn.update(1, Rotation::Up, 0.0);
+        turn.update(2, Rotation::Down, 1.0 / 60.0);
+        let (dr, _) = turn.satellite();
+        assert!((dr - 1.0).abs() < 1e-4);
+    }
+
+    fn moves_over(frames: u32, dt: f32) -> Vec<u32> {
+        let settings = Settings::default();
+        let mut timer = 0.0;
+        (0..frames).map(|_| autorepeat(&mut timer, true, dt, settings)).collect()
+    }
+
+    #[test]
+    fn a_held_key_moves_at_once_then_repeats_after_the_delay() {
+        let moves = moves_over(14, 1.0 / 60.0);
+        assert_eq!(moves[0], 1, "the press itself moves");
+        let first_repeat = moves.iter().skip(1).position(|&m| m > 0).map(|i| i + 1);
+        assert_eq!(first_repeat, Some(8), "Tsu repeats after 8 frames");
+        assert_eq!(moves[8..].iter().sum::<u32>(), 3, "then every 2 frames: 8, 10, 12");
+    }
+
+    #[test]
+    fn a_stall_does_not_unload_a_burst_of_moves() {
+        let settings = Settings::default();
+        let mut timer = 0.0;
+        autorepeat(&mut timer, true, 1.0 / 60.0, settings);
+        let burst = autorepeat(&mut timer, true, 5.0, settings);
+        assert_eq!(burst, config::GRID_WIDTH as u32);
+        let after: u32 = (0..10).map(|_| autorepeat(&mut timer, true, 1.0 / 60.0, settings)).sum();
+        assert!(after <= 6, "{after} moves in the 10 frames after the stall");
+    }
+
+    #[test]
+    fn releasing_the_key_resets_it() {
+        let settings = Settings::default();
+        let mut timer = 0.0;
+        autorepeat(&mut timer, true, 1.0 / 60.0, settings);
+        assert_eq!(autorepeat(&mut timer, false, 1.0 / 60.0, settings), 0);
+        assert_eq!(autorepeat(&mut timer, true, 1.0 / 60.0, settings), 1, "a new press moves at once");
+    }
+
+    fn arena() -> GameSession {
+        let mut session = synced_session();
+        session.team = 1;
+        for (slot, team) in [(2, 1), (3, 2), (4, 3)] {
+            session.add_rival(crate::state::Rival::new(slot, team, session.board.clone()));
+        }
+        session
+    }
+
+    #[test]
+    fn the_strategy_key_goes_round_and_manual_aims_at_an_opponent() {
+        let mut s = arena();
+        let key = Frame::pressing(Action::Strategy);
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            choose_target(&key, None, &mut s);
+            seen.push(s.targeting);
+        }
+        assert_eq!(
+            seen,
+            [Targeting::Attackers, Targeting::Danger, Targeting::Manual(3), Targeting::Random],
+            "the partner in slot 2 is skipped"
+        );
+    }
+
+    #[test]
+    fn next_target_skips_partners_and_the_knocked_out() {
+        let mut s = arena();
+        s.rivals[1].board.lose();
+        let key = Frame::pressing(Action::NextTarget);
+        choose_target(&key, None, &mut s);
+        assert_eq!(s.targeting, Targeting::Manual(4));
+        choose_target(&key, None, &mut s);
+        assert_eq!(s.targeting, Targeting::Manual(4), "the only one left");
+    }
+
+    #[test]
+    fn clicking_a_board_aims_at_it_unless_it_is_a_partner() {
+        let mut s = arena();
+        let none = Frame::default();
+        choose_target(&none, Some(crate::draw::GameClick::Board(2)), &mut s);
+        assert_eq!(s.targeting, Targeting::Random);
+        choose_target(&none, Some(crate::draw::GameClick::Board(4)), &mut s);
+        assert_eq!((s.targeting, s.target), (Targeting::Manual(4), Some(4)));
+        choose_target(&none, Some(crate::draw::GameClick::Strategy(2)), &mut s);
+        assert_eq!(s.targeting, Targeting::Danger);
+    }
+
+    #[test]
+    fn inputs_sent_again_start_from_the_oldest_unacknowledged() {
+        let mut session = synced_session();
+        session.net.pending_inputs = (1..=20)
+            .map(|seq| PendingInput { seq, input: StampedInput { tick: seq, kind: InputKind::RotateCW }, sent: 0.0 })
+            .collect();
+        session.net.pending_inputs.retain(|p| p.seq > 3);
+        let seqs: Vec<u32> = unacknowledged(&session).iter().map(|i| i.seq).collect();
+        assert_eq!(seqs, (4..20).collect::<Vec<_>>(), "a gap would get the older ones refused");
+    }
+}

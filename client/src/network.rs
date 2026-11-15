@@ -1,0 +1,624 @@
+use shared::{config, Board, ClientMessage, IncomingGarbage, PlayerUpdate, Rules, ServerMessage, StampedInput, Thumb};
+
+use crate::connection::ConnEvent;
+use crate::nav::{Nav, Transition};
+use crate::state::{GameSession, Network, Rival, Room, Screen, State};
+use crate::ui::Status;
+
+/// After the connection gave up, how long before a background one is tried.
+const LINK_PAUSE_SECS: f64 = 30.0;
+
+/// Keeps a signed-in player connected on every screen, for a friend's
+/// invitation to reach them, with the room list only on the screen showing it.
+pub fn keep_linked(net: &mut Network, signed_in: bool, screen: &Screen) {
+    let now = crate::connection::now_secs();
+    let wanted = signed_in && !net.too_old && !net.opened_elsewhere;
+    if wanted && net.conn.is_offline() && now >= net.next_link_at {
+        net.conn.connect(now);
+    }
+    if !signed_in && !screen.needs_connection() && !net.conn.is_offline() {
+        net.conn.disconnect();
+    }
+    let on = matches!(screen, Screen::RoomBrowser);
+    if net.conn.is_live() && net.rooms_listed != on {
+        net.conn.send(&ClientMessage::ListRooms { on });
+        net.rooms_listed = on;
+    }
+}
+
+pub fn handle_server_messages(state: &mut State, nav: &mut Nav) {
+    let now = crate::connection::now_secs();
+    for event in state.net.conn.poll(now) {
+        match event {
+            ConnEvent::Opened { recovered } => on_opened(state, nav, recovered),
+            ConnEvent::Message(msg) => process_message(state, nav, *msg),
+            ConnEvent::Retrying => {
+                if nav.current().needs_connection() {
+                    state.notice = Status::info("Connexion perdue, reconnexion…");
+                }
+            }
+            ConnEvent::GaveUp => {
+                state.net.next_link_at = now + LINK_PAUSE_SECS;
+                if nav.current().needs_connection() {
+                    reset_to_menu(state, nav, Status::error("Connexion au serveur perdue."));
+                }
+            }
+            ConnEvent::Outdated => {
+                state.outdated = true;
+                state.net.too_old = true;
+                #[cfg(not(target_arch = "wasm32"))]
+                crate::updater::check();
+                if nav.current().needs_connection() {
+                    reset_to_menu(state, nav, Status::Empty);
+                }
+            }
+        }
+    }
+}
+
+fn on_opened(state: &mut State, nav: &Nav, recovered: bool) {
+    let background = !nav.current().needs_connection();
+    state.net.opened_elsewhere &= background;
+    let hello = ClientMessage::Hello {
+        player_id: state.net.player_id.clone(),
+        auth_token: state.auth.as_ref().map(|a| a.token.clone()),
+        last_disconnect_reason: state.net.conn.take_unreported_drop(),
+        background,
+    };
+    state.net.conn.send(&hello);
+    state.net.rooms_listed = true;
+    state.net.maintenance = false;
+    if let Some(id) = state.net.pending_join.take() {
+        state.net.conn.send(&ClientMessage::JoinRoom { id });
+    }
+    if let Some(user_id) = state.net.pending_watch.take() {
+        state.net.conn.send(&ClientMessage::WatchFriend { user_id });
+    }
+    if matches!(nav.current(), Screen::Ranked) && state.ranked.resume_search() {
+        state.net.conn.send(&ClientMessage::JoinQueue);
+    }
+    if recovered && nav.current().needs_connection() {
+        state.notice.clear();
+    }
+}
+
+fn reset_to_menu(state: &mut State, nav: &mut Nav, notice: Status) {
+    state.room = None;
+    state.rooms.clear();
+    nav.apply(Transition::To(Screen::Menu));
+    state.notice = notice;
+}
+
+fn lead_ticks(rtt_ms: Option<f32>) -> u32 {
+    let rtt = rtt_ms.map_or(0, |ms| (ms / 1000.0 / config::CLIENT_SIM_DT).ceil() as u32);
+    rtt.saturating_add(config::INPUT_LEAD_MARGIN_TICKS).min(config::MAX_INPUT_LEAD_TICKS)
+}
+
+const DRIFT_WINDOW: u32 = 30;
+const DRIFT_DEADBAND: i32 = 1;
+
+fn sync_clock(session: &mut GameSession, server_tick: u32) {
+    let target = server_tick.saturating_add(lead_ticks(session.net.ping_rtt_ms));
+    let drift = session.net.local_tick as i64 - target as i64;
+    if !session.net.synced || drift.unsigned_abs() > config::MAX_INPUT_LEAD_TICKS as u64 {
+        session.net.local_tick = target;
+        session.net.synced = true;
+        session.net.clock_correction = 0;
+        session.net.drift_min = None;
+        session.net.drift_samples = 0;
+        return;
+    }
+    let drift = drift as i32;
+    let min = session.net.drift_min.map_or(drift, |m| m.min(drift));
+    session.net.drift_min = Some(min);
+    session.net.drift_samples += 1;
+    if session.net.drift_samples >= DRIFT_WINDOW {
+        session.net.clock_correction = if min.abs() > DRIFT_DEADBAND { -min } else { 0 };
+        session.net.drift_min = None;
+        session.net.drift_samples = 0;
+    }
+}
+
+pub struct Update {
+    pub board: Board,
+    pub ack: u32,
+    pub tick: u32,
+    pub incoming: Vec<IncomingGarbage>,
+}
+
+pub fn reconcile(session: &mut GameSession, update: Update) {
+    let prev_piece = session.predicted_board.piece().copied();
+    let prev_piece_id = session.predicted_board.piece_id;
+    let nuisance_before = session.my_nuisance();
+
+    session.board = update.board;
+    session.net.my_ack = update.ack;
+    session.net.server_tick = update.tick;
+    session.incoming = update.incoming;
+    let acked = session.net.pending_inputs.iter().filter(|p| p.seq <= update.ack);
+    if let Some(newest) = acked.max_by_key(|p| p.seq) {
+        session.debug.last_rtt_ms = ((session.net.clock - newest.sent) * 1000.0) as f32;
+    }
+    session.net.pending_inputs.retain(|p| p.seq > update.ack);
+
+    sync_clock(session, update.tick);
+
+    let pending: Vec<StampedInput> = session.net.pending_inputs.iter().map(|p| p.input).collect();
+    let predicted = session.board.replay(update.tick, session.net.local_tick, &pending, &session.incoming);
+
+    if predicted.piece_id == prev_piece_id {
+        if let (Some(prev), Some(cur)) = (&prev_piece, predicted.piece()) {
+            let off = &mut session.fx.piece_visual_offset;
+            off.0 = (off.0 + (prev.row - cur.row) as f32).clamp(-3.0, 3.0);
+            off.1 = (off.1 + (prev.col - cur.col) as f32).clamp(-3.0, 3.0);
+        }
+    } else {
+        session.fx.piece_visual_offset = (0.0, 0.0);
+    }
+
+    session.predicted_board = predicted;
+    crate::logic::announce_events(session);
+    if session.my_nuisance() > nuisance_before {
+        crate::audio::play_garbage();
+    }
+
+    if cfg!(debug_assertions) {
+        session.debug.last_server_msg = format!(
+            "StateUpdate ack={} pending={} seq={}",
+            update.ack,
+            session.net.pending_inputs.len(),
+            session.net.input_seq,
+        );
+    }
+}
+
+fn watch(session: &mut GameSession, board: Board, tick: u32, incoming: Vec<IncomingGarbage>) {
+    session.predicted_board = board.clone();
+    session.board = board;
+    session.net.server_tick = tick;
+    session.net.local_tick = tick;
+    session.incoming = incoming;
+    crate::logic::announce_events(session);
+}
+
+/// The rival in `slot`, made from `board` if it is new.
+fn rival_of(session: &mut GameSession, slot: u8, team: u8, board: impl FnOnce() -> Board) -> &mut Rival {
+    let i = match session.rivals.iter().position(|r| r.slot == slot) {
+        Some(i) => i,
+        None => {
+            session.add_rival(Rival::new(slot, team, board()));
+            session.rivals.iter().position(|r| r.slot == slot).unwrap_or_default()
+        }
+    };
+    &mut session.rivals[i]
+}
+
+/// The other boards of a big room, small: each brings its rival's board up
+/// to date, the stack kept when it did not come along.
+fn apply_thumbs(session: &mut GameSession, game: u32, tick: u32, thumbs: Vec<Thumb>) {
+    if game != session.game || session.applied.is_some_and(|t| tick < t) {
+        return;
+    }
+    session.applied = Some(tick);
+    let now = crate::connection::now_secs();
+    for mut t in thumbs {
+        if t.slot == session.focus {
+            continue;
+        }
+        let rival = rival_of(session, t.slot, t.team, || Board::new(0, &Rules::default()));
+        rival.team = t.team;
+        rival.target = t.target;
+        rival.incoming = std::mem::take(&mut t.incoming);
+        if t.apply_to(&mut rival.board) {
+            rival.view.push(tick, rival.board.clone(), now);
+        }
+    }
+}
+
+/// Hands each player's part of an update to its board: the large one is
+/// reconciled with the predicted inputs, the others are smoothed.
+fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<PlayerUpdate>) {
+    if game != session.game || session.applied.is_some_and(|t| tick < t) {
+        return;
+    }
+    if players.iter().any(|p| !p.board.is_well_formed()) {
+        return;
+    }
+    session.applied = Some(tick);
+    let focus = session.focus;
+    session.rivals.retain(|r| r.slot != focus);
+    let now = crate::connection::now_secs();
+    let mut mine = None;
+    for p in players {
+        if p.slot == focus {
+            mine = Some(p);
+            continue;
+        }
+        let rival = rival_of(session, p.slot, p.team, || (*p.board).clone());
+        let board = std::sync::Arc::unwrap_or_clone(p.board);
+        rival.view.push(tick, board.clone(), now);
+        rival.board = board;
+        rival.team = p.team;
+        rival.incoming = p.incoming;
+        rival.target = p.target;
+    }
+    let Some(me) = mine else { return };
+    session.team = me.team;
+    session.target = me.target;
+    let board = std::sync::Arc::unwrap_or_clone(me.board);
+    if session.spectating() {
+        watch(session, board, tick, me.incoming);
+        return;
+    }
+    reconcile(session, Update { board, ack: me.ack, tick, incoming: me.incoming });
+    session.out_early |= session.eliminated();
+}
+
+fn enter_lobby(state: &mut State, nav: &mut Nav, info: shared::LobbyInfo) {
+    let screen = if info.ranked.is_some() { Screen::Ranked } else { Screen::RoomLobby };
+    if info.ranked.is_some() {
+        state.ranked.stop();
+    }
+    nav.apply(Transition::To(screen));
+
+    match state.room.as_mut().filter(|r| r.info.id == info.id) {
+        Some(room) => {
+            room.info = info;
+            room.session = None;
+        }
+        None => state.room = Some(Room::new(info)),
+    }
+}
+
+fn start_game(state: &mut State, nav: &mut Nav, game: u32, your_slot: u8, names: Vec<String>) {
+    let Some(room) = state.room.as_mut() else { return };
+    let mut session = GameSession::new(your_slot, names);
+    session.game = game;
+    session.net.ping_rtt_ms = room.session.as_ref().and_then(|s| s.net.ping_rtt_ms);
+    session.debug.last_server_msg = "GameStart".to_string();
+
+    room.keep.take_if(|offer| !offer.is_for(game));
+    room.info.your_slot = your_slot;
+    room.session = Some(session);
+    nav.apply(Transition::To(Screen::Game));
+}
+
+fn process_message(state: &mut State, nav: &mut Nav, msg: ServerMessage) {
+    match msg {
+        ServerMessage::RoomList { rooms } => {
+            state.rooms = rooms;
+            if matches!(nav.current(), Screen::RoomLobby | Screen::Game) {
+                nav.apply(Transition::To(Screen::RoomBrowser));
+                state.room = None;
+            }
+        }
+        ServerMessage::Lobby { info } => enter_lobby(state, nav, info),
+        ServerMessage::JoinFailed { reason } => {
+            state.notice = Status::error(reason);
+        }
+        ServerMessage::GameStart { game, your_slot, names } => start_game(state, nav, game, your_slot, names),
+        ServerMessage::StateUpdate { game, tick, players } => {
+            if let Some(session) = state.session_mut() {
+                apply_update(session, game, tick, players);
+            }
+        }
+        ServerMessage::Thumbs { game, tick, thumbs } => {
+            if let Some(session) = state.session_mut() {
+                apply_thumbs(session, game, tick, thumbs);
+            }
+        }
+        ServerMessage::OpponentDisconnected => {
+            if let Some(session) = state.session_mut() {
+                session.opponent_disconnected = true;
+                session.debug.last_server_msg = "OpponentDisconnected".to_string();
+            }
+        }
+        ServerMessage::QueueRefused { reason } => {
+            state.ranked.stop();
+            state.notice = Status::error(reason);
+        }
+        ServerMessage::MatchFound { opponent, opponent_elo, opponent_avatar, secs } => {
+            if state.ranked.match_found(opponent, opponent_elo, opponent_avatar, secs) {
+                crate::audio::play_all_clear();
+            }
+        }
+        ServerMessage::MatchCancelled { requeued } => {
+            state.ranked.match_cancelled(requeued);
+            state.notice = if requeued {
+                Status::info("L'adversaire n'a pas accepté, retour dans la file.")
+            } else {
+                Status::error("Partie non acceptée.")
+            };
+        }
+        ServerMessage::QueueCooldown { secs } => state.ranked.cooldown(secs),
+        ServerMessage::SeriesScore { wins } => {
+            if let Some(ranked) = state.room.as_mut().and_then(|r| r.info.ranked.as_mut()) {
+                ranked.wins = wins;
+            }
+        }
+        ServerMessage::SeriesOver { winner_slot, elo_change } => {
+            if let Some(room) = state.room.as_mut() {
+                if let Some(auth) = state.auth.as_mut().filter(|_| room.series_over.is_none()) {
+                    auth.elo += elo_change;
+                }
+                room.series_over = Some((winner_slot, elo_change));
+            }
+        }
+        ServerMessage::Chat { from, text, spectator } => {
+            if let Some(room) = state.room.as_mut() {
+                room.chat.push(&from, &text, spectator);
+            }
+        }
+        ServerMessage::Spectators { count } => {
+            if let Some(room) = state.room.as_mut() {
+                room.info.spectators = count;
+            }
+        }
+        ServerMessage::SessionRevoked => {
+            if state.auth.is_some() {
+                crate::menu::clear_auth(state);
+                nav.forget_account();
+                state.notice = Status::info("Votre session a été fermée depuis un autre appareil.");
+            }
+        }
+        ServerMessage::OpenedElsewhere => {
+            state.net.opened_elsewhere = true;
+            state.net.conn.disconnect();
+            reset_to_menu(state, nav, Status::info("Le jeu a été ouvert dans un autre onglet."));
+        }
+        ServerMessage::Pong { .. } => {}
+        ServerMessage::Maintenance => state.net.maintenance = true,
+        ServerMessage::MatchSaved { id } => {
+            if let Some(room) = state.room.as_mut() {
+                let game = room.session.as_ref().map(|s| s.game);
+                room.keep = game.map(|game| crate::replay::KeepOffer::new(id, game));
+            }
+        }
+        ServerMessage::FriendInvitation { from_username, room_id, room_name } => {
+            state.pending_invitation = Some((from_username, room_id, room_name));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use shared::{GameState, InputKind};
+
+    use super::*;
+    use crate::state::PendingInput;
+
+    #[test]
+    fn lead_without_a_measurement_is_just_the_margin() {
+        assert_eq!(lead_ticks(None), config::INPUT_LEAD_MARGIN_TICKS);
+        assert_eq!(lead_ticks(Some(0.0)), config::INPUT_LEAD_MARGIN_TICKS);
+    }
+
+    #[test]
+    fn lead_covers_the_whole_round_trip() {
+        let lead = lead_ticks(Some(200.0));
+        assert_eq!(lead, 12 + config::INPUT_LEAD_MARGIN_TICKS);
+        assert!(lead_ticks(Some(200.0)) > lead_ticks(Some(20.0)));
+    }
+
+    #[test]
+    fn lead_is_capped() {
+        assert_eq!(lead_ticks(Some(10_000.0)), config::MAX_INPUT_LEAD_TICKS);
+        assert_eq!(lead_ticks(Some(f32::INFINITY)), config::MAX_INPUT_LEAD_TICKS);
+    }
+
+    #[test]
+    fn a_nonsense_sample_falls_back_to_the_margin() {
+        for bad in [f32::NAN, -1.0, f32::NEG_INFINITY] {
+            assert_eq!(lead_ticks(Some(bad)), config::INPUT_LEAD_MARGIN_TICKS, "sample {bad}");
+        }
+    }
+
+    fn session_with_rtt(rtt_ms: f32) -> GameSession {
+        let mut session = GameSession::new(1, Vec::new());
+        session.net.ping_rtt_ms = Some(rtt_ms);
+        session
+    }
+
+    #[test]
+    fn the_first_update_places_the_clock() {
+        let mut session = session_with_rtt(100.0);
+        sync_clock(&mut session, 500);
+        assert!(session.net.synced);
+        assert_eq!(session.net.local_tick, 500 + lead_ticks(Some(100.0)));
+    }
+
+    fn feed_window(session: &mut GameSession, drifts: impl Fn(u32) -> i32) {
+        let lead = lead_ticks(session.net.ping_rtt_ms) as i64;
+        for i in 0..DRIFT_WINDOW {
+            let server_tick = session.net.local_tick as i64 - lead - drifts(i) as i64;
+            sync_clock(session, server_tick as u32);
+            session.net.local_tick += 1;
+        }
+    }
+
+    #[test]
+    fn a_clock_behind_is_pushed_forward_and_one_ahead_held_back() {
+        let mut session = session_with_rtt(60.0);
+        sync_clock(&mut session, 1_000);
+        feed_window(&mut session, |_| -4);
+        assert_eq!(session.net.clock_correction, 4);
+
+        let mut session = session_with_rtt(60.0);
+        sync_clock(&mut session, 1_000);
+        feed_window(&mut session, |_| 4);
+        assert_eq!(session.net.clock_correction, -4);
+    }
+
+    #[test]
+    fn late_updates_do_not_pull_the_clock_back() {
+        let mut session = session_with_rtt(60.0);
+        sync_clock(&mut session, 1_000);
+        feed_window(&mut session, |i| if i % 10 == 0 { 0 } else { (i % 7) as i32 });
+        assert_eq!(session.net.clock_correction, 0);
+    }
+
+    #[test]
+    fn a_small_drift_is_left_alone() {
+        let mut session = session_with_rtt(60.0);
+        sync_clock(&mut session, 1_000);
+        feed_window(&mut session, |_| DRIFT_DEADBAND);
+        assert_eq!(session.net.clock_correction, 0);
+    }
+
+    #[test]
+    fn a_clock_far_off_is_placed_at_once() {
+        let mut session = session_with_rtt(60.0);
+        sync_clock(&mut session, 1_000);
+        session.net.local_tick -= 200;
+        sync_clock(&mut session, 1_000);
+        assert_eq!(session.net.local_tick, 1_000 + lead_ticks(Some(60.0)));
+    }
+
+    #[test]
+    fn updates_never_correct_a_board_that_was_predicted_right() {
+        let latency = 6;
+        let margin = config::INPUT_LEAD_MARGIN_TICKS;
+        let mut server = Board::new(77, &Rules::default());
+        server.spawn_piece();
+        let mut history = vec![server.clone()];
+        let mut queue: Vec<(u32, StampedInput)> = Vec::new();
+
+        let mut session = session_with_rtt((2 * latency) as f32 * 1000.0 * config::CLIENT_SIM_DT - 0.5);
+        assert_eq!(lead_ticks(session.net.ping_rtt_ms), 2 * latency + margin, "setup");
+        session.board = server.clone();
+        session.predicted_board = server.clone();
+        session.net.synced = true;
+
+        let script = [
+            InputKind::MoveLeft,
+            InputKind::RotateCW,
+            InputKind::HardDrop,
+            InputKind::MoveRight,
+            InputKind::MoveRight,
+            InputKind::SoftDropPress,
+            InputKind::RotateCCW,
+            InputKind::SoftDropRelease,
+            InputKind::HardDrop,
+        ];
+        let mut corrections = 0;
+        let mut server_tick = 0u32;
+        for step in 0..1_200u32 {
+            crate::logic::advance_one(&mut session);
+
+            if step % 9 == 0 && session.predicted_board.state() == GameState::Playing {
+                let kind = script[(step / 9) as usize % script.len()];
+                session.net.input_seq += 1;
+                let input = StampedInput { tick: session.net.local_tick + 1, kind };
+                session.predicted_board.apply_input(kind);
+                session.net.pending_inputs.push(PendingInput { seq: session.net.input_seq, input, sent: 0.0 });
+                queue.push((session.net.input_seq, input));
+            }
+
+            while server_tick + latency + margin < session.net.local_tick {
+                server_tick += 1;
+                let due = queue.iter().position(|(_, i)| i.tick > server_tick).unwrap_or(queue.len());
+                assert!(queue[..due].iter().all(|(_, i)| i.tick == server_tick), "an input arrived late");
+                let applied: Vec<_> = queue.drain(..due).collect();
+                server.step(applied.iter().map(|(_, i)| i.kind), 0);
+                history.push(server.clone());
+            }
+
+            if step % 4 == 0 && server_tick >= latency {
+                let at = server_tick - latency;
+                let ack = acked_by(&session, at);
+                let before = session.predicted_board.state_hash();
+                let local = session.net.local_tick;
+                reconcile(
+                    &mut session,
+                    Update { board: history[at as usize].clone(), ack, tick: at, incoming: Vec::new() },
+                );
+                assert_eq!(session.net.local_tick, local, "the clock moved on a steady link");
+                if session.predicted_board.state_hash() != before {
+                    corrections += 1;
+                }
+            }
+        }
+        assert!(session.predicted_board.piece_id > 5, "the script placed too few pieces to prove much");
+        assert_eq!(corrections, 0, "{corrections} updates corrected a correctly predicted board");
+    }
+
+    fn acked_by(session: &GameSession, at: u32) -> u32 {
+        session
+            .net
+            .pending_inputs
+            .iter()
+            .filter(|p| p.input.tick <= at)
+            .map(|p| p.seq)
+            .fold(session.net.my_ack, u32::max)
+    }
+
+    fn update(slot: u8, team: u8, out: bool) -> PlayerUpdate {
+        let mut board = Board::new(3, &Rules::default());
+        if out {
+            board.lose();
+        }
+        PlayerUpdate { slot, team, board: std::sync::Arc::new(board), ack: 0, incoming: Vec::new(), target: None }
+    }
+
+    #[test]
+    fn every_other_board_becomes_a_rival_by_slot() {
+        let mut session = GameSession::new(2, Vec::new());
+        apply_update(&mut session, 0, 5, vec![update(3, 7, false), update(1, 5, false), update(2, 6, false)]);
+        let slots: Vec<u8> = session.rivals.iter().map(|r| r.slot).collect();
+        assert_eq!(slots, [1, 3]);
+        assert_eq!(session.team, 6);
+    }
+
+    #[test]
+    fn a_player_out_before_the_end_does_not_share_the_draw() {
+        let mut session = GameSession::new(1, Vec::new());
+        apply_update(&mut session, 0, 5, vec![update(1, 1, true), update(2, 2, false), update(3, 3, false)]);
+        assert!(session.eliminated());
+        apply_update(&mut session, 0, 6, vec![update(1, 1, true), update(2, 2, true), update(3, 3, true)]);
+        assert!(session.decided() && session.out_early);
+    }
+
+    #[test]
+    fn a_spectator_follows_the_first_player_until_told_otherwise() {
+        let mut session = GameSession::new(0, Vec::new());
+        apply_update(&mut session, 0, 5, vec![update(3, 7, false)]);
+        apply_update(&mut session, 0, 5, vec![update(1, 5, false), update(2, 6, false)]);
+        assert_eq!(session.focus, 1, "a board alone in its update is not followed");
+        session.follow(3);
+        apply_update(&mut session, 0, 6, vec![update(1, 5, false), update(2, 6, false), update(3, 7, false)]);
+        assert_eq!(session.focus, 3);
+        let slots: Vec<u8> = session.rivals.iter().map(|r| r.slot).collect();
+        assert_eq!(slots, [1, 2]);
+    }
+
+    #[test]
+    fn a_thumbnail_without_its_stack_keeps_the_last_one() {
+        let mut session = GameSession::new(1, Vec::new());
+        let mut board = Board::new(3, &Rules::default());
+        board.cells_mut()[(config::GRID_HEIGHT - 1, 0)] = Some(shared::PuyoType::Red);
+        let thumb = |board: &Board, slot, cells| Thumb { slot, team: slot, ..Thumb::of(board, cells) };
+        apply_thumbs(&mut session, 0, 5, vec![thumb(&board, 1, true), thumb(&board, 2, true)]);
+        assert_eq!(session.rivals.len(), 1, "the player's own slot is not a rival");
+        board.pending_garbage = 4;
+        apply_thumbs(&mut session, 0, 8, vec![thumb(&board, 2, false)]);
+        let rival = &session.rivals[0];
+        assert_eq!(rival.board.cells()[(config::GRID_HEIGHT - 1, 0)], Some(shared::PuyoType::Red));
+        assert_eq!(rival.board.pending_garbage, 4);
+        apply_thumbs(&mut session, 0, 7, vec![thumb(&board, 3, true)]);
+        assert_eq!(session.rivals.len(), 1, "an older one is dropped");
+    }
+
+    #[test]
+    fn late_updates_and_those_of_another_game_are_dropped() {
+        let mut session = GameSession::new(1, Vec::new());
+        session.game = 4;
+        let mut scored = update(1, 1, false);
+        std::sync::Arc::make_mut(&mut scored.board).score = 70;
+        apply_update(&mut session, 4, 10, vec![scored]);
+        apply_update(&mut session, 4, 9, vec![update(1, 1, false)]);
+        apply_update(&mut session, 3, 11, vec![update(1, 1, false)]);
+        assert_eq!(session.board.score, 70, "an older update was applied");
+        apply_update(&mut session, 4, 10, vec![update(1, 1, false)]);
+        assert_eq!(session.board.score, 0, "a snapshot of the same tick, sent on a pause");
+    }
+}

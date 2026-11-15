@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Rouillo
+GenericName=Puzzle Game
+GenericName[fr]=Jeu de puzzle
+Comment=Multiplayer Puyo Puyo
+Comment[fr]=Puyo Puyo multijoueur
+Exec=rouillo
+Icon=org.priax.Rouillo
+Terminal=false
+Categories=Game;BlocksGame;
+Keywords=puyo;puzzle;versus;
+StartupNotify=true
+StartupWMClass=org.priax.Rouillo

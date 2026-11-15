@@ -1,0 +1,577 @@
+use std::collections::{HashMap, HashSet};
+
+use bytes::Bytes;
+use rayon::prelude::*;
+use shared::cpu::{Difficulty, Style};
+use shared::{config, InputKind, PausePolicy, RoomId, RoomInfo, RoomSetting, RoomSettings, ServerMessage, Targeting};
+use tokio::sync::mpsc;
+use tokio::time::{Duration, Instant};
+use tracing::{info, warn};
+use uuid::Uuid;
+
+use crate::room::{Member, Phase, Room, Series, SeriesResult, Spectator, StateOut};
+use crate::{db, ConnId, Token};
+
+mod client;
+pub mod friends;
+mod identity;
+mod presence;
+pub mod ranked;
+pub(crate) mod rooms;
+pub mod social;
+
+pub use client::Client;
+use friends::FriendCheck;
+use ranked::{PendingMatch, QueueEntry, RankedCheck};
+
+/// What the rooms one thread stepped and sent leave to record.
+#[derive(Default)]
+struct RoomsTicked {
+    records: Vec<db::MatchRecord>,
+    games_won: Vec<(RoomId, Option<usize>)>,
+    dead: Vec<ConnId>,
+    list_changed: bool,
+}
+
+pub const COUNTDOWN_SECS: f32 = 3.0;
+pub const GRACE: Duration = Duration::from_secs(config::RECONNECT_GRACE_SECS);
+
+const MAX_PLAYER_ID: usize = 64;
+
+const JOIN_UNAVAILABLE: &str = "Room indisponible";
+const JOIN_FRIENDS_ONLY: &str = "Cette room est réservée aux amis de l'hôte.";
+const JOIN_MAINTENANCE: &str = "Le serveur redémarre, réessayez dans un instant.";
+const JOIN_SAME_ACCOUNT: &str = "Ce compte est déjà dans cette room.";
+const WATCH_NOBODY: &str = "Cet ami ne joue pas en ce moment.";
+const WATCH_NOT_FRIENDS: &str = "Seuls les amis peuvent regarder cette partie.";
+
+pub struct Manager {
+    pub rooms: HashMap<RoomId, Room>,
+    pub clients: HashMap<ConnId, Client>,
+    dead: Vec<ConnId>,
+    next_id: RoomId,
+    room_list_dirty: bool,
+    last_room_list: Instant,
+    friend_checks: Vec<FriendCheck>,
+    /// The accepted friends of each signed-in user connected, for the room list.
+    friends: HashMap<Uuid, HashSet<Uuid>>,
+    friend_loads: Vec<Uuid>,
+    /// Users whose friend list is being read, and whether a friendship of
+    /// theirs changed meanwhile, which makes the answer stale.
+    friends_loading: HashMap<Uuid, bool>,
+    unsaved_matches: Vec<db::MatchRecord>,
+    unsaved_series: Vec<db::SeriesRecord>,
+    user_conns: HashMap<Uuid, HashSet<ConnId>>,
+    pub queue: Vec<QueueEntry>,
+    pub pending_matches: Vec<PendingMatch>,
+    queue_cooldowns: HashMap<Uuid, Instant>,
+    ranked_checks: Vec<RankedCheck>,
+    closing: bool,
+}
+
+pub enum Command {
+    Register {
+        conn: ConnId,
+        sender: mpsc::Sender<Vec<u8>>,
+        states: Option<mpsc::Sender<Vec<Bytes>>>,
+    },
+    Unregister {
+        conn: ConnId,
+    },
+    Hello {
+        conn: ConnId,
+        token: Token,
+        user_id: Option<Uuid>,
+        username: Option<String>,
+        session: Option<Uuid>,
+        last_disconnect_reason: Option<String>,
+        background: bool,
+    },
+    RequestRoomList {
+        conn: ConnId,
+    },
+    ListRooms {
+        conn: ConnId,
+        on: bool,
+    },
+    MatchSaved {
+        id: Uuid,
+        users: Vec<Uuid>,
+    },
+    CreateRoom {
+        conn: ConnId,
+        name: String,
+    },
+    JoinRoom {
+        conn: ConnId,
+        id: RoomId,
+    },
+    LeaveRoom {
+        conn: ConnId,
+    },
+    SetSetting {
+        conn: ConnId,
+        setting: RoomSetting,
+        dir: i32,
+    },
+    ToggleCountdown {
+        conn: ConnId,
+    },
+    ReturnToLobby {
+        conn: ConnId,
+    },
+    Input {
+        conn: ConnId,
+        kind: InputKind,
+        seq: u32,
+        tick: u32,
+    },
+    TogglePause {
+        conn: ConnId,
+    },
+    Restart {
+        conn: ConnId,
+    },
+    InviteFriend {
+        conn: ConnId,
+        target_user_id: String,
+    },
+    FriendCheckDone {
+        check: FriendCheck,
+        friends: bool,
+    },
+    FriendsLoaded {
+        user: Uuid,
+        friends: Vec<Uuid>,
+    },
+    FriendshipChanged {
+        users: (Uuid, Uuid),
+        friends: bool,
+    },
+    JoinQueue {
+        conn: ConnId,
+    },
+    LeaveQueue {
+        conn: ConnId,
+    },
+    AcceptMatch {
+        conn: ConnId,
+    },
+    Chat {
+        conn: ConnId,
+        text: String,
+    },
+    Spectate {
+        conn: ConnId,
+        id: RoomId,
+    },
+    WatchFriend {
+        conn: ConnId,
+        user_id: String,
+    },
+    SetTargeting {
+        conn: ConnId,
+        targeting: Targeting,
+    },
+    SetTeam {
+        conn: ConnId,
+        team: Option<u8>,
+    },
+    AddCpu {
+        conn: ConnId,
+    },
+    SetCpu {
+        conn: ConnId,
+        slot: u8,
+        difficulty: Difficulty,
+        style: Style,
+        team: Option<u8>,
+    },
+    RemoveCpu {
+        conn: ConnId,
+        slot: u8,
+    },
+    Follow {
+        conn: ConnId,
+        slot: u8,
+    },
+    /// Which of `users` are in a room, for the friend list.
+    Playing {
+        users: Vec<Uuid>,
+        reply: tokio::sync::oneshot::Sender<Vec<Uuid>>,
+    },
+    RankedCheckDone {
+        check: RankedCheck,
+        profile: Option<db::RankedProfile>,
+    },
+    Revoke {
+        user_id: Uuid,
+        keep: Option<Uuid>,
+    },
+    Rename {
+        user_id: Uuid,
+        username: String,
+    },
+    Shutdown,
+}
+
+impl Command {
+    fn client(&self) -> Option<ConnId> {
+        match self {
+            Self::Register { .. }
+            | Self::MatchSaved { .. }
+            | Self::FriendCheckDone { .. }
+            | Self::FriendsLoaded { .. }
+            | Self::FriendshipChanged { .. }
+            | Self::RankedCheckDone { .. }
+            | Self::Revoke { .. }
+            | Self::Rename { .. }
+            | Self::Playing { .. }
+            | Self::Shutdown => None,
+            Self::Unregister { conn }
+            | Self::Hello { conn, .. }
+            | Self::RequestRoomList { conn }
+            | Self::ListRooms { conn, .. }
+            | Self::CreateRoom { conn, .. }
+            | Self::JoinRoom { conn, .. }
+            | Self::LeaveRoom { conn }
+            | Self::SetSetting { conn, .. }
+            | Self::ToggleCountdown { conn }
+            | Self::ReturnToLobby { conn }
+            | Self::Input { conn, .. }
+            | Self::TogglePause { conn }
+            | Self::Restart { conn }
+            | Self::InviteFriend { conn, .. }
+            | Self::JoinQueue { conn }
+            | Self::LeaveQueue { conn }
+            | Self::AcceptMatch { conn }
+            | Self::Chat { conn, .. }
+            | Self::Spectate { conn, .. }
+            | Self::WatchFriend { conn, .. }
+            | Self::SetTargeting { conn, .. }
+            | Self::SetTeam { conn, .. }
+            | Self::AddCpu { conn }
+            | Self::SetCpu { conn, .. }
+            | Self::RemoveCpu { conn, .. }
+            | Self::Follow { conn, .. } => Some(*conn),
+        }
+    }
+}
+
+impl Manager {
+    pub fn new() -> Self {
+        Self {
+            rooms: HashMap::new(),
+            clients: HashMap::new(),
+            dead: Vec::new(),
+            next_id: 1,
+            room_list_dirty: false,
+            last_room_list: Instant::now(),
+            friend_checks: Vec::new(),
+            friends: HashMap::new(),
+            friend_loads: Vec::new(),
+            friends_loading: HashMap::new(),
+            unsaved_matches: Vec::new(),
+            unsaved_series: Vec::new(),
+            user_conns: HashMap::new(),
+            queue: Vec::new(),
+            pending_matches: Vec::new(),
+            queue_cooldowns: HashMap::new(),
+            ranked_checks: Vec::new(),
+            closing: false,
+        }
+    }
+
+    fn begin_shutdown(&mut self) {
+        if self.closing {
+            return;
+        }
+        self.closing = true;
+        let counting: Vec<RoomId> =
+            self.rooms.values().filter(|r| matches!(r.phase, Phase::CountingDown(_))).map(|r| r.id).collect();
+        for id in counting {
+            if let Some(room) = self.rooms.get_mut(&id) {
+                room.phase = Phase::Lobby;
+            }
+            self.send_lobby(id);
+            self.room_list_dirty = true;
+        }
+        let conns: Vec<ConnId> = self.clients.keys().copied().collect();
+        for conn in conns {
+            self.deliver_msg(conn, &ServerMessage::Maintenance);
+        }
+        for entry in std::mem::take(&mut self.queue) {
+            self.refuse_queue(entry.conn, JOIN_MAINTENANCE);
+        }
+        self.cancel_pending_for_maintenance();
+        info!("Maintenance: {} partie(s) en cours à laisser finir", self.games_running());
+    }
+
+    pub fn closing(&self) -> bool {
+        self.closing
+    }
+
+    pub fn games_running(&self) -> usize {
+        self.rooms.values().filter(|r| r.game_running()).count()
+    }
+
+    pub fn room_of(&self, conn: ConnId) -> Option<RoomId> {
+        self.clients.get(&conn)?.room
+    }
+
+    pub fn take_unsaved_matches(&mut self) -> Vec<db::MatchRecord> {
+        std::mem::take(&mut self.unsaved_matches)
+    }
+
+    fn join_failed(&mut self, conn: ConnId, reason: &str) {
+        self.deliver_msg(conn, &ServerMessage::JoinFailed { reason: reason.to_string() });
+    }
+
+    fn with_room<R>(&mut self, id: RoomId, f: impl FnOnce(&mut Room) -> R) -> Option<R> {
+        self.rooms.get_mut(&id).map(f)
+    }
+
+    fn deliver(&mut self, conn: ConnId, payload: Vec<u8>) {
+        if self.clients.get(&conn).is_some_and(|c| !c.send(payload)) {
+            self.dead.push(conn);
+        }
+    }
+
+    fn deliver_msg(&mut self, conn: ConnId, msg: &ServerMessage) {
+        self.deliver(conn, shared::encode(msg));
+    }
+
+    fn send_room_msg(&mut self, id: RoomId, msg: &ServerMessage) {
+        self.send_room(id, &shared::encode(msg));
+    }
+
+    fn send_room(&mut self, id: RoomId, payload: &[u8]) {
+        let Some(conns) = self.rooms.get(&id).map(Room::audience) else {
+            return;
+        };
+        for c in conns {
+            self.deliver(c, payload.to_vec());
+        }
+    }
+
+    fn send_game_start(&mut self, id: RoomId) {
+        for (c, payload) in self.rooms.get_mut(&id).map(Room::game_start_payloads).unwrap_or_default() {
+            self.deliver(c, payload);
+        }
+    }
+
+    fn deliver_game_start(&mut self, id: RoomId, conn: ConnId) {
+        if let Some(msg) = self.rooms.get_mut(&id).map(|r| r.game_start_for(conn)) {
+            self.deliver_msg(conn, &msg);
+        }
+    }
+
+    fn send_lobby(&mut self, id: RoomId) {
+        let Some(msgs) = self.rooms.get(&id).map(Room::lobby_payloads) else {
+            return;
+        };
+        for (c, payload) in msgs {
+            self.deliver(c, payload);
+        }
+    }
+
+    pub fn send_snapshot(&mut self, id: RoomId) {
+        let msg = match self.rooms.get(&id) {
+            Some(room) => room.sim.state_update(),
+            None => return,
+        };
+        self.send_room_msg(id, &msg);
+    }
+
+    pub fn public_room_list(&self) -> Vec<RoomInfo> {
+        self.rooms.values().filter(|r| !r.settings.friends_only).map(Room::info).collect()
+    }
+
+    /// The friends-only rooms `conn` may join: its own, or a friend's.
+    fn private_rooms_for(&self, conn: ConnId) -> impl Iterator<Item = &Room> {
+        let viewer = self.user_of(conn);
+        let friends = viewer.and_then(|v| self.friends.get(&v));
+        self.rooms.values().filter(move |r| {
+            r.settings.friends_only
+                && r.host_user().is_some_and(|host| viewer == Some(host) || friends.is_some_and(|f| f.contains(&host)))
+        })
+    }
+
+    fn room_list_for(&self, conn: ConnId) -> Vec<RoomInfo> {
+        let mut rooms = self.public_room_list();
+        rooms.extend(self.private_rooms_for(conn).map(Room::info));
+        rooms
+    }
+
+    /// The public list is encoded once; only those who also see a
+    /// friends-only room get a list of their own.
+    pub(crate) fn broadcast_room_list(&mut self) {
+        let browsing: Vec<ConnId> = self
+            .clients
+            .iter()
+            .filter_map(|(&c, client)| (client.room.is_none() && client.lists_rooms).then_some(c))
+            .collect();
+        let public = shared::encode(&ServerMessage::RoomList { rooms: self.public_room_list() });
+        for c in browsing {
+            if self.private_rooms_for(c).next().is_some() {
+                self.send_room_list_to(c);
+            } else {
+                self.deliver(c, public.clone());
+            }
+        }
+    }
+
+    fn send_room_list_to(&mut self, conn: ConnId) {
+        self.deliver_msg(conn, &ServerMessage::RoomList { rooms: self.room_list_for(conn) });
+    }
+
+    fn room_of_token(&self, token: &str) -> Option<RoomId> {
+        self.rooms.values().find(|r| r.members.iter().any(|m| m.token == token)).map(|r| r.id)
+    }
+
+    pub fn handle(&mut self, cmd: Command) {
+        if cmd.client().is_some_and(|conn| !self.clients.contains_key(&conn)) {
+            return;
+        }
+        match cmd {
+            Command::Register { conn, sender, states } => {
+                self.clients.insert(conn, Client::new(sender, states));
+            }
+            Command::Hello { conn, token, user_id, username, session, last_disconnect_reason, background } => {
+                if let Some(reason) = last_disconnect_reason {
+                    warn!("WS {conn} reconnecte après coupure client: {reason}");
+                }
+                self.set_identity(conn, user_id, username, session);
+                self.on_hello(conn, token, background);
+            }
+            Command::Unregister { conn } => self.drop_connection(conn),
+            Command::RequestRoomList { conn } => self.send_room_list_to(conn),
+            Command::ListRooms { conn, on } => {
+                if let Some(client) = self.clients.get_mut(&conn) {
+                    client.lists_rooms = on;
+                }
+                if on {
+                    self.send_room_list_to(conn);
+                }
+            }
+            Command::MatchSaved { id, users } => self.match_saved(id, &users),
+            Command::CreateRoom { conn, name } => self.create_room(conn, &name),
+            Command::JoinRoom { conn, id } => self.request_join(conn, id),
+            Command::LeaveRoom { conn } => {
+                self.leave_current(conn);
+                self.send_room_list_to(conn);
+            }
+            Command::SetSetting { conn, setting, dir } => self.set_setting(conn, setting, dir),
+            Command::ToggleCountdown { conn } => self.toggle_countdown(conn),
+            Command::ReturnToLobby { conn } => self.return_to_lobby(conn),
+            Command::Input { conn, kind, seq, tick } => self.on_input(conn, kind, seq, tick),
+            Command::TogglePause { conn } => self.toggle_pause(conn),
+            Command::Restart { conn } => self.restart(conn),
+            Command::InviteFriend { conn, target_user_id } => self.request_invite(conn, &target_user_id),
+            Command::FriendCheckDone { check, friends } => self.friend_check_done(check, friends),
+            Command::FriendsLoaded { user, friends } => self.friends_loaded(user, friends),
+            Command::FriendshipChanged { users, friends } => self.friendship_changed(users, friends),
+            Command::JoinQueue { conn } => self.join_queue(conn),
+            Command::LeaveQueue { conn } => self.leave_queue(conn),
+            Command::AcceptMatch { conn } => self.accept_match(conn),
+            Command::Chat { conn, text } => self.chat(conn, &text),
+            Command::Spectate { conn, id } => self.spectate(conn, id),
+            Command::WatchFriend { conn, user_id } => self.watch_friend(conn, &user_id),
+            Command::SetTargeting { conn, targeting } => self.set_targeting(conn, targeting),
+            Command::SetTeam { conn, team } => self.set_team(conn, team),
+            Command::AddCpu { conn } => self.add_cpu(conn),
+            Command::SetCpu { conn, slot, difficulty, style, team } => {
+                self.set_cpu(conn, slot, difficulty, style, team)
+            }
+            Command::RemoveCpu { conn, slot } => self.remove_cpu(conn, slot),
+            Command::Follow { conn, slot } => self.follow(conn, slot),
+            Command::Playing { users, reply } => {
+                let _ = reply.send(self.playing(&users));
+            }
+            Command::RankedCheckDone { check, profile } => self.ranked_check_done(check, profile),
+            Command::Revoke { user_id, keep } => self.revoke(user_id, keep),
+            Command::Rename { user_id, username } => self.rename(user_id, &username),
+            Command::Shutdown => self.begin_shutdown(),
+        }
+    }
+
+    pub fn reap_dead(&mut self) {
+        while !self.dead.is_empty() {
+            for conn in std::mem::take(&mut self.dead) {
+                if self.clients.contains_key(&conn) {
+                    warn!("WS {conn} trop lente, fermeture");
+                    self.drop_connection(conn);
+                }
+            }
+        }
+    }
+
+    pub fn tick(&mut self, dt: f32, do_broadcast: bool) {
+        if self.room_list_dirty && self.last_room_list.elapsed() >= Duration::from_millis(200) {
+            self.broadcast_room_list();
+            self.room_list_dirty = false;
+            self.last_room_list = Instant::now();
+        }
+        self.expire_grace_periods();
+
+        let clients = &self.clients;
+        let ticked: Vec<RoomsTicked> = self
+            .rooms
+            .par_iter_mut()
+            .fold(RoomsTicked::default, |mut out, (_, room)| {
+                let (mut outgoing, mut states) = (Vec::new(), Vec::new());
+                out.list_changed |= room.tick_countdown(dt, &mut outgoing);
+                let split = |c| clients.get(&c).is_some_and(Client::splits_states);
+                if let Some(rec) = room.tick_game(do_broadcast, split, &mut states, &mut outgoing) {
+                    if room.series.is_some() {
+                        out.games_won.push((room.id, rec.winner_slot().map(|w| usize::from(w) - 1)));
+                    }
+                    out.records.push(rec);
+                }
+                for (conn, payload) in outgoing {
+                    if clients.get(&conn).is_some_and(|c| !c.send(payload)) {
+                        out.dead.push(conn);
+                    }
+                }
+                for (conn, state) in states {
+                    if clients.get(&conn).is_some_and(|c| !c.send_state(state)) {
+                        out.dead.push(conn);
+                    }
+                }
+                out
+            })
+            .collect();
+
+        for out in ticked {
+            self.dead.extend(out.dead);
+            self.room_list_dirty |= out.list_changed;
+            self.unsaved_matches.extend(out.records);
+            for (id, winner) in out.games_won {
+                self.series_game_won(id, winner);
+            }
+        }
+        self.advance_series();
+        self.expire_matches();
+        self.matchmake();
+    }
+
+    fn expire_grace_periods(&mut self) {
+        let now = Instant::now();
+        let expired: Vec<(RoomId, Token)> = self
+            .rooms
+            .values()
+            .flat_map(|r| {
+                r.members
+                    .iter()
+                    .filter(|m| m.disconnect_at.is_some_and(|t| now.duration_since(t) >= GRACE))
+                    .map(move |m| (r.id, m.token.clone()))
+            })
+            .collect();
+        for (id, token) in expired {
+            if let Some(slot) = self.rooms.get(&id).and_then(|r| r.members.iter().position(|m| m.token == token)) {
+                info!("Grâce expirée, retrait room #{id}");
+                self.release_seat(id, slot, "jamais revenu après sa déconnexion");
+            }
+        }
+    }
+}

@@ -1,0 +1,296 @@
+use std::ops::ControlFlow;
+use std::sync::{Arc, Mutex};
+
+use ed25519_dalek::{Signature, VerifyingKey};
+use sha2::{Digest, Sha256};
+
+const DOWNLOADS: &str = "https://github.com/Priax/Rouillo/releases/download";
+
+/// Releases are signed in CI with the matching private key (a repository
+/// secret); a binary whose signature does not check is never run.
+const PUBLIC_KEY: [u8; 32] = [
+    41, 196, 121, 217, 172, 218, 124, 146, 13, 191, 225, 88, 231, 231, 151, 248, 24, 13, 219, 202, 118, 150, 106, 248,
+    70, 21, 168, 156, 20, 161, 12, 105,
+];
+
+pub const ASSET: &str = if cfg!(windows) { "rouillo-windows-x86_64.exe" } else { "rouillo-linux-x86_64" };
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Status {
+    Idle,
+    Available(String),
+    Checking,
+    Downloading { done: u64, total: Option<u64> },
+    Verifying,
+    Installing,
+    Failed(String),
+    Done,
+}
+
+#[derive(Clone)]
+struct Release {
+    version: String,
+    binary: String,
+    signature: String,
+}
+
+static STATUS: Mutex<Status> = Mutex::new(Status::Idle);
+static RELEASE: Mutex<Option<Release>> = Mutex::new(None);
+
+pub fn status() -> Status {
+    STATUS.lock().map_or(Status::Idle, |s| s.clone())
+}
+
+fn set(status: Status) {
+    if let Ok(mut s) = STATUS.lock() {
+        *s = status;
+    }
+}
+
+const NOT_PUBLISHED: &str = "la nouvelle version est en cours de publication, réessayez dans quelques minutes";
+
+fn remember(release: &Release) {
+    set(Status::Available(release.version.clone()));
+    if let Ok(mut r) = RELEASE.lock() {
+        *r = Some(release.clone());
+    }
+}
+
+/// Looks for a newer release in the background.
+pub fn check() {
+    std::thread::spawn(|| {
+        if let Ok(Some(release)) = latest() {
+            remember(&release);
+        }
+    });
+}
+
+/// Looks for a newer release now and installs it: the server may not have
+/// announced it at start. Without the server, opens the download page.
+pub fn update_now() {
+    set(Status::Checking);
+    std::thread::spawn(|| match latest() {
+        Ok(Some(release)) => {
+            remember(&release);
+            set(match run(&release) {
+                Ok(()) => Status::Done,
+                Err(e) => Status::Failed(e),
+            });
+        }
+        Ok(None) => set(Status::Failed(NOT_PUBLISHED.to_owned())),
+        Err(_) => {
+            set(Status::Idle);
+            crate::update::open_download_page();
+        }
+    });
+}
+
+/// Downloads, checks and installs the release found by `check`, then starts it.
+pub fn install() {
+    let Some(release) = RELEASE.lock().ok().and_then(|r| r.clone()) else {
+        return;
+    };
+    set(Status::Downloading { done: 0, total: None });
+    std::thread::spawn(move || {
+        set(match run(&release) {
+            Ok(()) => Status::Done,
+            Err(e) => Status::Failed(e),
+        });
+    });
+}
+
+fn get(url: &str, accept: &str) -> Result<Vec<u8>, String> {
+    let mut req = ehttp::Request::get(url);
+    req.headers.insert("User-Agent", "rouillo-updater");
+    req.headers.insert("Accept", accept);
+    let resp = ehttp::fetch_blocking(&req)?;
+    if resp.status != 200 {
+        return Err(format!("{url}: {}", resp.status));
+    }
+    Ok(resp.bytes)
+}
+
+#[derive(Default)]
+struct Transfer {
+    bytes: Vec<u8>,
+    total: Option<u64>,
+    outcome: Option<Result<(), String>>,
+}
+
+impl Transfer {
+    fn take(&mut self, part: ehttp::Result<ehttp::streaming::Part>, url: &str) -> ControlFlow<()> {
+        use ehttp::streaming::Part;
+        match part {
+            Ok(Part::Response(resp)) if resp.ok => {
+                self.total = resp.headers.get("content-length").and_then(|n| n.parse().ok());
+                return ControlFlow::Continue(());
+            }
+            Ok(Part::Response(resp)) => self.outcome = Some(Err(format!("{url}: {}", resp.status))),
+            Ok(Part::Chunk(chunk)) if chunk.is_empty() => self.outcome = Some(Ok(())),
+            Ok(Part::Chunk(chunk)) => {
+                self.bytes.extend_from_slice(&chunk);
+                set(Status::Downloading { done: self.bytes.len() as u64, total: self.total });
+                return ControlFlow::Continue(());
+            }
+            Err(e) => self.outcome = Some(Err(e)),
+        }
+        ControlFlow::Break(())
+    }
+}
+
+/// Like `get`, telling `Status::Downloading` how far it got.
+fn download(url: &str) -> Result<Vec<u8>, String> {
+    let mut req = ehttp::Request::get(url);
+    req.headers.insert("User-Agent", "rouillo-updater");
+    req.headers.insert("Accept", "application/octet-stream");
+    set(Status::Downloading { done: 0, total: None });
+    let transfer = Arc::new(Mutex::new(Transfer::default()));
+    let sink = Arc::clone(&transfer);
+    let source = url.to_owned();
+    ehttp::streaming::fetch_streaming_blocking(
+        req,
+        Box::new(move |part| match sink.lock() {
+            Ok(mut t) => t.take(part, &source),
+            Err(_) => ControlFlow::Break(()),
+        }),
+    );
+    let mut transfer = transfer.lock().map_err(|e| e.to_string())?;
+    match transfer.outcome.take() {
+        Some(Ok(())) => Ok(std::mem::take(&mut transfer.bytes)),
+        Some(Err(e)) => Err(e),
+        None => Err(format!("{url}: téléchargement interrompu")),
+    }
+}
+
+fn latest() -> Result<Option<Release>, String> {
+    #[derive(serde::Deserialize)]
+    struct Latest {
+        version: String,
+    }
+    let body = get(&crate::http::api_url("version"), "application/json")?;
+    let Latest { version } = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+    if !newer(&version, env!("CARGO_PKG_VERSION")) {
+        return Ok(None);
+    }
+    let binary = format!("{DOWNLOADS}/v{version}/{ASSET}");
+    Ok(Some(Release { signature: format!("{binary}.sig"), binary, version }))
+}
+
+fn parse(version: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = version.split('.').map(|p| p.parse::<u32>().ok());
+    let v = (parts.next()??, parts.next()??, parts.next()??);
+    parts.next().is_none().then_some(v)
+}
+
+fn newer(candidate: &str, current: &str) -> bool {
+    matches!((parse(candidate), parse(current)), (Some(a), Some(b)) if a > b)
+}
+
+/// What a release signature covers: which file, for which version, with
+/// which content. Signing all three keeps an old binary from passing as new.
+pub fn manifest(asset: &str, version: &str, bytes: &[u8]) -> String {
+    let hash: String = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
+    format!("{asset} {version} {hash}")
+}
+
+fn verify(key: &[u8; 32], manifest: &str, signature_hex: &str) -> bool {
+    let hex = signature_hex.trim();
+    let bytes: Option<Vec<u8>> = (hex.len() == 128)
+        .then(|| (0..64).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect())
+        .flatten();
+    let (Some(bytes), Ok(key)) = (bytes, VerifyingKey::from_bytes(key)) else {
+        return false;
+    };
+    let Ok(signature) = <[u8; 64]>::try_from(bytes.as_slice()).map(|b| Signature::from_bytes(&b)) else {
+        return false;
+    };
+    key.verify_strict(manifest.as_bytes(), &signature).is_ok()
+}
+
+fn run(release: &Release) -> Result<(), String> {
+    let binary = download(&release.binary)?;
+    set(Status::Verifying);
+    let signature = get(&release.signature, "application/octet-stream")?;
+    let signature = String::from_utf8_lossy(&signature);
+    if !verify(&PUBLIC_KEY, &manifest(ASSET, &release.version, &binary), &signature) {
+        return Err("signature invalide, fichier ignoré".to_owned());
+    }
+    set(Status::Installing);
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let fresh = exe.with_extension("new");
+    std::fs::write(&fresh, &binary).map_err(|e| format!("{}: {e}", fresh.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    }
+    let replaced = self_replace::self_replace(&fresh).map_err(|e| e.to_string());
+    let _ = std::fs::remove_file(&fresh);
+    replaced?;
+    #[cfg(windows)]
+    crate::windows::record_installed_version(&release.version);
+    std::process::Command::new(&exe).spawn().map_err(|e| format!("relance: {e}"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    use super::*;
+
+    fn sign(key: &SigningKey, text: &str) -> String {
+        key.sign(text.as_bytes()).to_bytes().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn versions_compare_by_number() {
+        assert!(newer("0.8.10", "0.8.9"));
+        assert!(newer("1.0.0", "0.99.99"));
+        assert!(!newer("0.8.9", "0.8.9"));
+        assert!(!newer("0.8.8", "0.8.9"));
+        assert!(!newer("0.9", "0.8.9"), "not a version");
+        assert!(!newer("0.9.0-beta", "0.8.9"));
+    }
+
+    #[test]
+    fn only_the_signed_file_for_the_signed_version_passes() {
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let public = key.verifying_key().to_bytes();
+        let binary = b"new game";
+        let good = manifest(ASSET, "0.9.0", binary);
+        let signature = sign(&key, &good);
+        assert!(verify(&public, &good, &signature));
+        assert!(!verify(&public, &manifest(ASSET, "0.9.0", b"tampered"), &signature));
+        assert!(!verify(&public, &manifest(ASSET, "0.9.1", binary), &signature), "replayed as another version");
+        assert!(!verify(&public, &manifest("other.exe", "0.9.0", binary), &signature));
+        let stranger = SigningKey::from_bytes(&[8; 32]);
+        assert!(!verify(&public, &good, &sign(&stranger, &good)), "signed by someone else");
+        assert!(!verify(&public, &good, "zz"));
+    }
+
+    #[test]
+    #[ignore = "needs the release key: RELEASE_KEY=path/to/key.pem, run with --ignored"]
+    fn the_release_script_signs_what_the_game_checks() {
+        let key = std::env::var("RELEASE_KEY").expect("RELEASE_KEY");
+        let dir = std::env::temp_dir().join(format!("rouillo-sign-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(ASSET);
+        std::fs::write(&file, b"a release binary").unwrap();
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/sign-release.sh");
+        let status =
+            std::process::Command::new(script).args([key.as_str(), "9.9.9", file.to_str().unwrap()]).status().unwrap();
+        assert!(status.success());
+        let signature = std::fs::read_to_string(dir.join(format!("{ASSET}.sig"))).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let signed = manifest(ASSET, "9.9.9", b"a release binary");
+        assert!(verify(&PUBLIC_KEY, &signed, &signature), "the game would refuse this release");
+        assert!(!verify(&PUBLIC_KEY, &manifest(ASSET, "9.9.8", b"a release binary"), &signature));
+    }
+
+    #[test]
+    fn the_manifest_names_file_version_and_content() {
+        let m = manifest("a", "1.2.3", b"");
+        assert_eq!(m, "a 1.2.3 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    }
+}

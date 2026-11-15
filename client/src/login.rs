@@ -1,0 +1,222 @@
+use std::sync::Arc;
+
+use notan::prelude::*;
+
+use crate::connection::now_secs;
+use crate::nav::{Nav, Transition};
+use crate::state::{ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State};
+use crate::ui::{self, field_clicked, text_field, Field, Rect, SharpText, Status, View, FILL};
+use crate::{http, theme};
+
+const STARTUP_RETRY_SECS: f64 = 5.0;
+
+struct AuthLayout {
+    cx: f32,
+    base_y: f32,
+    card: Rect,
+    tabs: [Rect; 2],
+    username: Rect,
+    password: Rect,
+    submit: Rect,
+    guest: Rect,
+}
+
+/// The title and form are 520 high. When the window is lower, as when a
+/// phone's keyboard takes half of it, the focused field is kept in the middle.
+fn auth_layout(view: View, focused: AuthField) -> AuthLayout {
+    let (ww, wh) = view.size();
+    let cx = ww / 2.0;
+    let field_y = match focused {
+        AuthField::Username => 60.0,
+        AuthField::Password => 140.0,
+    };
+    let base_y = if wh >= 560.0 { wh / 2.0 - 160.0 } else { wh / 2.0 - field_y - 25.0 };
+    let field = |y: f32| Rect::centered_on(cx, y, 420.0, 50.0);
+
+    AuthLayout {
+        cx,
+        base_y,
+        card: Rect::centered_on(cx, base_y - 40.0, 520.0, 440.0),
+        tabs: Rect::centered_on(cx, base_y - 10.0, 460.0, 50.0).columns(20.0, [FILL, FILL]),
+        username: field(base_y + 60.0),
+        password: field(base_y + 140.0),
+        submit: Rect::centered_on(cx, base_y + 220.0, 360.0, 56.0),
+        guest: Rect::centered_on(cx, base_y + 296.0, 360.0, 50.0),
+    }
+}
+
+fn submit(form: &mut AuthForm) {
+    if form.pending.is_some() {
+        return;
+    }
+
+    let username = form.username.trim().to_owned();
+    let password = form.password.to_owned();
+    if username.is_empty() || password.is_empty() {
+        form.status = Status::error("Remplissez tous les champs.");
+        return;
+    }
+
+    let body = serde_json::json!({ "username": username, "password": password }).to_string();
+    let slot = http::new_slot();
+    let path = match form.mode {
+        AuthMode::Login => "login",
+        AuthMode::Register => "register",
+    };
+
+    http::post_json(http::api_url(path), body, None, Arc::clone(&slot));
+    form.status.clear();
+    form.pending = Some(slot);
+}
+
+/// Whether the answer to the form just signed the player in.
+fn poll_auth(state: &mut State) -> bool {
+    let Some(result) = http::take_json::<AuthInfo>(&mut state.auth_form.pending) else {
+        return false;
+    };
+    match result {
+        Ok(r) => {
+            crate::state::save_token(&r.token);
+            state.auth = Some(r);
+            state.auth_form = AuthForm::default();
+            crate::solo::signed_in(state);
+            return true;
+        }
+        Err(msg) => state.auth_form.status = Status::error(msg),
+    }
+
+    false
+}
+
+pub fn check_stored_session(startup: &mut Startup) {
+    startup.retry_at = None;
+    let Some(token) = crate::state::load_stored_token() else {
+        return;
+    };
+
+    let slot = http::new_slot();
+    http::get(http::api_url("me"), Some(token), Arc::clone(&slot));
+    startup.check = Some(slot);
+}
+
+pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
+    let waiting = state.auth.is_none() && matches!(nav.current(), Screen::Title | Screen::Auth);
+    if waiting && state.startup.retry_at.is_some_and(|t| now_secs() >= t) {
+        check_stored_session(&mut state.startup);
+    }
+
+    let Some(result) = http::take(&mut state.startup.check) else {
+        return;
+    };
+    match result {
+        Ok(resp) if resp.status == 200 => {
+            let me = http::json::<ApiMeResponse>(&resp).filter(|_| waiting);
+            if let (Some(me), Some(token)) = (me, crate::state::load_stored_token()) {
+                state.auth = Some(AuthInfo {
+                    token,
+                    user_id: me.id,
+                    username: me.username,
+                    elo: me.elo,
+                    avatar_url: me.avatar_url,
+                });
+                state.auth_form.status.clear();
+                nav.apply(Transition::To(Screen::Menu));
+                crate::solo::signed_in(state);
+            }
+        }
+        Ok(resp) if resp.status == 401 => {
+            crate::state::clear_stored_token();
+            if matches!(nav.current(), Screen::Title) {
+                nav.apply(Transition::To(Screen::Auth));
+            }
+        }
+        _ => {
+            state.startup.retry_at = Some(now_secs() + STARTUP_RETRY_SECS);
+            state.auth_form.status = Status::info("Serveur injoignable, nouvel essai dans quelques secondes...");
+        }
+    }
+}
+
+pub fn update_auth(app: &mut App, state: &mut State) -> Transition {
+    if poll_auth(state) {
+        return Transition::To(Screen::Menu);
+    }
+
+    let layout = auth_layout(state.ui.view(), state.auth_form.focused);
+
+    state.auth_form.focused_input().edit(&state.input.keys);
+    if app.keyboard.was_pressed(KeyCode::Tab) {
+        state.auth_form.focused = match state.auth_form.focused {
+            AuthField::Username => AuthField::Password,
+            AuthField::Password => AuthField::Username,
+        };
+    }
+
+    for (tab, mode) in layout.tabs.iter().zip([AuthMode::Login, AuthMode::Register]) {
+        if state.ui.clicked(*tab) {
+            state.auth_form.mode = mode;
+            state.auth_form.status.clear();
+        }
+    }
+
+    if field_clicked(&state.ui, &state.fonts, layout.username, &mut state.auth_form.username) {
+        state.auth_form.focused = AuthField::Username;
+    }
+    if field_clicked(&state.ui, &state.fonts, layout.password, &mut state.auth_form.password) {
+        state.auth_form.focused = AuthField::Password;
+    }
+
+    if (state.ui.clicked(layout.submit) || app.keyboard.was_pressed(KeyCode::Enter))
+        && state.auth_form.pending.is_none()
+    {
+        submit(&mut state.auth_form);
+    }
+
+    if state.ui.clicked(layout.guest) {
+        state.auth = None;
+        state.auth_form = AuthForm::default();
+        return Transition::To(Screen::Menu);
+    }
+
+    Transition::Stay
+}
+
+pub fn draw_auth(gfx: &mut Graphics, state: &State) {
+    let pal = state.ui.palette();
+    let layout = auth_layout(state.ui.view(), state.auth_form.focused);
+    let AuthLayout { cx, base_y, .. } = layout;
+    let form = &state.auth_form;
+    let modes = [("Connexion", AuthMode::Login), ("Inscription", AuthMode::Register)];
+    let fields = [
+        (layout.username, "Nom d'utilisateur", &form.username, AuthField::Username),
+        (layout.password, "Mot de passe", &form.password, AuthField::Password),
+    ];
+    let loading = form.pending.is_some();
+    let submit_label = match (loading, form.mode) {
+        (true, _) => "Chargement...",
+        (false, AuthMode::Login) => "Se connecter",
+        (false, AuthMode::Register) => "S'inscrire",
+    };
+
+    let mut draw = state.ui.screen_canvas(gfx);
+    draw.sharp_text(&state.fonts.display, "Rouillo")
+        .center(cx, base_y - 110.0)
+        .size(theme::size::HERO)
+        .color(pal.title);
+    ui::card(&mut draw, &pal, layout.card);
+    for (&tab, (label, mode)) in layout.tabs.iter().zip(modes) {
+        state.ui.tab(&mut draw, &state.fonts, tab, label, form.mode == mode);
+    }
+    for (rect, placeholder, input, which) in fields {
+        let field = Field { placeholder, input, focused: form.focused == which };
+        text_field(&mut draw, &state.ui, &state.fonts, rect, &field);
+    }
+    state.ui.button_enabled(&mut draw, &state.fonts, layout.submit, submit_label, !loading);
+    state.ui.button(&mut draw, &state.fonts, layout.guest, "Jouer en invité");
+
+    if let Some((msg, color)) = form.status.shown(&pal) {
+        draw.sharp_text(&state.fonts.text, msg).center(cx, base_y + 370.0).size(theme::size::LABEL).color(color);
+    }
+
+    state.ui.render(gfx, &draw);
+}

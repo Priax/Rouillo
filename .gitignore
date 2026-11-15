@@ -1,0 +1,15 @@
+/target
+*.txt
+adresse_ip.txt
+dist/
+
+flamegraph*.svg
+perf.data*
+deploy/
+
+.env
+
+*.pem
+
+DEPLOY.md
+COMMANDS.md

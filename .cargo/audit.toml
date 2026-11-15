@@ -1,0 +1,5 @@
+# Configuration for `cargo audit`. Advisories ignored on purpose go under
+# [advisories] ignore = [...], each with the reason it does not apply.
+
+[advisories]
+ignore = []
