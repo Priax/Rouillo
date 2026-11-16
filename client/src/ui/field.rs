@@ -24,7 +24,7 @@ fn frame(draw: &mut Draw, pal: &Palette, r: Rect, focused: bool) {
     draw.rect((r.x, r.y), (r.w, r.h)).corner_radius(theme::RADIUS).stroke(2.0).color(border);
 }
 
-fn caret(draw: &mut Draw, ui: &Ui, input: &TextInput, x: f32, mid: f32, size: f32) {
+fn caret(draw: &mut Draw, ui: &mut Ui, input: &TextInput, x: f32, mid: f32, size: f32) {
     if ui.caret_on(input, input.caret()) {
         let h = size * 1.2;
         draw.rect((x - CARET_W / 2.0, mid - h / 2.0), (CARET_W, h)).color(ui.palette().text);
@@ -62,7 +62,7 @@ fn line<'a>(fonts: &Metrics, r: Rect, input: &'a TextInput) -> Line<'a> {
     Line { text, from, caret, size }
 }
 
-pub fn text_field(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Field) {
+pub fn text_field(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, r: Rect, field: &Field) {
     let pal = ui.palette();
     frame(draw, &pal, r, field.focused);
 
@@ -179,7 +179,7 @@ fn area<'a>(fonts: &Metrics, r: Rect, input: &'a TextInput) -> Area<'a> {
     Area { rows, first, visible, caret_row }
 }
 
-pub fn text_area(draw: &mut Draw, ui: &Ui, fonts: &Fonts, r: Rect, field: &Field) {
+pub fn text_area(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, r: Rect, field: &Field) {
     let pal = ui.palette();
     frame(draw, &pal, r, field.focused);
 

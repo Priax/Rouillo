@@ -1,4 +1,5 @@
 use crate::state::{Screen, State};
+use crate::ui::Gui;
 
 /// What a screen wants once its frame is done. Screens have no access to
 /// the navigation: this is how they move.
@@ -53,12 +54,14 @@ impl Nav {
     }
 }
 
-/// The application: where the player is, and everything screens share.
-/// They are apart so that a screen can hold its data and `State` together.
+/// The application: where the player is, what screens share, and what
+/// they draw with. They are apart so that a screen can hold its data,
+/// `State` and `Gui` together.
 #[derive(notan::prelude::AppState)]
 pub struct Root {
     pub nav: Nav,
     pub state: State,
+    pub gui: Gui,
 }
 
 #[cfg(test)]

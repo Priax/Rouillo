@@ -123,7 +123,7 @@ impl BindingsPanel {
         false
     }
 
-    pub fn draw(&self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, bindings: &Bindings) {
+    pub fn draw(&self, draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, bindings: &Bindings) {
         let pal = ui.palette();
         let view = ui.view();
         let c = card(view);

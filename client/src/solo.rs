@@ -7,7 +7,7 @@ use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSetting
 use crate::draw::Hud;
 use crate::nav::Transition;
 use crate::state::{AuthInfo, GameSession, Input, Player, Rival, Screen, State};
-use crate::ui::{self, Frame, Icon, Pill, Rect, SharpText, Size, Stepper, View, FILL};
+use crate::ui::{self, Frame, Gui, Icon, Pill, Rect, SharpText, Size, Stepper, View, FILL};
 use crate::{board_size, http, logic, rooms, theme};
 
 /// The most CPUs a solo game takes on: each one thinks on this device.
@@ -332,10 +332,11 @@ pub fn poll_best(solo: &mut Solo, signed_in: bool) {
     }
 }
 
-pub fn update_game(app: &mut App, state: &mut State, game: &mut SoloGame) -> Transition {
+pub fn update_game(app: &mut App, gui: &Gui, state: &mut State, game: &mut SoloGame) -> Transition {
     let signed_in = state.auth.is_some();
     let mut record = None;
-    let State { solo, settings, ui, input: Input { controls, .. }, .. } = state;
+    let Gui { ui, .. } = gui;
+    let State { solo, settings, input: Input { controls, .. }, .. } = state;
     let input = controls.frame;
     let best = &mut solo.best;
 
@@ -445,12 +446,12 @@ impl Setup {
     }
 }
 
-pub fn update_setup(app: &mut App, state: &mut State) -> Transition {
-    let setup = Setup::new(state.ui.view());
+pub fn update_setup(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
+    let setup = Setup::new(gui.ui.view());
     let settings = &mut state.solo.settings;
 
     if state.solo.sizing {
-        match board_size::update(app, &state.ui, &settings.room.rules, true) {
+        match board_size::update(app, &gui.ui, &settings.room.rules, true) {
             Some(board_size::Action::Close) => state.solo.sizing = false,
             Some(board_size::Action::Adjust(steps)) => {
                 for (setting, dir) in steps {
@@ -462,7 +463,7 @@ pub fn update_setup(app: &mut App, state: &mut State) -> Transition {
         return Transition::Stay;
     }
 
-    let ui = &state.ui;
+    let ui = &gui.ui;
     for i in 0..GAME_ROWS {
         let tile = setup.tile(i);
         if i == SIZE_ROW {
@@ -508,18 +509,18 @@ pub fn update_setup(app: &mut App, state: &mut State) -> Transition {
     Transition::Stay
 }
 
-pub fn draw_setup(gfx: &mut Graphics, state: &State) {
-    let pal = state.ui.palette();
-    let view = state.ui.view();
-    let fonts = &state.fonts;
+pub fn draw_setup(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
+    let pal = gui.ui.palette();
+    let view = gui.ui.view();
+    let fonts = &gui.fonts;
     let settings = &state.solo.settings;
     let setup = Setup::new(view);
     let count = settings.opponents.len();
     let best = format!("Meilleur score: {}", state.solo.best);
 
-    let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.set_input(!state.solo.sizing);
-    state.ui.page_header(&mut draw, fonts, "Solo");
+    let mut draw = gui.ui.screen_canvas(gfx);
+    gui.ui.set_input(!state.solo.sizing);
+    gui.ui.page_header(&mut draw, fonts, "Solo");
     if state.solo.best > 0 {
         ui::pills_ending_at(&mut draw, fonts, &[Pill::small(&best, theme::GOLD)], view.w - 60.0, theme::HEADER_H / 2.0);
     }
@@ -528,9 +529,9 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
     for i in 0..GAME_ROWS {
         let (tile, label, value) = (setup.tile(i), SoloSettings::label(i), settings.value(i));
         if i == SIZE_ROW {
-            state.ui.button_tile(&mut draw, fonts, tile, label, &value);
+            gui.ui.button_tile(&mut draw, fonts, tile, label, &value);
         } else {
-            state.ui.stepper_tile(&mut draw, fonts, tile, label, &value, settings.editable(i));
+            gui.ui.stepper_tile(&mut draw, fonts, tile, label, &value, settings.editable(i));
         }
     }
 
@@ -543,22 +544,22 @@ pub fn draw_setup(gfx: &mut Graphics, state: &State) {
             .center(x, y)
             .size(theme::size::EMPHASIS)
             .color(pal.text_dim);
-        state.ui.stepper_band(&mut draw, fonts, row.difficulty, difficulty.label(), true);
-        state.ui.stepper_band(&mut draw, fonts, row.style, style.character(), true);
-        state.ui.button(&mut draw, fonts, row.remove, Icon::Close);
+        gui.ui.stepper_band(&mut draw, fonts, row.difficulty, difficulty.label(), true);
+        gui.ui.stepper_band(&mut draw, fonts, row.style, style.character(), true);
+        gui.ui.button(&mut draw, fonts, row.remove, Icon::Close);
     }
     if count < MAX_OPPONENTS {
-        state.ui.button(&mut draw, fonts, setup.add(count), "Ajouter un CPU");
+        gui.ui.button(&mut draw, fonts, setup.add(count), "Ajouter un CPU");
     }
 
-    state.ui.menu_bar(&mut draw, fonts, setup.action_row(0), "Lancer la partie", theme::bar::GREEN);
-    state.ui.menu_bar(&mut draw, fonts, setup.action_row(1), "Retour", theme::bar::RED);
+    gui.ui.menu_bar(&mut draw, fonts, setup.action_row(0), "Lancer la partie", theme::bar::GREEN);
+    gui.ui.menu_bar(&mut draw, fonts, setup.action_row(1), "Retour", theme::bar::RED);
 
     if state.solo.sizing {
-        board_size::draw(&mut draw, &state.ui, fonts, &settings.room.rules, true);
+        board_size::draw(&mut draw, &mut gui.ui, fonts, &settings.room.rules, true);
     }
 
-    state.ui.render(gfx, &draw);
+    gui.ui.render(gfx, &draw);
 }
 
 #[cfg(test)]

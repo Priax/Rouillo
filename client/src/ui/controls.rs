@@ -9,7 +9,7 @@ const UNDERLINE: f32 = 3.0;
 impl Ui {
     /// A tab: its label, and an underline that grows from the centre on
     /// hover and spans the whole tab once selected.
-    pub fn tab(&self, draw: &mut Draw, fonts: &Fonts, rect: Rect, label: &str, active: bool) {
+    pub fn tab(&mut self, draw: &mut Draw, fonts: &Fonts, rect: Rect, label: &str, active: bool) {
         let pal = self.palette();
         let r = self.interact(label, rect, !active);
         if r.entered {
@@ -31,7 +31,7 @@ impl Ui {
     }
 
     /// A round avatar showing the player's initial.
-    pub fn avatar(&self, draw: &mut Draw, fonts: &Fonts, rect: Rect, name: &str, picture: Option<&Texture>) {
+    pub fn avatar(&mut self, draw: &mut Draw, fonts: &Fonts, rect: Rect, name: &str, picture: Option<&Texture>) {
         let pal = self.palette();
         let r = self.interact_in(name, rect, super::Area::Pointer, true);
         if r.entered {
@@ -45,7 +45,7 @@ impl Ui {
 
     /// Text that can be clicked: it takes the link colour and an underline
     /// when hovered. `enabled` false draws it as plain text.
-    pub fn link(&self, draw: &mut Draw, fonts: &Fonts, rect: Rect, text: &str, enabled: bool) {
+    pub fn link(&mut self, draw: &mut Draw, fonts: &Fonts, rect: Rect, text: &str, enabled: bool) {
         let pal = self.palette();
         let r = self.interact(text, rect, enabled);
         if r.entered {
@@ -65,7 +65,7 @@ impl Ui {
 
     /// A list row that reacts to the pointer: it lights up and grows an
     /// accent bar on its left edge. The caller draws what the row holds.
-    pub fn row(&self, draw: &mut Draw, rect: Rect, index: usize, id: &str) {
+    pub fn row(&mut self, draw: &mut Draw, rect: Rect, index: usize, id: &str) {
         let pal = self.palette();
         let r = self.interact(id, rect, true);
         if r.entered {

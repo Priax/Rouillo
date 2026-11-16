@@ -143,7 +143,7 @@ pub fn update(app: &App, ui: &Ui, rules: &Rules, editable: bool) -> Option<Actio
     None
 }
 
-pub fn draw(draw: &mut Draw, ui: &Ui, fonts: &Fonts, rules: &Rules, editable: bool) {
+pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, rules: &Rules, editable: bool) {
     let pal = ui.palette();
     let layout = Layout::new(ui.view());
     let well = layout.well(rules.columns, rules.rows);

@@ -18,7 +18,6 @@ mod text;
 mod triangles;
 mod view;
 
-use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -66,12 +65,21 @@ const PRESS_SPEED: f32 = 30.0;
 const FLASH_SPEED: f32 = 8.0;
 const CARET_BLINK: f64 = 0.5;
 
-#[derive(Default)]
-pub struct Ui {
-    inner: RefCell<Inner>,
+/// What screens draw with: the widgets, the fonts, and the pictures
+/// fetched from the server.
+pub struct Gui {
+    pub ui: Ui,
+    pub fonts: Fonts,
+    pub images: crate::images::Images,
 }
 
-struct Inner {
+impl Gui {
+    pub fn new(fonts: Fonts) -> Self {
+        Self { ui: Ui::default(), fonts, images: crate::images::Images::default() }
+    }
+}
+
+pub struct Ui {
     target: Option<RenderTexture>,
     dt: f32,
     time: f64,
@@ -96,7 +104,7 @@ struct Inner {
     pointer: (f32, f32),
 }
 
-impl Default for Inner {
+impl Default for Ui {
     fn default() -> Self {
         Self {
             target: None,
@@ -184,22 +192,21 @@ impl Ui {
     /// even when the screen it triggers is a different one. Returns whether a
     /// button was clicked.
     pub fn begin_frame(&mut self, dt: f32, view: View, mouse: Mouse) -> bool {
-        let inner = self.inner.get_mut();
-        inner.dt = dt.clamp(0.0, MAX_DT);
-        inner.time += f64::from(inner.dt);
-        inner.view = view;
-        let turn = (inner.target_hue - inner.from_hue + 540.0).rem_euclid(360.0) - 180.0;
-        let progress = ease_out(transition_progress(inner.time, inner.entered_at, inner.fade));
-        inner.hue = (inner.from_hue + turn * progress).rem_euclid(360.0);
-        inner.palette = Palette::new(inner.hue);
-        inner.mouse = mouse;
-        inner.input_off = false;
-        inner.widgets.retain(|_, w| std::mem::take(&mut w.touched));
-        inner.drawn.clear();
+        self.dt = dt.clamp(0.0, MAX_DT);
+        self.time += f64::from(self.dt);
+        self.view = view;
+        let turn = (self.target_hue - self.from_hue + 540.0).rem_euclid(360.0) - 180.0;
+        let progress = ease_out(transition_progress(self.time, self.entered_at, self.fade));
+        self.hue = (self.from_hue + turn * progress).rem_euclid(360.0);
+        self.palette = Palette::new(self.hue);
+        self.mouse = mouse;
+        self.input_off = false;
+        self.widgets.retain(|_, w| std::mem::take(&mut w.touched));
+        self.drawn.clear();
 
         let mut clicked = false;
         if mouse.pressed {
-            for w in inner.widgets.values_mut() {
+            for w in self.widgets.values_mut() {
                 if w.live && w.contains(mouse.x, mouse.y) {
                     w.flash = 1.0;
                     clicked = true;
@@ -216,32 +223,30 @@ impl Ui {
     /// screen starts a transition of `fade` seconds: the new one fades and
     /// slides in while the palette moves to its hue, both along the same
     /// curve. The first screen shows up at once.
-    pub fn set_screen(&self, screen: usize, hue: f32, fade: f32) {
-        let mut inner = self.inner.borrow_mut();
-        match inner.screen {
+    pub fn set_screen(&mut self, screen: usize, hue: f32, fade: f32) {
+        match self.screen {
             Some(current) if current == screen => {}
             Some(_) => {
-                inner.screen = Some(screen);
-                inner.focus = None;
-                inner.from_hue = inner.hue;
-                inner.target_hue = hue;
-                inner.entered_at = inner.time;
-                inner.fade = fade;
+                self.screen = Some(screen);
+                self.focus = None;
+                self.from_hue = self.hue;
+                self.target_hue = hue;
+                self.entered_at = self.time;
+                self.fade = fade;
             }
             None => {
-                inner.screen = Some(screen);
-                inner.hue = hue;
-                inner.from_hue = hue;
-                inner.target_hue = hue;
-                inner.palette = Palette::new(hue);
+                self.screen = Some(screen);
+                self.hue = hue;
+                self.from_hue = hue;
+                self.target_hue = hue;
+                self.palette = Palette::new(hue);
             }
         }
     }
 
     /// How far the current screen is into its entrance, eased, in `0..=1`.
     fn transition(&self) -> f32 {
-        let inner = self.inner.borrow();
-        ease_out(transition_progress(inner.time, inner.entered_at, inner.fade))
+        ease_out(transition_progress(self.time, self.entered_at, self.fade))
     }
 
     pub fn waiting_dots(&self) -> String {
@@ -249,22 +254,22 @@ impl Ui {
     }
 
     pub fn time(&self) -> f64 {
-        self.inner.borrow().time
+        self.time
     }
 
     pub fn palette(&self) -> Palette {
-        self.inner.borrow().palette
+        self.palette
     }
 
     pub fn view(&self) -> View {
-        self.inner.borrow().view
+        self.view
     }
 
     /// A canvas for this frame. Everything is drawn into a texture
     /// `SUPERSAMPLE` times the window's size and scaled down by `present`,
     /// which smooths every edge: notan draws shapes as bare triangles, and
     /// multisampling cannot be relied on (Wayland's EGL refuses it here).
-    pub fn canvas(&self, gfx: &mut Graphics) -> Draw {
+    pub fn canvas(&mut self, gfx: &mut Graphics) -> Draw {
         let view = self.view();
         let mut draw = self.target(gfx).create_draw();
         let scale = view.scale * supersample(view);
@@ -273,12 +278,12 @@ impl Ui {
         draw
     }
 
-    pub fn render(&self, gfx: &mut Graphics, draw: &Draw) {
+    pub fn render(&mut self, gfx: &mut Graphics, draw: &Draw) {
         let target = self.target(gfx);
         gfx.render_to(&target, draw);
     }
 
-    pub fn present(&self, gfx: &mut Graphics) {
+    pub fn present(&mut self, gfx: &mut Graphics) {
         let view = self.view();
         let target = self.target(gfx);
         let mut draw = gfx.create_draw();
@@ -287,12 +292,11 @@ impl Ui {
         gfx.render(&draw);
     }
 
-    fn target(&self, gfx: &mut Graphics) -> RenderTexture {
+    fn target(&mut self, gfx: &mut Graphics) -> RenderTexture {
         let view = self.view();
         let factor = view.scale * supersample(view);
         let size = ((view.w * factor).ceil() as u32, (view.h * factor).ceil() as u32);
-        let mut inner = self.inner.borrow_mut();
-        if let Some(target) = inner.target.as_ref().filter(|t| t.size() == (size.0 as f32, size.1 as f32)) {
+        if let Some(target) = self.target.as_ref().filter(|t| t.size() == (size.0 as f32, size.1 as f32)) {
             return target.clone();
         }
         let target = gfx
@@ -300,13 +304,13 @@ impl Ui {
             .with_filter(TextureFilter::Linear, TextureFilter::Linear)
             .build()
             .expect("a render texture the size of the window");
-        inner.target = Some(target.clone());
+        self.target = Some(target.clone());
         target
     }
 
     /// Keeps this frame's click from what lies under the widget that took it.
     pub fn swallow_click(&mut self) {
-        self.inner.get_mut().mouse.pressed = false;
+        self.mouse.pressed = false;
     }
 
     pub fn clicked(&self, r: Rect) -> bool {
@@ -314,18 +318,17 @@ impl Ui {
     }
 
     pub fn click_in(&self, r: Rect) -> Option<(f32, f32)> {
-        let m = self.inner.borrow().mouse;
+        let m = self.mouse;
         (m.pressed && r.contains(m.x, m.y)).then_some((m.x, m.y))
     }
 
     pub fn pressed(&self, label: &str) -> bool {
-        let inner = self.inner.borrow();
-        let (m, label) = (inner.mouse, hash_of(label));
-        m.pressed && inner.widgets.iter().any(|(&(l, _), w)| l == label && w.live && w.contains(m.x, m.y))
+        let (m, label) = (self.mouse, hash_of(label));
+        m.pressed && self.widgets.iter().any(|(&(l, _), w)| l == label && w.live && w.contains(m.x, m.y))
     }
 
     pub fn bar_clicked(&self, row: Rect) -> bool {
-        let m = self.inner.borrow().mouse;
+        let m = self.mouse;
         m.pressed && bar::contains(row, m.x, m.y)
     }
 
@@ -334,33 +337,30 @@ impl Ui {
     /// changes or the caret moves, so that it never vanishes under the typing.
     /// Leaves gamepad control as soon as the mouse moves.
     pub fn note_pointer(&mut self, real: Mouse) {
-        let inner = self.inner.get_mut();
-        if (real.x, real.y) != inner.pointer {
-            inner.pointer = (real.x, real.y);
-            inner.pad = false;
+        if (real.x, real.y) != self.pointer {
+            self.pointer = (real.x, real.y);
+            self.pad = false;
         }
     }
 
     /// A click on the widget the gamepad points at, to stand for the mouse.
     pub fn pad_click(&self) -> Option<Mouse> {
-        let inner = self.inner.borrow();
-        let w = inner.widgets.get(&inner.focus?).filter(|w| inner.pad && w.live)?;
+        let w = self.widgets.get(&self.focus?).filter(|w| self.pad && w.live)?;
         let (x, y) = w.rect.center();
         Some(Mouse { x, y, down: true, pressed: true })
     }
 
     /// Moves the gamepad's pointer to the nearest live widget in `dir`, or
     /// onto the screen's first widget if it pointed at none.
-    pub fn move_focus(&self, (dx, dy): (f32, f32)) {
-        let mut inner = self.inner.borrow_mut();
-        let live: Vec<((u64, u32), (f32, f32))> = inner
+    pub fn move_focus(&mut self, (dx, dy): (f32, f32)) {
+        let live: Vec<((u64, u32), (f32, f32))> = self
             .widgets
             .iter()
             .filter(|(_, w)| w.live && w.area != Area::Pointer)
             .map(|(k, w)| (*k, w.rect.center()))
             .collect();
-        let current = inner.focus.and_then(|f| live.iter().find(|(k, _)| *k == f).copied());
-        let next = match current.filter(|_| inner.pad) {
+        let current = self.focus.and_then(|f| live.iter().find(|(k, _)| *k == f).copied());
+        let next = match current.filter(|_| self.pad) {
             None => live
                 .iter()
                 .min_by(|a, b| (a.1 .1, a.1 .0).partial_cmp(&(b.1 .1, b.1 .0)).unwrap_or(Ordering::Equal))
@@ -375,41 +375,39 @@ impl Ui {
                 })
                 .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
                 .map(|(k, _)| k)
-                .or(inner.focus),
+                .or(self.focus),
         };
-        inner.focus = next;
-        inner.pad = next.is_some();
+        self.focus = next;
+        self.pad = next.is_some();
     }
 
     pub fn pad_active(&self) -> bool {
-        self.inner.borrow().pad
+        self.pad
     }
 
     pub fn mouse(&self) -> Mouse {
-        self.inner.borrow().mouse
+        self.mouse
     }
 
-    pub fn caret_on(&self, text: &str, at: usize) -> bool {
-        let mut inner = self.inner.borrow_mut();
+    pub fn caret_on(&mut self, text: &str, at: usize) -> bool {
         let text = Some(hash_of(&(text, at)));
-        if inner.caret_text != text {
-            inner.caret_text = text;
-            inner.caret_since = inner.time;
+        if self.caret_text != text {
+            self.caret_text = text;
+            self.caret_since = self.time;
         }
-        (inner.time - inner.caret_since) % (2.0 * CARET_BLINK) < CARET_BLINK
+        (self.time - self.caret_since) % (2.0 * CARET_BLINK) < CARET_BLINK
     }
 
-    pub fn set_input(&self, on: bool) {
-        self.inner.borrow_mut().input_off = !on;
+    pub fn set_input(&mut self, on: bool) {
+        self.input_off = !on;
     }
 
-    fn interact(&self, label: &str, rect: Rect, enabled: bool) -> Response {
+    fn interact(&mut self, label: &str, rect: Rect, enabled: bool) -> Response {
         self.interact_in(label, rect, Area::Whole, enabled)
     }
 
-    fn interact_in(&self, label: &str, rect: Rect, area: Area, enabled: bool) -> Response {
-        let mut inner = self.inner.borrow_mut();
-        let Inner { dt, mouse, input_off, widgets, drawn, focus, pad, .. } = &mut *inner;
+    fn interact_in(&mut self, label: &str, rect: Rect, area: Area, enabled: bool) -> Response {
+        let Self { dt, mouse, input_off, widgets, drawn, focus, pad, .. } = self;
         let live = enabled && !*input_off;
 
         let label = hash_of(label);
@@ -549,7 +547,7 @@ mod tests {
         ui.set_screen(0, hue::GREEN, TRANSITION);
         ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
         assert!((ui.transition() - 1.0).abs() < f32::EPSILON);
-        assert!((ui.inner.borrow().hue - hue::GREEN).abs() < f32::EPSILON);
+        assert!((ui.hue - hue::GREEN).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -561,16 +559,16 @@ mod tests {
         ui.set_screen(1, hue::PINK, TRANSITION);
         assert!(ui.transition() < f32::EPSILON, "the new screen starts hidden");
         frame(&mut ui);
-        let h = ui.inner.borrow().hue;
+        let h = ui.hue;
         assert!(h > hue::PURPLE && h < hue::PINK, "from 255 towards 333, got {h}");
         for _ in 0..30 {
             frame(&mut ui);
         }
         assert!((ui.transition() - 1.0).abs() < f32::EPSILON, "done in {TRANSITION}s");
-        assert!((ui.inner.borrow().hue - hue::PINK).abs() < 1e-3);
+        assert!((ui.hue - hue::PINK).abs() < 1e-3);
         ui.set_screen(2, hue::ORANGE, TRANSITION);
         frame(&mut ui);
-        let h = ui.inner.borrow().hue;
+        let h = ui.hue;
         assert!(h > hue::PINK || h < hue::ORANGE, "333 to 45 crosses 360, got {h}");
         ui.set_screen(2, hue::ORANGE, TRANSITION);
         assert!(ui.transition() > 0.0, "staying on a screen does not restart it");

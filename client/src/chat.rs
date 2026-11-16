@@ -126,7 +126,7 @@ impl Chat {
     }
 
     /// The lobby's chat: a card with the conversation and its field.
-    pub fn draw_card(&self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect) {
+    pub fn draw_card(&self, draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, area: Rect) {
         let pal = ui.palette();
         let field = Field { placeholder: "Écrire un message...", input: &self.input, focused: self.focused };
 
@@ -136,7 +136,7 @@ impl Chat {
     }
 
     /// The in-game chat: recent messages that fade, and the field once open.
-    pub fn draw_overlay(&self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect, hint: Option<&str>) {
+    pub fn draw_overlay(&self, draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, area: Rect, hint: Option<&str>) {
         let pal = ui.palette();
         let field =
             Field { placeholder: "Entrée pour envoyer, Échap pour fermer", input: &self.input, focused: true };

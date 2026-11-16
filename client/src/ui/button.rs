@@ -87,12 +87,12 @@ impl<'a> Label<'a> {
 }
 
 impl Ui {
-    pub fn button<'a>(&self, draw: &mut Draw, fonts: &Fonts, rect: Rect, label: impl Into<Label<'a>>) {
+    pub fn button<'a>(&mut self, draw: &mut Draw, fonts: &Fonts, rect: Rect, label: impl Into<Label<'a>>) {
         self.button_enabled(draw, fonts, rect, label, true);
     }
 
     pub fn button_enabled<'a>(
-        &self,
+        &mut self,
         draw: &mut Draw,
         fonts: &Fonts,
         rect: Rect,

@@ -8,7 +8,7 @@ use crate::images::Images;
 use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State};
 use crate::ui::{
-    self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Label, Pager, Pill,
+    self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Gui, Label, Pager, Pill,
     Rect, SharpText, Size, Status, TextInput, Ui, View,
 };
 use crate::{http, theme};
@@ -117,7 +117,7 @@ fn watch_btn(view: View, row: usize) -> Rect {
 
 type Pictures = HashMap<String, Texture>;
 
-fn pictures<'a>(gfx: &mut Graphics, images: &Images, urls: impl Iterator<Item = &'a Option<String>>) -> Pictures {
+fn pictures<'a>(gfx: &mut Graphics, images: &mut Images, urls: impl Iterator<Item = &'a Option<String>>) -> Pictures {
     urls.flatten().filter_map(|url| Some((url.clone(), images.get(gfx, url)?))).collect()
 }
 
@@ -315,18 +315,18 @@ enum FriendAction {
     Cancel(String),
 }
 
-pub fn update_friends(app: &mut App, state: &mut State, f: &mut FriendsData) -> Transition {
+pub fn update_friends(app: &mut App, gui: &Gui, state: &mut State, f: &mut FriendsData) -> Transition {
     poll_list(f);
     poll_search(f);
     poll_add(state, f);
     poll_action(state, f);
 
-    let view = state.ui.view();
+    let view = gui.ui.view();
     let paging = f.pages.iter().any(Pager::focused);
 
-    if field_clicked(&state.ui, &state.fonts, search_box(view), &mut f.search_input) {
+    if field_clicked(&gui.ui, &gui.fonts, search_box(view), &mut f.search_input) {
         f.search_focused = true;
-    } else if state.ui.clicked(Rect::at(0.0, 0.0, view.w, view.h)) {
+    } else if gui.ui.clicked(Rect::at(0.0, 0.0, view.w, view.h)) {
         f.search_focused = false;
     }
     let searching = f.search_focused && !paging;
@@ -337,10 +337,10 @@ pub fn update_friends(app: &mut App, state: &mut State, f: &mut FriendsData) -> 
     for col in 0..3 {
         let pages = page_count(lists(f)[col].len(), rows_for(view));
         f.pages[col].clamp(pages);
-        f.pages[col].update(app, &state.ui, &state.fonts, &state.input.keys, pager_area(view, col), pages);
+        f.pages[col].update(app, &gui.ui, &gui.fonts, &state.input.keys, pager_area(view, col), pages);
     }
 
-    if state.ui.clicked(search_submit_btn(view)) || (searching && app.keyboard.was_pressed(KeyCode::Enter)) {
+    if gui.ui.clicked(search_submit_btn(view)) || (searching && app.keyboard.was_pressed(KeyCode::Enter)) {
         let q = search_query(f);
         if looks_like_uuid(&q) {
             return crate::profile::enter_other_profile(state, q, "...".to_owned(), Some(f));
@@ -348,20 +348,20 @@ pub fn update_friends(app: &mut App, state: &mut State, f: &mut FriendsData) -> 
         try_search(state, f);
     }
 
-    if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if gui.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Transition::To(Screen::Menu);
     }
 
-    if can_refresh(f) && state.ui.clicked(refresh_btn(view)) {
+    if can_refresh(f) && gui.ui.clicked(refresh_btn(view)) {
         refresh_list(state, f);
     }
 
-    if let Some((uid, uname)) = clicked_profile(f, &state.ui, view).or_else(|| clicked_listed(f, &state.ui, view)) {
+    if let Some((uid, uname)) = clicked_profile(f, &gui.ui, view).or_else(|| clicked_listed(f, &gui.ui, view)) {
         return crate::profile::enter_other_profile(state, uid, uname, Some(f));
     }
 
-    let add = clicked_add(f, &state.ui, view);
-    let action = clicked_action(f, &state.ui, view);
+    let add = clicked_add(f, &gui.ui, view);
+    let action = clicked_action(f, &gui.ui, view);
     if let Some(uid) = add {
         send_add_request(state, f, &uid);
     }
@@ -492,24 +492,24 @@ fn apply_action(state: &State, f: &mut FriendsData, action: FriendAction) {
     }
 }
 
-pub fn draw_friends(gfx: &mut Graphics, state: &State, f: &FriendsData) {
-    let view = state.ui.view();
+pub fn draw_friends(gfx: &mut Graphics, gui: &mut Gui, f: &FriendsData) {
+    let view = gui.ui.view();
     let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
-    let pics = pictures(gfx, &state.images, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
+    let pics = pictures(gfx, &mut gui.images, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
     let label = Label::busy_or(f.list_slot.is_some(), "Rafraîchir");
 
-    let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.page_header(&mut draw, &state.fonts, "Amis");
-    draw_search(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
-    draw_lists(&mut draw, &state.ui, &state.fonts, f, (view, &pics));
+    let mut draw = gui.ui.screen_canvas(gfx);
+    gui.ui.page_header(&mut draw, &gui.fonts, "Amis");
+    draw_search(&mut draw, &mut gui.ui, &gui.fonts, f, (view, &pics));
+    draw_lists(&mut draw, &mut gui.ui, &gui.fonts, f, (view, &pics));
 
-    state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
-    state.ui.button_enabled(&mut draw, &state.fonts, refresh_btn(view), label, can_refresh(f));
+    gui.ui.button(&mut draw, &gui.fonts, back_btn(view), "Retour");
+    gui.ui.button_enabled(&mut draw, &gui.fonts, refresh_btn(view), label, can_refresh(f));
 
-    state.ui.render(gfx, &draw);
+    gui.ui.render(gfx, &draw);
 }
 
-fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
+fn draw_search(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
     let pal = ui.palette();
     let field = search_box(view);
     let searching = f.search_slot.is_some();
@@ -562,7 +562,7 @@ fn draw_search(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, 
     }
 }
 
-fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
+fn draw_lists(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
     let pal = ui.palette();
     let columns = [
         ("Amis", &f.friends, "Aucun ami pour l'instant"),
@@ -596,7 +596,7 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, p
             (view, 0),
             (columns[0].1, &f.pages[0], pics),
             columns[0].2,
-            |draw, fonts, entry, i| {
+            |draw, ui, fonts, entry, i| {
                 if confirm == Some(entry.user_id.as_str()) {
                     ui.button_enabled(draw, fonts, confirm_yes_btn(view, i), "Oui", !busy);
                     ui.button(draw, fonts, confirm_no_btn(view, i), "Non");
@@ -609,13 +609,29 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, p
                 }
             },
         );
-        draw_col(draw, ui, fonts, (view, 1), (columns[1].1, &f.pages[1], pics), columns[1].2, |draw, fonts, _, i| {
-            ui.button_enabled(draw, fonts, accept_btn(view, i), "Accepter", !busy);
-            ui.button_enabled(draw, fonts, reject_btn(view, i), "Refuser", !busy);
-        });
-        draw_col(draw, ui, fonts, (view, 2), (columns[2].1, &f.pages[2], pics), columns[2].2, |draw, fonts, _, i| {
-            ui.button_enabled(draw, fonts, remove_btn(view, 2, i), "Annuler", !busy);
-        });
+        draw_col(
+            draw,
+            ui,
+            fonts,
+            (view, 1),
+            (columns[1].1, &f.pages[1], pics),
+            columns[1].2,
+            |draw, ui, fonts, _, i| {
+                ui.button_enabled(draw, fonts, accept_btn(view, i), "Accepter", !busy);
+                ui.button_enabled(draw, fonts, reject_btn(view, i), "Refuser", !busy);
+            },
+        );
+        draw_col(
+            draw,
+            ui,
+            fonts,
+            (view, 2),
+            (columns[2].1, &f.pages[2], pics),
+            columns[2].2,
+            |draw, ui, fonts, _, i| {
+                ui.button_enabled(draw, fonts, remove_btn(view, 2, i), "Annuler", !busy);
+            },
+        );
     }
 
     for (col, list) in lists(f).into_iter().enumerate() {
@@ -635,14 +651,14 @@ fn draw_lists(draw: &mut Draw, ui: &Ui, fonts: &Fonts, f: &FriendsData, (view, p
 
 fn draw_col<F>(
     draw: &mut Draw,
-    ui: &Ui,
+    ui: &mut Ui,
     fonts: &Fonts,
     (view, col): (View, usize),
     (list, pager, pics): (&[FriendEntry], &Pager, &Pictures),
     empty_msg: &str,
     draw_buttons: F,
 ) where
-    F: Fn(&mut Draw, &Fonts, &FriendEntry, usize),
+    F: Fn(&mut Draw, &mut Ui, &Fonts, &FriendEntry, usize),
 {
     let pal = &ui.palette();
     if list.is_empty() {
@@ -668,7 +684,7 @@ fn draw_col<F>(
             .left(text_x, mid + 10.0)
             .size(theme::size::SMALL)
             .color(theme::GOLD);
-        draw_buttons(draw, fonts, e, i);
+        draw_buttons(draw, ui, fonts, e, i);
     }
 }
 

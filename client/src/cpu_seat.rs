@@ -87,7 +87,7 @@ pub fn update(app: &App, ui: &Ui, seat: CpuSeat) -> Option<Action> {
     None
 }
 
-pub fn draw(draw: &mut Draw, ui: &Ui, fonts: &Fonts, seat: CpuSeat) {
+pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, seat: CpuSeat) {
     let pal = ui.palette();
     let modal = modal(ui.view());
 

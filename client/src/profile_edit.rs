@@ -8,8 +8,8 @@ use crate::picker::{self, Picked};
 use crate::state::{ApiUserProfile, Input, ProfileData, State};
 use crate::theme;
 use crate::ui::{
-    area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field, Fonts, Rect, SharpText, Status,
-    TextInput, Ui, FILL,
+    area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field, Fonts, Gui, Rect, SharpText,
+    Status, TextInput, Ui, FILL,
 };
 
 const BIO_LINES: usize = 6;
@@ -252,11 +252,12 @@ fn save(form: &mut EditForm, token: Option<String>) {
     form.status.clear();
 }
 
-pub fn update(app: &mut App, state: &mut State, profile: &mut ProfileData) {
-    let cx = state.ui.view().w / 2.0;
+pub fn update(app: &mut App, gui: &Gui, state: &mut State, profile: &mut ProfileData) {
+    let cx = gui.ui.view().w / 2.0;
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let (save_btn, cancel_btn) = buttons(cx);
-    let State { ui, fonts, input: Input { keys, .. }, .. } = state;
+    let Gui { ui, fonts, .. } = gui;
+    let State { input: Input { keys, .. }, .. } = state;
     let Some(form) = profile.edit.as_mut() else { return };
 
     match form.focused {
@@ -298,7 +299,7 @@ pub fn update(app: &mut App, state: &mut State, profile: &mut ProfileData) {
     }
 }
 
-pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: &ApiUserProfile, cx: f32) {
+pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: &ApiUserProfile, cx: f32) {
     let pal = ui.palette();
     let (save_btn, cancel_btn) = buttons(cx);
     let saving = form.pending.is_some();

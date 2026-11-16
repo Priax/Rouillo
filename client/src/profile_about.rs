@@ -78,7 +78,7 @@ pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &Fonts, summary: &Summary, 
     }
 }
 
-pub fn draw_more_link(draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect) {
+pub fn draw_more_link(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, area: Rect) {
     let w = fonts.width(Face::Text, MORE, theme::size::BODY) + 8.0;
     let link = Rect::at(area.x + area.w - w, area.y - 13.0, w, 26.0);
 
@@ -89,7 +89,7 @@ pub fn overlay_closed(app: &App, ui: &Ui) -> bool {
     Modal::new(ui.view(), OVERLAY_W).dismissed(ui) || app.keyboard.was_pressed(KeyCode::Escape)
 }
 
-pub fn draw_overlay(draw: &mut Draw, ui: &Ui, fonts: &Fonts, info: &ApiUserProfile) {
+pub fn draw_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, info: &ApiUserProfile) {
     let modal = Modal::new(ui.view(), OVERLAY_W);
     let title = fonts.fit(Face::Display, &info.username, theme::size::HEADING, modal.card.w - 120.0);
     let area = modal.body().below(LABEL_H);

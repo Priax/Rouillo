@@ -11,12 +11,12 @@ const BAND: Color = Color::new(0.0, 0.0, 0.0, 0.28);
 const TEXT_HEIGHT: f32 = 0.42;
 
 impl Ui {
-    pub fn menu_bar(&self, draw: &mut Draw, fonts: &Fonts, row: Rect, label: &str, color: Color) {
+    pub fn menu_bar(&mut self, draw: &mut Draw, fonts: &Fonts, row: Rect, label: &str, color: Color) {
         self.menu_bar_enabled(draw, fonts, row, label, color, true);
     }
 
     pub fn menu_bar_enabled(
-        &self,
+        &mut self,
         draw: &mut Draw,
         fonts: &Fonts,
         row: Rect,

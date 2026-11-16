@@ -292,7 +292,7 @@ pub fn update(
     Outcome::Stay
 }
 
-pub fn draw(ui: &Ui, draw: &mut Draw, fonts: &Fonts, form: &AccountForm, cx: f32) {
+pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &Fonts, form: &AccountForm, cx: f32) {
     let pal = ui.palette();
     let choosing = form.page == Page::Choose;
     let (confirm_btn, cancel_btn) = buttons(cx, form);

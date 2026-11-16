@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -16,13 +15,13 @@ enum Entry {
 /// new URL, so an entry never goes stale.
 #[derive(Default)]
 pub struct Images {
-    entries: RefCell<HashMap<String, Entry>>,
+    entries: HashMap<String, Entry>,
 }
 
 impl Images {
     /// The picture at `url`, a path on the API server, once it has loaded.
-    pub fn get(&self, gfx: &mut Graphics, url: &str) -> Option<Texture> {
-        let mut entries = self.entries.borrow_mut();
+    pub fn get(&mut self, gfx: &mut Graphics, url: &str) -> Option<Texture> {
+        let entries = &mut self.entries;
         let entry = entries.entry(url.to_owned()).or_insert_with(|| {
             let slot = http::new_slot();
             http::get(http::resource_url(url), None, Arc::clone(&slot));
@@ -48,7 +47,7 @@ impl Images {
         }
     }
 
-    pub fn get_opt(&self, gfx: &mut Graphics, url: Option<&str>) -> Option<Texture> {
+    pub fn get_opt(&mut self, gfx: &mut Graphics, url: Option<&str>) -> Option<Texture> {
         url.and_then(|u| self.get(gfx, u))
     }
 }

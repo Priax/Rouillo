@@ -6,7 +6,7 @@ use crate::demo::Demo;
 use crate::nav::Transition;
 use crate::pads::Pad;
 use crate::state::{Screen, State};
-use crate::ui::{self, Face, Fonts, Frame, Icon, Rect, SharpText, Size, Ui, View, FILL};
+use crate::ui::{self, Face, Fonts, Frame, Gui, Icon, Rect, SharpText, Size, Ui, View, FILL};
 use crate::{draw as game_draw, theme};
 
 const RULES: [(&str, &str); 7] = [
@@ -76,24 +76,24 @@ pub fn enter() -> Transition {
     Transition::To(Screen::Help(Box::new(HelpView { demo: Demo::new(), rules: false })))
 }
 
-pub fn update(app: &App, state: &State, help: &mut HelpView) -> Transition {
-    let view = state.ui.view();
+pub fn update(app: &App, gui: &Gui, help: &mut HelpView) -> Transition {
+    let view = gui.ui.view();
     let (info, demo_card) = cards(view);
     let [previous, next] = lesson_arrows(demo_card);
     let [controls, rules] = tabs(info);
 
     help.demo.update(app.timer.delta_f32());
-    if state.ui.clicked(previous) || app.keyboard.was_pressed(KeyCode::ArrowLeft) {
+    if gui.ui.clicked(previous) || app.keyboard.was_pressed(KeyCode::ArrowLeft) {
         help.demo.previous();
-    } else if state.ui.clicked(next) || app.keyboard.was_pressed(KeyCode::ArrowRight) {
+    } else if gui.ui.clicked(next) || app.keyboard.was_pressed(KeyCode::ArrowRight) {
         help.demo.next();
     }
-    if state.ui.clicked(controls) {
+    if gui.ui.clicked(controls) {
         help.rules = false;
-    } else if state.ui.clicked(rules) {
+    } else if gui.ui.clicked(rules) {
         help.rules = true;
     }
-    if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if gui.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Transition::To(Screen::Menu);
     }
 
@@ -189,7 +189,7 @@ fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect) {
 
 /// The demo: its lesson above the board, the key just pressed below it, and
 /// the explanation over the board while the game stands still.
-fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, time: f32) {
+fn draw_demo(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, card: Rect, demo: &Demo, time: f32) {
     let pal = ui.palette();
     let title = demo.title();
     let title = fonts.fit(Face::Display, &title, theme::size::LABEL, card.w - 110.0);
@@ -231,25 +231,26 @@ fn draw_demo(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, demo: &Demo, t
     }
 }
 
-pub fn draw(gfx: &mut Graphics, state: &State, help: &HelpView) {
-    let pal = state.ui.palette();
-    let view = state.ui.view();
+pub fn draw(gfx: &mut Graphics, gui: &mut Gui, state: &State, help: &HelpView) {
+    let pal = gui.ui.palette();
+    let view = gui.ui.view();
     let (info, demo_card) = cards(view);
     let rules = help.rules;
     let [controls_tab, rules_tab] = tabs(info);
 
-    let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.page_header(&mut draw, &state.fonts, "Comment jouer");
+    let mut draw = gui.ui.screen_canvas(gfx);
+    gui.ui.page_header(&mut draw, &gui.fonts, "Comment jouer");
     ui::card(&mut draw, &pal, info);
-    state.ui.tab(&mut draw, &state.fonts, controls_tab, "Contrôles", !rules);
-    state.ui.tab(&mut draw, &state.fonts, rules_tab, "Règles", rules);
+    gui.ui.tab(&mut draw, &gui.fonts, controls_tab, "Contrôles", !rules);
+    gui.ui.tab(&mut draw, &gui.fonts, rules_tab, "Règles", rules);
     if rules {
-        draw_rules(&mut draw, &state.ui, &state.fonts, info);
+        draw_rules(&mut draw, &gui.ui, &gui.fonts, info);
     } else {
-        draw_controls(&mut draw, &state.ui, &state.fonts, info, &state.input.controls.bindings);
+        draw_controls(&mut draw, &gui.ui, &gui.fonts, info, &state.input.controls.bindings);
     }
-    draw_demo(&mut draw, &state.ui, &state.fonts, demo_card, &help.demo, state.ui.time() as f32);
-    state.ui.button(&mut draw, &state.fonts, back_btn(view), "Retour");
+    let time = gui.ui.time() as f32;
+    draw_demo(&mut draw, &mut gui.ui, &gui.fonts, demo_card, &help.demo, time);
+    gui.ui.button(&mut draw, &gui.fonts, back_btn(view), "Retour");
 
-    state.ui.render(gfx, &draw);
+    gui.ui.render(gfx, &draw);
 }

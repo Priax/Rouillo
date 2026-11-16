@@ -63,7 +63,7 @@ impl History {
         }
     }
 
-    pub fn draw_pager(&self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect, total: i64) {
+    pub fn draw_pager(&self, draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, area: Rect, total: i64) {
         self.pager.draw(draw, ui, fonts, area, self.pages(total));
     }
 }

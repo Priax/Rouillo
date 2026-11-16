@@ -314,7 +314,7 @@ fn winner(session: &GameSession, team: u8) -> String {
     format!("{} WINS", session.name_of(slot))
 }
 
-pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &Ui, fonts: &Fonts, hud: Hud) {
+pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &mut Ui, fonts: &Fonts, hud: Hud) {
     let layout = GameLayout::new(ui.view(), session);
     let pal = ui.palette();
     let time = app.timer.elapsed_f32();
@@ -534,7 +534,7 @@ fn draw_arena(
 }
 
 /// One's board once out: the others play on, one may leave.
-fn draw_out(draw: &mut Draw, ui: &Ui, fonts: &Fonts, mine: Rect, hud: Hud) {
+fn draw_out(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, mine: Rect, hud: Hud) {
     let frame = framed(mine);
     let (cx, cy) = mine.center();
     let label = match hud {
@@ -836,7 +836,7 @@ pub fn exit_rows(view: View, with_back: bool) -> (Rect, Rect) {
     }
 }
 
-fn draw_exit_buttons(draw: &mut Draw, ui: &Ui, fonts: &Fonts, hud: Hud, forfeits: bool) {
+fn draw_exit_buttons(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, hud: Hud, forfeits: bool) {
     let (leave, back, has_back) = match hud {
         Hud::Online(Role { series: Some(series), .. }) => {
             let leave = if series.over.is_some() { "Retour au menu" } else { "Abandonner (défaite)" };

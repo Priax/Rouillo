@@ -12,7 +12,7 @@ impl Ui {
     /// The canvas a screen draws on: its section's background with triangles
     /// drifting up through it, then the screen's own content, which fades and
     /// slides in while a transition runs. The backdrop stays put under it.
-    pub fn screen_canvas(&self, gfx: &mut Graphics) -> Draw {
+    pub fn screen_canvas(&mut self, gfx: &mut Graphics) -> Draw {
         let mut draw = self.canvas(gfx);
         let pal = self.palette();
         let view = self.view();

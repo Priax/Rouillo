@@ -58,6 +58,8 @@ use pads::{Pad, Pads};
 use state::{Input, Network, Screen, State};
 use ui::{Rect, SharpText, Size};
 
+use crate::ui::Gui;
+
 const BANNER_H: f32 = 80.0;
 const MAINTENANCE_H: f32 = 30.0;
 
@@ -82,8 +84,8 @@ pub fn server_url() -> String {
 }
 
 fn setup(gfx: &mut Graphics) -> Root {
-    let fonts = ui::Fonts::load(gfx).expect("the bundled fonts are valid");
-    let mut state = State::new(fonts);
+    let gui = ui::Gui::new(ui::Fonts::load(gfx).expect("the bundled fonts are valid"));
+    let mut state = State::new();
     #[cfg(target_arch = "wasm32")]
     {
         web::start_text_input();
@@ -100,7 +102,7 @@ fn setup(gfx: &mut Graphics) -> Root {
         current = Screen::Title;
     }
 
-    Root { nav: Nav::new(current), state }
+    Root { nav: Nav::new(current), state, gui }
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -169,11 +171,12 @@ fn can_chat(state: &State) -> bool {
 
 /// Runs the in-game chat and returns the game's input for this frame, without
 /// the keys the chat took.
-fn game_chat(app: &App, state: &mut State) -> controls::Frame {
+fn game_chat(app: &App, gui: &Gui, state: &mut State) -> controls::Frame {
     let mut input = state.input.controls.frame;
     let allowed = can_chat(state);
-    let area = game_chat_area(state.ui.view(), state.input.touch.active);
-    let State { room, ui, fonts, input: Input { keys, .. }, net: Network { conn, .. }, .. } = state;
+    let area = game_chat_area(gui.ui.view(), state.input.touch.active);
+    let Gui { ui, fonts, .. } = gui;
+    let State { room, input: Input { keys, .. }, net: Network { conn, .. }, .. } = state;
     let Some(chat) = room.as_mut().map(|r| &mut r.chat) else {
         return input;
     };
@@ -231,16 +234,16 @@ fn banner_buttons(ww: f32, wh: f32) -> (Rect, Rect) {
     (accept, decline)
 }
 
-fn update_invitation(state: &mut State, nav: &mut Nav) {
+fn update_invitation(gui: &mut Gui, state: &mut State, nav: &mut Nav) {
     if state.pending_invitation.is_none() {
         return;
     }
 
-    let (ww, wh) = state.ui.view().size();
+    let (ww, wh) = gui.ui.view().size();
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
-    let on_banner = state.ui.clicked(Rect::at(0.0, wh - BANNER_H, ww, BANNER_H));
+    let on_banner = gui.ui.clicked(Rect::at(0.0, wh - BANNER_H, ww, BANNER_H));
 
-    if state.ui.clicked(accept_btn) {
+    if gui.ui.clicked(accept_btn) {
         if let Some((_, room_id, _)) = state.pending_invitation.take() {
             if state.net.conn.is_live() {
                 state.net.conn.send(&ClientMessage::JoinRoom { id: room_id });
@@ -252,11 +255,11 @@ fn update_invitation(state: &mut State, nav: &mut Nav) {
             state.ranked.stop();
             nav.apply(Transition::To(Screen::RoomBrowser));
         }
-    } else if state.ui.clicked(decline_btn) {
+    } else if gui.ui.clicked(decline_btn) {
         state.pending_invitation = None;
     }
     if on_banner {
-        state.ui.swallow_click();
+        gui.ui.swallow_click();
     }
 }
 
@@ -292,21 +295,22 @@ fn pace_frame() {
     });
 }
 
-fn update_online_game(app: &mut App, state: &mut State) -> Transition {
+fn update_online_game(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
     let online = state.room.as_ref().map_or_else(logic::Online::default, |r| logic::Online {
         is_host: r.info.is_host,
         ranked: r.info.ranked.is_some(),
         ended: r.series_over.is_some(),
     });
-    let input = game_chat(app, state);
-    let State { room, settings, net: Network { conn, .. }, ui, .. } = &mut *state;
+    let input = game_chat(app, gui, state);
+    let Gui { ui, .. } = gui;
+    let State { room, settings, net: Network { conn, .. }, .. } = &mut *state;
     let left = room
         .as_mut()
         .and_then(|r| r.session.as_mut())
         .is_some_and(|s| logic::update_game(app, &input, ui, s, *settings, conn, online));
 
     let transition = if left && online.ranked { ranked::enter(state) } else { Transition::Stay };
-    replay::update_keep(state);
+    replay::update_keep(gui, state);
 
     transition
 }
@@ -314,20 +318,19 @@ fn update_online_game(app: &mut App, state: &mut State) -> Transition {
 fn update(app: &mut App, root: &mut Root) {
     #[cfg(not(target_arch = "wasm32"))]
     pace_frame();
-    let Root { nav, state } = root;
+    let Root { nav, state, gui } = root;
     let dt = app.timer.delta_f32();
     let view = ui::View::of(app);
     let real = ui::Mouse::of(app, view);
 
     state.input.pads.update();
     let pad_nav = pad_menus(state, nav.current());
-    state.ui.note_pointer(real);
-    let mouse =
-        if pad_nav && state.input.pads.pressed(Pad::South) { state.ui.pad_click().unwrap_or(real) } else { real };
-    state.ui.begin_frame(dt, view, mouse);
+    gui.ui.note_pointer(real);
+    let mouse = if pad_nav && state.input.pads.pressed(Pad::South) { gui.ui.pad_click().unwrap_or(real) } else { real };
+    gui.ui.begin_frame(dt, view, mouse);
     if pad_nav {
         if let Some(dir) = pad_direction(&state.input.pads) {
-            state.ui.move_focus(dir);
+            gui.ui.move_focus(dir);
         }
         if state.input.pads.pressed(Pad::East) {
             app.keyboard.pressed.insert(KeyCode::Escape);
@@ -377,32 +380,32 @@ fn update(app: &mut App, root: &mut Root) {
     replay::poll(state, nav);
 
     network::keep_linked(&mut state.net, state.auth.is_some(), nav.current());
-    update_invitation(state, nav);
+    update_invitation(gui, state, nav);
     network::handle_server_messages(state, nav);
 
     let transition = match nav.current_mut() {
         Screen::Title => title::update_title(app, state),
-        Screen::Auth => login::update_auth(app, state),
-        Screen::Menu => menu::update_menu(app, state, false),
-        Screen::PlayMenu => menu::update_menu(app, state, true),
-        Screen::Settings => menu::update_settings(app, state),
-        Screen::RoomBrowser => rooms::update_browser(app, state),
-        Screen::CreateRoom => rooms::update_create_room(app, state),
-        Screen::JoinById => rooms::update_join_by_id(app, state),
+        Screen::Auth => login::update_auth(app, gui, state),
+        Screen::Menu => menu::update_menu(app, gui, state, false),
+        Screen::PlayMenu => menu::update_menu(app, gui, state, true),
+        Screen::Settings => menu::update_settings(app, gui, state),
+        Screen::RoomBrowser => rooms::update_browser(app, gui, state),
+        Screen::CreateRoom => rooms::update_create_room(app, gui, state),
+        Screen::JoinById => rooms::update_join_by_id(app, gui, state),
         Screen::RoomLobby => {
-            rooms::update_lobby(app, state);
+            rooms::update_lobby(app, gui, state);
             Transition::Stay
         }
-        Screen::Profile(p) => profile::update_profile(app, state, p),
-        Screen::Friends(f) => friends::update_friends(app, state, f),
-        Screen::OtherProfile(p) => profile::update_other_profile(app, state, p),
-        Screen::SoloSetup => solo::update_setup(app, state),
-        Screen::Ranked => ranked::update(app, state),
-        Screen::Leaderboard(board) => leaderboard::update(app, state, board),
-        Screen::Help(view) => help::update(app, state, view),
-        Screen::Solo(game) => solo::update_game(app, state, game),
-        Screen::Replay(viewer) => replay::update(app, state, viewer),
-        Screen::Game => update_online_game(app, state),
+        Screen::Profile(p) => profile::update_profile(app, gui, state, p),
+        Screen::Friends(f) => friends::update_friends(app, gui, state, f),
+        Screen::OtherProfile(p) => profile::update_other_profile(app, gui, state, p),
+        Screen::SoloSetup => solo::update_setup(app, gui, state),
+        Screen::Ranked => ranked::update(app, gui, state),
+        Screen::Leaderboard(board) => leaderboard::update(app, gui, state, board),
+        Screen::Help(view) => help::update(app, gui, view),
+        Screen::Solo(game) => solo::update_game(app, gui, state, game),
+        Screen::Replay(viewer) => replay::update(app, gui, viewer),
+        Screen::Game => update_online_game(app, gui, state),
     };
 
     nav.apply(transition);
@@ -410,94 +413,89 @@ fn update(app: &mut App, root: &mut Root) {
         nav.apply(Transition::To(Screen::Title));
     }
     let fade = if was_title { title::FADE } else { ui::TRANSITION };
-    state.ui.set_screen(nav.current().id(), nav.current().hue(), fade);
+    gui.ui.set_screen(nav.current().id(), nav.current().hue(), fade);
 }
 
-fn draw_invitation_banner(gfx: &mut Graphics, state: &State) {
+fn draw_invitation_banner(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
     let Some((ref from, _, ref room_name)) = state.pending_invitation else {
         return;
     };
 
-    let pal = state.ui.palette();
-    let (ww, wh) = state.ui.view().size();
+    let pal = gui.ui.palette();
+    let (ww, wh) = gui.ui.view().size();
     let banner_y = wh - BANNER_H;
     let msg = format!("{from} vous invite dans \"{room_name}\"");
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
 
-    let mut d = state.ui.canvas(gfx);
+    let mut d = gui.ui.canvas(gfx);
     ui::banner(&mut d, Rect::at(0.0, banner_y, ww, BANNER_H), pal.banner, pal.accent, ui::Edge::Top);
-    d.sharp_text(&state.fonts.text, &msg).left(20.0, banner_y + 40.0).size(theme::size::LABEL).color(pal.text);
-    state.ui.button(&mut d, &state.fonts, accept_btn, "Rejoindre");
-    state.ui.button(&mut d, &state.fonts, decline_btn, "Ignorer");
+    d.sharp_text(&gui.fonts.text, &msg).left(20.0, banner_y + 40.0).size(theme::size::LABEL).color(pal.text);
+    gui.ui.button(&mut d, &gui.fonts, accept_btn, "Rejoindre");
+    gui.ui.button(&mut d, &gui.fonts, decline_btn, "Ignorer");
 
-    state.ui.render(gfx, &d);
+    gui.ui.render(gfx, &d);
 }
 
 fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
-    let Root { nav, state } = root;
+    let Root { nav, state, gui } = root;
     let screen = nav.current();
     match screen {
-        Screen::Title => title::draw_title(gfx, state),
-        Screen::Auth => login::draw_auth(gfx, state),
-        Screen::Menu => menu::draw_menu(gfx, state, false),
-        Screen::PlayMenu => menu::draw_menu(gfx, state, true),
-        Screen::Settings => menu::draw_settings(gfx, state),
-        Screen::RoomBrowser => rooms::draw_browser(gfx, state),
-        Screen::CreateRoom => rooms::draw_create_room(gfx, state),
-        Screen::JoinById => rooms::draw_join_by_id(gfx, state),
-        Screen::RoomLobby => rooms::draw_lobby(gfx, state),
-        Screen::Profile(p) => profile::draw_profile(gfx, state, p),
-        Screen::Friends(f) => friends::draw_friends(gfx, state, f),
-        Screen::OtherProfile(p) => profile::draw_other_profile(gfx, state, p),
-        Screen::SoloSetup => solo::draw_setup(gfx, state),
-        Screen::Ranked => ranked::draw(gfx, state),
-        Screen::Leaderboard(board) => leaderboard::draw(gfx, state, board),
-        Screen::Help(view) => help::draw(gfx, state, view),
-        Screen::Replay(viewer) => replay::draw(app, gfx, state, viewer),
+        Screen::Title => title::draw_title(gfx, gui),
+        Screen::Auth => login::draw_auth(gfx, gui, state),
+        Screen::Menu => menu::draw_menu(gfx, gui, state, false),
+        Screen::PlayMenu => menu::draw_menu(gfx, gui, state, true),
+        Screen::Settings => menu::draw_settings(gfx, gui, state),
+        Screen::RoomBrowser => rooms::draw_browser(gfx, gui, state),
+        Screen::CreateRoom => rooms::draw_create_room(gfx, gui, state),
+        Screen::JoinById => rooms::draw_join_by_id(gfx, gui, state),
+        Screen::RoomLobby => rooms::draw_lobby(gfx, gui, state),
+        Screen::Profile(p) => profile::draw_profile(gfx, gui, p),
+        Screen::Friends(f) => friends::draw_friends(gfx, gui, f),
+        Screen::OtherProfile(p) => profile::draw_other_profile(gfx, gui, p),
+        Screen::SoloSetup => solo::draw_setup(gfx, gui, state),
+        Screen::Ranked => ranked::draw(gfx, gui, state),
+        Screen::Leaderboard(board) => leaderboard::draw(gfx, gui, state, board),
+        Screen::Help(view) => help::draw(gfx, gui, state, view),
+        Screen::Replay(viewer) => replay::draw(app, gfx, gui, viewer),
         Screen::Solo(game) => {
             let hud = game.hud(state.solo.best);
-            draw::draw_game(app, gfx, &game.session, &state.ui, &state.fonts, hud);
+            draw::draw_game(app, gfx, &game.session, &mut gui.ui, &gui.fonts, hud);
         }
         Screen::Game => {
             if let Some((room, session)) = state.room.as_ref().and_then(|r| Some((r, r.session.as_ref()?))) {
-                draw::draw_game(app, gfx, session, &state.ui, &state.fonts, draw::Hud::Online(online_role(room)));
+                draw::draw_game(app, gfx, session, &mut gui.ui, &gui.fonts, draw::Hud::Online(online_role(room)));
             }
         }
     }
 
     if matches!(screen, Screen::Game | Screen::Solo(_)) {
-        let mut d = state.ui.canvas(gfx);
+        let mut d = gui.ui.canvas(gfx);
         if let Some(room) = state.room.as_ref().filter(|_| matches!(screen, Screen::Game)) {
             let hint = can_chat(state).then_some("Entrée pour écrire");
-            room.chat.draw_overlay(
-                &mut d,
-                &state.ui,
-                &state.fonts,
-                game_chat_area(state.ui.view(), state.input.touch.active),
-                hint,
-            );
-            replay::draw_keep(&mut d, state);
+            let area = game_chat_area(gui.ui.view(), state.input.touch.active);
+            room.chat.draw_overlay(&mut d, &mut gui.ui, &gui.fonts, area, hint);
+            replay::draw_keep(&mut d, gui, state);
         }
-        state.input.touch.draw(&mut d, &state.fonts, state.ui.view());
-        state.ui.render(gfx, &d);
+        state.input.touch.draw(&mut d, &gui.fonts, gui.ui.view());
+        gui.ui.render(gfx, &d);
     }
 
-    draw_invitation_banner(gfx, state);
-    draw_maintenance_banner(gfx, state, screen);
-    draw_too_old_banner(gfx, state, screen);
-    draw_reconnect_banner(gfx, state, screen);
+    draw_invitation_banner(gfx, gui, state);
+    draw_maintenance_banner(gfx, gui, state, screen);
+    draw_too_old_banner(gfx, gui, state, screen);
+    draw_reconnect_banner(gfx, gui, state, screen);
 
-    let view = state.ui.view();
+    let view = gui.ui.view();
     // A game, and the screens that lead straight into one, need the phone
     // turned: the boards are laid out side by side.
     let needs_landscape = matches!(screen, Screen::RoomLobby | Screen::Game | Screen::Ranked | Screen::Solo(_));
     if state.input.touch.active && view.portrait() && needs_landscape {
-        let mut d = state.ui.canvas(gfx);
-        touch::draw_turn_hint(&mut d, &state.fonts, view);
-        state.ui.render(gfx, &d);
+        let mut d = gui.ui.canvas(gfx);
+        touch::draw_turn_hint(&mut d, &gui.fonts, view);
+        gui.ui.render(gfx, &d);
     }
 
-    state.ui.present(gfx);
+    gui.ui.present(gfx);
 }
 
 /// The player's place in an online game, as its screen shows it.
@@ -517,26 +515,26 @@ fn online_role(room: &state::Room) -> draw::Role {
     }
 }
 
-fn draw_maintenance_banner(gfx: &mut Graphics, state: &State, screen: &Screen) {
+fn draw_maintenance_banner(gfx: &mut Graphics, gui: &mut Gui, state: &State, screen: &Screen) {
     let playing = matches!(screen, Screen::Game) && state.session().is_some_and(|s| !s.decided());
     if state.net.maintenance && state.net.conn.is_live() && screen.needs_connection() && !playing {
         draw_warning_banner(
             gfx,
-            &state.ui,
-            &state.fonts,
+            &mut gui.ui,
+            &gui.fonts,
             "Le serveur redémarre: les parties en cours se terminent, aucune autre ne démarre.",
         );
     }
 }
 
 /// Says why online play is closed while the server refuses this version.
-fn draw_too_old_banner(gfx: &mut Graphics, state: &State, screen: &Screen) {
+fn draw_too_old_banner(gfx: &mut Graphics, gui: &mut Gui, state: &State, screen: &Screen) {
     if state.net.too_old && matches!(screen, Screen::Menu | Screen::PlayMenu) {
-        draw_warning_banner(gfx, &state.ui, &state.fonts, crate::update::TOO_OLD);
+        draw_warning_banner(gfx, &mut gui.ui, &gui.fonts, crate::update::TOO_OLD);
     }
 }
 
-fn draw_warning_banner(gfx: &mut Graphics, ui: &ui::Ui, fonts: &ui::Fonts, text: &str) {
+fn draw_warning_banner(gfx: &mut Graphics, ui: &mut ui::Ui, fonts: &ui::Fonts, text: &str) {
     let ww = ui.view().w;
 
     let mut d = ui.canvas(gfx);
@@ -548,7 +546,7 @@ fn draw_warning_banner(gfx: &mut Graphics, ui: &ui::Ui, fonts: &ui::Fonts, text:
     ui.render(gfx, &d);
 }
 
-fn draw_reconnect_banner(gfx: &mut Graphics, state: &State, screen: &Screen) {
+fn draw_reconnect_banner(gfx: &mut Graphics, gui: &mut Gui, state: &State, screen: &Screen) {
     let Some((attempts, secs_left)) = state.net.conn.recovering(connection::now_secs()) else {
         return;
     };
@@ -556,14 +554,14 @@ fn draw_reconnect_banner(gfx: &mut Graphics, state: &State, screen: &Screen) {
         return;
     }
 
-    let ww = state.ui.view().w;
-    let dots = state.ui.waiting_dots();
+    let ww = gui.ui.view().w;
+    let dots = gui.ui.waiting_dots();
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
 
-    let mut d = state.ui.canvas(gfx);
+    let mut d = gui.ui.canvas(gfx);
     ui::banner(&mut d, Rect::at(0.0, 0.0, ww, 46.0), theme::WARNING_BANNER, theme::WARNING, ui::Edge::Bottom);
-    d.sharp_text(&state.fonts.text, &msg).center(ww / 2.0, 22.0).size(theme::size::LABEL).color(theme::WARNING_TEXT);
-    state.ui.render(gfx, &d);
+    d.sharp_text(&gui.fonts.text, &msg).center(ww / 2.0, 22.0).size(theme::size::LABEL).color(theme::WARNING_TEXT);
+    gui.ui.render(gfx, &d);
 }
 
 #[notan_main]

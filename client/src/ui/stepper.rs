@@ -59,7 +59,7 @@ impl Stepper {
 
 impl Ui {
     /// Draws the stepper; its buttons only when `editable`.
-    pub fn stepper(&self, draw: &mut Draw, fonts: &Fonts, s: Stepper, label: &str, value: &str, editable: bool) {
+    pub fn stepper(&mut self, draw: &mut Draw, fonts: &Fonts, s: Stepper, label: &str, value: &str, editable: bool) {
         let pal = self.palette();
         draw.sharp_text(&fonts.text, label)
             .right(s.label_x(), s.mid_y())
@@ -84,13 +84,21 @@ impl Ui {
 
     /// A settings tile: its name, then its value between the buttons that
     /// step it, the buttons only when `editable`.
-    pub fn stepper_tile(&self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str, value: &str, editable: bool) {
+    pub fn stepper_tile(
+        &mut self,
+        draw: &mut Draw,
+        fonts: &Fonts,
+        tile: Rect,
+        label: &str,
+        value: &str,
+        editable: bool,
+    ) {
         self.tile_label(draw, fonts, tile, label);
         self.stepper_band(draw, fonts, Stepper::tile_band(tile), value, editable);
     }
 
     /// A value between the buttons that step it, across `band`.
-    pub fn stepper_band(&self, draw: &mut Draw, fonts: &Fonts, band: Rect, value: &str, editable: bool) {
+    pub fn stepper_band(&mut self, draw: &mut Draw, fonts: &Fonts, band: Rect, value: &str, editable: bool) {
         let s = Stepper::across(band);
         let room = s.plus.x - (s.minus.x + s.minus.w) - 12.0;
         let full = theme::size::EMPHASIS;
@@ -104,14 +112,14 @@ impl Ui {
 
     /// A settings tile whose value is a button over `Stepper::tile_band`,
     /// for a setting changed somewhere else.
-    pub fn button_tile(&self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str, value: &str) {
+    pub fn button_tile(&mut self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str, value: &str) {
         self.tile_label(draw, fonts, tile, label);
         self.button(draw, fonts, Stepper::tile_band(tile), value);
     }
 
     /// A settings tile for a yes or no: its name, then a switch and what it
     /// says. Clicks on `Stepper::tile_band` flip it, when `editable`.
-    pub fn switch_tile(&self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str, on: bool, editable: bool) {
+    pub fn switch_tile(&mut self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str, on: bool, editable: bool) {
         let pal = self.palette();
         self.tile_label(draw, fonts, tile, label);
         let band = Stepper::tile_band(tile);

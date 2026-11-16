@@ -7,7 +7,7 @@ use crate::http::{self, HttpSlot};
 use crate::nav::Transition;
 use crate::state::{Screen, State};
 use crate::theme;
-use crate::ui::{self, Face, Frame, Label, ListCard, Pager, Pill, Rect, SharpText, Status, View};
+use crate::ui::{self, Face, Frame, Gui, Label, ListCard, Pager, Pill, Rect, SharpText, Status, View};
 
 const SIZE: i64 = 100;
 const ROW_H: f32 = 56.0;
@@ -82,20 +82,20 @@ fn refresh_btn(view: View) -> Rect {
     Frame::of(view).header_tools(0.0).right(190.0).middle(44.0)
 }
 
-pub fn update(app: &App, state: &mut State, board: &mut Leaderboard) -> Transition {
+pub fn update(app: &App, gui: &Gui, state: &mut State, board: &mut Leaderboard) -> Transition {
     let me = state.auth.as_ref().map(|a| a.user_id.clone());
-    let list = list(state.ui.view());
-    let view = state.ui.view();
+    let list = list(gui.ui.view());
+    let view = gui.ui.view();
 
     poll(board, me.as_deref());
     let pages = ui::page_count(board.top.len(), list.per_page());
     board.pager.clamp(pages);
-    board.pager.update(app, &state.ui, &state.fonts, &state.input.keys, list.pager(), pages);
+    board.pager.update(app, &gui.ui, &gui.fonts, &state.input.keys, list.pager(), pages);
 
     let clicked = board
         .pager
         .shown(&board.top, list.per_page())
-        .find(|&(i, _)| state.ui.clicked(list.row(i)))
+        .find(|&(i, _)| gui.ui.clicked(list.row(i)))
         .map(|(_, e)| (e.user_id.clone(), e.username.clone()));
     if let Some((user_id, username)) = clicked {
         if Some(&user_id) == me.as_ref() {
@@ -105,9 +105,9 @@ pub fn update(app: &App, state: &mut State, board: &mut Leaderboard) -> Transiti
     }
 
     let loading = board.slot.is_some();
-    if !loading && state.ui.clicked(refresh_btn(view)) {
+    if !loading && gui.ui.clicked(refresh_btn(view)) {
         refresh(board, state);
-    } else if state.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    } else if gui.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
         return Transition::To(Screen::Menu);
     }
 
@@ -123,9 +123,9 @@ fn rank_color(rank: i64, fallback: Color) -> Color {
     }
 }
 
-fn draw_row(draw: &mut Draw, state: &State, (row, i): (Rect, usize), e: &Entry, mine: bool, picture: Option<&Texture>) {
-    let pal = state.ui.palette();
-    let fonts = &state.fonts;
+fn draw_row(draw: &mut Draw, gui: &mut Gui, (row, i): (Rect, usize), e: &Entry, mine: bool, picture: Option<&Texture>) {
+    let pal = gui.ui.palette();
+    let fonts = &gui.fonts;
     let mid = row.y + row.h / 2.0;
     let who = ui::Persona { name: &e.username, glow: 0.0, picture };
     let name_x = row.x + 100.0 + 2.0 * AVATAR_R + 12.0;
@@ -138,7 +138,7 @@ fn draw_row(draw: &mut Draw, state: &State, (row, i): (Rect, usize), e: &Entry, 
     pills.push(Pill::small(&record, pal.text_dim));
     pills.push(Pill::small(&elo, theme::GOLD));
 
-    state.ui.row(draw, row, i, &format!("rank:{}", e.user_id));
+    gui.ui.row(draw, row, i, &format!("rank:{}", e.user_id));
     ui::portrait(draw, &pal, fonts, (row.x + 100.0 + AVATAR_R, mid), AVATAR_R, &who);
     draw.sharp_text(&fonts.display, &format!("#{}", e.rank))
         .left(row.x + 18.0, mid)
@@ -149,9 +149,9 @@ fn draw_row(draw: &mut Draw, state: &State, (row, i): (Rect, usize), e: &Entry, 
     draw.sharp_text(&fonts.display, &name).left(name_x, mid).size(theme::size::EMPHASIS).color(pal.text);
 }
 
-pub fn draw(gfx: &mut Graphics, state: &State, board: &Leaderboard) {
-    let pal = state.ui.palette();
-    let view = state.ui.view();
+pub fn draw(gfx: &mut Graphics, gui: &mut Gui, state: &State, board: &Leaderboard) {
+    let pal = gui.ui.palette();
+    let view = gui.ui.view();
     let list = list(view);
     let card = list.card;
     let me = state.auth.as_ref().map(|a| a.user_id.as_str());
@@ -173,34 +173,34 @@ pub fn draw(gfx: &mut Graphics, state: &State, board: &Leaderboard) {
         None
     };
 
-    let mut draw = state.ui.screen_canvas(gfx);
-    state.ui.page_header(&mut draw, &state.fonts, "Classement");
+    let mut draw = gui.ui.screen_canvas(gfx);
+    gui.ui.page_header(&mut draw, &gui.fonts, "Classement");
     ui::card(&mut draw, &pal, card);
     if let Some(text) = empty {
-        draw.sharp_text(&state.fonts.text, text)
+        draw.sharp_text(&gui.fonts.text, text)
             .center(card.x + card.w / 2.0, card.y + 60.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text_muted);
     } else {
         for (i, e) in board.pager.shown(&board.top, list.per_page()) {
-            let picture = state.images.get_opt(gfx, e.avatar_url.as_deref());
+            let picture = gui.images.get_opt(gfx, e.avatar_url.as_deref());
             let mine = Some(e.user_id.as_str()) == me;
-            draw_row(&mut draw, state, (list.row(i), i), e, mine, picture.as_ref());
+            draw_row(&mut draw, gui, (list.row(i), i), e, mine, picture.as_ref());
         }
         let pages = ui::page_count(board.top.len(), list.per_page());
         if pages > 1 {
-            board.pager.draw(&mut draw, &state.ui, &state.fonts, list.pager(), pages);
+            board.pager.draw(&mut draw, &mut gui.ui, &gui.fonts, list.pager(), pages);
         }
     }
 
-    state.ui.button_enabled(&mut draw, &state.fonts, refresh_btn(view), refresh, !loading);
-    state.ui.button(&mut draw, &state.fonts, back, "Retour");
+    gui.ui.button_enabled(&mut draw, &gui.fonts, refresh_btn(view), refresh, !loading);
+    gui.ui.button(&mut draw, &gui.fonts, back, "Retour");
     if let Some((msg, color)) = footer {
-        draw.sharp_text(&state.fonts.text, &msg)
+        draw.sharp_text(&gui.fonts.text, &msg)
             .center(view.w / 2.0, back.y + back.h / 2.0)
             .size(theme::size::EMPHASIS)
             .color(color);
     }
 
-    state.ui.render(gfx, &draw);
+    gui.ui.render(gfx, &draw);
 }

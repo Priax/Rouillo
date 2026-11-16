@@ -765,15 +765,12 @@ pub struct State {
     pub room_pager: crate::ui::Pager,
     pub text_input: TextInput,
     pub notice: Status,
-    pub fonts: crate::ui::Fonts,
-    pub images: crate::images::Images,
     pub auth: Option<AuthInfo>,
     pub auth_form: AuthForm,
     pub startup: Startup,
     pub pending_invitation: Option<(String, RoomId, String)>,
     pub ranked: crate::ranked::RankedView,
     pub outdated: bool,
-    pub ui: crate::ui::Ui,
     pub input: Input,
     pub net: Network,
     pub bindings_panel: crate::bindings_panel::BindingsPanel,
@@ -782,7 +779,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(fonts: crate::ui::Fonts) -> Self {
+    pub fn new() -> Self {
         let player_id = load_or_create_player_id();
         Self {
             settings: Settings::load(),
@@ -791,15 +788,12 @@ impl State {
             room_pager: crate::ui::Pager::default(),
             text_input: TextInput::default(),
             notice: Status::Empty,
-            fonts,
-            images: crate::images::Images::default(),
             auth: None,
             auth_form: AuthForm::default(),
             startup: Startup::default(),
             pending_invitation: None,
             ranked: crate::ranked::RankedView::default(),
             outdated: false,
-            ui: crate::ui::Ui::default(),
             input: Input {
                 keys: crate::ui::EditKeys::default(),
                 controls: crate::controls::Controls::load(),

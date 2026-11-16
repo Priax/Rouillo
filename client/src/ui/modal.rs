@@ -32,7 +32,7 @@ impl Modal {
         ui.clicked(self.close()) || (ui.clicked(anywhere) && !ui.clicked(self.card))
     }
 
-    pub fn draw(self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, title: &str) {
+    pub fn draw(self, draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, title: &str) {
         let pal = ui.palette();
         let view = ui.view();
         ui.set_input(true);

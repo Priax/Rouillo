@@ -132,7 +132,7 @@ impl Pager {
         changed
     }
 
-    pub fn draw(&self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect, pages: usize) {
+    pub fn draw(&self, draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, area: Rect, pages: usize) {
         let pages = pages.max(1);
         let l = Layout::new(area);
         let back = self.page > 0;
