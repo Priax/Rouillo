@@ -206,7 +206,7 @@ pub fn game_click(ui: &Ui, session: &GameSession) -> Option<GameClick> {
     }
 
     let i = (0..session.rivals.len()).find(|&i| layout.thumb_frame(i).is_some_and(|r| ui.clicked(r)))?;
-    Some(GameClick::Board(session.rivals[i].slot))
+    Some(GameClick::Board(session.rivals[i].player.slot))
 }
 
 #[derive(Clone, Copy)]
@@ -281,7 +281,7 @@ impl Overlay {
                 return Some(Self::Watched(alive.first().map(|&team| winner(session, team))));
             }
             return Some(Self::GameOver {
-                i_lost: !alive.contains(&session.team),
+                i_lost: !alive.contains(&session.large.team),
                 draw: alive.is_empty() && !session.rivals.is_empty() && !session.out_early,
             });
         }
@@ -306,10 +306,10 @@ fn winner(session: &GameSession, team: u8) -> String {
         return format!("L'ÉQUIPE {} GAGNE", name.to_uppercase());
     }
 
-    let slot = if session.team == team {
-        session.focus
+    let slot = if session.large.team == team {
+        session.large.slot
     } else {
-        session.rivals.iter().find(|r| r.team == team).map_or(0, |r| r.slot)
+        session.rivals.iter().find(|r| r.player.team == team).map_or(0, |r| r.player.slot)
     };
     format!("{} WINS", session.name_of(slot))
 }
@@ -400,11 +400,11 @@ fn draw_boards(
     let (row_off, col_off) = session.fx.piece_visual_offset;
     let piece = Piece { offset: (row_off + fall_step(me), col_off), satellite: session.fx.my_turn.satellite() };
     let mine = match hud {
-        _ if session.spectating() => session.name_of(session.focus),
+        _ if session.spectating() => session.name_of(session.large.slot),
         Hud::Solo { watching: true, .. } => session.name_of(session.my_slot),
         _ => "YOU",
     };
-    let color = match theme::team(session.team) {
+    let color = match theme::team(session.large.team) {
         Some((_, color)) if !layout.thumbs.is_empty() => color,
         _ => pal.text,
     };
@@ -423,7 +423,7 @@ fn draw_boards(
 
     let (opp_board, opp_offset) = rival.shown();
     let piece = Piece { offset: opp_offset, satellite: rival.turn.satellite() };
-    let name = session.name_of(rival.slot);
+    let name = session.name_of(rival.player.slot);
     let header = Header {
         name: if name.is_empty() { hud.rival_name() } else { name },
         color: pal.text_muted,
@@ -445,7 +445,7 @@ fn draw_arena(
     layout: &GameLayout,
     time: f32,
 ) {
-    let target = session.target.and_then(|t| session.rivals.iter().position(|r| r.slot == t));
+    let target = session.large.target.and_then(|t| session.rivals.iter().position(|r| r.player.slot == t));
     let pulse = 0.5 + 0.5 * (time * 5.0).sin();
 
     if let Some(frame) = target.and_then(|i| layout.thumb_frame(i)) {
@@ -460,7 +460,7 @@ fn draw_arena(
         let scale = layout.thumb_scale;
         let (board, offset) = rival.shown();
         let piece = Piece { offset, satellite: rival.turn.satellite() };
-        let attacks_me = !session.spectating() && rival.target == Some(session.my_slot) && !rival.out();
+        let attacks_me = !session.spectating() && rival.player.target == Some(session.my_slot) && !rival.out();
         let ring = |draw: &mut Draw, grow: f32, color: Color| {
             draw.rect((frame.x - grow, frame.y - grow), (frame.w + 2.0 * grow, frame.h + 2.0 * grow))
                 .corner_radius(18.0 * scale + grow)
@@ -481,7 +481,7 @@ fn draw_arena(
         }
 
         let label_y = frame.y - THUMB_LABEL / 2.0 - 2.0;
-        let team = theme::team(rival.team);
+        let team = theme::team(rival.player.team);
         let name_x = frame.x + if team.is_some() { 20.0 } else { 2.0 };
         let nuisance = rival.nuisance();
         let count = if nuisance > 0 { nuisance.to_string() } else { String::new() };
@@ -495,7 +495,7 @@ fn draw_arena(
             pal.text
         };
         let room = (frame.x + frame.w - name_x - count_w).max(10.0);
-        let name = fonts.fit(Face::Display, session.name_of(rival.slot), theme::size::LABEL, room);
+        let name = fonts.fit(Face::Display, session.name_of(rival.player.slot), theme::size::LABEL, room);
 
         if let Some((_, color)) = team {
             draw.circle(6.0).position(frame.x + 8.0, label_y).color(color);
@@ -813,7 +813,7 @@ fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32)
             game::DEBUG_NET,
         ),
         (board("ME ", &session.predicted_board), game::DEBUG_BOARDS),
-        (session.rivals.first().map_or_else(String::new, |r| board("OPP", &r.board)), game::DEBUG_BOARDS),
+        (session.rivals.first().map_or_else(String::new, |r| board("OPP", &r.player.board)), game::DEBUG_BOARDS),
     ];
 
     for (i, (text, color)) in lines.iter().enumerate() {

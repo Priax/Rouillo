@@ -445,42 +445,51 @@ pub struct Invite {
     pub pager: crate::ui::Pager,
 }
 
-/// Another board of the game, as received from the server.
-pub struct Rival {
+/// A player of the game: their board, what they send their nuisance to
+/// and what is on its way to them.
+pub struct Player {
     pub slot: u8,
     pub team: u8,
     pub board: Board,
-    pub view: OpponentView,
-    pub turn: TurnAnim,
     pub incoming: Vec<IncomingGarbage>,
     pub target: Option<u8>,
 }
 
-impl Rival {
-    pub fn new(slot: u8, team: u8, board: Board) -> Self {
-        Self {
-            slot,
-            team,
-            board,
-            view: OpponentView::default(),
-            turn: TurnAnim::default(),
-            incoming: Vec::new(),
-            target: None,
-        }
-    }
-
-    pub fn nuisance(&self) -> u32 {
-        let travelling: u32 = self.incoming.iter().map(|g| g.amount).sum();
-        self.board.pending_garbage + travelling
+impl Player {
+    pub const fn new(slot: u8, team: u8, board: Board) -> Self {
+        Self { slot, team, board, incoming: Vec::new(), target: None }
     }
 
     pub fn out(&self) -> bool {
         self.board.state() == GameState::GameOver
     }
+}
+
+/// Another board of the game, as received from the server.
+pub struct Rival {
+    pub player: Player,
+    pub view: OpponentView,
+    pub turn: TurnAnim,
+}
+
+impl Rival {
+    pub fn new(player: Player) -> Self {
+        Self { player, view: OpponentView::default(), turn: TurnAnim::default() }
+    }
+
+    pub fn nuisance(&self) -> u32 {
+        let travelling: u32 = self.player.incoming.iter().map(|g| g.amount).sum();
+        self.player.board.pending_garbage + travelling
+    }
+
+    pub fn out(&self) -> bool {
+        self.player.out()
+    }
 
     /// The board to draw, smoothed between updates, and its piece's offset.
     pub fn shown(&self) -> (&Board, (f32, f32)) {
-        self.view.frame().unwrap_or((&self.board, (crate::draw::fall_step(&self.board), 0.0)))
+        let board = &self.player.board;
+        self.view.frame().unwrap_or((board, (crate::draw::fall_step(board), 0.0)))
     }
 }
 
@@ -543,18 +552,15 @@ impl Default for NetDebug {
 }
 
 pub struct GameSession {
-    pub board: Board,
+    /// The player drawn large: oneself, or the one a spectator follows.
+    pub large: Player,
     pub predicted_board: Board,
     /// Played here, with no server: `predicted_board` is all there is.
     pub local: bool,
     /// The other boards, by slot; the first is the one a duel shows.
     pub rivals: Vec<Rival>,
     pub my_slot: u8,
-    /// The slot of the large board: one's own, or the one a spectator follows.
-    pub focus: u8,
-    pub team: u8,
     pub targeting: Targeting,
-    pub target: Option<u8>,
     /// Each slot's player, from slot 1.
     pub names: Vec<String>,
     /// The room's game this session plays, and the tick of its last update:
@@ -571,8 +577,6 @@ pub struct GameSession {
     pub fx: Effects,
     pub net: Netcode,
     pub debug: NetDebug,
-
-    pub incoming: Vec<IncomingGarbage>,
 }
 
 impl GameSession {
@@ -580,14 +584,11 @@ impl GameSession {
         let board = Board::new(0, &Rules::default());
         Self {
             predicted_board: board.clone(),
-            board,
+            large: Player::new(my_slot.max(1), 0, board),
             local: false,
             rivals: Vec::new(),
             my_slot,
-            focus: my_slot.max(1),
-            team: 0,
             targeting: Targeting::default(),
-            target: None,
             names,
             game: 0,
             applied: None,
@@ -598,7 +599,6 @@ impl GameSession {
             fx: Effects::default(),
             net: Netcode::default(),
             debug: NetDebug::default(),
-            incoming: Vec::new(),
         }
     }
 }
@@ -637,8 +637,8 @@ impl GameSession {
     /// The teams still playing, own team first when it is.
     pub fn teams_alive(&self, me_out: bool) -> Vec<u8> {
         let mut alive = Vec::new();
-        let me = (!me_out).then_some(self.team);
-        let others = self.rivals.iter().filter(|r| !r.out()).map(|r| r.team);
+        let me = (!me_out).then_some(self.large.team);
+        let others = self.rivals.iter().filter(|r| !r.out()).map(|r| r.player.team);
         for team in me.into_iter().chain(others) {
             if !alive.contains(&team) {
                 alive.push(team);
@@ -661,7 +661,7 @@ impl GameSession {
         if self.local {
             &self.predicted_board
         } else {
-            &self.board
+            &self.large.board
         }
     }
 
@@ -684,33 +684,29 @@ impl GameSession {
 
     /// A spectator's switch of the large board to another player.
     pub fn follow(&mut self, slot: u8) {
-        let Some(i) = self.rivals.iter().position(|r| r.slot == slot).filter(|_| self.spectating()) else {
+        let Some(i) = self.rivals.iter().position(|r| r.player.slot == slot).filter(|_| self.spectating()) else {
             return;
         };
-        let next = self.rivals.remove(i);
-        let mut left = Rival::new(self.focus, self.team, self.board.clone());
-        left.incoming = std::mem::take(&mut self.incoming);
-        left.target = self.target;
-        self.add_rival(left);
-        self.focus = next.slot;
-        self.team = next.team;
-        self.target = next.target;
-        self.incoming = next.incoming;
+        let next = self.rivals.remove(i).player;
         self.predicted_board = next.board.clone();
-        self.board = next.board;
-        self.fx.announced_chain = (self.board.piece_id, self.board.chain_count);
-        self.fx.announced_all_clear = self.board.piece_id;
+        let left = std::mem::replace(&mut self.large, next);
+        self.add_rival(Rival::new(left));
+        let board = &self.large.board;
+        self.fx.announced_chain = (board.piece_id, board.chain_count);
+        self.fx.announced_all_clear = board.piece_id;
         self.fx.chain_display = None;
         self.fx.all_clear_timer = 0.0;
     }
 
-    pub fn add_rival(&mut self, rival: Rival) {
-        let at = self.rivals.partition_point(|r| r.slot < rival.slot);
+    /// Where `rival` went, among the others by slot.
+    pub fn add_rival(&mut self, rival: Rival) -> usize {
+        let at = self.rivals.partition_point(|r| r.player.slot < rival.player.slot);
         self.rivals.insert(at, rival);
+        at
     }
 
     pub fn my_nuisance(&self) -> u32 {
-        let travelling: u32 = self.incoming.iter().filter(|g| g.at > self.net.local_tick).map(|g| g.amount).sum();
+        let travelling: u32 = self.large.incoming.iter().filter(|g| g.at > self.net.local_tick).map(|g| g.amount).sum();
         self.predicted_board.pending_garbage + travelling
     }
 }
@@ -863,18 +859,18 @@ mod session_tests {
 
     fn session(my_team: u8, rivals: &[(u8, u8)]) -> GameSession {
         let mut s = GameSession::new(1, vec!["me".into(), "b".into(), "c".into(), "d".into()]);
-        s.team = my_team;
+        s.large.team = my_team;
         for &(slot, team) in rivals {
-            s.add_rival(Rival::new(slot, team, s.board.clone()));
+            s.add_rival(Rival::new(Player::new(slot, team, s.large.board.clone())));
         }
         s
     }
 
     fn knock_out(s: &mut GameSession, slot: u8) {
-        if slot == s.focus {
-            s.board.lose();
-        } else if let Some(r) = s.rivals.iter_mut().find(|r| r.slot == slot) {
-            r.board.lose();
+        if slot == s.large.slot {
+            s.large.board.lose();
+        } else if let Some(r) = s.rivals.iter_mut().find(|r| r.player.slot == slot) {
+            r.player.board.lose();
         }
     }
 
@@ -909,19 +905,19 @@ mod session_tests {
     fn a_spectator_switches_boards() {
         let mut s = session(5, &[(2, 6), (3, 7)]);
         s.my_slot = 0;
-        s.board.score = 111;
+        s.large.board.score = 111;
         s.follow(3);
-        assert_eq!((s.focus, s.team), (3, 7));
-        let slots: Vec<u8> = s.rivals.iter().map(|r| r.slot).collect();
+        assert_eq!((s.large.slot, s.large.team), (3, 7));
+        let slots: Vec<u8> = s.rivals.iter().map(|r| r.player.slot).collect();
         assert_eq!(slots, [1, 2]);
-        assert_eq!(s.rivals[0].board.score, 111, "the board left keeps its state");
+        assert_eq!(s.rivals[0].player.board.score, 111, "the board left keeps its state");
     }
 
     #[test]
     fn a_player_cannot_switch_boards() {
         let mut s = session(5, &[(2, 6), (3, 7)]);
         s.follow(3);
-        assert_eq!(s.focus, 1);
+        assert_eq!(s.large.slot, 1);
         assert_eq!(s.rivals.len(), 2);
     }
 }

@@ -163,7 +163,7 @@ fn can_chat(state: &State) -> bool {
             || s.decided()
             || s.eliminated()
             || s.opponent_disconnected
-            || s.board.state() == shared::GameState::Paused
+            || s.large.board.state() == shared::GameState::Paused
     })
 }
 

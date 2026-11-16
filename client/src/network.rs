@@ -2,7 +2,7 @@ use shared::{config, Board, ClientMessage, IncomingGarbage, PlayerUpdate, Rules,
 
 use crate::connection::ConnEvent;
 use crate::nav::{Nav, Transition};
-use crate::state::{GameSession, Network, Rival, Room, Screen, State};
+use crate::state::{GameSession, Network, Player, Rival, Room, Screen, State};
 use crate::ui::Status;
 
 /// After the connection gave up, how long before a background one is tried.
@@ -131,10 +131,10 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
     let prev_piece_id = session.predicted_board.piece_id;
     let nuisance_before = session.my_nuisance();
 
-    session.board = update.board;
+    session.large.board = update.board;
     session.net.my_ack = update.ack;
     session.net.server_tick = update.tick;
-    session.incoming = update.incoming;
+    session.large.incoming = update.incoming;
     let acked = session.net.pending_inputs.iter().filter(|p| p.seq <= update.ack);
     if let Some(newest) = acked.max_by_key(|p| p.seq) {
         session.debug.last_rtt_ms = ((session.net.clock - newest.sent) * 1000.0) as f32;
@@ -144,7 +144,7 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
     sync_clock(session, update.tick);
 
     let pending: Vec<StampedInput> = session.net.pending_inputs.iter().map(|p| p.input).collect();
-    let predicted = session.board.replay(update.tick, session.net.local_tick, &pending, &session.incoming);
+    let predicted = session.large.board.replay(update.tick, session.net.local_tick, &pending, &session.large.incoming);
 
     if predicted.piece_id == prev_piece_id {
         if let (Some(prev), Some(cur)) = (&prev_piece, predicted.piece()) {
@@ -174,21 +174,18 @@ pub fn reconcile(session: &mut GameSession, update: Update) {
 
 fn watch(session: &mut GameSession, board: Board, tick: u32, incoming: Vec<IncomingGarbage>) {
     session.predicted_board = board.clone();
-    session.board = board;
+    session.large.board = board;
     session.net.server_tick = tick;
     session.net.local_tick = tick;
-    session.incoming = incoming;
+    session.large.incoming = incoming;
     crate::logic::announce_events(session);
 }
 
 /// The rival in `slot`, made from `board` if it is new.
-fn rival_of(session: &mut GameSession, slot: u8, team: u8, board: impl FnOnce() -> Board) -> &mut Rival {
-    let i = match session.rivals.iter().position(|r| r.slot == slot) {
+fn rival_of(session: &mut GameSession, slot: u8, team: u8) -> &mut Rival {
+    let i = match session.rivals.iter().position(|r| r.player.slot == slot) {
         Some(i) => i,
-        None => {
-            session.add_rival(Rival::new(slot, team, board()));
-            session.rivals.iter().position(|r| r.slot == slot).unwrap_or_default()
-        }
+        None => session.add_rival(Rival::new(Player::new(slot, team, Board::new(0, &Rules::default())))),
     };
     &mut session.rivals[i]
 }
@@ -202,15 +199,15 @@ fn apply_thumbs(session: &mut GameSession, game: u32, tick: u32, thumbs: Vec<Thu
     session.applied = Some(tick);
     let now = crate::connection::now_secs();
     for Thumb { slot, team, target, incoming, board } in thumbs {
-        if slot == session.focus {
+        if slot == session.large.slot {
             continue;
         }
-        let rival = rival_of(session, slot, team, || Board::new(0, &Rules::default()));
-        rival.team = team;
-        rival.target = target;
-        rival.incoming = incoming;
-        if board.apply_to(&mut rival.board) {
-            rival.view.push(tick, rival.board.clone(), now);
+        let rival = rival_of(session, slot, team);
+        rival.player.team = team;
+        rival.player.target = target;
+        rival.player.incoming = incoming;
+        if board.apply_to(&mut rival.player.board) {
+            rival.view.push(tick, rival.player.board.clone(), now);
         }
     }
 }
@@ -225,8 +222,8 @@ fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<Pl
         return;
     }
     session.applied = Some(tick);
-    let focus = session.focus;
-    session.rivals.retain(|r| r.slot != focus);
+    let focus = session.large.slot;
+    session.rivals.retain(|r| r.player.slot != focus);
     let now = crate::connection::now_secs();
     let mut mine = None;
     for p in players {
@@ -234,17 +231,15 @@ fn apply_update(session: &mut GameSession, game: u32, tick: u32, players: Vec<Pl
             mine = Some(p);
             continue;
         }
-        let rival = rival_of(session, p.slot, p.team, || (*p.board).clone());
-        let board = std::sync::Arc::unwrap_or_clone(p.board);
+        let PlayerUpdate { slot, team, board, incoming, target, .. } = p;
+        let rival = rival_of(session, slot, team);
+        let board = std::sync::Arc::unwrap_or_clone(board);
         rival.view.push(tick, board.clone(), now);
-        rival.board = board;
-        rival.team = p.team;
-        rival.incoming = p.incoming;
-        rival.target = p.target;
+        rival.player = Player { slot, team, board, incoming, target };
     }
     let Some(me) = mine else { return };
-    session.team = me.team;
-    session.target = me.target;
+    session.large.team = me.team;
+    session.large.target = me.target;
     let board = std::sync::Arc::unwrap_or_clone(me.board);
     if session.spectating() {
         watch(session, board, tick, me.incoming);
@@ -485,7 +480,7 @@ mod tests {
 
         let mut session = session_with_rtt((2 * latency) as f32 * 1000.0 * config::CLIENT_SIM_DT - 0.5);
         assert_eq!(lead_ticks(session.net.ping_rtt_ms), 2 * latency + margin, "setup");
-        session.board = server.clone();
+        session.large.board = server.clone();
         session.predicted_board = server.clone();
         session.net.synced = true;
 
@@ -564,9 +559,9 @@ mod tests {
     fn every_other_board_becomes_a_rival_by_slot() {
         let mut session = GameSession::new(2, Vec::new());
         apply_update(&mut session, 0, 5, vec![update(3, 7, false), update(1, 5, false), update(2, 6, false)]);
-        let slots: Vec<u8> = session.rivals.iter().map(|r| r.slot).collect();
+        let slots: Vec<u8> = session.rivals.iter().map(|r| r.player.slot).collect();
         assert_eq!(slots, [1, 3]);
-        assert_eq!(session.team, 6);
+        assert_eq!(session.large.team, 6);
     }
 
     #[test]
@@ -583,11 +578,11 @@ mod tests {
         let mut session = GameSession::new(0, Vec::new());
         apply_update(&mut session, 0, 5, vec![update(3, 7, false)]);
         apply_update(&mut session, 0, 5, vec![update(1, 5, false), update(2, 6, false)]);
-        assert_eq!(session.focus, 1, "a board alone in its update is not followed");
+        assert_eq!(session.large.slot, 1, "a board alone in its update is not followed");
         session.follow(3);
         apply_update(&mut session, 0, 6, vec![update(1, 5, false), update(2, 6, false), update(3, 7, false)]);
-        assert_eq!(session.focus, 3);
-        let slots: Vec<u8> = session.rivals.iter().map(|r| r.slot).collect();
+        assert_eq!(session.large.slot, 3);
+        let slots: Vec<u8> = session.rivals.iter().map(|r| r.player.slot).collect();
         assert_eq!(slots, [1, 2]);
     }
 
@@ -602,8 +597,8 @@ mod tests {
         board.pending_garbage = 4;
         apply_thumbs(&mut session, 0, 8, vec![thumb(&board, 2, false)]);
         let rival = &session.rivals[0];
-        assert_eq!(rival.board.cells()[(config::GRID_HEIGHT - 1, 0)], Some(shared::PuyoType::Red));
-        assert_eq!(rival.board.pending_garbage, 4);
+        assert_eq!(rival.player.board.cells()[(config::GRID_HEIGHT - 1, 0)], Some(shared::PuyoType::Red));
+        assert_eq!(rival.player.board.pending_garbage, 4);
         apply_thumbs(&mut session, 0, 7, vec![thumb(&board, 3, true)]);
         assert_eq!(session.rivals.len(), 1, "an older one is dropped");
     }
@@ -617,8 +612,8 @@ mod tests {
         apply_update(&mut session, 4, 10, vec![scored]);
         apply_update(&mut session, 4, 9, vec![update(1, 1, false)]);
         apply_update(&mut session, 3, 11, vec![update(1, 1, false)]);
-        assert_eq!(session.board.score, 70, "an older update was applied");
+        assert_eq!(session.large.board.score, 70, "an older update was applied");
         apply_update(&mut session, 4, 10, vec![update(1, 1, false)]);
-        assert_eq!(session.board.score, 0, "a snapshot of the same tick, sent on a pause");
+        assert_eq!(session.large.board.score, 0, "a snapshot of the same tick, sent on a pause");
     }
 }

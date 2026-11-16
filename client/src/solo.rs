@@ -6,7 +6,7 @@ use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSetting
 
 use crate::draw::Hud;
 use crate::nav::Transition;
-use crate::state::{AuthInfo, GameSession, Input, Rival, Screen, State};
+use crate::state::{AuthInfo, GameSession, Input, Player, Rival, Screen, State};
 use crate::ui::{self, Frame, Icon, Pill, Rect, SharpText, Size, Stepper, View, FILL};
 use crate::{board_size, http, logic, rooms, theme};
 
@@ -159,7 +159,7 @@ impl SoloGame {
             cpus.push(Cpu::new(difficulty, style, seed.wrapping_add(i as u64)));
             let seat = i as u8 + 1;
             let (slot, team) = (seat + 1, shared::own_team(seat));
-            session.add_rival(Rival::new(slot, team, board.clone()));
+            session.add_rival(Rival::new(Player::new(slot, team, board.clone())));
         }
 
         let pilot = settings
@@ -209,7 +209,7 @@ impl SoloGame {
     fn set_paused(&mut self, paused: bool) {
         self.session.predicted_board.set_paused(paused);
         for rival in &mut self.session.rivals {
-            rival.board.set_paused(paused);
+            rival.player.board.set_paused(paused);
         }
     }
 
@@ -223,7 +223,7 @@ impl SoloGame {
     }
 
     fn board(&self, i: usize) -> &Board {
-        i.checked_sub(1).map_or(&self.session.predicted_board, |r| &self.session.rivals[r].board)
+        i.checked_sub(1).map_or(&self.session.predicted_board, |r| &self.session.rivals[r].player.board)
     }
 
     /// Picks where each board's nuisance goes: the player by the way they
@@ -254,9 +254,9 @@ impl SoloGame {
         }
 
         let slot = |t: Option<usize>| t.map(|t| t as u8 + 1);
-        self.session.target = slot(self.targets[0]);
+        self.session.large.target = slot(self.targets[0]);
         for (i, rival) in self.session.rivals.iter_mut().enumerate() {
-            rival.target = slot(self.targets[i + 1]);
+            rival.player.target = slot(self.targets[i + 1]);
         }
     }
 
@@ -270,12 +270,12 @@ impl SoloGame {
 
         let mut sent = vec![logic::advance_one(&mut self.session)];
         let now = self.session.net.local_tick;
-        self.session.incoming.retain(|g| g.at > now);
+        self.session.large.incoming.retain(|g| g.at > now);
         for (cpu, rival) in self.cpus.iter_mut().zip(&mut self.session.rivals) {
-            let landed: u32 = rival.incoming.iter().filter(|g| g.at <= now).map(|g| g.amount).sum();
-            rival.incoming.retain(|g| g.at > now);
-            let input = cpu.input(&rival.board, rival.nuisance() + landed);
-            sent.push(rival.board.step(input, landed).sent);
+            let landed: u32 = rival.player.incoming.iter().filter(|g| g.at <= now).map(|g| g.amount).sum();
+            rival.player.incoming.retain(|g| g.at > now);
+            let input = cpu.input(&rival.player.board, rival.nuisance() + landed);
+            sent.push(rival.player.board.step(input, landed).sent);
         }
         self.aim();
 
@@ -284,10 +284,10 @@ impl SoloGame {
             let garbage = IncomingGarbage { at, amount };
             match self.targets[from] {
                 Some(0) => {
-                    self.session.incoming.push(garbage);
+                    self.session.large.incoming.push(garbage);
                     crate::audio::play_garbage();
                 }
-                Some(to) => self.session.rivals[to - 1].incoming.push(garbage),
+                Some(to) => self.session.rivals[to - 1].player.incoming.push(garbage),
                 None => {}
             }
         }
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn both_players_are_dealt_the_same_pairs() {
         let game = game(Some(Difficulty::Easy), 9);
-        let (me, cpu) = (&game.session.predicted_board, &game.session.rivals[0].board);
+        let (me, cpu) = (&game.session.predicted_board, &game.session.rivals[0].player.board);
         assert_eq!(me.piece(), cpu.piece());
         assert_eq!(me.next_types, cpu.next_types);
         assert_eq!(me.next_next_types, cpu.next_next_types);
@@ -594,7 +594,7 @@ mod tests {
         for _ in 0..3 * 60 * 60 {
             game.advance();
             let now = game.session.net.local_tick;
-            if let Some(g) = game.session.incoming.first().copied() {
+            if let Some(g) = game.session.large.incoming.first().copied() {
                 if expected.is_none() {
                     assert_eq!(g.at, now + config::GARBAGE_TRAVEL_TICKS);
                     let before = game.session.my_nuisance();
@@ -603,7 +603,7 @@ mod tests {
             }
             if let Some((at, shown)) = expected {
                 if now == at {
-                    assert!(game.session.incoming.iter().all(|g| g.at > now), "landed twice");
+                    assert!(game.session.large.incoming.iter().all(|g| g.at > now), "landed twice");
                     assert!(game.session.predicted_board.pending_garbage > 0, "never landed");
                     assert!(shown > 0, "the attack in flight was not shown");
                     return;
@@ -617,14 +617,14 @@ mod tests {
     fn nuisance_sent_by_the_player_reaches_the_cpu() {
         let mut game = game(Some(Difficulty::Easy), 4);
         let now = game.session.net.local_tick;
-        game.session.rivals[0].incoming.push(IncomingGarbage { at: now + 3, amount: 7 });
+        game.session.rivals[0].player.incoming.push(IncomingGarbage { at: now + 3, amount: 7 });
         assert_eq!(game.session.rivals[0].nuisance(), 7);
         for _ in 0..3 {
             game.advance();
         }
         let cpu = &game.session.rivals[0];
-        assert!(cpu.incoming.is_empty());
-        assert_eq!(cpu.board.pending_garbage, 7);
+        assert!(cpu.player.incoming.is_empty());
+        assert_eq!(cpu.player.board.pending_garbage, 7);
         assert_eq!(cpu.nuisance(), 7, "counted twice or lost on landing");
     }
 
@@ -636,14 +636,14 @@ mod tests {
             game.advance();
         }
         assert_eq!(game.session.net.local_tick, 600);
-        assert!(game.session.incoming.is_empty());
+        assert!(game.session.large.incoming.is_empty());
     }
 
     #[test]
     fn a_topped_out_cpu_ends_the_game() {
         let mut versus = game(Some(Difficulty::Easy), 1);
         assert!(!versus.over());
-        versus.session.rivals[0].board.lose();
+        versus.session.rivals[0].player.board.lose();
         assert!(versus.over());
     }
 
@@ -651,12 +651,12 @@ mod tests {
     fn pausing_stops_both_boards() {
         let mut game = game(Some(Difficulty::Normal), 6);
         game.set_paused(true);
-        let (me, cpu) = (game.session.predicted_board.state_hash(), game.session.rivals[0].board.state_hash());
+        let (me, cpu) = (game.session.predicted_board.state_hash(), game.session.rivals[0].player.board.state_hash());
         for _ in 0..120 {
             game.advance();
         }
         assert_eq!(game.session.predicted_board.state_hash(), me);
-        assert_eq!(game.session.rivals[0].board.state_hash(), cpu);
+        assert_eq!(game.session.rivals[0].player.board.state_hash(), cpu);
         game.set_paused(false);
         game.advance();
         assert_ne!(game.session.predicted_board.state_hash(), me);
@@ -737,7 +737,7 @@ mod tests {
         for _ in 0..10 * 60 * 60 {
             game.advance();
             for (i, rival) in game.session.rivals.iter().enumerate() {
-                hit[i] |= rival.board.pending_garbage > 0;
+                hit[i] |= rival.player.board.pending_garbage > 0;
             }
             if game.over() {
                 break;
@@ -755,11 +755,11 @@ mod tests {
         let mut game = against(&foes, None, 5);
         game.session.predicted_board.lose();
         assert!(game.knocked_out() && !game.over());
-        let before: Vec<u64> = game.session.rivals.iter().map(|r| r.board.state_hash()).collect();
+        let before: Vec<u64> = game.session.rivals.iter().map(|r| r.player.board.state_hash()).collect();
         for _ in 0..120 {
             game.advance();
         }
-        let after: Vec<u64> = game.session.rivals.iter().map(|r| r.board.state_hash()).collect();
+        let after: Vec<u64> = game.session.rivals.iter().map(|r| r.player.board.state_hash()).collect();
         assert!(before.iter().zip(&after).all(|(b, a)| b != a), "a CPU stopped with the player");
         assert!(game.targets[1..].iter().all(|&t| t != Some(0)), "a CPU still aims at the player");
     }

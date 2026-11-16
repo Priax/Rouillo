@@ -27,7 +27,7 @@ pub fn update_game(
     }
 
     let game_over = session.decided() || online.ended;
-    let paused = session.board.state() == GameState::Paused;
+    let paused = session.large.board.state() == GameState::Paused;
     let is_host = online.is_host;
     let menu = paused || game_over || session.opponent_disconnected || session.quit_menu;
 
@@ -87,7 +87,7 @@ pub fn animate(session: &mut GameSession, dt: f32) {
     }
     for rival in &mut session.rivals {
         rival.view.advance(dt);
-        let shown = rival.view.frame().map_or(&rival.board, |(board, _)| board);
+        let shown = rival.view.frame().map_or(&rival.player.board, |(board, _)| board);
         if let Some(p) = shown.piece() {
             let (id, rotation) = (shown.piece_id, p.rotation);
             rival.turn.update(id, rotation, dt);
@@ -179,7 +179,7 @@ pub fn take_steps(session: &mut GameSession, dt: f32) -> u32 {
 pub(crate) fn advance_one(session: &mut GameSession) -> u32 {
     session.net.local_tick = session.net.local_tick.wrapping_add(1);
     let now = session.net.local_tick;
-    let landed = session.incoming.iter().filter(|g| g.at == now).map(|g| g.amount).sum();
+    let landed = session.large.incoming.iter().filter(|g| g.at == now).map(|g| g.amount).sum();
     let events = session.predicted_board.step([], landed);
     if events.locked {
         crate::audio::play_lock();
@@ -252,8 +252,8 @@ fn handle_global_input(input: &Frame, session: &mut GameSession, conn: &mut Conn
 
 /// The opponents one may aim at, by slot.
 fn opponents(session: &GameSession) -> Vec<u8> {
-    let foes = session.rivals.iter().filter(|r| !r.out() && r.team != session.team);
-    foes.map(|r| r.slot).collect()
+    let foes = session.rivals.iter().filter(|r| !r.out() && r.player.team != session.large.team);
+    foes.map(|r| r.player.slot).collect()
 }
 
 /// The way of aiming the player switches to, by key or click: the session
@@ -269,7 +269,7 @@ pub fn choose_target(
     let foes = opponents(session);
     let current = match session.targeting {
         Targeting::Manual(slot) => Some(slot),
-        _ => session.target,
+        _ => session.large.target,
     };
     let after = |slot: Option<u8>| {
         let i = slot.and_then(|s| foes.iter().position(|&f| f == s)).map_or(0, |i| i + 1);
@@ -290,7 +290,7 @@ pub fn choose_target(
     let targeting = chosen.filter(|&t| t != session.targeting || matches!(t, Targeting::Manual(_)))?;
     session.targeting = targeting;
     if let Targeting::Manual(slot) = targeting {
-        session.target = Some(slot);
+        session.large.target = Some(slot);
     }
     Some(targeting)
 }
@@ -474,7 +474,7 @@ mod tests {
     #[test]
     fn landing_garbage_moves_from_travelling_to_queued() {
         let mut session = synced_session();
-        session.incoming = vec![IncomingGarbage { at: 3, amount: 5 }];
+        session.large.incoming = vec![IncomingGarbage { at: 3, amount: 5 }];
         assert_eq!(session.my_nuisance(), 5);
         run_steps(&mut session, 2);
         assert_eq!(session.predicted_board.pending_garbage, 0);
@@ -544,9 +544,13 @@ mod tests {
 
     fn arena() -> GameSession {
         let mut session = synced_session();
-        session.team = 1;
+        session.large.team = 1;
         for (slot, team) in [(2, 1), (3, 2), (4, 3)] {
-            session.add_rival(crate::state::Rival::new(slot, team, session.board.clone()));
+            session.add_rival(crate::state::Rival::new(crate::state::Player::new(
+                slot,
+                team,
+                session.large.board.clone(),
+            )));
         }
         session
     }
@@ -570,7 +574,7 @@ mod tests {
     #[test]
     fn next_target_skips_partners_and_the_knocked_out() {
         let mut s = arena();
-        s.rivals[1].board.lose();
+        s.rivals[1].player.board.lose();
         let key = Frame::pressing(Action::NextTarget);
         choose_target(&key, None, &mut s);
         assert_eq!(s.targeting, Targeting::Manual(4));
@@ -585,7 +589,7 @@ mod tests {
         choose_target(&none, Some(crate::draw::GameClick::Board(2)), &mut s);
         assert_eq!(s.targeting, Targeting::Random);
         choose_target(&none, Some(crate::draw::GameClick::Board(4)), &mut s);
-        assert_eq!((s.targeting, s.target), (Targeting::Manual(4), Some(4)));
+        assert_eq!((s.targeting, s.large.target), (Targeting::Manual(4), Some(4)));
         choose_target(&none, Some(crate::draw::GameClick::Strategy(2)), &mut s);
         assert_eq!(s.targeting, Targeting::Danger);
     }

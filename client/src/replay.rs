@@ -8,7 +8,7 @@ use shared::{Board, Playback, Replay};
 use crate::draw::{self, Hud};
 use crate::http::{self, HttpSlot};
 use crate::nav::{Nav, Transition};
-use crate::state::{GameSession, Rival, Room, Screen, State};
+use crate::state::{GameSession, Player, Rival, Room, Screen, State};
 use crate::ui::{Fonts, Icon, Rect, SharpText, Status, Ui, View};
 use crate::{logic, theme};
 
@@ -135,13 +135,13 @@ impl ReplayViewer {
         let players = &self.playback.replay().players;
         let focus = focus.clamp(1, u8::try_from(players.len()).unwrap_or(u8::MAX).max(1));
         let mut session = GameSession::new(0, players.iter().map(|p| p.name.clone()).collect());
-        session.focus = focus;
-        session.team = players.get(usize::from(focus) - 1).map_or(0, |p| p.team);
+        session.large.slot = focus;
+        session.large.team = players.get(usize::from(focus) - 1).map_or(0, |p| p.team);
 
         for (i, player) in players.iter().enumerate() {
             let slot = u8::try_from(i + 1).unwrap_or(u8::MAX);
             if slot != focus {
-                session.add_rival(Rival::new(slot, player.team, Board::new(0, &shared::Rules::default())));
+                session.add_rival(Rival::new(Player::new(slot, player.team, Board::new(0, &shared::Rules::default()))));
             }
         }
 
@@ -151,15 +151,15 @@ impl ReplayViewer {
 
     fn show(&mut self) {
         let boards = self.playback.boards();
-        let focus = usize::from(self.session.focus) - 1;
+        let focus = usize::from(self.session.large.slot) - 1;
 
         if let Some(board) = boards.get(focus) {
             self.session.predicted_board = board.clone();
-            self.session.board = board.clone();
+            self.session.large.board = board.clone();
         }
         for rival in &mut self.session.rivals {
-            if let Some(board) = boards.get(usize::from(rival.slot) - 1) {
-                rival.board = board.clone();
+            if let Some(board) = boards.get(usize::from(rival.player.slot) - 1) {
+                rival.player.board = board.clone();
             }
         }
     }
@@ -167,7 +167,7 @@ impl ReplayViewer {
     fn advance(&mut self) {
         let events = self.playback.step();
         self.show();
-        if events.get(usize::from(self.session.focus) - 1).is_some_and(|e| e.locked) {
+        if events.get(usize::from(self.session.large.slot) - 1).is_some_and(|e| e.locked) {
             crate::audio::play_lock();
         }
         logic::announce_events(&mut self.session);
@@ -175,7 +175,7 @@ impl ReplayViewer {
 
     pub fn restart(&mut self) {
         self.playback = self.start.clone();
-        let focus = self.session.focus;
+        let focus = self.session.large.slot;
         self.watch(focus);
         self.paused = false;
     }
@@ -183,7 +183,7 @@ impl ReplayViewer {
     /// Shows the next player's board large.
     fn next_player(&mut self) {
         let players = u8::try_from(self.playback.replay().players.len()).unwrap_or(u8::MAX);
-        let next = self.session.focus % players.max(1) + 1;
+        let next = self.session.large.slot % players.max(1) + 1;
         let (paused, speed) = (self.paused, self.speed);
         self.watch(next);
         (self.paused, self.speed) = (paused, speed);
