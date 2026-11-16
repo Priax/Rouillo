@@ -513,8 +513,7 @@ mod tests {
                 server_tick += 1;
                 let due = queue.iter().position(|(_, i)| i.tick > server_tick).unwrap_or(queue.len());
                 assert!(queue[..due].iter().all(|(_, i)| i.tick == server_tick), "an input arrived late");
-                let applied: Vec<_> = queue.drain(..due).collect();
-                server.step(applied.iter().map(|(_, i)| i.kind), 0);
+                server.step(queue.drain(..due).map(|(_, i)| i.kind), 0);
                 history.push(server.clone());
             }
 

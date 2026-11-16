@@ -81,6 +81,7 @@ impl Gui {
 
 pub struct Ui {
     target: Option<RenderTexture>,
+    frame: u64,
     dt: f32,
     time: f64,
     view: View,
@@ -127,6 +128,7 @@ impl Default for Ui {
             focus: None,
             pad: false,
             pointer: (0.0, 0.0),
+            frame: 0,
         }
     }
 }
@@ -147,7 +149,8 @@ struct Widget {
     press: f32,
     flash: f32,
     hovered: bool,
-    touched: bool,
+    /// The frame it was last drawn in.
+    seen: u64,
 }
 
 impl Widget {
@@ -201,7 +204,9 @@ impl Ui {
         self.palette = Palette::new(self.hue);
         self.mouse = mouse;
         self.input_off = false;
-        self.widgets.retain(|_, w| std::mem::take(&mut w.touched));
+        let last = self.frame;
+        self.frame += 1;
+        self.widgets.retain(|_, w| w.seen == last);
         self.drawn.clear();
 
         let mut clicked = false;
@@ -407,7 +412,7 @@ impl Ui {
     }
 
     fn interact_in(&mut self, label: &str, rect: Rect, area: Area, enabled: bool) -> Response {
-        let Self { dt, mouse, input_off, widgets, drawn, focus, pad, .. } = self;
+        let Self { dt, mouse, input_off, widgets, drawn, focus, pad, frame, .. } = self;
         let live = enabled && !*input_off;
 
         let label = hash_of(label);
@@ -418,7 +423,7 @@ impl Ui {
         let mut fresh = false;
         let w = widgets.entry(key).or_insert_with(|| {
             fresh = true;
-            Widget { rect, area, live, hover: 0.0, press: 0.0, flash: 0.0, hovered: false, touched: false }
+            Widget { rect, area, live, hover: 0.0, press: 0.0, flash: 0.0, hovered: false, seen: 0 }
         });
         w.rect = rect;
         w.area = area;
@@ -426,7 +431,7 @@ impl Ui {
         let entered = over && !w.hovered && !fresh;
         w.live = live;
         w.hovered = over;
-        w.touched = true;
+        w.seen = *frame;
         w.hover = approach(w.hover, f32::from(u8::from(over)), HOVER_SPEED, *dt);
         w.press = approach(w.press, f32::from(u8::from(over && mouse.down)), PRESS_SPEED, *dt);
         w.flash = approach(w.flash, 0.0, FLASH_SPEED, *dt);

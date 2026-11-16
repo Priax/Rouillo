@@ -154,9 +154,12 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
             Err(_) => ControlFlow::Break(()),
         }),
     );
-    let mut transfer = transfer.lock().map_err(|e| e.to_string())?;
-    match transfer.outcome.take() {
-        Some(Ok(())) => Ok(std::mem::take(&mut transfer.bytes)),
+    let Transfer { bytes, outcome, .. } = Arc::try_unwrap(transfer)
+        .map_err(|_| format!("{url}: téléchargement encore en cours"))?
+        .into_inner()
+        .map_err(|e| e.to_string())?;
+    match outcome {
+        Some(Ok(())) => Ok(bytes),
         Some(Err(e)) => Err(e),
         None => Err(format!("{url}: téléchargement interrompu")),
     }
