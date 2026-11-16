@@ -138,14 +138,14 @@ fn a_sent_board_draws_what_the_original_draws() {
 fn a_malformed_thumb_is_not_applied() {
     let board = busy_boards()[0].clone();
     let mut shown = empty_board();
-    assert!(Thumb::of(&board, true).apply_to(&mut shown));
+    assert!(BoardThumb::of(&board, true).apply_to(&mut shown));
     let before = shown.state_hash();
-    let short = Thumb { cells: Some(vec![None; 5]), ..Thumb::of(&board, true) };
+    let short = BoardThumb { cells: Some(vec![None; 5]), ..BoardThumb::of(&board, true) };
     assert!(!short.apply_to(&mut shown), "too few cells for the size");
-    let off_grid =
-        Thumb { phase: Phase::Popping { frame: 0, cells: vec![(GRID_HEIGHT as u8, 0)] }, ..Thumb::of(&board, false) };
+    let popping = Phase::Popping { frame: 0, cells: vec![(GRID_HEIGHT as u8, 0)] };
+    let off_grid = BoardThumb { phase: popping, ..BoardThumb::of(&board, false) };
     assert!(!off_grid.apply_to(&mut shown), "a popping cell below the floor");
-    let no_rows = Thumb { height: 0, cells: Some(Vec::new()), ..Thumb::of(&board, false) };
+    let no_rows = BoardThumb { height: 0, cells: Some(Vec::new()), ..BoardThumb::of(&board, false) };
     assert!(!no_rows.apply_to(&mut shown), "no room to spawn");
     assert_eq!(shown.state_hash(), before, "a rejected thumb changed the board");
     assert!(Grid::from_cells(6, 13, vec![None; 77]).is_none());
@@ -455,7 +455,7 @@ fn server_samples() -> Vec<ServerMessage> {
                     team: 1,
                     target: Some(1),
                     incoming: vec![IncomingGarbage { at: 4, amount: 5 }],
-                    ..Thumb::of(board, true)
+                    board: BoardThumb::of(board, true),
                 })
                 .chain([Thumb::of(&boards[0], false)])
                 .collect(),

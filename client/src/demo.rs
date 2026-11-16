@@ -242,7 +242,12 @@ const fn key_label(input: InputKind) -> Option<&'static str> {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Phase {
-    Intro(f32),
+    /// The opening words, with the first pairs, own and the rival's, held
+    /// back until they are read.
+    Intro {
+        left: f32,
+        pairs: [Option<ActivePuyo>; 2],
+    },
     Play,
     Paused(f32),
     Outro(f32),
@@ -288,9 +293,6 @@ pub struct Demo {
     pub key: Option<(&'static str, f32)>,
     pub chain: Option<(u32, f32)>,
     text: &'static str,
-    /// The first pairs, own and the rival's, put on the boards once the
-    /// lesson's opening words are read.
-    first_pairs: [Option<ActivePuyo>; 2],
 }
 
 impl Demo {
@@ -313,7 +315,7 @@ impl Demo {
             lesson,
             board,
             turn: TurnAnim::default(),
-            phase: Phase::Intro(INTRO_SECS),
+            phase: Phase::Intro { left: INTRO_SECS, pairs: [None, None] },
             next_drop: 0,
             keys: VecDeque::new(),
             wait: INPUT_GAP,
@@ -326,12 +328,14 @@ impl Demo {
             key: None,
             chain: None,
             text: l.intro,
-            first_pairs: [None, None],
         };
         if demo.cpu.is_none() {
             demo.take_next_drop();
         }
-        demo.first_pairs = [demo.board.take_piece(), demo.rival.as_mut().and_then(|r| r.board.take_piece())];
+        let first = [demo.board.take_piece(), demo.rival.as_mut().and_then(|r| r.board.take_piece())];
+        if let Phase::Intro { pairs, .. } = &mut demo.phase {
+            *pairs = first;
+        }
         demo
     }
 
@@ -399,10 +403,11 @@ impl Demo {
         self.key = self.key.filter(|k| k.1 > 0.0);
         self.chain = self.chain.filter(|c| c.1 > 0.0);
         match &mut self.phase {
-            Phase::Intro(left) => {
+            Phase::Intro { left, pairs } => {
                 *left -= dt;
                 if *left <= 0.0 {
-                    self.begin();
+                    let pairs = *pairs;
+                    self.begin(pairs);
                 }
             }
             Phase::Paused(left) => {
@@ -434,9 +439,8 @@ impl Demo {
     }
 
     /// The opening words are read: the first pairs come and play starts.
-    fn begin(&mut self) {
+    fn begin(&mut self, [mine, theirs]: [Option<ActivePuyo>; 2]) {
         self.phase = Phase::Play;
-        let [mine, theirs] = std::mem::take(&mut self.first_pairs);
         if let Some(piece) = mine {
             self.board.set_piece(piece);
         }
@@ -580,7 +584,7 @@ mod tests {
                 return seen;
             }
             match demo.phase {
-                Phase::Intro(_) => demo.begin(),
+                Phase::Intro { pairs, .. } => demo.begin(pairs),
                 _ => demo.phase = Phase::Play,
             }
             demo.step();
@@ -682,7 +686,7 @@ mod tests {
         demo.next();
         demo.next();
         assert_eq!(demo.lesson, 1);
-        assert_eq!(demo.phase, Phase::Intro(INTRO_SECS), "a lesson picked starts from its words");
+        assert!(matches!(demo.phase, Phase::Intro { left: INTRO_SECS, .. }), "a lesson picked starts from its words");
     }
 
     #[test]

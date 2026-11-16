@@ -74,9 +74,11 @@ fn clip_convex(subject: &[(f32, f32)], clip: &[(f32, f32)]) -> Vec<(f32, f32)> {
     let area2: f32 = clip.iter().zip(clip.iter().cycle().skip(1)).map(|(a, b)| a.0 * b.1 - b.0 * a.1).sum();
     let orientation = area2.signum();
     let mut output = subject.to_vec();
+    let mut input = Vec::with_capacity(output.len() + clip.len());
     for (&a, &b) in clip.iter().zip(clip.iter().cycle().skip(1)) {
         let side = |p: (f32, f32)| orientation * ((b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0));
-        let input = std::mem::take(&mut output);
+        std::mem::swap(&mut input, &mut output);
+        output.clear();
         for (&p, &q) in input.iter().zip(input.iter().cycle().skip(1)) {
             let (sp, sq) = (side(p), side(q));
             if sp >= 0.0 {

@@ -1,16 +1,19 @@
 use super::{Board, Grid, Rules};
 use crate::config::VISIBLE_ROW_OFFSET;
-use crate::protocol::Thumb;
+use crate::protocol::{BoardThumb, Thumb};
 use crate::small;
 
 impl Thumb {
+    /// `board` for nobody in particular, its stack along only with `cells`.
+    pub fn of(board: &Board, cells: bool) -> Self {
+        Self { slot: 0, team: 0, target: None, incoming: Vec::new(), board: BoardThumb::of(board, cells) }
+    }
+}
+
+impl BoardThumb {
     /// `board`, whose stack goes along only with `cells`.
     pub fn of(board: &Board, cells: bool) -> Self {
         Self {
-            slot: 0,
-            team: 0,
-            target: None,
-            incoming: Vec::new(),
             width: small(board.width()),
             height: small(board.height()),
             cells: cells.then(|| board.cells.as_slice().to_vec()),

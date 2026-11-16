@@ -201,15 +201,15 @@ fn apply_thumbs(session: &mut GameSession, game: u32, tick: u32, thumbs: Vec<Thu
     }
     session.applied = Some(tick);
     let now = crate::connection::now_secs();
-    for mut t in thumbs {
-        if t.slot == session.focus {
+    for Thumb { slot, team, target, incoming, board } in thumbs {
+        if slot == session.focus {
             continue;
         }
-        let rival = rival_of(session, t.slot, t.team, || Board::new(0, &Rules::default()));
-        rival.team = t.team;
-        rival.target = t.target;
-        rival.incoming = std::mem::take(&mut t.incoming);
-        if t.apply_to(&mut rival.board) {
+        let rival = rival_of(session, slot, team, || Board::new(0, &Rules::default()));
+        rival.team = team;
+        rival.target = target;
+        rival.incoming = incoming;
+        if board.apply_to(&mut rival.board) {
             rival.view.push(tick, rival.board.clone(), now);
         }
     }

@@ -199,6 +199,12 @@ pub enum ConnEvent {
 
 pub struct Connection {
     link: Link,
+    dialer: Dialer,
+}
+
+/// What a link's steps from one state to the next go by, apart from the
+/// link itself.
+struct Dialer {
     unreported_drop: Option<String>,
     jitter: u64,
     heartbeat: Heartbeat,
@@ -209,14 +215,14 @@ pub struct Connection {
 
 impl Connection {
     pub fn new(player_id: &str) -> Self {
-        Self {
-            link: Link::Offline,
+        let dialer = Dialer {
             unreported_drop: None,
             jitter: seed_from(player_id),
             heartbeat: Heartbeat::new(0.0),
             transport: Transport::Unknown,
             wt_failed: false,
-        }
+        };
+        Self { link: Link::Offline, dialer }
     }
 
     /// What carries the live link, for the debug overlay.
@@ -229,7 +235,7 @@ impl Connection {
     }
 
     pub fn rtt_ms(&self) -> Option<f32> {
-        self.heartbeat.rtt_ms
+        self.dialer.heartbeat.rtt_ms
     }
 
     pub fn is_live(&self) -> bool {
@@ -241,14 +247,53 @@ impl Connection {
     }
 
     pub fn connect(&mut self, now: f64) {
-        if matches!(self.transport, Transport::Unknown) {
+        if matches!(self.dialer.transport, Transport::Unknown) {
             let slot = crate::http::new_slot();
             crate::http::get(crate::http::api_url("transport"), None, std::sync::Arc::clone(&slot));
-            self.transport = Transport::Asking { slot, since: now };
+            self.dialer.transport = Transport::Asking { slot, since: now };
         }
         self.link = Link::Waiting { retry: Retry::initial(now) };
     }
 
+    pub fn disconnect(&mut self) {
+        self.link = Link::Offline;
+        self.dialer.unreported_drop = None;
+        self.dialer.heartbeat = Heartbeat::new(0.0);
+    }
+
+    pub fn recovering(&self, now: f64) -> Option<(u32, f64)> {
+        let (Link::Dialing { retry, .. } | Link::Waiting { retry }) = &self.link else {
+            return None;
+        };
+        retry.recovering.then(|| (retry.attempts, (retry.deadline - now).max(0.0)))
+    }
+
+    pub fn take_unreported_drop(&mut self) -> Option<String> {
+        self.dialer.unreported_drop.take()
+    }
+
+    pub fn send(&mut self, msg: &ClientMessage) {
+        if let Link::Live { net } = &mut self.link {
+            net.send(msg);
+        }
+    }
+
+    /// Sends `msg` again in a datagram, on a link that has them.
+    pub fn send_datagram(&mut self, msg: &ClientMessage) {
+        if let Link::Live { net: Net::Wt(link) } = &mut self.link {
+            link.send_datagram(shared::encode(msg));
+        }
+    }
+
+    pub fn poll(&mut self, now: f64) -> Vec<ConnEvent> {
+        let mut events = Vec::new();
+        let link = std::mem::replace(&mut self.link, Link::Offline);
+        self.link = self.dialer.step(link, now, &mut events);
+        events
+    }
+}
+
+impl Dialer {
     /// The WebTransport offer to dial now, or `Err` while the server has
     /// not answered whether it makes one. An answer that comes too late
     /// serves the next dial; a failed question is asked again on the next
@@ -271,43 +316,6 @@ impl Connection {
             Transport::Known(Some(offer)) if !self.wt_failed => Some(offer.clone()),
             _ => None,
         })
-    }
-
-    pub fn disconnect(&mut self) {
-        self.link = Link::Offline;
-        self.unreported_drop = None;
-        self.heartbeat = Heartbeat::new(0.0);
-    }
-
-    pub fn recovering(&self, now: f64) -> Option<(u32, f64)> {
-        let (Link::Dialing { retry, .. } | Link::Waiting { retry }) = &self.link else {
-            return None;
-        };
-        retry.recovering.then(|| (retry.attempts, (retry.deadline - now).max(0.0)))
-    }
-
-    pub fn take_unreported_drop(&mut self) -> Option<String> {
-        self.unreported_drop.take()
-    }
-
-    pub fn send(&mut self, msg: &ClientMessage) {
-        if let Link::Live { net } = &mut self.link {
-            net.send(msg);
-        }
-    }
-
-    /// Sends `msg` again in a datagram, on a link that has them.
-    pub fn send_datagram(&mut self, msg: &ClientMessage) {
-        if let Link::Live { net: Net::Wt(link) } = &mut self.link {
-            link.send_datagram(shared::encode(msg));
-        }
-    }
-
-    pub fn poll(&mut self, now: f64) -> Vec<ConnEvent> {
-        let mut events = Vec::new();
-        let link = std::mem::replace(&mut self.link, Link::Offline);
-        self.link = self.step(link, now, &mut events);
-        events
     }
 
     fn step(&mut self, link: Link, now: f64, events: &mut Vec<ConnEvent>) -> Link {
@@ -588,7 +596,7 @@ mod tests {
         let now = 40.0;
         let mut c = Connection::new("p");
         let stale = Retry::recovering(now - RECOVER_WINDOW - 1.0);
-        let link = c.drop_link("read: boom".to_string(), stale, now, &mut Vec::new());
+        let link = c.dialer.drop_link("read: boom".to_string(), stale, now, &mut Vec::new());
         assert!(matches!(link, Link::Offline), "this drop must give up");
 
         c.connect(now + 30.0);
@@ -634,7 +642,7 @@ mod tests {
         let now = 3.0;
         let mut c = Connection::new("test-player");
         c.link = Link::Waiting { retry: Retry::recovering(now) };
-        c.unreported_drop = Some("boom".to_string());
+        c.dialer.unreported_drop = Some("boom".to_string());
 
         c.disconnect();
 
@@ -649,7 +657,7 @@ mod tests {
         let mut c = Connection::new("test-player");
         let mut events = Vec::new();
 
-        let link = c.drop_link("read: boom".to_string(), Retry::recovering(now), now, &mut events);
+        let link = c.dialer.drop_link("read: boom".to_string(), Retry::recovering(now), now, &mut events);
 
         assert!(matches!(link, Link::Waiting { .. }));
         assert!(matches!(events.as_slice(), [ConnEvent::Retrying]));
@@ -664,7 +672,7 @@ mod tests {
         let mut events = Vec::new();
         let stale = Retry::recovering(now - RECOVER_WINDOW - 1.0);
 
-        let link = c.drop_link("gone".to_string(), stale, now, &mut events);
+        let link = c.dialer.drop_link("gone".to_string(), stale, now, &mut events);
 
         assert!(matches!(link, Link::Offline));
         assert!(matches!(events.as_slice(), [ConnEvent::GaveUp]));
@@ -676,7 +684,7 @@ mod tests {
         let mut c = Connection::new("test-player");
         let mut events = vec![ConnEvent::Message(Box::new(ServerMessage::Maintenance))];
 
-        let link = c.outdated(&mut events);
+        let link = c.dialer.outdated(&mut events);
 
         assert!(matches!(link, Link::Offline), "a retry would be refused again");
         assert!(matches!(events.as_slice(), [ConnEvent::Outdated]));
@@ -690,14 +698,14 @@ mod tests {
         let mut c = Connection::new("test-player");
         let mut events = vec![ConnEvent::Message(Box::new(ServerMessage::Maintenance))];
 
-        c.drop_link("bye".to_string(), Retry::recovering(now), now, &mut events);
+        c.dialer.drop_link("bye".to_string(), Retry::recovering(now), now, &mut events);
 
         assert!(matches!(events.as_slice(), [ConnEvent::Retrying]));
     }
 
     fn asking(c: &mut Connection, since: f64) -> crate::http::HttpSlot {
         let slot = crate::http::new_slot();
-        c.transport = Transport::Asking { slot: std::sync::Arc::clone(&slot), since };
+        c.dialer.transport = Transport::Asking { slot: std::sync::Arc::clone(&slot), since };
         slot
     }
 
@@ -716,15 +724,15 @@ mod tests {
     fn a_dial_waits_a_little_for_the_offer_then_goes_without() {
         let mut c = Connection::new("p");
         let slot = asking(&mut c, 0.0);
-        assert!(c.offer(OFFER_WAIT - 0.1).is_err(), "too soon to give up on it");
-        assert!(matches!(c.offer(OFFER_WAIT), Ok(None)));
+        assert!(c.dialer.offer(OFFER_WAIT - 0.1).is_err(), "too soon to give up on it");
+        assert!(matches!(c.dialer.offer(OFFER_WAIT), Ok(None)));
         answered(&slot, 200, r#"{"url":"https://h/wt"}"#);
         assert!(
-            matches!(c.offer(OFFER_WAIT + 5.0), Ok(Some(o)) if o.url == "https://h/wt"),
+            matches!(c.dialer.offer(OFFER_WAIT + 5.0), Ok(Some(o)) if o.url == "https://h/wt"),
             "a late answer serves the next dial"
         );
-        c.wt_failed = true;
-        assert!(matches!(c.offer(9.0), Ok(None)), "WebTransport failed once");
+        c.dialer.wt_failed = true;
+        assert!(matches!(c.dialer.offer(9.0), Ok(None)), "WebTransport failed once");
     }
 
     #[test]
@@ -732,11 +740,11 @@ mod tests {
         let mut c = Connection::new("p");
         let slot = asking(&mut c, 0.0);
         answered(&slot, 502, "Bad Gateway");
-        assert!(matches!(c.offer(0.5), Ok(None)));
-        assert!(matches!(c.transport, Transport::Unknown), "a server being restarted is no answer");
+        assert!(matches!(c.dialer.offer(0.5), Ok(None)));
+        assert!(matches!(c.dialer.transport, Transport::Unknown), "a server being restarted is no answer");
         let slot = asking(&mut c, 1.0);
         answered(&slot, 200, "null");
-        assert!(matches!(c.offer(1.5), Ok(None)));
-        assert!(matches!(c.transport, Transport::Known(None)));
+        assert!(matches!(c.dialer.offer(1.5), Ok(None)));
+        assert!(matches!(c.dialer.transport, Transport::Known(None)));
     }
 }

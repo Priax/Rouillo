@@ -68,15 +68,20 @@ pub struct PlayerUpdate {
     pub target: Option<u8>,
 }
 
-/// A board of a big room as it is drawn small, beside the one watched
-/// large: without the random state, score or next pairs. The stack is left
-/// out while it has not changed since it was last sent.
+/// A player of a big room as drawn small, beside the one watched large.
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone)]
 pub struct Thumb {
     pub slot: u8,
     pub team: u8,
     pub target: Option<u8>,
     pub incoming: Vec<IncomingGarbage>,
+    pub board: BoardThumb,
+}
+
+/// A board without the random state, score or next pairs. The stack is
+/// left out while it has not changed since it was last sent.
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone)]
+pub struct BoardThumb {
     pub width: u8,
     pub height: u8,
     /// The stack row by row, `width` cells a row.

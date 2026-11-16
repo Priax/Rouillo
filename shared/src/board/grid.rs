@@ -128,6 +128,12 @@ impl Grid {
     }
 
     /// Lets every puyo fall to the floor or onto the stack.
+    pub(super) fn clear(&mut self, cells: &[(u8, u8)]) {
+        for &(r, c) in cells {
+            self[(usize::from(r), usize::from(c))] = None;
+        }
+    }
+
     pub(super) fn collapse(&mut self) -> Vec<Move> {
         let mut moved = Vec::new();
         for col in 0..self.width {

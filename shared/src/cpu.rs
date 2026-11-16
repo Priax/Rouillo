@@ -485,7 +485,8 @@ fn potential(grid: &Grid) -> Chain {
             tried[colour as usize] = true;
             let mut with = *grid;
             with[row][col] = colour;
-            if flood(&with, row, col, &mut NO_MARKS.clone()).len < 4 {
+            let mut marks = NO_MARKS;
+            if flood(&with, row, col, &mut marks).len < 4 {
                 continue;
             }
             let chain = resolve(&mut with);

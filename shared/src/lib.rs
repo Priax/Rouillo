@@ -16,9 +16,9 @@ pub use board::{
 pub use codec::{decode, decode_bounded, encode, frame_header, frame_len, FRAME_HEADER, MAX_DECODED_SIZE};
 pub use hash::fnv1a;
 pub use protocol::{
-    valid_username, ClientMessage, LobbyInfo, PlayerUpdate, RankedInfo, RoomId, RoomInfo, SentInput, ServerMessage,
-    Targeting, Thumb, MAX_CHAT_CHARS, MAX_RESENT_INPUTS, MAX_SPECTATORS, MAX_USERNAME_CHARS, OUTDATED_FRAME,
-    PROTOCOL_VERSION,
+    valid_username, BoardThumb, ClientMessage, LobbyInfo, PlayerUpdate, RankedInfo, RoomId, RoomInfo, SentInput,
+    ServerMessage, Targeting, Thumb, MAX_CHAT_CHARS, MAX_RESENT_INPUTS, MAX_SPECTATORS, MAX_USERNAME_CHARS,
+    OUTDATED_FRAME, PROTOCOL_VERSION,
 };
 pub use replay::{Playback, Replay, ReplayPlayer};
 pub use room::{

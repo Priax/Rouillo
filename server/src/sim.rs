@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use rand::RngExt;
 use shared::{
-    config, Board, Events, GameState, Grid, IncomingGarbage, InputKind, PlayerUpdate, Replay, ReplayPlayer,
+    config, Board, BoardThumb, Events, GameState, Grid, IncomingGarbage, InputKind, PlayerUpdate, Replay, ReplayPlayer,
     RoomSettings, Rules, ServerMessage, Targeting, Thumb,
 };
 use tokio::time::Instant;
@@ -389,7 +389,7 @@ impl Sim {
                 team: self.teams[i],
                 target: self.targets[i].map(|t| slot_byte(t + 1)),
                 incoming: self.incoming(i),
-                ..Thumb::of(board, send)
+                board: BoardThumb::of(board, send),
             });
         }
         ServerMessage::Thumbs { game: self.game, tick: self.tick, thumbs }
@@ -577,7 +577,7 @@ mod tests {
 
     fn stacks_sent(s: &mut Sim) -> Vec<bool> {
         let ServerMessage::Thumbs { thumbs, .. } = s.thumbs() else { unreachable!() };
-        thumbs.iter().map(|t| t.cells.is_some()).collect()
+        thumbs.iter().map(|t| t.board.cells.is_some()).collect()
     }
 
     #[test]

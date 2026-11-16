@@ -58,17 +58,11 @@ impl Board {
         Some((score, cells))
     }
 
-    fn clear(&mut self, cells: &[(u8, u8)]) {
-        for &(r, c) in cells {
-            self.cells[(usize::from(r), usize::from(c))] = None;
-        }
-    }
-
     /// Pops what would pop now, at once: the score it makes.
     #[cfg(any(test, feature = "test-support"))]
     pub fn check_matches(&mut self) -> Option<u32> {
         let (score, cells) = self.find_pops()?;
-        self.clear(&cells);
+        self.cells.clear(&cells);
         Some(score)
     }
 
@@ -164,8 +158,7 @@ impl Board {
                 if *frame < POP_FRAMES {
                     return;
                 }
-                let cells = std::mem::take(cells);
-                self.clear(&cells);
+                self.cells.clear(cells);
                 let falls = self.cells.collapse().into_iter().map(CellFall::from).collect();
                 self.phase = Phase::Falling(Fall::new(falls, false));
             }
