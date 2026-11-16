@@ -174,7 +174,7 @@ fn late_hello_from_a_dead_connection_is_ignored() {
     assert_eq!(b.conn, None, "seat stays free for B's real reconnection");
     assert!(b.disconnect_at.is_some(), "grace keeps running");
     assert!(mgr.rooms[&1].sim.paused, "game stays paused");
-    assert!(!mgr.clients.contains_key(&2), "no state recreated for the dead socket");
+    assert!(!mgr.clients.contains(2), "no state recreated for the dead socket");
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn late_commands_from_a_dead_connection_are_ignored() {
     mgr.handle(Command::Unregister { conn: 1 });
     mgr.handle(Command::CreateRoom { conn: 1, name: "ghost".into() });
     assert!(mgr.rooms.is_empty());
-    assert!(!mgr.clients.contains_key(&1));
+    assert!(!mgr.clients.contains(1));
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn another_account_on_the_same_browser_frees_the_seat_instead_of_taking_it() {
     mgr.handle(Command::Unregister { conn: 2 });
     let _rx3 = reg(&mut mgr, 3);
     hello_as(&mut mgr, 3, "B", 9);
-    assert_eq!(mgr.room_of(3), None, "the new account got the old seat");
+    assert_eq!(mgr.clients.room_of(3), None, "the new account got the old seat");
     assert_eq!(mgr.rooms[&1].members.len(), 1);
     let saved = mgr.take_unsaved_matches();
     assert_eq!(saved.len(), 1, "the abandoned game is recorded");
@@ -220,7 +220,7 @@ fn another_account_in_a_second_tab_leaves_a_live_seat_alone() {
     let (_rx1, _rx2) = running_game(&mut mgr);
     let _rx3 = reg(&mut mgr, 3);
     hello_as(&mut mgr, 3, "B", 9);
-    assert_eq!(mgr.room_of(3), None);
+    assert_eq!(mgr.clients.room_of(3), None);
     assert_eq!(mgr.rooms[&1].members[1].conn, Some(2), "the playing tab lost its seat");
     assert!(mgr.rooms[&1].game_running());
     assert!(mgr.take_unsaved_matches().is_empty());
@@ -238,7 +238,7 @@ fn the_same_account_still_gets_its_seat_back() {
     mgr.handle(Command::Unregister { conn: 2 });
     let _rx3 = reg(&mut mgr, 3);
     hello_as(&mut mgr, 3, "B", 2);
-    assert_eq!(mgr.room_of(3), Some(1));
+    assert_eq!(mgr.clients.room_of(3), Some(1));
     assert_eq!(mgr.rooms[&1].members[1].conn, Some(3));
 }
 
@@ -302,8 +302,8 @@ fn a_second_tab_takes_the_seat_and_tells_the_first() {
     let _rx3 = reg(&mut mgr, 3);
     hello(&mut mgr, 3, "B");
     assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::OpenedElsewhere)));
-    assert_eq!(mgr.room_of(2), None, "the first tab left the room");
-    assert_eq!(mgr.room_of(3), Some(1));
+    assert_eq!(mgr.clients.room_of(2), None, "the first tab left the room");
+    assert_eq!(mgr.clients.room_of(3), Some(1));
 
     let before = mgr.rooms[&1].sim.boards[1].piece().copied().map(|p| p.col);
     super::game::press(&mut mgr, 2, 1, 1);
@@ -354,7 +354,7 @@ fn a_background_connection_leaves_a_used_seat_alone() {
         last_disconnect_reason: None,
         background: true,
     });
-    assert!(mgr.room_of(1).is_some(), "the first tab stays in its room");
-    assert_eq!(mgr.room_of(2), None);
+    assert!(mgr.clients.room_of(1).is_some(), "the first tab stays in its room");
+    assert_eq!(mgr.clients.room_of(2), None);
     assert!(!has(&drain(&mut rx2), |m| matches!(m, ServerMessage::OpenedElsewhere)));
 }

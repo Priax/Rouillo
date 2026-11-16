@@ -13,11 +13,11 @@ pub(super) fn hello_as(mgr: &mut Manager, conn: ConnId, token: &str, user: u128)
 }
 
 fn rewind_invite(mgr: &mut Manager, conn: ConnId) {
-    let last = mgr.clients.get_mut(&conn).and_then(|c| c.last_invite.as_mut());
+    let last = mgr.clients.get_mut(conn).and_then(|c| c.last_invite.as_mut());
     *last.expect("an invite was sent") -= INVITE_COOLDOWN;
 }
 
-pub(super) fn friends_only_room(mgr: &mut Manager) -> (mpsc::Receiver<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
+pub(super) fn friends_only_room(mgr: &mut Manager) -> (mpsc::Receiver<bytes::Bytes>, mpsc::Receiver<bytes::Bytes>) {
     let rx1 = reg(mgr, 1);
     hello_as(mgr, 1, "A", 1);
     create_room(mgr, 1);
@@ -40,7 +40,7 @@ fn friends_only_join_is_queued_not_awaited() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = friends_only_room(&mut mgr);
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
-    assert_eq!(mgr.room_of(2), None, "not joined before the answer");
+    assert_eq!(mgr.clients.room_of(2), None, "not joined before the answer");
     let check = only_join_check(&mut mgr);
     assert_eq!(check.users(), (Uuid::from_u128(2), Uuid::from_u128(1)));
 }
@@ -52,7 +52,7 @@ fn friends_only_join_completes_for_a_friend() {
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
     let check = only_join_check(&mut mgr);
     mgr.handle(Command::FriendCheckDone { check, friends: true });
-    assert_eq!(mgr.room_of(2), Some(1));
+    assert_eq!(mgr.clients.room_of(2), Some(1));
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn friends_only_join_refused_for_a_stranger() {
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
     let check = only_join_check(&mut mgr);
     mgr.handle(Command::FriendCheckDone { check, friends: false });
-    assert_eq!(mgr.room_of(2), None);
+    assert_eq!(mgr.clients.room_of(2), None);
     assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::JoinFailed { .. })));
 }
 
@@ -97,9 +97,9 @@ fn stale_join_answer_is_ignored_if_the_player_moved() {
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
     let check = only_join_check(&mut mgr);
     mgr.handle(Command::CreateRoom { conn: 2, name: "mine".into() });
-    let mine = mgr.room_of(2).expect("in own room");
+    let mine = mgr.clients.room_of(2).expect("in own room");
     mgr.handle(Command::FriendCheckDone { check, friends: true });
-    assert_eq!(mgr.room_of(2), Some(mine));
+    assert_eq!(mgr.clients.room_of(2), Some(mine));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn join_answer_for_a_disconnected_player_is_ignored() {
     mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
     let check = only_join_check(&mut mgr);
     mgr.handle(Command::Unregister { conn: 2 });
-    assert!(!mgr.clients.contains_key(&2), "cleaned up on disconnect");
+    assert!(!mgr.clients.contains(2), "cleaned up on disconnect");
     mgr.handle(Command::FriendCheckDone { check, friends: true });
     assert_eq!(mgr.rooms[&1].members.len(), 1);
 }
@@ -124,7 +124,7 @@ fn join_answer_after_the_room_filled_is_refused() {
     mgr.rooms.get_mut(&1).unwrap().members.push(filler);
     mgr.handle(Command::FriendCheckDone { check, friends: true });
     assert_eq!(mgr.rooms[&1].members.len(), 2);
-    assert_eq!(mgr.room_of(2), None);
+    assert_eq!(mgr.clients.room_of(2), None);
     assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::JoinFailed { .. })));
 }
 
@@ -141,12 +141,12 @@ fn join_is_rechecked_if_the_host_changed() {
         room.host = "C".into();
     }
     mgr.handle(Command::FriendCheckDone { check, friends: true });
-    assert_eq!(mgr.room_of(2), None, "must not join on an answer about A");
+    assert_eq!(mgr.clients.room_of(2), None, "must not join on an answer about A");
     let again = only_join_check(&mut mgr);
     assert_eq!(again.users(), (Uuid::from_u128(2), Uuid::from_u128(3)));
 }
 
-pub(super) fn inviter_and_target(mgr: &mut Manager) -> mpsc::Receiver<Vec<u8>> {
+pub(super) fn inviter_and_target(mgr: &mut Manager) -> mpsc::Receiver<bytes::Bytes> {
     let _ = reg(mgr, 1);
     hello_as(mgr, 1, "A", 1);
     create_room(mgr, 1);
@@ -160,7 +160,7 @@ pub(super) fn invite_b(mgr: &mut Manager) {
     mgr.handle(Command::InviteFriend { conn: 1, target_user_id: Uuid::from_u128(2).to_string() });
 }
 
-pub(super) fn invitations(rx: &mut mpsc::Receiver<Vec<u8>>) -> usize {
+pub(super) fn invitations(rx: &mut mpsc::Receiver<bytes::Bytes>) -> usize {
     drain(rx).iter().filter(|m| matches!(m, ServerMessage::FriendInvitation { .. })).count()
 }
 
@@ -259,7 +259,7 @@ fn invitation_waits_for_a_slow_lookup_beyond_the_cooldown() {
     assert!(mgr.take_friend_checks().is_empty(), "first lookup still in flight");
 }
 
-fn listed(rx: &mut mpsc::Receiver<Vec<u8>>) -> Option<Vec<RoomId>> {
+fn listed(rx: &mut mpsc::Receiver<bytes::Bytes>) -> Option<Vec<RoomId>> {
     drain(rx).into_iter().rev().find_map(|m| match m {
         ServerMessage::RoomList { rooms } => Some(rooms.iter().map(|r| r.id).collect()),
         _ => None,

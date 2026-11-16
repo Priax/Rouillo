@@ -8,12 +8,12 @@ impl Manager {
     pub(super) fn record_forfeit(&mut self, id: RoomId, slot: usize, why: &str) {
         if let Some(rec) = self.rooms.get_mut(&id).and_then(|r| r.forfeit(slot)) {
             info!("Forfait room #{id}: slot {} perd ({why})", slot + 1);
-            self.unsaved_matches.push(rec);
+            self.effects.push(Effect::SaveMatch(rec));
         }
     }
 
     pub(super) fn request_join(&mut self, conn: ConnId, id: RoomId) {
-        if self.token_of(conn).is_none() {
+        if self.clients.token_of(conn).is_none() {
             return;
         }
         if self.rooms.get(&id).is_some_and(|r| r.slot_of_conn(conn).is_some()) {
@@ -34,19 +34,19 @@ impl Manager {
             return;
         }
         let host = room.host.clone();
-        let (Some(host_user), Some(joiner)) = (room.host_user(), self.user_of(conn)) else {
+        let (Some(host_user), Some(joiner)) = (room.host_user(), self.clients.user_of(conn)) else {
             self.join_failed(conn, JOIN_FRIENDS_ONLY);
             return;
         };
-        if !self.begin_friend_check(conn) {
+        if !self.clients.begin_friend_check(conn) {
             return;
         }
-        let from = self.room_of(conn);
-        self.friend_checks.push(FriendCheck::Join { conn, room: id, host, from, joiner, host_user });
+        let from = self.clients.room_of(conn);
+        self.effects.push(Effect::CheckFriends(FriendCheck::Join { conn, room: id, host, from, joiner, host_user }));
     }
 
     pub(super) fn complete_join(&mut self, conn: ConnId, id: RoomId) {
-        let Some(token) = self.token_of(conn).cloned() else {
+        let Some(token) = self.clients.token_of(conn).cloned() else {
             return;
         };
         if self.closing {
@@ -61,17 +61,17 @@ impl Manager {
             self.join_failed(conn, JOIN_UNAVAILABLE);
             return;
         }
-        let user_id = self.user_of(conn);
+        let user_id = self.clients.user_of(conn);
         if user_id.is_some() && self.rooms[&id].members.iter().any(|m| m.user_id == user_id) {
             self.join_failed(conn, JOIN_SAME_ACCOUNT);
             return;
         }
         self.leave_current(conn);
-        let name = self.display_name(conn);
+        let name = self.clients.display_name(conn);
         if let Some(room) = self.rooms.get_mut(&id) {
             room.members.push(Member::present(token, conn, user_id, name));
         }
-        self.set_room(conn, Some(id));
+        self.clients.set_room(conn, Some(id));
         self.sync_after_attach(id, conn);
     }
 
@@ -83,7 +83,7 @@ impl Manager {
         from: Option<RoomId>,
         friends: bool,
     ) {
-        if !self.clients.contains_key(&conn) || self.room_of(conn) != from {
+        if !self.clients.contains(conn) || self.clients.room_of(conn) != from {
             return;
         }
         let Some(r) = self.rooms.get(&room) else {
@@ -104,7 +104,7 @@ impl Manager {
     }
 
     pub(super) fn create_room(&mut self, conn: ConnId, name: &str) {
-        let Some(token) = self.token_of(conn).cloned() else {
+        let Some(token) = self.clients.token_of(conn).cloned() else {
             return;
         };
         if self.closing {
@@ -114,18 +114,18 @@ impl Manager {
         self.leave_current(conn);
         let id = self.next_id;
         self.next_id += 1;
-        let user_id = self.user_of(conn);
-        let member = Member::present(token, conn, user_id, self.display_name(conn));
+        let user_id = self.clients.user_of(conn);
+        let member = Member::present(token, conn, user_id, self.clients.display_name(conn));
         let room = Room::new(id, clean_name(name), vec![member], RoomSettings::default(), None);
         self.rooms.insert(id, room);
-        self.set_room(conn, Some(id));
+        self.clients.set_room(conn, Some(id));
         self.send_lobby(id);
         self.room_list_dirty = true;
         info!("Room #{id} créée (conn {conn})");
     }
 
     pub(super) fn set_setting(&mut self, conn: ConnId, setting: RoomSetting, dir: i32) {
-        if let Some(id) = self.room_of(conn) {
+        if let Some(id) = self.clients.room_of(conn) {
             let changed = self
                 .with_room(id, |room| {
                     if room.series.is_none() && room.is_host_conn(conn) && matches!(room.phase, Phase::Lobby) {
@@ -146,7 +146,7 @@ impl Manager {
 
     pub(super) fn toggle_countdown(&mut self, conn: ConnId) {
         let closing = self.closing;
-        let Some(id) = self.room_of(conn) else { return };
+        let Some(id) = self.clients.room_of(conn) else { return };
         let toggled = self
             .with_room(id, |room| {
                 if room.series.is_some() || !room.is_host_conn(conn) {
@@ -169,7 +169,7 @@ impl Manager {
     }
 
     pub(super) fn return_to_lobby(&mut self, conn: ConnId) {
-        let Some(id) = self.room_of(conn) else { return };
+        let Some(id) = self.clients.room_of(conn) else { return };
         let host_slot = self
             .rooms
             .get(&id)
@@ -185,7 +185,7 @@ impl Manager {
     }
 
     pub(super) fn on_input(&mut self, conn: ConnId, kind: InputKind, seq: u32, tick: u32) {
-        if let Some(id) = self.room_of(conn) {
+        if let Some(id) = self.clients.room_of(conn) {
             self.with_room(id, |room| {
                 let Some(idx) = room.game_slot_of_conn(conn) else {
                     return;
@@ -204,7 +204,7 @@ impl Manager {
 
     /// A player picks a team in the lobby, or none to play for themselves.
     pub(super) fn set_team(&mut self, conn: ConnId, team: Option<u8>) {
-        let Some(id) = self.room_of(conn) else { return };
+        let Some(id) = self.clients.room_of(conn) else { return };
         let team = team.filter(|t| (1..=shared::MAX_TEAMS).contains(t));
         let changed = self
             .with_room(id, |room| {
@@ -226,7 +226,7 @@ impl Manager {
     /// What the host of a lobby may change about its CPUs, through `f`:
     /// whether it changed anything.
     fn edit_cpus(&mut self, conn: ConnId, f: impl FnOnce(&mut Room) -> bool) {
-        let Some(id) = self.room_of(conn) else { return };
+        let Some(id) = self.clients.room_of(conn) else { return };
         let changed = self
             .with_room(id, |room| {
                 let lobby = matches!(room.phase, Phase::Lobby) && room.series.is_none();
@@ -273,7 +273,7 @@ impl Manager {
     }
 
     pub(super) fn set_targeting(&mut self, conn: ConnId, targeting: Targeting) {
-        let Some(id) = self.room_of(conn) else { return };
+        let Some(id) = self.clients.room_of(conn) else { return };
         let targeting = match targeting {
             Targeting::Manual(slot) => slot.checked_sub(1).map_or(Targeting::Random, Targeting::Manual),
             other => other,
@@ -286,7 +286,7 @@ impl Manager {
     }
 
     pub(super) fn toggle_pause(&mut self, conn: ConnId) {
-        if let Some(id) = self.room_of(conn) {
+        if let Some(id) = self.clients.room_of(conn) {
             let toggled = self
                 .with_room(id, |room| {
                     let allowed = room.slot_of_conn(conn).is_some()
@@ -311,7 +311,7 @@ impl Manager {
         if self.closing {
             return;
         }
-        let Some(id) = self.room_of(conn) else { return };
+        let Some(id) = self.clients.room_of(conn) else { return };
         let restarted = self
             .with_room(id, |room| {
                 let ready = room.series.is_none()

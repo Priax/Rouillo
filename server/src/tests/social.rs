@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn spectator(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<Vec<u8>> {
+pub(super) fn spectator(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<bytes::Bytes> {
     let mut rx = reg(mgr, conn);
     hello(mgr, conn, &format!("S{conn}"));
     mgr.handle(Command::Spectate { conn, id: 1 });
@@ -13,7 +13,7 @@ fn a_spectator_sees_the_game_and_cannot_touch_it() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
     let mut rx3 = spectator(&mut mgr, 3);
-    assert_eq!(mgr.room_of(3), Some(1));
+    assert_eq!(mgr.clients.room_of(3), Some(1));
     let got = drain(&mut rx3);
     assert!(has(&got, |m| matches!(m, ServerMessage::Lobby { info } if info.your_slot == 0 && !info.is_host)));
     assert!(has(&got, |m| matches!(m, ServerMessage::GameStart { .. })));
@@ -39,7 +39,7 @@ fn spectators_leave_and_are_sent_back_when_the_room_closes() {
     assert_eq!(mgr.public_room_list()[0].spectators, 2);
 
     mgr.handle(Command::LeaveRoom { conn: 3 });
-    assert_eq!((mgr.room_of(3), mgr.rooms[&1].spectators.len()), (None, 1));
+    assert_eq!((mgr.clients.room_of(3), mgr.rooms[&1].spectators.len()), (None, 1));
     assert!(has(&drain(&mut rx3), |m| matches!(m, ServerMessage::RoomList { .. })));
     assert!(mgr.take_unsaved_matches().is_empty(), "a spectator leaving is no forfeit");
 
@@ -47,7 +47,7 @@ fn spectators_leave_and_are_sent_back_when_the_room_closes() {
     mgr.handle(Command::LeaveRoom { conn: 1 });
     mgr.handle(Command::LeaveRoom { conn: 2 });
     assert!(mgr.rooms.is_empty());
-    assert_eq!(mgr.room_of(4), None);
+    assert_eq!(mgr.clients.room_of(4), None);
     assert!(has(&drain(&mut rx4), |m| matches!(m, ServerMessage::RoomList { .. })));
 }
 
@@ -79,7 +79,7 @@ fn players_in_a_game_hear_how_many_people_watch() {
     let mut mgr = new_mgr();
     let (mut rx1, _rx2) = running_game(&mut mgr);
     drain(&mut rx1);
-    let counts = |rx: &mut mpsc::Receiver<Vec<u8>>| -> Vec<u8> {
+    let counts = |rx: &mut mpsc::Receiver<bytes::Bytes>| -> Vec<u8> {
         drain(rx)
             .into_iter()
             .filter_map(|m| match m {
@@ -158,7 +158,7 @@ fn a_late_watch_answer_leaves_a_player_who_moved_on_alone() {
     let check = watch_check(&mut mgr);
     mgr.handle(Command::CreateRoom { conn: 4, name: "own".into() });
     mgr.handle(Command::FriendCheckDone { check, friends: true });
-    assert_eq!(mgr.room_of(4), Some(2), "pulled out of the room it made meanwhile");
+    assert_eq!(mgr.clients.room_of(4), Some(2), "pulled out of the room it made meanwhile");
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn watching_through_a_friend_respects_the_spectator_limit() {
     let check = watch_check(&mut mgr);
     mgr.handle(Command::FriendCheckDone { check, friends: true });
     assert_eq!(mgr.rooms[&1].spectators.len(), shared::MAX_SPECTATORS);
-    assert_eq!(mgr.room_of(4), None);
+    assert_eq!(mgr.clients.room_of(4), None);
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn watching_a_friend_finds_their_room_after_checking_the_friendship() {
     let check = watch_check(&mut mgr);
     assert_eq!(check.users(), (Uuid::from_u128(4), Uuid::from_u128(1)));
     mgr.handle(Command::FriendCheckDone { check, friends: true });
-    assert_eq!(mgr.room_of(4), Some(1));
+    assert_eq!(mgr.clients.room_of(4), Some(1));
     assert_eq!(mgr.rooms[&1].spectators.len(), 1);
 }
 
@@ -239,7 +239,7 @@ fn chat_stays_in_the_room_and_is_rate_limited() {
         drain(rx);
     }
     mgr.handle(Command::Chat { conn: 1, text: "  salut\tà tous \u{7}".into() });
-    let chats = |rx: &mut mpsc::Receiver<Vec<u8>>| {
+    let chats = |rx: &mut mpsc::Receiver<bytes::Bytes>| {
         drain(rx)
             .into_iter()
             .filter_map(|m| match m {

@@ -9,7 +9,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::sim::{slot_byte, Sim};
-use crate::{db, ConnId, Token};
+use crate::{db, encode, ConnId, Token};
 
 pub enum Phase {
     Lobby,
@@ -138,7 +138,7 @@ const OTHERS_EVERY: u32 = 6;
 /// One tick's game state for one connection.
 pub enum StateOut {
     /// In one message, on a link that keeps every message.
-    Whole(Vec<u8>),
+    Whole(Bytes),
     /// Messages of a few boards, each to go alone in a datagram.
     Boards(Vec<Bytes>),
 }
@@ -225,24 +225,19 @@ impl Room {
         self.sim.set_paused(false);
     }
 
-    pub fn lobby_payloads(&self) -> Vec<(ConnId, Vec<u8>)> {
-        let encode = |info: LobbyInfo| shared::encode(&ServerMessage::Lobby { info });
+    pub fn lobby_payloads(&self) -> impl Iterator<Item = (ConnId, Bytes)> + '_ {
+        let lobby = |info: LobbyInfo| encode(&ServerMessage::Lobby { info });
         let members =
-            self.members.iter().enumerate().filter_map(|(i, m)| Some((m.conn?, encode(self.lobby_info_for(i)))));
-        let watching = encode(self.spectator_info());
-        let spectators = self.spectators.iter().map(|s| (s.conn, watching.clone()));
-        members.chain(spectators).collect()
+            self.members.iter().enumerate().filter_map(move |(i, m)| Some((m.conn?, lobby(self.lobby_info_for(i)))));
+        let watching = lobby(self.spectator_info());
+        let spectators = self.spectators.iter().map(move |s| (s.conn, watching.clone()));
+        members.chain(spectators)
     }
 
     /// The start of the running game as `conn` sees it: its own slot, 0 for
-    /// one without a board, and every seat's name. A client starts each
-    /// game it is told of afresh, so its slot does too.
-    pub fn game_start_for(&mut self, conn: ConnId) -> ServerMessage {
-        let slot = self.game_slot_of_conn(conn);
-        if let Some(slot) = slot {
-            self.sim.restart_client(slot);
-        }
-        let your_slot = slot.map_or(0, |s| slot_byte(s + 1));
+    /// one without a board, and every seat's name.
+    pub fn game_start_for(&self, conn: ConnId) -> ServerMessage {
+        let your_slot = self.game_slot_of_conn(conn).map_or(0, |s| slot_byte(s + 1));
         ServerMessage::GameStart {
             game: self.sim.game,
             your_slot,
@@ -250,14 +245,23 @@ impl Room {
         }
     }
 
-    fn send_to_audience(&self, payload: &[u8], outgoing: &mut Vec<(ConnId, Vec<u8>)>) {
-        for c in self.audience() {
-            outgoing.push((c, payload.to_vec()));
+    /// A client starts each game it is told of afresh, so its slot does too.
+    pub fn restart_client(&mut self, conn: ConnId) {
+        if let Some(slot) = self.game_slot_of_conn(conn) {
+            self.sim.restart_client(slot);
         }
     }
 
-    pub fn game_start_payloads(&mut self) -> Vec<(ConnId, Vec<u8>)> {
-        self.audience().into_iter().map(|c| (c, shared::encode(&self.game_start_for(c)))).collect()
+    /// The start of the game for everyone who sees the room.
+    pub fn game_start_payloads(&mut self) -> impl Iterator<Item = (ConnId, Bytes)> + '_ {
+        let Self { members, sim, .. } = self;
+        for slot in members.iter().filter(|m| m.conn.is_some()).filter_map(|m| m.game_slot) {
+            if slot < sim.boards.len() {
+                sim.restart_client(slot);
+            }
+        }
+        let room = &*self;
+        room.audience().map(|c| (c, encode(&room.game_start_for(c))))
     }
 
     pub fn spectator_slot(&self, conn: ConnId) -> Option<usize> {
@@ -265,7 +269,7 @@ impl Room {
     }
 
     /// Returns whether the room list changed (the game started).
-    pub fn tick_countdown(&mut self, dt: f32, outgoing: &mut Vec<(ConnId, Vec<u8>)>) -> bool {
+    pub fn tick_countdown(&mut self, dt: f32, outgoing: &mut Vec<(ConnId, Bytes)>) -> bool {
         let Phase::CountingDown(t) = &mut self.phase else {
             return false;
         };
@@ -294,7 +298,7 @@ impl Room {
         do_broadcast: bool,
         split: impl Fn(ConnId) -> bool,
         states: &mut Vec<(ConnId, StateOut)>,
-        outgoing: &mut Vec<(ConnId, Vec<u8>)>,
+        outgoing: &mut Vec<(ConnId, Bytes)>,
     ) -> Option<db::MatchRecord> {
         if !matches!(self.phase, Phase::Playing) {
             return None;
@@ -321,7 +325,8 @@ impl Room {
             }
         }
         if ended {
-            self.send_to_audience(&shared::encode(&self.sim.state_update()), outgoing);
+            let last = encode(&self.sim.state_update());
+            outgoing.extend(self.audience().map(|c| (c, last.clone())));
         } else if do_broadcast && advanced {
             self.send_states(split, states);
         }
@@ -353,17 +358,14 @@ impl Room {
                         all.get_or_insert_with(|| packed_all(0..boards, &|r| shared::encode(&sim.state_update_of(r))));
                     StateOut::Boards(all.clone())
                 } else {
-                    StateOut::Whole(whole.get_or_insert_with(|| shared::encode(&sim.state_update())).clone())
+                    StateOut::Whole(whole.get_or_insert_with(|| encode(&sim.state_update())).clone())
                 };
                 sink.push((conn, out));
                 continue;
             };
-            let mine = shared::encode(&sim.state_update_of([slot]));
+            let mine = encode(&sim.state_update_of([slot]));
             let Some(msg @ ServerMessage::Thumbs { game, tick, thumbs: list }) = &thumbs else {
-                sink.push((
-                    conn,
-                    if datagrams { StateOut::Boards(vec![Bytes::from(mine)]) } else { StateOut::Whole(mine) },
-                ));
+                sink.push((conn, if datagrams { StateOut::Boards(vec![mine]) } else { StateOut::Whole(mine) }));
                 continue;
             };
             if datagrams {
@@ -371,12 +373,12 @@ impl Room {
                     shared::encode(&ServerMessage::Thumbs { game: *game, tick: *tick, thumbs: list[r].to_vec() })
                 };
                 let others = small_packed.get_or_insert_with(|| packed_all(0..list.len(), &encode));
-                let mut out = vec![Bytes::from(mine)];
+                let mut out = vec![mine];
                 out.extend(others.iter().cloned());
                 sink.push((conn, StateOut::Boards(out)));
             } else {
                 sink.push((conn, StateOut::Whole(mine)));
-                let others = small.get_or_insert_with(|| shared::encode(msg));
+                let others = small.get_or_insert_with(|| encode(msg));
                 sink.push((conn, StateOut::Whole(others.clone())));
             }
         }
@@ -429,9 +431,9 @@ impl Room {
     }
 
     /// Everyone who sees the room: its connected players, then its spectators.
-    pub fn audience(&self) -> Vec<ConnId> {
+    pub fn audience(&self) -> impl Iterator<Item = ConnId> + '_ {
         let players = self.members.iter().filter_map(|m| m.conn);
-        players.chain(self.spectators.iter().map(|s| s.conn)).collect()
+        players.chain(self.spectators.iter().map(|s| s.conn))
     }
 
     pub fn lobby_info_for(&self, idx: usize) -> LobbyInfo {

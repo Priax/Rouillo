@@ -6,7 +6,7 @@ impl Manager {
             warn!("WS {conn}: player_id invalide, ignoré");
             return;
         }
-        let user = self.user_of(conn);
+        let user = self.clients.user_of(conn);
         let room = match self.room_of_token(&token) {
             Some(id) => {
                 let seat = self.rooms[&id].members.iter().position(|m| m.token == token);
@@ -28,7 +28,7 @@ impl Manager {
             }
             None => None,
         };
-        if let Some(client) = self.clients.get_mut(&conn) {
+        if let Some(client) = self.clients.get_mut(conn) {
             client.token = Some(token);
         }
         if let Some(id) = room {
@@ -37,12 +37,12 @@ impl Manager {
             self.send_room_list_to(conn);
         }
         if self.closing {
-            self.deliver_msg(conn, &ServerMessage::Maintenance);
+            self.clients.deliver_msg(conn, &ServerMessage::Maintenance);
         }
     }
 
     pub(super) fn rejoin(&mut self, conn: ConnId, id: RoomId) {
-        let Some(token) = self.token_of(conn).cloned() else {
+        let Some(token) = self.clients.token_of(conn).cloned() else {
             return;
         };
         let mut replaced: Option<ConnId> = None;
@@ -53,10 +53,10 @@ impl Manager {
                 room.members[slot].disconnect_at = None;
             }
         }
-        self.set_room(conn, Some(id));
+        self.clients.set_room(conn, Some(id));
         if let Some(old) = replaced {
-            self.set_room(old, None);
-            self.deliver_msg(old, &ServerMessage::OpenedElsewhere);
+            self.clients.set_room(old, None);
+            self.clients.deliver_msg(old, &ServerMessage::OpenedElsewhere);
         }
         self.sync_after_attach(id, conn);
         info!("Reconnexion room #{id} (conn {conn})");
@@ -85,7 +85,7 @@ impl Manager {
             }
             (true, false) => {
                 self.deliver_game_start(id, conn);
-                self.deliver_msg(conn, &ServerMessage::OpponentDisconnected);
+                self.clients.deliver_msg(conn, &ServerMessage::OpponentDisconnected);
             }
             _ => {}
         }
@@ -96,7 +96,7 @@ impl Manager {
     }
 
     pub(super) fn mark_disconnected(&mut self, conn: ConnId) {
-        let Some(id) = self.room_of(conn) else {
+        let Some(id) = self.clients.room_of(conn) else {
             return;
         };
         if self.leave_audience(conn, id) {
@@ -138,15 +138,15 @@ impl Manager {
 
     fn forget_conn(&mut self, conn: ConnId) {
         self.forget_identity(conn);
-        self.clients.remove(&conn);
+        self.clients.remove(conn);
     }
 
     pub(super) fn leave_current(&mut self, conn: ConnId) {
         self.leave_queue(conn);
-        let Some(id) = self.room_of(conn) else {
+        let Some(id) = self.clients.room_of(conn) else {
             return;
         };
-        self.set_room(conn, None);
+        self.clients.set_room(conn, None);
         if self.leave_audience(conn, id) {
             return;
         }

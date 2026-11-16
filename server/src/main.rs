@@ -20,11 +20,16 @@ use tokio::task::JoinSet;
 use tokio::time::{interval, Duration, Instant};
 use tracing::{error, info, warn};
 
-use crate::manager::{Command, Manager};
+use crate::manager::{Command, Effect, Manager};
 use crate::ws::{bind_listener, ws_route, CMD_CHAN_CAP};
 
 type ConnId = u64;
 type Token = String;
+
+/// A message as it goes out, shared by all who get it.
+fn encode(msg: &shared::ServerMessage) -> bytes::Bytes {
+    shared::encode(msg).into()
+}
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(600);
 const SHUTDOWN_LINGER: Duration = Duration::from_secs(4);
@@ -101,56 +106,56 @@ impl Winddown {
 
 fn run_side_effects(mgr: &mut Manager, pool: &db::DbPool, cmd_tx: &mpsc::Sender<Command>, saves: &mut JoinSet<()>) {
     while saves.try_join_next().is_some() {}
-    for rec in mgr.take_unsaved_matches() {
+    for effect in mgr.effects() {
         let (pool, cmd_tx) = (pool.clone(), cmd_tx.clone());
-        let users: Vec<_> = rec.players.iter().filter_map(|p| p.user_id).collect();
-        saves.spawn(async move {
-            match db::record_match_result(&pool, rec).await {
-                Ok(id) => {
-                    let _ = cmd_tx.try_send(Command::MatchSaved { id, users });
-                }
-                Err(e) => error!("Match save: {e}"),
+        match effect {
+            Effect::SaveMatch(rec) => {
+                let users: Vec<_> = rec.players.iter().filter_map(|p| p.user_id).collect();
+                saves.spawn(async move {
+                    match db::record_match_result(&pool, rec).await {
+                        Ok(id) => {
+                            let _ = cmd_tx.try_send(Command::MatchSaved { id, users });
+                        }
+                        Err(e) => error!("Match save: {e}"),
+                    }
+                });
             }
-        });
-    }
-    for rec in mgr.take_unsaved_series() {
-        let pool = pool.clone();
-        saves.spawn(async move {
-            if let Err(e) = db::record_series(&pool, rec).await {
-                error!("Series save: {e}");
+            Effect::SaveSeries(rec) => {
+                saves.spawn(async move {
+                    if let Err(e) = db::record_series(&pool, rec).await {
+                        error!("Series save: {e}");
+                    }
+                });
             }
-        });
-    }
-    for check in mgr.take_ranked_checks() {
-        let (pool, cmd_tx) = (pool.clone(), cmd_tx.clone());
-        tokio::spawn(async move {
-            let profile = db::ranked_profile(&pool, check.user_id).await.unwrap_or_else(|e| {
-                error!("Ranked check: {e}");
-                None
-            });
-            let _ = cmd_tx.send(Command::RankedCheckDone { check, profile }).await;
-        });
-    }
-    for user in mgr.take_friend_loads() {
-        let (pool, cmd_tx) = (pool.clone(), cmd_tx.clone());
-        tokio::spawn(async move {
-            let friends = db::friend_ids(&pool, user).await.unwrap_or_else(|e| {
-                error!("Friend list: {e}");
-                Vec::new()
-            });
-            let _ = cmd_tx.send(Command::FriendsLoaded { user, friends }).await;
-        });
-    }
-    for check in mgr.take_friend_checks() {
-        let (pool, cmd_tx) = (pool.clone(), cmd_tx.clone());
-        tokio::spawn(async move {
-            let (a, b) = check.users();
-            let friends = db::are_friends(&pool, a, b).await.unwrap_or_else(|e| {
-                error!("Friend check: {e}");
-                false
-            });
-            let _ = cmd_tx.send(Command::FriendCheckDone { check, friends }).await;
-        });
+            Effect::CheckRanked(check) => {
+                tokio::spawn(async move {
+                    let profile = db::ranked_profile(&pool, check.user_id).await.unwrap_or_else(|e| {
+                        error!("Ranked check: {e}");
+                        None
+                    });
+                    let _ = cmd_tx.send(Command::RankedCheckDone { check, profile }).await;
+                });
+            }
+            Effect::LoadFriends(user) => {
+                tokio::spawn(async move {
+                    let friends = db::friend_ids(&pool, user).await.unwrap_or_else(|e| {
+                        error!("Friend list: {e}");
+                        Vec::new()
+                    });
+                    let _ = cmd_tx.send(Command::FriendsLoaded { user, friends }).await;
+                });
+            }
+            Effect::CheckFriends(check) => {
+                tokio::spawn(async move {
+                    let (a, b) = check.users();
+                    let friends = db::are_friends(&pool, a, b).await.unwrap_or_else(|e| {
+                        error!("Friend check: {e}");
+                        false
+                    });
+                    let _ = cmd_tx.send(Command::FriendCheckDone { check, friends }).await;
+                });
+            }
+        }
     }
 }
 

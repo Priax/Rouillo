@@ -152,7 +152,7 @@ async fn serve(session: &Session, cmd_tx: mpsc::Sender<Command>, pool: db::DbPoo
         .await
         .map_err(|_| "pas de flux ouvert".to_owned())?
         .map_err(|e| e.to_string())?;
-    let (to_client_tx, mut to_client_rx) = mpsc::channel::<Vec<u8>>(CLIENT_CHAN_CAP);
+    let (to_client_tx, mut to_client_rx) = mpsc::channel::<Bytes>(CLIENT_CHAN_CAP);
     let (states_tx, mut states_rx) = mpsc::channel::<Vec<Bytes>>(STATE_CHAN_CAP);
     let mut inbox = Inbox::new(conn, cmd_tx.clone(), pool, to_client_tx.clone());
     info!("WT {conn} ouverture");

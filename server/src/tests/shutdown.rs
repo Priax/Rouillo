@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn told_of_maintenance(rx: &mut mpsc::Receiver<Vec<u8>>) -> bool {
+pub(super) fn told_of_maintenance(rx: &mut mpsc::Receiver<bytes::Bytes>) -> bool {
     has(&drain(rx), |m| matches!(m, ServerMessage::Maintenance))
 }
 
@@ -97,7 +97,7 @@ fn a_join_being_checked_when_the_shutdown_starts_is_refused() {
     mgr.handle(Command::Shutdown);
     drain(&mut rx2);
     mgr.handle(Command::FriendCheckDone { check, friends: true });
-    assert_eq!(mgr.room_of(2), None);
+    assert_eq!(mgr.clients.room_of(2), None);
     assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::JoinFailed { .. })));
 }
 
@@ -112,7 +112,7 @@ fn a_player_can_still_come_back_during_a_shutdown() {
 
     let mut rx3 = reg(&mut mgr, 3);
     hello(&mut mgr, 3, "B");
-    assert_eq!(mgr.room_of(3), Some(1));
+    assert_eq!(mgr.clients.room_of(3), Some(1));
     assert!(!mgr.rooms[&1].sim.paused, "the game resumes");
     assert!(told_of_maintenance(&mut rx3), "a client that connects late must learn of it too");
 }

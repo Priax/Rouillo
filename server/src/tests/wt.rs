@@ -56,7 +56,7 @@ async fn a_webtransport_client_plays_over_a_stream_and_datagrams() {
         panic!("registered without a way for states");
     };
 
-    sender.try_send(shared::encode(&ServerMessage::Maintenance)).unwrap();
+    sender.try_send(crate::encode(&ServerMessage::Maintenance)).unwrap();
     assert!(matches!(within(read_frame(&mut recv)).await.expect("a message"), ServerMessage::Maintenance));
 
     let board = |count| bytes::Bytes::from(shared::encode(&ServerMessage::Spectators { count }));

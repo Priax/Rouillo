@@ -13,7 +13,7 @@ fn env_list(name: &str, default: &[usize]) -> Vec<usize> {
 /// board by board when it plays over datagrams.
 struct Link {
     conn: ConnId,
-    rx: mpsc::Receiver<Vec<u8>>,
+    rx: mpsc::Receiver<bytes::Bytes>,
     states: Option<mpsc::Receiver<Vec<bytes::Bytes>>>,
 }
 
@@ -58,7 +58,7 @@ fn seat(mgr: &mut Manager, setup: &Setup) -> (Vec<Link>, Vec<Link>) {
         let host = Link::new(mgr, first, datagrams);
         hello(mgr, first, &format!("p{first}"));
         mgr.handle(Command::CreateRoom { conn: first, name: "load".into() });
-        let id = mgr.room_of(first).expect("the room was made");
+        let id = mgr.clients.room_of(first).expect("the room was made");
         ids.push(id);
         mgr.rooms.get_mut(&id).expect("room").settings.max_players = u8::try_from(players).expect("at most 255");
         links.push(host);
@@ -128,7 +128,7 @@ fn run(setup: &Setup) -> Report {
         let t0 = Instant::now();
         for (link, seq) in links.iter().zip(&mut seqs) {
             if let Some(kind) = input(&mut noise) {
-                let tick = mgr.room_of(link.conn).map_or(0, |id| mgr.rooms[&id].sim.tick) + 1;
+                let tick = mgr.clients.room_of(link.conn).map_or(0, |id| mgr.rooms[&id].sim.tick) + 1;
                 *seq += 1;
                 mgr.handle(Command::Input { conn: link.conn, kind, seq: *seq, tick });
             }

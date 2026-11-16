@@ -10,6 +10,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use shared::{config, ClientMessage, ServerMessage};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -201,7 +202,7 @@ pub(crate) struct Inbox {
     cmd_tx: mpsc::Sender<Command>,
     pool: db::DbPool,
     /// Pongs skip the manager, for an honest round trip.
-    pong_tx: mpsc::Sender<Vec<u8>>,
+    pong_tx: mpsc::Sender<Bytes>,
     limiter: RateLimiter,
     greeted: bool,
 }
@@ -211,7 +212,7 @@ impl Inbox {
         conn: ConnId,
         cmd_tx: mpsc::Sender<Command>,
         pool: db::DbPool,
-        pong_tx: mpsc::Sender<Vec<u8>>,
+        pong_tx: mpsc::Sender<Bytes>,
     ) -> Self {
         Self { conn, cmd_tx, pool, pong_tx, limiter: RateLimiter::new(Instant::now()), greeted: false }
     }
@@ -269,7 +270,7 @@ impl Inbox {
                 }
             }
             ClientMessage::Ping { id } => {
-                let _ = self.pong_tx.try_send(shared::encode(&ServerMessage::Pong { id }));
+                let _ = self.pong_tx.try_send(crate::encode(&ServerMessage::Pong { id }));
                 return true;
             }
             ClientMessage::Inputs { inputs } => {
@@ -332,7 +333,7 @@ fn command(conn: ConnId, msg: ClientMessage) -> Option<Command> {
 
 async fn handle_connection(ws: WebSocket, cmd_tx: mpsc::Sender<Command>, conn: ConnId, pool: db::DbPool) {
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
-    let (to_client_tx, mut to_client_rx) = mpsc::channel::<Vec<u8>>(CLIENT_CHAN_CAP);
+    let (to_client_tx, mut to_client_rx) = mpsc::channel::<Bytes>(CLIENT_CHAN_CAP);
     let pong_tx = to_client_tx.clone();
     info!("WS {conn} ouverture");
 

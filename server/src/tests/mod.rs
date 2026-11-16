@@ -35,7 +35,7 @@ fn new_mgr() -> Manager {
     Manager::new()
 }
 
-fn reg(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<Vec<u8>> {
+fn reg(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<bytes::Bytes> {
     let (tx, rx) = mpsc::channel(CLIENT_CHAN_CAP);
     mgr.handle(Command::Register { conn, sender: tx, states: None });
     rx
@@ -57,7 +57,7 @@ fn create_room(mgr: &mut Manager, conn: ConnId) {
     mgr.handle(Command::CreateRoom { conn, name: "R".into() });
 }
 
-fn drain(rx: &mut mpsc::Receiver<Vec<u8>>) -> Vec<ServerMessage> {
+fn drain(rx: &mut mpsc::Receiver<bytes::Bytes>) -> Vec<ServerMessage> {
     let mut out = Vec::new();
     while let Ok(bytes) = rx.try_recv() {
         if let Some(msg) = shared::decode::<ServerMessage>(&bytes) {
@@ -78,7 +78,7 @@ fn has(msgs: &[ServerMessage], f: impl Fn(&ServerMessage) -> bool) -> bool {
     msgs.iter().any(f)
 }
 
-fn two_player_room(mgr: &mut Manager) -> (RoomId, mpsc::Receiver<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
+fn two_player_room(mgr: &mut Manager) -> (RoomId, mpsc::Receiver<bytes::Bytes>, mpsc::Receiver<bytes::Bytes>) {
     let rx1 = reg(mgr, 1);
     hello(mgr, 1, "A");
     create_room(mgr, 1);

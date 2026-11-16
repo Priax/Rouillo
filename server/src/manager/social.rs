@@ -17,10 +17,10 @@ pub fn clean_chat(text: &str) -> Option<String> {
 
 impl Manager {
     pub(super) fn chat(&mut self, conn: ConnId, text: &str) {
-        let Some(id) = self.room_of(conn) else { return };
+        let Some(id) = self.clients.room_of(conn) else { return };
         let Some(text) = clean_chat(text) else { return };
         let now = Instant::now();
-        let Some(client) = self.clients.get_mut(&conn) else {
+        let Some(client) = self.clients.get_mut(conn) else {
             return;
         };
         let (tokens, last) = client.chat_budget.get_or_insert((CHAT_BURST, now));
@@ -31,14 +31,14 @@ impl Manager {
         }
         *tokens -= 1.0;
         let spectator = self.rooms.get(&id).is_some_and(|r| r.spectator_slot(conn).is_some());
-        let msg = ServerMessage::Chat { from: self.display_name(conn), text, spectator };
+        let msg = ServerMessage::Chat { from: self.clients.display_name(conn), text, spectator };
         self.send_room_msg(id, &msg);
     }
 
     /// One without a board of their own picks the one to watch large, by
     /// its slot from 1.
     pub(super) fn follow(&mut self, conn: ConnId, slot: u8) {
-        let Some(room) = self.room_of(conn).and_then(|id| self.rooms.get_mut(&id)) else {
+        let Some(room) = self.clients.room_of(conn).and_then(|id| self.rooms.get_mut(&id)) else {
             return;
         };
         let Some(slot) = usize::from(slot).checked_sub(1).filter(|&s| s < room.sim.boards.len()) else {
@@ -50,7 +50,7 @@ impl Manager {
     }
 
     pub(super) fn spectate(&mut self, conn: ConnId, id: RoomId) {
-        if self.token_of(conn).is_none() || self.room_of(conn) == Some(id) {
+        if self.clients.token_of(conn).is_none() || self.clients.room_of(conn) == Some(id) {
             return;
         }
         let Some(room) = self.rooms.get(&id) else {
@@ -63,7 +63,7 @@ impl Manager {
         }
         let host = room.host.clone();
         let host_user = room.host_user();
-        let watcher = self.user_of(conn);
+        let watcher = self.clients.user_of(conn);
         match (watcher, host_user) {
             (Some(watcher), Some(other)) if watcher == other => self.enter_audience(conn, id),
             (Some(watcher), Some(other)) => self.check_watch(conn, id, host, watcher, other),
@@ -85,7 +85,7 @@ impl Manager {
 
     /// Watches the game a friend is in, wherever it is.
     pub(super) fn watch_friend(&mut self, conn: ConnId, friend: &str) {
-        let (Some(watcher), Ok(friend)) = (self.user_of(conn), Uuid::parse_str(friend)) else {
+        let (Some(watcher), Ok(friend)) = (self.clients.user_of(conn), Uuid::parse_str(friend)) else {
             return;
         };
         let found =
@@ -98,17 +98,17 @@ impl Manager {
     }
 
     fn check_watch(&mut self, conn: ConnId, room: RoomId, host: Token, watcher: Uuid, other: Uuid) {
-        if !self.begin_friend_check(conn) {
+        if !self.clients.begin_friend_check(conn) {
             return;
         }
-        let from = self.room_of(conn);
-        self.friend_checks.push(FriendCheck::Watch { conn, room, host, from, watcher, other });
+        let from = self.clients.room_of(conn);
+        self.effects.push(Effect::CheckFriends(FriendCheck::Watch { conn, room, host, from, watcher, other }));
     }
 
     /// The answer to a `FriendCheck::Watch` about `other`. A friends-only
     /// room also needs the friendship of its current host, asked next.
     pub(super) fn finish_watch_check(&mut self, conn: ConnId, id: RoomId, host: &str, other: Uuid, friends: bool) {
-        if !self.clients.contains_key(&conn) {
+        if !self.clients.contains(conn) {
             return;
         }
         let Some(room) = self.rooms.get(&id) else {
@@ -119,8 +119,7 @@ impl Manager {
             self.join_failed(conn, WATCH_NOT_FRIENDS);
             return;
         }
-        let host_user = room.members.iter().find(|m| m.token == room.host).and_then(|m| m.user_id);
-        if room.settings.friends_only && (room.host != host || host_user != Some(other)) {
+        if room.settings.friends_only && (room.host != host || room.host_user() != Some(other)) {
             self.spectate(conn, id);
         } else {
             self.enter_audience(conn, id);
@@ -128,7 +127,7 @@ impl Manager {
     }
 
     fn enter_audience(&mut self, conn: ConnId, id: RoomId) {
-        if self.room_of(conn) == Some(id) {
+        if self.clients.room_of(conn) == Some(id) {
             return;
         }
         if self.rooms.get(&id).is_none_or(|r| r.spectators.len() >= shared::MAX_SPECTATORS) {
@@ -136,21 +135,21 @@ impl Manager {
             return;
         }
         self.leave_current(conn);
-        let spectator = Spectator { conn, user_id: self.user_of(conn), name: self.display_name(conn) };
+        let spectator = Spectator { conn, user_id: self.clients.user_of(conn), name: self.clients.display_name(conn) };
         let Some(room) = self.rooms.get_mut(&id) else { return };
         room.spectators.push(spectator);
         let count = room.spectators.len() as u8;
         let playing = matches!(room.phase, Phase::Playing);
         let snapshot = playing.then(|| room.sim.state_update());
         let lobby = room.spectator_info();
-        self.set_room(conn, Some(id));
+        self.clients.set_room(conn, Some(id));
         self.refresh_lobby(id);
         if playing {
-            self.deliver_msg(conn, &ServerMessage::Lobby { info: lobby });
+            self.clients.deliver_msg(conn, &ServerMessage::Lobby { info: lobby });
         }
         if let Some(snapshot) = snapshot {
             self.deliver_game_start(id, conn);
-            self.deliver_msg(conn, &snapshot);
+            self.clients.deliver_msg(conn, &snapshot);
         }
         self.send_room_msg(id, &ServerMessage::Spectators { count });
         self.room_list_dirty = true;
@@ -167,7 +166,7 @@ impl Manager {
         };
         room.spectators.remove(i);
         let count = room.spectators.len() as u8;
-        self.set_room(conn, None);
+        self.clients.set_room(conn, None);
         self.refresh_lobby(id);
         self.send_room_msg(id, &ServerMessage::Spectators { count });
         self.room_list_dirty = true;
@@ -186,7 +185,7 @@ impl Manager {
     pub(super) fn close_room(&mut self, id: RoomId) {
         let Some(room) = self.rooms.remove(&id) else { return };
         for s in room.spectators {
-            self.set_room(s.conn, None);
+            self.clients.set_room(s.conn, None);
             self.send_room_list_to(s.conn);
         }
     }

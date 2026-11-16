@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn last_update_tick(rx: &mut mpsc::Receiver<Vec<u8>>) -> Option<u32> {
+pub(super) fn last_update_tick(rx: &mut mpsc::Receiver<bytes::Bytes>) -> Option<u32> {
     drain(rx).into_iter().rev().find_map(|m| match m {
         ServerMessage::StateUpdate { tick, .. } => Some(tick),
         _ => None,
@@ -329,7 +329,7 @@ fn a_restart_clears_attacks_in_flight() {
     assert_eq!(mgr.rooms[&1].sim.boards[1].pending_garbage, 0, "an attack from the previous game landed in this one");
 }
 
-fn last_board(rx: &mut mpsc::Receiver<Vec<u8>>, slot: u8) -> Option<shared::Board> {
+fn last_board(rx: &mut mpsc::Receiver<bytes::Bytes>, slot: u8) -> Option<shared::Board> {
     drain(rx).into_iter().rev().find_map(|m| match m {
         ServerMessage::StateUpdate { players, .. } => {
             players.into_iter().find(|p| p.slot == slot).map(|p| std::sync::Arc::unwrap_or_clone(p.board))

@@ -88,7 +88,7 @@ fn opponent_disconnect_pauses_running_game() {
     assert!(has(&drain(&mut rx1), |m| matches!(m, ServerMessage::OpponentDisconnected)));
 }
 
-pub(super) fn running_game(mgr: &mut Manager) -> (mpsc::Receiver<Vec<u8>>, mpsc::Receiver<Vec<u8>>) {
+pub(super) fn running_game(mgr: &mut Manager) -> (mpsc::Receiver<bytes::Bytes>, mpsc::Receiver<bytes::Bytes>) {
     let (_id, rx1, rx2) = two_player_room(mgr);
     mgr.handle(Command::ToggleCountdown { conn: 1 });
     mgr.tick(3.5, false);
@@ -211,7 +211,7 @@ fn reconnecting_to_a_closed_room_lands_on_the_room_list() {
     mgr.handle(Command::LeaveRoom { conn: 1 });
     let mut rx3 = reg(&mut mgr, 3);
     hello(&mut mgr, 3, "B");
-    assert_eq!(mgr.room_of(3), None);
+    assert_eq!(mgr.clients.room_of(3), None);
     assert!(has(&drain(&mut rx3), |m| matches!(m, ServerMessage::RoomList { .. })));
 }
 
@@ -223,7 +223,7 @@ fn joining_your_own_room_keeps_it() {
     create_room(&mut mgr, 1);
     mgr.handle(Command::JoinRoom { conn: 1, id: 1 });
     assert!(mgr.rooms.contains_key(&1));
-    assert_eq!(mgr.room_of(1), Some(1));
+    assert_eq!(mgr.clients.room_of(1), Some(1));
 }
 
 pub(super) fn set_pause_policy(mgr: &mut Manager, policy: PausePolicy) {
@@ -336,7 +336,7 @@ fn restart_refused_while_opponent_is_disconnected() {
 }
 
 /// A room for up to `max` players, with `players` of them seated (conns 1..).
-fn big_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<Vec<u8>>> {
+fn big_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<bytes::Bytes>> {
     let mut rxs = vec![reg(mgr, 1)];
     hello(mgr, 1, "P1");
     mgr.handle(Command::CreateRoom { conn: 1, name: "big".into() });
@@ -352,7 +352,7 @@ fn big_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<Ve
 }
 
 /// A room where the host may seat CPUs, as on a debug server.
-fn cpu_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<Vec<u8>>> {
+fn cpu_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<bytes::Bytes>> {
     let rxs = big_room(mgr, max, players);
     mgr.rooms.get_mut(&1).expect("the room").cpu_seats = true;
     rxs
@@ -509,7 +509,7 @@ fn update_slots(msgs: &[ServerMessage]) -> Vec<Vec<u8>> {
 
 /// What `rx` got over 12 ticks: how often each board came whole and how
 /// often the thumbnails came.
-fn twelve_ticks(mgr: &mut Manager, rx: &mut mpsc::Receiver<Vec<u8>>) -> (Vec<(char, Vec<u8>)>, usize) {
+fn twelve_ticks(mgr: &mut Manager, rx: &mut mpsc::Receiver<bytes::Bytes>) -> (Vec<(char, Vec<u8>)>, usize) {
     drain(rx);
     for _ in 0..12 {
         mgr.tick(1.0 / 60.0, true);

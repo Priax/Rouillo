@@ -10,7 +10,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::room::{Member, Phase, Room, Series, SeriesResult, Spectator, StateOut};
-use crate::{db, ConnId, Token};
+use crate::{db, encode, ConnId, Token};
 
 mod client;
 pub mod friends;
@@ -20,9 +20,9 @@ pub mod ranked;
 pub(crate) mod rooms;
 pub mod social;
 
-pub use client::Client;
-use friends::FriendCheck;
-use ranked::{PendingMatch, QueueEntry, RankedCheck};
+pub use client::{Client, Clients};
+use friends::{FriendCheck, Friends};
+use ranked::{Ranked, RankedCheck};
 
 /// What the rooms one thread stepped and sent leave to record.
 #[derive(Default)]
@@ -45,34 +45,32 @@ const JOIN_SAME_ACCOUNT: &str = "Ce compte est déjà dans cette room.";
 const WATCH_NOBODY: &str = "Cet ami ne joue pas en ce moment.";
 const WATCH_NOT_FRIENDS: &str = "Seuls les amis peuvent regarder cette partie.";
 
+/// Work for the database, done outside the manager, whose answer comes
+/// back as a `Command`.
+pub enum Effect {
+    SaveMatch(db::MatchRecord),
+    SaveSeries(db::SeriesRecord),
+    CheckRanked(RankedCheck),
+    LoadFriends(Uuid),
+    CheckFriends(FriendCheck),
+}
+
 pub struct Manager {
     pub rooms: HashMap<RoomId, Room>,
-    pub clients: HashMap<ConnId, Client>,
-    dead: Vec<ConnId>,
+    pub clients: Clients,
+    pub ranked: Ranked,
+    friends: Friends,
+    effects: Vec<Effect>,
     next_id: RoomId,
     room_list_dirty: bool,
     last_room_list: Instant,
-    friend_checks: Vec<FriendCheck>,
-    /// The accepted friends of each signed-in user connected, for the room list.
-    friends: HashMap<Uuid, HashSet<Uuid>>,
-    friend_loads: Vec<Uuid>,
-    /// Users whose friend list is being read, and whether a friendship of
-    /// theirs changed meanwhile, which makes the answer stale.
-    friends_loading: HashMap<Uuid, bool>,
-    unsaved_matches: Vec<db::MatchRecord>,
-    unsaved_series: Vec<db::SeriesRecord>,
-    user_conns: HashMap<Uuid, HashSet<ConnId>>,
-    pub queue: Vec<QueueEntry>,
-    pub pending_matches: Vec<PendingMatch>,
-    queue_cooldowns: HashMap<Uuid, Instant>,
-    ranked_checks: Vec<RankedCheck>,
     closing: bool,
 }
 
 pub enum Command {
     Register {
         conn: ConnId,
-        sender: mpsc::Sender<Vec<u8>>,
+        sender: mpsc::Sender<Bytes>,
         states: Option<mpsc::Sender<Vec<Bytes>>>,
     },
     Unregister {
@@ -262,24 +260,20 @@ impl Manager {
     pub fn new() -> Self {
         Self {
             rooms: HashMap::new(),
-            clients: HashMap::new(),
-            dead: Vec::new(),
+            clients: Clients::default(),
+            ranked: Ranked::default(),
+            friends: Friends::default(),
+            effects: Vec::new(),
             next_id: 1,
             room_list_dirty: false,
             last_room_list: Instant::now(),
-            friend_checks: Vec::new(),
-            friends: HashMap::new(),
-            friend_loads: Vec::new(),
-            friends_loading: HashMap::new(),
-            unsaved_matches: Vec::new(),
-            unsaved_series: Vec::new(),
-            user_conns: HashMap::new(),
-            queue: Vec::new(),
-            pending_matches: Vec::new(),
-            queue_cooldowns: HashMap::new(),
-            ranked_checks: Vec::new(),
             closing: false,
         }
+    }
+
+    /// What is left for the database to do, in the order it came.
+    pub fn effects(&mut self) -> std::vec::Drain<'_, Effect> {
+        self.effects.drain(..)
     }
 
     fn begin_shutdown(&mut self) {
@@ -287,23 +281,14 @@ impl Manager {
             return;
         }
         self.closing = true;
-        let counting: Vec<RoomId> =
-            self.rooms.values().filter(|r| matches!(r.phase, Phase::CountingDown(_))).map(|r| r.id).collect();
-        for id in counting {
-            if let Some(room) = self.rooms.get_mut(&id) {
-                room.phase = Phase::Lobby;
-            }
-            self.send_lobby(id);
+        for room in self.rooms.values_mut().filter(|r| matches!(r.phase, Phase::CountingDown(_))) {
+            room.phase = Phase::Lobby;
+            self.clients.deliver_many(room.lobby_payloads());
             self.room_list_dirty = true;
         }
-        let conns: Vec<ConnId> = self.clients.keys().copied().collect();
-        for conn in conns {
-            self.deliver_msg(conn, &ServerMessage::Maintenance);
-        }
-        for entry in std::mem::take(&mut self.queue) {
-            self.refuse_queue(entry.conn, JOIN_MAINTENANCE);
-        }
-        self.cancel_pending_for_maintenance();
+        let maintenance = encode(&ServerMessage::Maintenance);
+        self.clients.broadcast(|_| Some(maintenance.clone()));
+        self.refuse_queue_for_maintenance();
         info!("Maintenance: {} partie(s) en cours à laisser finir", self.games_running());
     }
 
@@ -315,114 +300,64 @@ impl Manager {
         self.rooms.values().filter(|r| r.game_running()).count()
     }
 
-    pub fn room_of(&self, conn: ConnId) -> Option<RoomId> {
-        self.clients.get(&conn)?.room
-    }
-
-    pub fn take_unsaved_matches(&mut self) -> Vec<db::MatchRecord> {
-        std::mem::take(&mut self.unsaved_matches)
-    }
-
     fn join_failed(&mut self, conn: ConnId, reason: &str) {
-        self.deliver_msg(conn, &ServerMessage::JoinFailed { reason: reason.to_string() });
+        self.clients.deliver_msg(conn, &ServerMessage::JoinFailed { reason: reason.to_string() });
     }
 
     fn with_room<R>(&mut self, id: RoomId, f: impl FnOnce(&mut Room) -> R) -> Option<R> {
         self.rooms.get_mut(&id).map(f)
     }
 
-    fn deliver(&mut self, conn: ConnId, payload: Vec<u8>) {
-        if self.clients.get(&conn).is_some_and(|c| !c.send(payload)) {
-            self.dead.push(conn);
-        }
-    }
-
-    fn deliver_msg(&mut self, conn: ConnId, msg: &ServerMessage) {
-        self.deliver(conn, shared::encode(msg));
-    }
-
     fn send_room_msg(&mut self, id: RoomId, msg: &ServerMessage) {
-        self.send_room(id, &shared::encode(msg));
-    }
-
-    fn send_room(&mut self, id: RoomId, payload: &[u8]) {
-        let Some(conns) = self.rooms.get(&id).map(Room::audience) else {
-            return;
-        };
-        for c in conns {
-            self.deliver(c, payload.to_vec());
+        if let Some(room) = self.rooms.get(&id) {
+            self.clients.deliver_all(room.audience(), &encode(msg));
         }
     }
 
     fn send_game_start(&mut self, id: RoomId) {
-        for (c, payload) in self.rooms.get_mut(&id).map(Room::game_start_payloads).unwrap_or_default() {
-            self.deliver(c, payload);
+        if let Some(room) = self.rooms.get_mut(&id) {
+            self.clients.deliver_many(room.game_start_payloads());
         }
     }
 
     fn deliver_game_start(&mut self, id: RoomId, conn: ConnId) {
-        if let Some(msg) = self.rooms.get_mut(&id).map(|r| r.game_start_for(conn)) {
-            self.deliver_msg(conn, &msg);
+        if let Some(room) = self.rooms.get_mut(&id) {
+            room.restart_client(conn);
+            self.clients.deliver_msg(conn, &room.game_start_for(conn));
         }
     }
 
     fn send_lobby(&mut self, id: RoomId) {
-        let Some(msgs) = self.rooms.get(&id).map(Room::lobby_payloads) else {
-            return;
-        };
-        for (c, payload) in msgs {
-            self.deliver(c, payload);
+        if let Some(room) = self.rooms.get(&id) {
+            self.clients.deliver_many(room.lobby_payloads());
         }
     }
 
     pub fn send_snapshot(&mut self, id: RoomId) {
-        let msg = match self.rooms.get(&id) {
-            Some(room) => room.sim.state_update(),
-            None => return,
-        };
-        self.send_room_msg(id, &msg);
+        if let Some(room) = self.rooms.get(&id) {
+            self.clients.deliver_all(room.audience(), &encode(&room.sim.state_update()));
+        }
     }
 
-    pub fn public_room_list(&self) -> Vec<RoomInfo> {
-        self.rooms.values().filter(|r| !r.settings.friends_only).map(Room::info).collect()
-    }
-
-    /// The friends-only rooms `conn` may join: its own, or a friend's.
-    fn private_rooms_for(&self, conn: ConnId) -> impl Iterator<Item = &Room> {
-        let viewer = self.user_of(conn);
-        let friends = viewer.and_then(|v| self.friends.get(&v));
-        self.rooms.values().filter(move |r| {
-            r.settings.friends_only
-                && r.host_user().is_some_and(|host| viewer == Some(host) || friends.is_some_and(|f| f.contains(&host)))
-        })
-    }
-
-    fn room_list_for(&self, conn: ConnId) -> Vec<RoomInfo> {
-        let mut rooms = self.public_room_list();
-        rooms.extend(self.private_rooms_for(conn).map(Room::info));
-        rooms
+    fn send_room_list_to(&mut self, conn: ConnId) {
+        let rooms = room_list(&self.rooms, &self.friends, self.clients.user_of(conn));
+        self.clients.deliver_msg(conn, &ServerMessage::RoomList { rooms });
     }
 
     /// The public list is encoded once; only those who also see a
     /// friends-only room get a list of their own.
     pub(crate) fn broadcast_room_list(&mut self) {
-        let browsing: Vec<ConnId> = self
-            .clients
-            .iter()
-            .filter_map(|(&c, client)| (client.room.is_none() && client.lists_rooms).then_some(c))
-            .collect();
-        let public = shared::encode(&ServerMessage::RoomList { rooms: self.public_room_list() });
-        for c in browsing {
-            if self.private_rooms_for(c).next().is_some() {
-                self.send_room_list_to(c);
-            } else {
-                self.deliver(c, public.clone());
+        let Self { rooms, friends, clients, .. } = self;
+        let public = encode(&ServerMessage::RoomList { rooms: public_rooms(rooms).map(Room::info).collect() });
+        clients.broadcast(|client| {
+            if !client.browsing() {
+                return None;
             }
-        }
-    }
-
-    fn send_room_list_to(&mut self, conn: ConnId) {
-        self.deliver_msg(conn, &ServerMessage::RoomList { rooms: self.room_list_for(conn) });
+            if private_rooms(rooms, friends, client.user).next().is_none() {
+                return Some(public.clone());
+            }
+            Some(encode(&ServerMessage::RoomList { rooms: room_list(rooms, friends, client.user) }))
+        });
     }
 
     fn room_of_token(&self, token: &str) -> Option<RoomId> {
@@ -430,13 +365,11 @@ impl Manager {
     }
 
     pub fn handle(&mut self, cmd: Command) {
-        if cmd.client().is_some_and(|conn| !self.clients.contains_key(&conn)) {
+        if cmd.client().is_some_and(|conn| !self.clients.contains(conn)) {
             return;
         }
         match cmd {
-            Command::Register { conn, sender, states } => {
-                self.clients.insert(conn, Client::new(sender, states));
-            }
+            Command::Register { conn, sender, states } => self.clients.insert(conn, Client::new(sender, states)),
             Command::Hello { conn, token, user_id, username, session, last_disconnect_reason, background } => {
                 if let Some(reason) = last_disconnect_reason {
                     warn!("WS {conn} reconnecte après coupure client: {reason}");
@@ -447,7 +380,7 @@ impl Manager {
             Command::Unregister { conn } => self.drop_connection(conn),
             Command::RequestRoomList { conn } => self.send_room_list_to(conn),
             Command::ListRooms { conn, on } => {
-                if let Some(client) = self.clients.get_mut(&conn) {
+                if let Some(client) = self.clients.get_mut(conn) {
                     client.lists_rooms = on;
                 }
                 if on {
@@ -495,13 +428,13 @@ impl Manager {
         }
     }
 
+    /// Drops the connections too slow to keep up, and those that dropping
+    /// them finds slow in turn.
     pub fn reap_dead(&mut self) {
-        while !self.dead.is_empty() {
-            for conn in std::mem::take(&mut self.dead) {
-                if self.clients.contains_key(&conn) {
-                    warn!("WS {conn} trop lente, fermeture");
-                    self.drop_connection(conn);
-                }
+        while let Some(conn) = self.clients.next_dead() {
+            if self.clients.contains(conn) {
+                warn!("WS {conn} trop lente, fermeture");
+                self.drop_connection(conn);
             }
         }
     }
@@ -521,7 +454,7 @@ impl Manager {
             .fold(RoomsTicked::default, |mut out, (_, room)| {
                 let (mut outgoing, mut states) = (Vec::new(), Vec::new());
                 out.list_changed |= room.tick_countdown(dt, &mut outgoing);
-                let split = |c| clients.get(&c).is_some_and(Client::splits_states);
+                let split = |c| clients.splits_states(c);
                 if let Some(rec) = room.tick_game(do_broadcast, split, &mut states, &mut outgoing) {
                     if room.series.is_some() {
                         out.games_won.push((room.id, rec.winner_slot().map(|w| usize::from(w) - 1)));
@@ -529,12 +462,12 @@ impl Manager {
                     out.records.push(rec);
                 }
                 for (conn, payload) in outgoing {
-                    if clients.get(&conn).is_some_and(|c| !c.send(payload)) {
+                    if !clients.try_send(conn, payload) {
                         out.dead.push(conn);
                     }
                 }
                 for (conn, state) in states {
-                    if clients.get(&conn).is_some_and(|c| !c.send_state(state)) {
+                    if !clients.try_send_state(conn, state) {
                         out.dead.push(conn);
                     }
                 }
@@ -543,9 +476,9 @@ impl Manager {
             .collect();
 
         for out in ticked {
-            self.dead.extend(out.dead);
+            self.clients.mark_dead(out.dead);
             self.room_list_dirty |= out.list_changed;
-            self.unsaved_matches.extend(out.records);
+            self.effects.extend(out.records.into_iter().map(Effect::SaveMatch));
             for (id, winner) in out.games_won {
                 self.series_game_won(id, winner);
             }
@@ -574,4 +507,46 @@ impl Manager {
             }
         }
     }
+}
+
+fn public_rooms(rooms: &HashMap<RoomId, Room>) -> impl Iterator<Item = &Room> {
+    rooms.values().filter(|r| !r.settings.friends_only)
+}
+
+/// The friends-only rooms `viewer` may join: its own, or a friend's.
+fn private_rooms<'a>(
+    rooms: &'a HashMap<RoomId, Room>,
+    friends: &'a Friends,
+    viewer: Option<Uuid>,
+) -> impl Iterator<Item = &'a Room> {
+    rooms
+        .values()
+        .filter(move |r| r.settings.friends_only && r.host_user().is_some_and(|host| friends.sees(viewer, host)))
+}
+
+fn room_list(rooms: &HashMap<RoomId, Room>, friends: &Friends, viewer: Option<Uuid>) -> Vec<RoomInfo> {
+    public_rooms(rooms).chain(private_rooms(rooms, friends, viewer)).map(Room::info).collect()
+}
+
+#[cfg(test)]
+macro_rules! effects_of {
+    ($name:ident, $variant:ident, $ty:ty) => {
+        pub fn $name(&mut self) -> Vec<$ty> {
+            let picked = self.effects.extract_if(.., |e| matches!(e, Effect::$variant(_)));
+            picked.filter_map(|e| if let Effect::$variant(x) = e { Some(x) } else { None }).collect()
+        }
+    };
+}
+
+#[cfg(test)]
+impl Manager {
+    pub fn public_room_list(&self) -> Vec<RoomInfo> {
+        public_rooms(&self.rooms).map(Room::info).collect()
+    }
+
+    effects_of!(take_unsaved_matches, SaveMatch, db::MatchRecord);
+    effects_of!(take_unsaved_series, SaveSeries, db::SeriesRecord);
+    effects_of!(take_ranked_checks, CheckRanked, RankedCheck);
+    effects_of!(take_friend_loads, LoadFriends, Uuid);
+    effects_of!(take_friend_checks, CheckFriends, FriendCheck);
 }
