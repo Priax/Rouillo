@@ -125,6 +125,17 @@ pub(super) async fn handle_me(Authed(user): Authed) -> Result<impl IntoResponse,
     Ok(Json(UserProfile::from(user)))
 }
 
+/// At most one blank line in a row.
+fn one_blank_line(text: &str) -> String {
+    let mut breaks = 0;
+    text.chars()
+        .filter(|&c| {
+            breaks = if c == '\n' { breaks + 1 } else { 0 };
+            breaks <= 2
+        })
+        .collect()
+}
+
 /// Profile text without control characters: the bio keeps its line breaks,
 /// the favorite music is one line.
 pub(super) fn printable(text: &str, lines: bool) -> String {
@@ -144,7 +155,7 @@ pub(super) async fn handle_patch_me(
     Authed(user): Authed,
     JsonBody(mut body): JsonBody<PatchMeBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    body.bio = body.bio.map(|s| printable(&s, true));
+    body.bio = body.bio.map(|s| one_blank_line(&printable(&s, true)));
     body.favorite_music = body.favorite_music.map(|s| printable(&s, false));
     if body.bio.as_deref().is_some_and(|s| s.chars().count() > 500) {
         return Err(ApiError::BioTooLong);
@@ -216,5 +227,10 @@ mod tests {
     fn profile_text_loses_its_control_characters() {
         assert_eq!(printable("a\r\nb\tc\u{7}d\u{1b}[2J", true), "a\nb cd[2J");
         assert_eq!(printable("one\ntwo", false), "one two");
+    }
+
+    #[test]
+    fn a_bio_keeps_one_blank_line_in_a_row() {
+        assert_eq!(one_blank_line("a\n\n\n\nb\nc\n\nd"), "a\n\nb\nc\n\nd");
     }
 }

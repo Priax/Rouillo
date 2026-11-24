@@ -132,14 +132,7 @@ impl EditForm {
         if self.focused != EditField::Bio {
             return true;
         }
-
-        let (before, after) = self.bio.around_caret();
-        let around =
-            before.len() - before.trim_end_matches('\n').len() + after.len() - after.trim_start_matches('\n').len();
-        if around < 2 {
-            self.bio.type_char('\n');
-        }
-
+        self.bio.type_char('\n');
         false
     }
 
@@ -372,26 +365,18 @@ mod tests {
     }
 
     #[test]
-    fn a_bio_holds_one_blank_line_in_a_row_and_none_in_front() {
+    fn enter_always_breaks_the_line_but_not_in_front() {
         let mut form = EditForm::default();
         form.enter();
         typed(&mut form, "  ");
         assert_eq!(&*form.bio, "", "nothing the save would trim off the front");
         typed(&mut form, "a");
-        for _ in 0..5 {
-            form.enter();
-        }
-        assert_eq!(&*form.bio, "a\n\n");
-        typed(&mut form, "b");
         form.enter();
-        assert_eq!(&*form.bio, "a\n\nb\n");
+        form.enter();
+        typed(&mut form, "b");
         form.bio.set_caret(2);
         form.enter();
-        assert_eq!(&*form.bio, "a\n\nb\n", "nor a second one from the middle of a break");
-        form.bio.set_caret(4);
-        typed(&mut form, "c");
-        form.enter();
-        assert_eq!(&*form.bio, "a\n\nbc\n\n");
+        assert_eq!(&*form.bio, "a\n\n\nb", "a line opened on a blank one, to write on");
     }
 
     #[test]

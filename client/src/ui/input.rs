@@ -188,10 +188,6 @@ impl TextInput {
         true
     }
 
-    pub fn around_caret(&self) -> (&str, &str) {
-        self.text.split_at(self.caret)
-    }
-
     pub fn insert(&mut self, c: char) {
         self.remember(if self.selection().is_some() { Change::Other } else { Change::Typing });
         self.last = Change::Typing;
@@ -384,7 +380,7 @@ mod tests {
         field.left();
         assert_eq!(field.shown(), (Cow::Borrowed("***"), 2));
         field.set_caret_shown(1, false);
-        assert_eq!(field.around_caret(), ("p", "é€"));
+        assert_eq!(field.caret(), "p".len());
         field.set_caret_shown(7, false);
         assert_eq!(field.caret(), field.len());
     }

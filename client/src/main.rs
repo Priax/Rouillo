@@ -109,7 +109,8 @@ fn setup(gfx: &mut Graphics) -> Root {
 fn event(root: &mut Root, evt: Event) {
     #[cfg(not(target_arch = "wasm32"))]
     if let Event::ReceivedCharacter(c) = evt {
-        if let Some(c) = root.state.input.keys.key_char(c) {
+        // Enter is read by its key on each screen, Shift held or not.
+        if let Some(c) = root.state.input.keys.key_char(c).filter(|c| !matches!(c, '\n' | '\r')) {
             type_char(&mut root.state, &mut root.nav, c);
         }
     }
