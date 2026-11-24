@@ -677,7 +677,7 @@ checksum = "e0921b3876b3a1df8a1c9f912e7f94342458022c2e84288015893d83c4d62a79"
 
 [[package]]
 name = "client"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "ab_glyph",
  "arboard",
@@ -2775,7 +2775,7 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
 name = "loadbot"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "futures-util",
  "shared",
@@ -4950,7 +4950,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "argon2",
  "axum",
@@ -5060,7 +5060,7 @@ dependencies = [
 
 [[package]]
 name = "shared"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "bitcode",
  "criterion",
