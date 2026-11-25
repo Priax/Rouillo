@@ -2,8 +2,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use argon2::{password_hash, Argon2, PasswordHasher, PasswordVerifier};
-use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
@@ -50,7 +50,7 @@ pub struct User {
     pub avatar_url: Option<String>,
     pub banner_url: Option<String>,
     pub elo: i32,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
     pub solo_best: i32,
 }
 
@@ -379,7 +379,8 @@ pub struct UserProfileRow {
     pub avatar_url: Option<String>,
     pub banner_url: Option<String>,
     pub elo: i32,
-    pub created_at: DateTime<Utc>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
     pub total_matches: i64,
     pub wins: i64,
     pub casual_matches: i64,
@@ -461,7 +462,8 @@ pub async fn leaderboard(pool: &DbPool, me: Option<Uuid>) -> Result<Vec<Leaderbo
 #[derive(serde::Serialize)]
 pub struct MatchRow {
     pub id: Uuid,
-    pub played_at: DateTime<Utc>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub played_at: OffsetDateTime,
     pub duration_secs: f64,
     pub ranked: bool,
     pub has_replay: bool,
@@ -490,7 +492,7 @@ pub struct MatchPlayer {
 #[derive(sqlx::FromRow)]
 struct MatchHead {
     id: Uuid,
-    played_at: DateTime<Utc>,
+    played_at: OffsetDateTime,
     duration_secs: f64,
     ranked: bool,
     has_replay: bool,

@@ -13,7 +13,7 @@ use axum::Router;
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use shared::{config, ClientMessage, ServerMessage};
-use socket2::{Domain, Protocol, Socket, Type};
+use tokio::net::TcpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tracing::{info, warn};
@@ -79,13 +79,11 @@ impl RateLimiter {
 }
 
 pub fn bind_listener(addr: SocketAddr) -> tokio::net::TcpListener {
-    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP)).expect("socket()");
-    socket.set_tcp_nodelay(true).expect("TCP_NODELAY");
-    socket.set_reuse_address(true).expect("SO_REUSEADDR");
-    socket.set_nonblocking(true).expect("O_NONBLOCK");
-    socket.bind(&addr.into()).expect("bind");
-    socket.listen(1024).expect("listen");
-    tokio::net::TcpListener::from_std(socket.into()).expect("listener")
+    let socket = if addr.is_ipv4() { TcpSocket::new_v4() } else { TcpSocket::new_v6() }.expect("socket()");
+    socket.set_nodelay(true).expect("TCP_NODELAY");
+    socket.set_reuseaddr(true).expect("SO_REUSEADDR");
+    socket.bind(addr).expect("bind");
+    socket.listen(1024).expect("listen")
 }
 
 const MAX_LOGGED_REASON: usize = 100;

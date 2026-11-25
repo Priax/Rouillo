@@ -11,8 +11,8 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use tokio::sync::mpsc;
 use tracing::error;
 use uuid::Uuid;
@@ -68,7 +68,8 @@ struct UserProfile {
     avatar_url: Option<String>,
     banner_url: Option<String>,
     elo: i32,
-    created_at: DateTime<Utc>,
+    #[serde(with = "time::serde::rfc3339")]
+    created_at: OffsetDateTime,
     solo_best: i32,
 }
 

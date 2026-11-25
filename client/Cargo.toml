@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
-notan = { version = "0.14.0", features = ["serde"] }
+notan = { version = "0.14.0", default-features = false, features = ["backend", "log", "draw", "shaderc", "serde"] }
 ab_glyph = "0.2"
 rand = "0.10"
 serde = { version = "1.0", features = ["derive"] }
@@ -18,7 +18,7 @@ shared = { path = "../shared" }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Registry"] }
 
 [target.'cfg(windows)'.build-dependencies]
-winres = "0.1"
+winresource = "0.1"
 
 [package.metadata.notan.assets]
 search = ["assets"]
