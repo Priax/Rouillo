@@ -4,11 +4,13 @@ use aero::Cx;
 
 use crate::color::TextureFilter;
 use crate::drawing::Draw;
+use crate::texts::Texts;
 
 /// What notan's callbacks draw with: Aero's context, and while drawing, the window's frame.
 pub struct Graphics<'a> {
     pub(crate) cx: &'a mut Cx,
     pub(crate) frame: Option<&'a mut aero::draw::Draw>,
+    pub(crate) texts: &'a mut Texts,
 }
 
 impl Graphics<'_> {
@@ -20,13 +22,14 @@ impl Graphics<'_> {
     /// Draws `draw` into the window, over what is already drawn this frame.
     pub fn render(&mut self, draw: &Draw) {
         if let Some(frame) = self.frame.as_deref_mut() {
-            draw.play(frame, &mut self.cx.fonts);
+            draw.play(frame, &mut self.cx.fonts, self.texts);
         }
     }
 
     /// Draws `draw` into `target` right away, over what it holds.
     pub fn render_to(&mut self, target: &RenderTexture, draw: &Draw) {
-        self.cx.render_to(&target.texture.image, |frame, fonts| draw.play(frame, fonts));
+        let texts = &mut *self.texts;
+        self.cx.render_to(&target.texture.image, |frame, fonts| draw.play(frame, fonts, texts));
     }
 
     pub fn create_texture(&mut self) -> TextureBuilder {
@@ -79,9 +82,15 @@ pub trait CreateFont {
 
 impl CreateFont for Graphics<'_> {
     fn create_font(&mut self, data: &'static [u8]) -> Result<Font, String> {
+        Font::add(&mut self.cx.fonts, data)
+    }
+}
+
+impl Font {
+    pub(crate) fn add(fonts: &mut aero::text::Fonts, data: &'static [u8]) -> Result<Self, String> {
         let em_per_size = em_per_size(data)?;
-        let family = self.cx.fonts.add(data).into_iter().next().ok_or("no font in the data")?;
-        Ok(Font { family, em_per_size })
+        let family = fonts.add(data).into_iter().next().ok_or("no font in the data")?;
+        Ok(Self { family, em_per_size })
     }
 }
 

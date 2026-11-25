@@ -8,6 +8,7 @@ use aero::text::Fonts;
 
 use crate::color::{BlendMode, Color};
 use crate::graphics::{Font, Texture};
+use crate::texts::Texts;
 
 /// notan's draw extension, which Aero needs no setup for.
 pub struct DrawConfig;
@@ -159,20 +160,20 @@ impl Draw {
     }
 
     /// Plays the shapes into Aero's `draw`; a clear becomes its background.
-    pub(crate) fn play(&self, draw: &mut aero::draw::Draw, fonts: &mut Fonts) {
+    pub(crate) fn play(&self, draw: &mut aero::draw::Draw, fonts: &mut Fonts, texts: &mut Texts) {
         for item in &self.items {
             if let Kind::Clear(color) = item.kind {
                 draw.background(color.aero(1.0));
                 continue;
             }
             draw.push_transform(Affine2::from_mat3(item.matrix));
-            play(&item.kind, draw, fonts);
+            play(&item.kind, draw, fonts, texts);
             draw.pop_transform();
         }
     }
 }
 
-fn play(kind: &Kind, draw: &mut aero::draw::Draw, fonts: &mut Fonts) {
+fn play(kind: &Kind, draw: &mut aero::draw::Draw, fonts: &mut Fonts, texts: &mut Texts) {
     match kind {
         Kind::Clear(_) => {}
         Kind::Rect { min, size, radii, paint } => {
@@ -198,13 +199,7 @@ fn play(kind: &Kind, draw: &mut aero::draw::Draw, fonts: &mut Fonts) {
             .paint(*paint);
         }
         Kind::Text { font, text, at, size, color, h, v, max_width } => {
-            let style = aero::text::TextStyle::new().family(font.family()).size(font.em(*size));
-            let style = style.line_height(font.line_height());
-            let mut style = style.color(color.aero(1.0));
-            if let Some(width) = max_width {
-                style = style.max_width(*width);
-            }
-            let layout = fonts.layout(text, &style);
+            let layout = texts.layout(fonts, font, *size, *max_width, text);
             let shown = layout.size();
             let x = match h {
                 HAlign::Left => 0.0,
@@ -216,7 +211,7 @@ fn play(kind: &Kind, draw: &mut aero::draw::Draw, fonts: &mut Fonts) {
                 VAlign::Middle => shown.y * 0.5,
                 VAlign::Bottom => shown.y,
             };
-            draw.text(fonts, &layout, *at - Vec2::new(x, y));
+            draw.text_colored(fonts, layout, *at - Vec2::new(x, y), color.aero(1.0));
         }
         Kind::Image { image, at, size, crop, color } => {
             let shape = draw.image(image, Rect::new(at.x, at.y, size.x, size.y)).tint(color.aero(1.0));

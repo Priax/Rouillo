@@ -5,6 +5,7 @@ mod color;
 mod drawing;
 mod graphics;
 mod input;
+mod texts;
 
 use aero::{Config, Cx, WindowIcon};
 
@@ -165,8 +166,9 @@ impl<S: 'static> AppBuilder<S> {
         let Self { setup, window, event, update, draw } = self;
         let config = Config::new().window(window.unwrap_or_default());
         aero::run(config, move |cx| {
-            let state = setup(&mut graphics::Graphics { cx, frame: None });
-            Runner { state, app: input::App::new(), stale: false, event, update, draw }
+            let mut texts = texts::Texts::default();
+            let state = setup(&mut graphics::Graphics { cx, frame: None, texts: &mut texts });
+            Runner { state, app: input::App::new(), texts, stale: false, event, update, draw }
         })
         .map_err(|e| e.to_string())
     }
@@ -175,6 +177,7 @@ impl<S: 'static> AppBuilder<S> {
 struct Runner<S> {
     state: S,
     app: input::App,
+    texts: texts::Texts,
     /// An update ran and no frame cleared its input yet.
     stale: bool,
     event: Option<OnEvent<S>>,
@@ -216,8 +219,10 @@ impl<S: 'static> aero::App for Runner<S> {
 
     fn draw(&mut self, cx: &mut Cx, frame: &mut aero::draw::Draw) {
         if let Some(draw) = self.draw {
-            draw(&mut self.app, &mut graphics::Graphics { cx, frame: Some(frame) }, &mut self.state);
+            let mut gfx = graphics::Graphics { cx, frame: Some(frame), texts: &mut self.texts };
+            draw(&mut self.app, &mut gfx, &mut self.state);
         }
+        self.texts.end_frame();
         self.freshen();
     }
 }
