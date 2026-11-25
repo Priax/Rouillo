@@ -4,7 +4,8 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
-notan = { version = "0.14.0", default-features = false, features = ["backend", "log", "draw", "shaderc", "serde"] }
+notan = { version = "0.14.0", optional = true, default-features = false, features = ["backend", "log", "draw", "shaderc", "serde"] }
+aero-notan = { path = "../aero-notan", optional = true }
 ab_glyph = "0.2"
 rand = "0.10"
 serde = { version = "1.0", features = ["derive"] }
@@ -13,6 +14,12 @@ ewebsock = { version = "0.8", features = ["tls"] }
 ehttp = "0.7"
 gilrs = "0.11"
 shared = { path = "../shared" }
+
+[features]
+default = ["notan"]
+notan = ["dep:notan"]
+# Draws with Aero through its notan layer, instead of notan.
+aero = ["dep:aero-notan"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Registry"] }

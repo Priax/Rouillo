@@ -1,5 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(all(feature = "aero", feature = "notan"))]
+compile_error!("one backend: build with --no-default-features --features aero to draw with Aero");
+#[cfg(feature = "aero")]
+extern crate aero_notan as notan;
+
 use notan::app::Event;
 use notan::draw::DrawConfig;
 use notan::prelude::*;
@@ -565,7 +570,7 @@ fn draw_reconnect_banner(gfx: &mut Graphics, gui: &mut Gui, state: &State, scree
     gui.ui.render(gfx, &d);
 }
 
-#[notan_main]
+#[cfg_attr(feature = "notan", notan_main)]
 fn main() -> Result<(), String> {
     #[cfg(windows)]
     windows::log_to_file();

@@ -57,7 +57,7 @@ impl Nav {
 /// The application: where the player is, what screens share, and what
 /// they draw with. They are apart so that a screen can hold its data,
 /// `State` and `Gui` together.
-#[derive(notan::prelude::AppState)]
+#[cfg_attr(feature = "notan", derive(notan::prelude::AppState))]
 pub struct Root {
     pub nav: Nav,
     pub state: State,
