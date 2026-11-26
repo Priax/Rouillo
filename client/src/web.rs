@@ -170,13 +170,20 @@ fn typed(text: &str) {
 
 pub fn after(delay: std::time::Duration, f: impl FnOnce() + 'static) {
     let Some(window) = web_sys::window() else { return };
-    let callback = Closure::once_into_js(f);
+    let callback = Closure::once_into_js(move || {
+        f();
+        crate::wake::wake();
+    });
     let ms = i32::try_from(delay.as_millis()).unwrap_or(i32::MAX);
     let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), ms);
 }
 
-pub fn listen<E: FromWasmAbi + 'static>(target: &EventTarget, event: &str, handler: impl FnMut(E) + 'static) {
-    let handler = Closure::<dyn FnMut(E)>::new(handler);
+/// Every page event wakes the game's loop, which reads what it left.
+pub fn listen<E: FromWasmAbi + 'static>(target: &EventTarget, event: &str, mut handler: impl FnMut(E) + 'static) {
+    let handler = Closure::<dyn FnMut(E)>::new(move |event| {
+        handler(event);
+        crate::wake::wake();
+    });
     let _ = target.add_event_listener_with_callback(event, handler.as_ref().unchecked_ref());
     handler.forget();
 }

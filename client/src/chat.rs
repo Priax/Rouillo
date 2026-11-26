@@ -96,7 +96,7 @@ impl Chat {
         self.edit(tick, keys)
     }
 
-    fn draw_lines(&self, draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, area: Rect, fade: bool) {
+    fn draw_lines(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect, fade: bool) {
         let pal = ui.palette();
         let now = now_secs();
 
@@ -104,6 +104,11 @@ impl Chat {
         for line in self.lines.iter().rev() {
             let alpha = if fade {
                 let left = FADE_AFTER + FADE_FOR - (now - line.at);
+                if left > FADE_FOR {
+                    ui.change_after(left - FADE_FOR);
+                } else if left > 0.0 {
+                    ui.keep_moving();
+                }
                 (left / FADE_FOR).clamp(0.0, 1.0) as f32
             } else {
                 1.0

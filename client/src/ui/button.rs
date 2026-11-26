@@ -101,6 +101,9 @@ impl Ui {
         enabled: bool,
     ) {
         let label = label.into();
+        if label == Label::Icon(Icon::Busy) {
+            self.keep_moving();
+        }
         let r = self.interact(label.id(), rect, enabled);
         if r.entered {
             crate::audio::play_ui_hover();

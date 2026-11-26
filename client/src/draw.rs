@@ -316,6 +316,7 @@ fn winner(session: &GameSession, team: u8) -> String {
 }
 
 pub fn draw_game(draw: &mut Draw, session: &GameSession, ui: &mut Ui, fonts: &mut Fonts, hud: Hud) {
+    ui.keep_moving();
     let layout = GameLayout::new(ui.view(), session);
     let pal = ui.palette();
     let time = ui.time() as f32;

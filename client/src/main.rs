@@ -51,6 +51,7 @@ mod ui;
 mod update;
 #[cfg(not(target_arch = "wasm32"))]
 mod updater;
+mod wake;
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(windows)]
@@ -67,6 +68,8 @@ use crate::ui::Gui;
 
 const BANNER_H: f32 = 80.0;
 const MAINTENANCE_H: f32 = 30.0;
+/// How often the game updates without drawing while nothing moves, for the network's timers.
+const IDLE_BEAT: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub fn server_url() -> String {
     #[cfg(all(target_arch = "wasm32", not(debug_assertions)))]
@@ -334,9 +337,13 @@ fn update(cx: &Cx, root: &mut Root) {
     let real = ui::Mouse::of(&cx.input, view);
 
     state.input.pads.update();
+    if state.input.pads.connected() {
+        gui.ui.keep_moving();
+    }
     let pad_nav = pad_menus(state, nav.current());
     gui.ui.note_pointer(real);
     let mouse = if pad_nav && state.input.pads.pressed(Pad::South) { gui.ui.pad_click().unwrap_or(real) } else { real };
+    gui.ui.set_clock(connection::now_secs());
     gui.ui.begin_frame(dt, view, mouse);
     if pad_nav {
         if let Some(dir) = pad_direction(&state.input.pads) {
@@ -556,6 +563,7 @@ fn draw_reconnect_banner(draw: &mut Draw, gui: &mut Gui, state: &State, screen: 
 
     let ww = gui.ui.view().w;
     let dots = gui.ui.waiting_dots();
+    gui.ui.next_second();
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
 
     ui::banner(draw, Rect::at(0.0, 0.0, ww, 46.0), theme::WARNING_BANNER, theme::WARNING, ui::Edge::Bottom);
@@ -565,22 +573,34 @@ fn draw_reconnect_banner(draw: &mut Draw, gui: &mut Gui, state: &State, screen: 
 struct Rouillo(Root);
 
 impl aero::App for Rouillo {
-    fn event(&mut self, _cx: &mut Cx, event: &Event) {
-        if matches!(event, Event::GpuReset) {
-            self.0.gui.images.rebuild();
+    fn event(&mut self, cx: &mut Cx, event: &Event) {
+        match event {
+            Event::GpuReset => self.0.gui.images.rebuild(),
+            // Aero knows none of the game's widgets, so it cannot tell when the pointer enters one.
+            Event::PointerMoved { .. } => cx.request_redraw(),
+            _ => {}
         }
         #[cfg(not(target_arch = "wasm32"))]
         event_typed(&mut self.0, event);
     }
 
-    /// Every frame asks for the next: games, the network and the animations go on without input.
     fn update(&mut self, cx: &mut Cx) {
         update(cx, &mut self.0);
-        cx.request_redraw();
     }
 
-    fn draw(&mut self, _cx: &mut Cx, draw: &mut Draw) {
+    /// A frame follows while something moves, or when something shown changes; otherwise a slow beat of updates
+    /// without drawing keeps the network's timers going.
+    fn draw(&mut self, cx: &mut Cx, draw: &mut Draw) {
         draw_frame(draw, &mut self.0);
+        let change_in = self.0.gui.ui.take_change_in();
+        if self.0.gui.ui.take_moving() {
+            cx.request_redraw();
+        } else {
+            if let Some(delay) = change_in {
+                cx.request_redraw_in(std::time::Duration::from_secs_f64(delay));
+            }
+            cx.request_update_in(IDLE_BEAT);
+        }
     }
 }
 
@@ -598,5 +618,8 @@ fn main() -> Result<(), aero::Error> {
     #[cfg(target_arch = "wasm32")]
     let window = window.maximized(true);
 
-    aero::run(aero::Config::new().window(window), |_| Rouillo(setup()))
+    aero::run(aero::Config::new().window(window), |cx| {
+        wake::init(cx.waker());
+        Rouillo(setup())
+    })
 }

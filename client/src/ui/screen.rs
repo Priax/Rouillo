@@ -13,7 +13,8 @@ impl Ui {
     /// The canvas a screen draws on: its section's background with triangles
     /// drifting up through it, then the screen's own content, which fades and
     /// slides in while a transition runs. The backdrop stays put under it.
-    pub fn screen_canvas<'a>(&self, draw: &'a mut Draw) -> ScreenCanvas<'a> {
+    pub fn screen_canvas<'a>(&mut self, draw: &'a mut Draw) -> ScreenCanvas<'a> {
+        self.keep_moving();
         let pal = self.palette();
         let view = self.view();
         draw.background(pal.background);
@@ -28,7 +29,7 @@ impl Ui {
     }
 
     /// The header band along the top of a page, with its title.
-    pub fn page_header(&self, draw: &mut Draw, fonts: &mut Fonts, title: &str) {
+    pub fn page_header(&mut self, draw: &mut Draw, fonts: &mut Fonts, title: &str) {
         self.header_band(draw, Rect::at(0.0, 0.0, self.view().w, theme::HEADER_H));
         fonts
             .write(draw, Face::Display, title)
@@ -39,7 +40,8 @@ impl Ui {
 
     /// A page header: a band in the section's colour with triangles rising
     /// through it and a line of accent along its foot.
-    pub fn header_band(&self, draw: &mut Draw, rect: Rect) {
+    pub fn header_band(&mut self, draw: &mut Draw, rect: Rect) {
+        self.keep_moving();
         let pal = self.palette();
         draw.rect(rect).color(pal.banner);
         let triangles = Triangles {

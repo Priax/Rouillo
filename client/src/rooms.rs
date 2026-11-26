@@ -822,7 +822,7 @@ fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool
     }
 }
 
-fn draw_lobby_header(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, info: &LobbyInfo) {
+fn draw_lobby_header(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, info: &LobbyInfo) {
     let pal = ui.palette();
     let view = ui.view();
     let mid = theme::HEADER_H / 2.0;

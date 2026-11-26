@@ -150,7 +150,7 @@ fn cover(draw: &mut Draw, picture: &Image, r: Rect) {
 }
 
 fn draw_header(draw: &mut Draw, gui: &mut Gui, core: &ProfileCore) {
-    let (ui, fonts) = (&gui.ui, &mut gui.fonts);
+    let (ui, fonts) = (&mut gui.ui, &mut gui.fonts);
     let pal = ui.palette();
     let view = ui.view();
     let banner = gui.images.get_opt(core.info.banner_url.as_deref());

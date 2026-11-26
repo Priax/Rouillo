@@ -295,7 +295,10 @@ pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State) {
                     line(draw, fonts, &why, cy + 75.0, theme::size::BODY, theme::WARNING_TEXT);
                     ("Rechercher une partie".to_string(), false)
                 }
-                (None, Some(left)) => (format!("Disponible dans {}", clock(left)), false),
+                (None, Some(left)) => {
+                    gui.ui.next_second();
+                    (format!("Disponible dans {}", clock(left)), false)
+                }
                 (None, None) => ("Rechercher une partie".to_string(), true),
             };
             gui.ui.button_enabled(draw, fonts, b.main, label.as_str(), enabled);
@@ -303,6 +306,7 @@ pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State) {
         }
         Search::Searching { since } => {
             let text = format!("Recherche d'un adversaire{}", gui.ui.waiting_dots());
+            gui.ui.next_second();
             let waited = clock((now_secs() - since).max(0.0) as u64);
 
             line(draw, fonts, &text, cy - 40.0, theme::size::HEADING, pal.text);
@@ -314,6 +318,7 @@ pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State) {
             let left = (deadline - now_secs()).clamp(0.0, total);
             let bar = Rect::at(cx - 200.0, cy + 48.0, 400.0, 10.0);
             let urgency = if left < 3.0 { theme::DANGER } else { pal.accent };
+            gui.ui.keep_moving();
 
             found(draw, fonts, opponent, *opponent_elo);
             draw.rect(bar).radius(5.0).color(pal.surface);

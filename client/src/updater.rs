@@ -45,6 +45,7 @@ fn set(status: Status) {
     if let Ok(mut s) = STATUS.lock() {
         *s = status;
     }
+    crate::wake::wake();
 }
 
 const NOT_PUBLISHED: &str = "la nouvelle version est en cours de publication, réessayez dans quelques minutes";

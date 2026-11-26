@@ -167,6 +167,7 @@ export class WtLink {
                     _ => Event::Closed(payload.as_string().unwrap_or_default()),
                 };
                 queue.borrow_mut().push_back(event);
+                crate::wake::wake();
             });
             Self { js: WtLink::new(url, hash, &callback), events, _callback: callback }
         }
@@ -230,7 +231,7 @@ mod imp {
             let url = url.to_owned();
             let task = runtime().spawn(async move {
                 let reason = run(&url, hash, out_rx, &events_tx).await;
-                let _ = events_tx.send(Event::Closed(reason));
+                emit(&events_tx, Event::Closed(reason));
             });
             Self { out, events, task }
         }
@@ -279,7 +280,7 @@ mod imp {
             Ok(stream) => stream,
             Err(e) => return e.to_string(),
         };
-        let _ = events.send(Event::Opened);
+        emit(events, Event::Opened);
         let reader = tokio::spawn(read_frames(recv, events.clone()));
         let reason = loop {
             tokio::select! {
@@ -301,7 +302,7 @@ mod imp {
                 }
                 datagram = session.read_datagram() => match datagram {
                     Ok(bytes) => {
-                        let _ = events.send(Event::Message(bytes.to_vec()));
+                        emit(events, Event::Message(bytes.to_vec()));
                     }
                     Err(e) => break e.to_string(),
                 },
@@ -313,6 +314,13 @@ mod imp {
         reason
     }
 
+    /// Hands `event` to the game and wakes its loop; false once the link was dropped.
+    fn emit(events: &mpsc::Sender<Event>, event: Event) -> bool {
+        let sent = events.send(event).is_ok();
+        crate::wake::wake();
+        sent
+    }
+
     async fn read_frames(mut recv: RecvStream, events: mpsc::Sender<Event>) {
         let mut header = [0; shared::FRAME_HEADER];
         while recv.read_exact(&mut header).await.is_ok() {
@@ -321,7 +329,7 @@ mod imp {
                 return;
             }
             let mut buf = vec![0; len];
-            if recv.read_exact(&mut buf).await.is_err() || events.send(Event::Message(buf)).is_err() {
+            if recv.read_exact(&mut buf).await.is_err() || !emit(&events, Event::Message(buf)) {
                 return;
             }
         }

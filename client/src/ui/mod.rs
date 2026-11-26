@@ -65,6 +65,9 @@ const HOVER_SPEED: f32 = 18.0;
 const PRESS_SPEED: f32 = 30.0;
 const FLASH_SPEED: f32 = 8.0;
 const CARET_BLINK: f64 = 0.5;
+const DOT_STEP: f64 = 0.5;
+/// Closer than this to where it heads, a fade no longer shows.
+const SETTLED: f32 = 0.002;
 
 /// What screens draw with: the widgets, the fonts, and the pictures
 /// fetched from the server.
@@ -103,6 +106,12 @@ pub struct Ui {
     focus: Option<(u64, u32)>,
     pad: bool,
     pointer: (f32, f32),
+    /// Something shown moves on its own: the next frame is wanted.
+    moving: bool,
+    /// Seconds of the real clock: the caret blinks on it, frames or not.
+    clock: f64,
+    /// In how many seconds something shown changes, such as the caret.
+    change_in: Option<f64>,
 }
 
 impl Default for Ui {
@@ -127,6 +136,9 @@ impl Default for Ui {
             focus: None,
             pad: false,
             pointer: (0.0, 0.0),
+            moving: false,
+            clock: 0.0,
+            change_in: None,
             frame: 0,
         }
     }
@@ -202,6 +214,7 @@ impl Ui {
         self.view = view;
         let turn = (self.target_hue - self.from_hue + 540.0).rem_euclid(360.0) - 180.0;
         let progress = ease_out(transition_progress(self.time, self.entered_at, self.fade));
+        self.moving |= progress < 1.0;
         self.hue = (self.from_hue + turn * progress).rem_euclid(360.0);
         self.palette = Palette::new(self.hue);
         self.mouse = mouse;
@@ -256,8 +269,18 @@ impl Ui {
         ease_out(transition_progress(self.time, self.entered_at, self.fade))
     }
 
-    pub fn waiting_dots(&self) -> String {
-        ".".repeat(1 + (self.time() * 2.0) as usize % 3)
+    pub fn keep_moving(&mut self) {
+        self.moving = true;
+    }
+
+    /// Whether this frame showed anything that moves, and forgets it for the next.
+    pub fn take_moving(&mut self) -> bool {
+        std::mem::take(&mut self.moving)
+    }
+
+    pub fn waiting_dots(&mut self) -> String {
+        self.change_after(DOT_STEP - self.clock.rem_euclid(DOT_STEP));
+        ".".repeat(1 + (self.clock / DOT_STEP) as usize % 3)
     }
 
     pub fn time(&self) -> f64 {
@@ -357,9 +380,31 @@ impl Ui {
         let text = Some(hash_of(&(text, at)));
         if self.caret_text != text {
             self.caret_text = text;
-            self.caret_since = self.time;
+            self.caret_since = self.clock;
         }
-        (self.time - self.caret_since) % (2.0 * CARET_BLINK) < CARET_BLINK
+        let phase = (self.clock - self.caret_since) % CARET_BLINK;
+        self.change_after(CARET_BLINK - phase);
+        (self.clock - self.caret_since) % (2.0 * CARET_BLINK) < CARET_BLINK
+    }
+
+    /// The real clock, in seconds.
+    pub fn set_clock(&mut self, now: f64) {
+        self.clock = now;
+    }
+
+    /// Something shown changes in `delay` seconds without moving until then.
+    pub fn change_after(&mut self, delay: f64) {
+        self.change_in = Some(self.change_in.map_or(delay, |current| current.min(delay)));
+    }
+
+    /// A clock shown in whole seconds of the real clock: the next frame comes when it ticks.
+    pub fn next_second(&mut self) {
+        self.change_after(1.0 - self.clock.rem_euclid(1.0));
+    }
+
+    /// In how many seconds something shown next changes on its own, and forgets it for the next frame.
+    pub fn take_change_in(&mut self) -> Option<f64> {
+        self.change_in.take()
     }
 
     pub fn set_input(&mut self, on: bool) {
@@ -371,7 +416,7 @@ impl Ui {
     }
 
     fn interact_in(&mut self, label: &str, rect: Rect, area: Area, enabled: bool) -> Response {
-        let Self { dt, mouse, input_off, widgets, drawn, focus, pad, frame, .. } = self;
+        let Self { dt, mouse, input_off, widgets, drawn, focus, pad, frame, moving, .. } = self;
         let live = enabled && !*input_off;
 
         let label = hash_of(label);
@@ -391,9 +436,12 @@ impl Ui {
         w.live = live;
         w.hovered = over;
         w.seen = *frame;
-        w.hover = approach(w.hover, f32::from(u8::from(over)), HOVER_SPEED, *dt);
-        w.press = approach(w.press, f32::from(u8::from(over && mouse.down)), PRESS_SPEED, *dt);
+        let (hover, press) = (f32::from(u8::from(over)), f32::from(u8::from(over && mouse.down)));
+        w.hover = approach(w.hover, hover, HOVER_SPEED, *dt);
+        w.press = approach(w.press, press, PRESS_SPEED, *dt);
         w.flash = approach(w.flash, 0.0, FLASH_SPEED, *dt);
+        let settled = |value: f32, target: f32| (value - target).abs() < SETTLED;
+        *moving |= !(settled(w.hover, hover) && settled(w.press, press) && settled(w.flash, 0.0));
 
         Response { hover: w.hover, press: w.press, flash: w.flash, entered }
     }
@@ -483,6 +531,26 @@ mod tests {
         ui.move_focus((-1.0, -1.0));
         let click = ui.pad_click().unwrap();
         assert!(play.contains(click.x, click.y), "and never reached");
+    }
+
+    #[test]
+    fn frames_are_wanted_only_while_something_moves() {
+        let mut ui = Ui::default();
+        let button = [("a", Rect::at(0.0, 0.0, 100.0, 40.0))];
+        ui.set_screen(0, hue::GREEN, TRANSITION);
+        frame(&mut ui, AWAY, &button);
+        assert!(!ui.take_moving(), "a still screen wants no frame");
+        frame(&mut ui, ON_A, &button);
+        assert!(ui.take_moving(), "the hover fades in");
+        for _ in 0..120 {
+            frame(&mut ui, ON_A, &button);
+            ui.take_moving();
+        }
+        frame(&mut ui, ON_A, &button);
+        assert!(!ui.take_moving(), "and settles");
+        ui.set_screen(1, hue::PURPLE, TRANSITION);
+        frame(&mut ui, ON_A, &button);
+        assert!(ui.take_moving(), "a new screen slides in");
     }
 
     #[test]
@@ -669,9 +737,7 @@ mod tests {
     fn the_caret_blinks_and_typing_lights_it_again() {
         let mut ui = Ui::default();
         let at = |ui: &mut Ui, frames: u32, text: &str, at: usize| {
-            for _ in 0..frames {
-                ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
-            }
+            ui.set_clock(ui.clock + f64::from(frames) / 60.0);
             ui.caret_on(text, at)
         };
         let after = |ui: &mut Ui, frames: u32, text: &str| at(ui, frames, text, text.len());

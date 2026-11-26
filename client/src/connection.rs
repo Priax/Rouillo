@@ -338,7 +338,7 @@ impl Dialer {
                     return Link::Dialing { net: Net::Wt(crate::wt::Link::dial(&offer)), retry, since: now };
                 }
                 let url = format!("{}?v={}", crate::server_url(), shared::PROTOCOL_VERSION);
-                match ewebsock::connect(url, ewebsock::Options::default()) {
+                match ewebsock::connect_with_wakeup(url, ewebsock::Options::default(), crate::wake::wake) {
                     Ok((sender, receiver)) => Link::Dialing { net: Net::Ws { sender, receiver }, retry, since: now },
                     Err(e) => {
                         eprintln!("[ws] tentative {} impossible: {e}", retry.attempts);

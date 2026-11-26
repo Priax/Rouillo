@@ -144,6 +144,7 @@ fn send(mut req: ehttp::Request, token: Option<String>, slot: HttpSlot) {
 fn deliver(slot: &HttpSlot, done: &AtomicBool, result: ehttp::Result<ehttp::Response>) {
     if !done.swap(true, Ordering::AcqRel) {
         *slot.lock().unwrap() = Some(result);
+        crate::wake::wake();
     }
 }
 

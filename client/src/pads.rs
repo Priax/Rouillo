@@ -121,6 +121,11 @@ impl Pads {
         self.held = held;
     }
 
+    /// Whether a gamepad is plugged in: its buttons are only seen when polled.
+    pub fn connected(&self) -> bool {
+        self.gilrs.as_ref().is_some_and(|g| g.gamepads().next().is_some())
+    }
+
     pub fn held(&self, pad: Pad) -> bool {
         self.held.contains(&pad)
     }
