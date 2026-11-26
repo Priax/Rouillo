@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(all(feature = "aero", feature = "notan"))]
-compile_error!("one backend: build with --no-default-features --features aero to draw with Aero");
+compile_error!("one backend: build with --no-default-features --features notan to draw with notan");
 #[cfg(feature = "aero")]
 extern crate aero_notan as notan;
 

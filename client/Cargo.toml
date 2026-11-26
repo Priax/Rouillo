@@ -16,10 +16,10 @@ gilrs = "0.11"
 shared = { path = "../shared" }
 
 [features]
-default = ["notan"]
-notan = ["dep:notan"]
-# Draws with Aero through its notan layer, instead of notan.
+default = ["aero"]
 aero = ["dep:aero-notan"]
+# The former backend, kept while the client moves to Aero's own API.
+notan = ["dep:notan"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Registry"] }
