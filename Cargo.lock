@@ -163,15 +163,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero-notan"
-version = "0.1.0"
-dependencies = [
- "aero",
- "image",
- "skrifa",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -996,9 +987,7 @@ checksum = "e0921b3876b3a1df8a1c9f912e7f94342458022c2e84288015893d83c4d62a79"
 name = "client"
 version = "0.11.3"
 dependencies = [
- "ab_glyph",
  "aero",
- "aero-notan",
  "arboard",
  "display-info",
  "ed25519-dalek",
@@ -1006,6 +995,7 @@ dependencies = [
  "ewebsock",
  "getrandom 0.4.3",
  "gilrs",
+ "image",
  "js-sys",
  "quinn",
  "rand 0.10.4",
@@ -1016,6 +1006,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "shared",
+ "skrifa",
  "tokio",
  "url",
  "wasm-bindgen",

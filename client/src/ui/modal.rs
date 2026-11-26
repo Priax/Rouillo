@@ -1,6 +1,6 @@
-use notan::draw::{Draw, DrawShapes};
+use aero::draw::Draw;
 
-use super::{card, Fonts, Icon, Rect, SharpText, Ui, View};
+use super::{card, Face, Fonts, Icon, Rect, Ui, View};
 use crate::theme;
 
 const MARGIN: f32 = 110.0;
@@ -32,13 +32,14 @@ impl Modal {
         ui.clicked(self.close()) || (ui.clicked(anywhere) && !ui.clicked(self.card))
     }
 
-    pub fn draw(self, draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, title: &str) {
+    pub fn draw(self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, title: &str) {
         let pal = ui.palette();
         let view = ui.view();
         ui.set_input(true);
-        draw.rect((0.0, 0.0), (view.w, view.h)).color(pal.scrim_strong);
+        draw.rect(Rect::at(0.0, 0.0, view.w, view.h)).color(pal.scrim_strong);
         card(draw, &pal, self.card);
-        draw.sharp_text(&fonts.display, title)
+        fonts
+            .write(draw, Face::Display, title)
             .left(self.card.x + PADDING, self.card.y + TITLE_H / 2.0 - 1.0)
             .size(theme::size::HEADING)
             .color(pal.text);

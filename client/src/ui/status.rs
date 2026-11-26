@@ -1,4 +1,4 @@
-use notan::prelude::Color;
+use aero::geom::Color;
 
 use crate::theme::{self, Palette};
 

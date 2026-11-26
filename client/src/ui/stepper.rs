@@ -1,6 +1,7 @@
-use notan::draw::{Draw, DrawShapes};
+use aero::draw::Draw;
+use aero::math::vec2;
 
-use super::{Face, Fonts, Icon, Rect, SharpText, Ui};
+use super::{Face, Fonts, Icon, Rect, Ui};
 use crate::theme;
 
 const BUTTON: f32 = 50.0;
@@ -59,13 +60,23 @@ impl Stepper {
 
 impl Ui {
     /// Draws the stepper; its buttons only when `editable`.
-    pub fn stepper(&mut self, draw: &mut Draw, fonts: &Fonts, s: Stepper, label: &str, value: &str, editable: bool) {
+    pub fn stepper(
+        &mut self,
+        draw: &mut Draw,
+        fonts: &mut Fonts,
+        s: Stepper,
+        label: &str,
+        value: &str,
+        editable: bool,
+    ) {
         let pal = self.palette();
-        draw.sharp_text(&fonts.text, label)
+        fonts
+            .write(draw, Face::Text, label)
             .right(s.label_x(), s.mid_y())
             .size(theme::size::EMPHASIS)
             .color(pal.text_dim);
-        draw.sharp_text(&fonts.display, value)
+        fonts
+            .write(draw, Face::Display, value)
             .center(s.value_x(), s.mid_y())
             .size(theme::size::EMPHASIS)
             .color(theme::GOLD);
@@ -75,8 +86,9 @@ impl Ui {
         }
     }
 
-    fn tile_label(&self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str) {
-        draw.sharp_text(&fonts.text, label)
+    fn tile_label(&self, draw: &mut Draw, fonts: &mut Fonts, tile: Rect, label: &str) {
+        fonts
+            .write(draw, Face::Text, label)
             .left(tile.x, tile.y + TILE_LABEL_H / 2.0 - 2.0)
             .size(theme::size::BODY)
             .color(self.palette().text_dim);
@@ -87,7 +99,7 @@ impl Ui {
     pub fn stepper_tile(
         &mut self,
         draw: &mut Draw,
-        fonts: &Fonts,
+        fonts: &mut Fonts,
         tile: Rect,
         label: &str,
         value: &str,
@@ -98,12 +110,12 @@ impl Ui {
     }
 
     /// A value between the buttons that step it, across `band`.
-    pub fn stepper_band(&mut self, draw: &mut Draw, fonts: &Fonts, band: Rect, value: &str, editable: bool) {
+    pub fn stepper_band(&mut self, draw: &mut Draw, fonts: &mut Fonts, band: Rect, value: &str, editable: bool) {
         let s = Stepper::across(band);
         let room = s.plus.x - (s.minus.x + s.minus.w) - 12.0;
         let full = theme::size::EMPHASIS;
         let size = full.min(full * room / fonts.width(Face::Display, value, full));
-        draw.sharp_text(&fonts.display, value).center(s.value_x(), s.mid_y()).size(size).color(theme::GOLD);
+        fonts.write(draw, Face::Display, value).center(s.value_x(), s.mid_y()).size(size).color(theme::GOLD);
         if editable {
             self.button(draw, fonts, s.minus, Icon::Minus);
             self.button(draw, fonts, s.plus, Icon::Plus);
@@ -112,14 +124,22 @@ impl Ui {
 
     /// A settings tile whose value is a button over `Stepper::tile_band`,
     /// for a setting changed somewhere else.
-    pub fn button_tile(&mut self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str, value: &str) {
+    pub fn button_tile(&mut self, draw: &mut Draw, fonts: &mut Fonts, tile: Rect, label: &str, value: &str) {
         self.tile_label(draw, fonts, tile, label);
         self.button(draw, fonts, Stepper::tile_band(tile), value);
     }
 
     /// A settings tile for a yes or no: its name, then a switch and what it
     /// says. Clicks on `Stepper::tile_band` flip it, when `editable`.
-    pub fn switch_tile(&mut self, draw: &mut Draw, fonts: &Fonts, tile: Rect, label: &str, on: bool, editable: bool) {
+    pub fn switch_tile(
+        &mut self,
+        draw: &mut Draw,
+        fonts: &mut Fonts,
+        tile: Rect,
+        label: &str,
+        on: bool,
+        editable: bool,
+    ) {
         let pal = self.palette();
         self.tile_label(draw, fonts, tile, label);
         let band = Stepper::tile_band(tile);
@@ -133,19 +153,17 @@ impl Ui {
             (true, true) => pal.accent,
             (true, false) => theme::mix(pal.raised, pal.raised_hover, r.hover),
         };
-        draw.rect((track.x, track.y), (track.w, track.h)).corner_radius(SWITCH_H / 2.0).color(fill);
-        draw.rect((track.x, track.y), (track.w, track.h))
-            .corner_radius(SWITCH_H / 2.0)
-            .stroke(2.0)
-            .color(theme::mix(pal.border, pal.accent, r.hover));
+        draw.rect(track).radius(SWITCH_H / 2.0).color(fill);
+        draw.rect(track).radius(SWITCH_H / 2.0).stroke(theme::mix(pal.border, pal.accent, r.hover), 2.0);
         let knob = SWITCH_H / 2.0 - 4.0;
         let knob_x = if on { track.x + track.w - SWITCH_H / 2.0 } else { track.x + SWITCH_H / 2.0 };
-        draw.circle(knob).position(knob_x, track.y + track.h / 2.0).color(if editable {
+        draw.circle(vec2(knob_x, track.y + track.h / 2.0), knob).color(if editable {
             pal.text
         } else {
             pal.text_disabled
         });
-        draw.sharp_text(&fonts.display, if on { "Oui" } else { "Non" })
+        fonts
+            .write(draw, Face::Display, if on { "Oui" } else { "Non" })
             .left(track.x + track.w + 14.0, track.y + track.h / 2.0)
             .size(theme::size::EMPHASIS)
             .color(theme::GOLD);

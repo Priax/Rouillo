@@ -1,13 +1,14 @@
-use notan::draw::{Draw, DrawShapes};
-use notan::math::{vec2, Mat3};
-use notan::prelude::*;
+use aero::draw::Draw;
+use aero::geom::Color;
+use aero::math::{vec2, Affine2, Vec2};
+use aero::path::Cap;
 use shared::{Board, GameState, Phase, PuyoType, Rules, Targeting};
 
 use crate::config;
 use crate::sprites::{self, Joint, Layer, Mood, Nuisance, Puyo};
 use crate::state::GameSession;
 use crate::theme::{self, game, Palette};
-use crate::ui::{Face, Fonts, Rect, SharpText, Ui, View};
+use crate::ui::{Face, Fonts, Rect, Ui, View};
 
 pub const FRAME_PAD: f32 = 10.0;
 pub const BOARD_W: f32 = config::GRID_WIDTH as f32 * config::CELL_SIZE;
@@ -314,61 +315,58 @@ fn winner(session: &GameSession, team: u8) -> String {
     format!("{} WINS", session.name_of(slot))
 }
 
-pub fn draw_game(gfx: &mut Graphics, session: &GameSession, ui: &mut Ui, fonts: &Fonts, hud: Hud) {
+pub fn draw_game(draw: &mut Draw, session: &GameSession, ui: &mut Ui, fonts: &mut Fonts, hud: Hud) {
     let layout = GameLayout::new(ui.view(), session);
     let pal = ui.palette();
     let time = ui.time() as f32;
 
-    let mut draw = ui.canvas(gfx);
-    draw.clear(game::BACKGROUND);
-    draw_backdrop(&mut draw, layout.win_w, layout.win_h, time);
+    draw.background(game::BACKGROUND);
+    draw_backdrop(draw, layout.win_w, layout.win_h, time);
 
     if !layout.thumbs.is_empty() {
-        draw_arena(&mut draw, &pal, fonts, ui, session, &layout, time);
+        draw_arena(draw, &pal, fonts, ui, session, &layout, time);
     }
-    draw_boards(&mut draw, &pal, fonts, session, &layout, hud, time);
-    draw_sidebar(&mut draw, &pal, fonts, session, &layout, hud, time);
-    draw_chain_anim(&mut draw, fonts, session.fx.chain_display, layout.mine);
+    draw_boards(draw, &pal, fonts, session, &layout, hud, time);
+    draw_sidebar(draw, &pal, fonts, session, &layout, hud, time);
+    draw_chain_anim(draw, fonts, session.fx.chain_display, layout.mine);
     if let Hud::Online(Role { watchers: 1.., .. }) = hud {
-        draw_watchers(&mut draw, &pal, fonts, hud, layout.win_w);
+        draw_watchers(draw, &pal, fonts, hud, layout.win_w);
     }
 
     if session.fx.all_clear_timer > 0.0 {
         let alpha = (session.fx.all_clear_timer / 3.0).min(1.0);
         let (cx, cy) = (layout.mine.x + layout.mine.w / 2.0, layout.mine.y + layout.mine.h / 2.0);
-        shadowed(&mut draw, fonts, "ALL CLEAR!", (cx, cy), theme::size::TITLE, game::ALL_CLEAR.with_alpha(alpha));
+        shadowed(draw, fonts, "ALL CLEAR!", (cx, cy), theme::size::TITLE, game::ALL_CLEAR.with_alpha(alpha));
     }
 
     match Overlay::of(session, hud) {
-        Some(Overlay::Out) => draw_out(&mut draw, ui, fonts, layout.mine, hud),
+        Some(Overlay::Out) => draw_out(draw, ui, fonts, layout.mine, hud),
         Some(overlay) => {
             let game_over = matches!(overlay, Overlay::GameOver { .. } | Overlay::Watched(_));
             let leaving_forfeits = !game_over && !session.opponent_disconnected;
-            draw_overlay(&mut draw, &pal, fonts, &overlay, &layout, hud, time);
-            draw_exit_buttons(&mut draw, ui, fonts, hud, leaving_forfeits);
+            draw_overlay(draw, &pal, fonts, &overlay, &layout, hud, time);
+            draw_exit_buttons(draw, ui, fonts, hud, leaving_forfeits);
         }
         None => {}
     }
 
     #[cfg(debug_assertions)]
     if matches!(hud, Hud::Online(_)) {
-        draw_debug(&mut draw, fonts, session, layout.win_h);
+        draw_debug(draw, fonts, session, layout.win_h);
     }
-
-    ui.render(gfx, &draw);
 }
 
-fn draw_watchers(draw: &mut Draw, pal: &Palette, fonts: &Fonts, hud: Hud, win_w: f32) {
+fn draw_watchers(draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, hud: Hud, win_w: f32) {
     let Hud::Online(role) = hud else { return };
     let count = role.watchers.to_string();
     let (cx, cy) = (win_w - 70.0, 34.0);
     let eye = (cx - 18.0, cy);
 
-    draw.rect((cx - 46.0, cy - 18.0), (92.0, 36.0)).corner_radius(18.0).color(Color::BLACK.with_alpha(0.45));
-    draw.ellipse(eye, (15.0, 9.0)).color(pal.text);
-    draw.circle(5.5).position(eye.0, eye.1).color(Color::BLACK);
-    draw.circle(1.8).position(eye.0 + 1.8, eye.1 - 1.8).color(pal.text);
-    draw.sharp_text(&fonts.display, &count).center(cx + 18.0, cy).size(theme::size::EMPHASIS).color(pal.text);
+    draw.rect(Rect::at(cx - 46.0, cy - 18.0, 92.0, 36.0)).radius(18.0).color(Color::BLACK.with_alpha(0.45));
+    draw.ellipse(Vec2::from(eye), vec2(15.0, 9.0)).color(pal.text);
+    draw.circle(vec2(eye.0, eye.1), 5.5).color(Color::BLACK);
+    draw.circle(vec2(eye.0 + 1.8, eye.1 - 1.8), 1.8).color(pal.text);
+    fonts.write(draw, Face::Display, &count).center(cx + 18.0, cy).size(theme::size::EMPHASIS).color(pal.text);
 }
 
 fn draw_backdrop(draw: &mut Draw, w: f32, h: f32, time: f32) {
@@ -382,7 +380,7 @@ fn draw_backdrop(draw: &mut Draw, w: f32, h: f32, time: f32) {
             let stagger = if j % 2 == 0 { 0.0 } else { STEP / 2.0 };
             let x = i as f32 * STEP + stagger + drift / 2.0 - STEP;
             let y = j as f32 * STEP + drift / 2.0 - STEP;
-            draw.circle(15.0).position(x, y).color(game::PATTERN);
+            draw.circle(vec2(x, y), 15.0).color(game::PATTERN);
         }
     }
 }
@@ -390,7 +388,7 @@ fn draw_backdrop(draw: &mut Draw, w: f32, h: f32, time: f32) {
 fn draw_boards(
     draw: &mut Draw,
     pal: &Palette,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     session: &GameSession,
     layout: &GameLayout,
     hud: Hud,
@@ -439,7 +437,7 @@ fn draw_boards(
 fn draw_arena(
     draw: &mut Draw,
     pal: &Palette,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     ui: &Ui,
     session: &GameSession,
     layout: &GameLayout,
@@ -449,7 +447,8 @@ fn draw_arena(
     let pulse = 0.5 + 0.5 * (time * 5.0).sin();
 
     if let Some(frame) = target.and_then(|i| layout.thumb_frame(i)) {
-        draw.line(layout.mine.center(), frame.center()).width(4.0).color(theme::GOLD.with_alpha(0.55));
+        draw.line_with(Vec2::from(layout.mine.center()), Vec2::from(frame.center()), 4.0, Cap::Butt)
+            .color(theme::GOLD.with_alpha(0.55));
     }
 
     for (i, rival) in session.rivals.iter().enumerate() {
@@ -462,10 +461,9 @@ fn draw_arena(
         let piece = Piece { offset, satellite: rival.turn.satellite() };
         let attacks_me = !session.spectating() && rival.player.target == Some(session.my_slot) && !rival.out();
         let ring = |draw: &mut Draw, grow: f32, color: Color| {
-            draw.rect((frame.x - grow, frame.y - grow), (frame.w + 2.0 * grow, frame.h + 2.0 * grow))
-                .corner_radius(18.0 * scale + grow)
-                .stroke(3.0)
-                .color(color);
+            draw.rect(Rect::at(frame.x - grow, frame.y - grow, frame.w + 2.0 * grow, frame.h + 2.0 * grow))
+                .radius(18.0 * scale + grow)
+                .stroke(color, 3.0);
         };
 
         scaled(draw, area, scale, |draw, local| draw_board(draw, board, local, piece, false, time));
@@ -476,7 +474,7 @@ fn draw_arena(
             ring(draw, 8.0, theme::DANGER.with_alpha(0.4 + 0.6 * pulse));
         }
         if rival.out() {
-            draw.rect((frame.x, frame.y), (frame.w, frame.h)).corner_radius(18.0 * scale).color(theme::SCRIM_DARK);
+            draw.rect(frame).radius(18.0 * scale).color(theme::SCRIM_DARK);
             shadowed(draw, fonts, "K.O.", frame.center(), theme::size::TITLE * scale.max(0.5), theme::DANGER);
         }
 
@@ -498,11 +496,12 @@ fn draw_arena(
         let name = fonts.fit(Face::Display, session.name_of(rival.player.slot), theme::size::LABEL, room);
 
         if let Some((_, color)) = team {
-            draw.circle(6.0).position(frame.x + 8.0, label_y).color(color);
+            draw.circle(vec2(frame.x + 8.0, label_y), 6.0).color(color);
         }
-        draw.sharp_text(&fonts.display, &name).left(name_x, label_y).size(theme::size::LABEL).color(ink);
+        fonts.write(draw, Face::Display, &name).left(name_x, label_y).size(theme::size::LABEL).color(ink);
         if !count.is_empty() {
-            draw.sharp_text(&fonts.display, &count)
+            fonts
+                .write(draw, Face::Display, &count)
                 .right(frame.x + frame.w - 2.0, label_y)
                 .size(theme::size::LABEL)
                 .color(game::nuisance(nuisance));
@@ -524,9 +523,10 @@ fn draw_arena(
         let edge = if on || hovered { theme::GOLD } else { game::FRAME_INNER };
         let ink = if on { theme::GOLD } else { pal.text };
 
-        draw.rect((row.x, row.y), (row.w, row.h)).corner_radius(row.h / 2.0).color(fill);
-        draw.rect((row.x, row.y), (row.w, row.h)).corner_radius(row.h / 2.0).stroke(2.0).color(edge);
-        draw.sharp_text(&fonts.display, name)
+        draw.rect(row).radius(row.h / 2.0).color(fill);
+        draw.rect(row).radius(row.h / 2.0).stroke(edge, 2.0);
+        fonts
+            .write(draw, Face::Display, name)
             .center(row.x + row.w / 2.0, row.y + row.h / 2.0)
             .size(theme::size::EMPHASIS)
             .color(ink);
@@ -534,7 +534,7 @@ fn draw_arena(
 }
 
 /// One's board once out: the others play on, one may leave.
-fn draw_out(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, mine: Rect, hud: Hud) {
+fn draw_out(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, mine: Rect, hud: Hud) {
     let frame = framed(mine);
     let (cx, cy) = mine.center();
     let label = match hud {
@@ -542,7 +542,7 @@ fn draw_out(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, mine: Rect, hud: Hud) {
         Hud::Online(_) | Hud::Replay => "Quitter la room",
     };
 
-    draw.rect((frame.x, frame.y), (frame.w, frame.h)).corner_radius(18.0).color(theme::SCRIM_DARK);
+    draw.rect(frame).radius(18.0).color(theme::SCRIM_DARK);
     shadowed(draw, fonts, "K.O.", (cx, cy - 40.0), theme::size::HERO, theme::DANGER);
     ui.menu_bar(draw, fonts, out_row(ui.view()), label, theme::bar::RED);
 }
@@ -557,22 +557,23 @@ fn framed(area: Rect) -> Rect {
 }
 
 fn panel(draw: &mut Draw, rect: Rect) {
-    draw.rect((rect.x, rect.y + 3.0), (rect.w, rect.h)).corner_radius(10.0).color(Color::BLACK.with_alpha(0.25));
-    draw.rect((rect.x, rect.y), (rect.w, rect.h)).corner_radius(10.0).color(game::PANEL);
-    draw.rect((rect.x, rect.y), (rect.w, rect.h)).corner_radius(10.0).stroke(2.0).color(game::FRAME_INNER);
+    draw.rect(Rect::at(rect.x, rect.y + 3.0, rect.w, rect.h)).radius(10.0).color(Color::BLACK.with_alpha(0.25));
+    draw.rect(rect).radius(10.0).color(game::PANEL);
+    draw.rect(rect).radius(10.0).stroke(game::FRAME_INNER, 2.0);
 }
 
-fn label(draw: &mut Draw, pal: &Palette, fonts: &Fonts, text: &str, (x, y): (f32, f32)) {
-    draw.sharp_text(&fonts.display, text).position(x + 4.0, y).size(theme::size::HEADING).color(pal.text_dim);
+fn label(draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, text: &str, (x, y): (f32, f32)) {
+    fonts.write(draw, Face::Display, text).position(x + 4.0, y).size(theme::size::HEADING).color(pal.text_dim);
 }
 
-fn draw_stats(draw: &mut Draw, pal: &Palette, fonts: &Fonts, (x, mut y): (f32, f32), stats: &[(&str, String)]) {
+fn draw_stats(draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, (x, mut y): (f32, f32), stats: &[(&str, String)]) {
     for (name, value) in stats {
         let rect = Rect::at(x, y + LABEL_H, COLUMN_W, PANEL_H);
 
         label(draw, pal, fonts, name, (x, y));
         panel(draw, rect);
-        draw.sharp_text(&fonts.display, value)
+        fonts
+            .write(draw, Face::Display, value)
             .right(rect.x + rect.w - 14.0, rect.y + rect.h / 2.0)
             .size(VALUE_SIZE)
             .color(pal.text);
@@ -592,7 +593,7 @@ struct Header<'a> {
 /// into `screen`.
 fn draw_player(
     draw: &mut Draw,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     board: &Board,
     (screen, scale): (Rect, f32),
     piece: Piece,
@@ -609,13 +610,13 @@ fn draw_player(
 /// Draws with the top left of `screen` as the origin and every length times
 /// `scale`, handing `f` the area in those units.
 fn scaled(draw: &mut Draw, screen: Rect, scale: f32, f: impl FnOnce(&mut Draw, Rect)) {
-    draw.transform().push(Mat3::from_translation(vec2(screen.x, screen.y)) * Mat3::from_scale(vec2(scale, scale)));
+    draw.push_transform(Affine2::from_translation(vec2(screen.x, screen.y)) * Affine2::from_scale(vec2(scale, scale)));
     f(draw, Rect::at(0.0, 0.0, screen.w / scale, screen.h / scale));
-    draw.transform().pop();
+    draw.pop_transform();
 }
 
 /// Nuisance that has landed falls on the next lock, so the tray blinks.
-fn draw_header(draw: &mut Draw, fonts: &Fonts, header: Header, board: &Board, area: Rect, time: f32) {
+fn draw_header(draw: &mut Draw, fonts: &mut Fonts, header: Header, board: &Board, area: Rect, time: f32) {
     let Header { name, color, nuisance } = header;
     let frame = framed(area);
     let tray = Rect::at(frame.x, area.y - config::CELL_SIZE - TRAY_H - 6.0, frame.w, TRAY_H);
@@ -625,18 +626,20 @@ fn draw_header(draw: &mut Draw, fonts: &Fonts, header: Header, board: &Board, ar
     let tint = game::nuisance(nuisance);
     let flash = if board.pending_garbage > 0 { 0.55 * (0.5 + 0.5 * (time * 12.0).sin()) } else { 0.0 };
 
-    draw.sharp_text(&fonts.display, &name)
+    fonts
+        .write(draw, Face::Display, &name)
         .position(frame.x + 4.0, tray.y - 40.0)
         .size(theme::size::HEADING)
         .color(color);
-    draw.rect((tray.x, tray.y), (tray.w, tray.h)).corner_radius(tray.h / 2.0).color(game::PANEL);
-    draw.rect((tray.x, tray.y), (tray.w, tray.h)).corner_radius(tray.h / 2.0).stroke(2.0).color(game::FRAME_INNER);
+    draw.rect(tray).radius(tray.h / 2.0).color(game::PANEL);
+    draw.rect(tray).radius(tray.h / 2.0).stroke(game::FRAME_INNER, 2.0);
     for (i, icon) in icons.into_iter().enumerate() {
         let cx = area.x + (i as f32 + 0.5) * config::CELL_SIZE;
         sprites::nuisance_icon(draw, icon, (cx, cy), 12.0, game::PANEL, tint, flash);
     }
     if nuisance > 0 {
-        draw.sharp_text(&fonts.display, &nuisance.to_string())
+        fonts
+            .write(draw, Face::Display, &nuisance.to_string())
             .position(frame.x + frame.w - 4.0, tray.y - 40.0)
             .size(theme::size::HEADING)
             .h_align_right()
@@ -647,7 +650,7 @@ fn draw_header(draw: &mut Draw, fonts: &Fonts, header: Header, board: &Board, ar
 fn draw_sidebar(
     draw: &mut Draw,
     pal: &Palette,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     session: &GameSession,
     layout: &GameLayout,
     hud: Hud,
@@ -689,30 +692,30 @@ fn draw_lock_meter(draw: &mut Draw, me: &Board, area: Rect) {
     let ratio = (1.0 - used).max(0.0);
     let color = if used > 0.75 { theme::DANGER } else { theme::WARNING };
 
-    draw.rect((area.x, area.y + area.h + 3.0), (area.w * ratio, 4.0)).corner_radius(2.0).color(color);
+    draw.rect(Rect::at(area.x, area.y + area.h + 3.0, area.w * ratio, 4.0)).radius(2.0).color(color);
 }
 
-fn shadowed(draw: &mut Draw, fonts: &Fonts, text: &str, (x, y): (f32, f32), size: f32, color: Color) {
+fn shadowed(draw: &mut Draw, fonts: &mut Fonts, text: &str, (x, y): (f32, f32), size: f32, color: Color) {
     let shadow = game::TEXT_SHADOW.with_alpha(game::TEXT_SHADOW.a * color.a);
 
     for (dx, dy) in [(0.0, 4.0), (-2.0, 2.0), (2.0, 2.0)] {
-        draw.sharp_text(&fonts.display, text).center(x + dx, y + dy).size(size).color(shadow);
+        fonts.write(draw, Face::Display, text).center(x + dx, y + dy).size(size).color(shadow);
     }
-    draw.sharp_text(&fonts.display, text).center(x, y).size(size).color(color);
+    fonts.write(draw, Face::Display, text).center(x, y).size(size).color(color);
 }
 
 fn draw_overlay(
     draw: &mut Draw,
     pal: &Palette,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     overlay: &Overlay,
     layout: &GameLayout,
     hud: Hud,
     elapsed: f32,
 ) {
     let (cx, cy) = (layout.win_w / 2.0, layout.win_h / 2.0);
-    let centered = |draw: &mut Draw, text: &str, y: f32, size: f32, color: Color| {
-        draw.sharp_text(&fonts.display, text).center(cx, y).size(size).color(color);
+    let centered = |draw: &mut Draw, fonts: &mut Fonts, text: &str, y: f32, size: f32, color: Color| {
+        fonts.write(draw, Face::Display, text).center(cx, y).size(size).color(color);
     };
     let scrim = match overlay {
         Overlay::GameOver { .. } | Overlay::Watched(_) => theme::SCRIM_DARK,
@@ -720,7 +723,7 @@ fn draw_overlay(
         Overlay::Paused | Overlay::QuitMenu | Overlay::Out => theme::SCRIM_LIGHT,
     };
 
-    draw.rect((0.0, 0.0), (layout.win_w, layout.win_h)).color(scrim);
+    draw.rect(Rect::at(0.0, 0.0, layout.win_w, layout.win_h)).color(scrim);
 
     if let (Overlay::GameOver { i_lost, draw: tie }, Some(series)) = (overlay, hud.series()) {
         let (title, color) = match series.over {
@@ -740,9 +743,9 @@ fn draw_overlay(
             None => "Next round...".to_string(),
         };
 
-        centered(draw, title, cy - 50.0, theme::size::HERO, color);
-        centered(draw, &score, cy + 5.0, theme::size::TITLE, pal.text);
-        centered(draw, &info, cy + 50.0, theme::size::HEADING, pal.text_dim);
+        centered(draw, fonts, title, cy - 50.0, theme::size::HERO, color);
+        centered(draw, fonts, &score, cy + 5.0, theme::size::TITLE, pal.text);
+        centered(draw, fonts, &info, cy + 50.0, theme::size::HEADING, pal.text_dim);
         return;
     }
 
@@ -750,7 +753,7 @@ fn draw_overlay(
         Overlay::Watched(winner) => {
             let title = winner.clone().unwrap_or_else(|| "DRAW".to_owned());
             let title = fonts.fit(Face::Display, &title, theme::size::HERO, layout.win_w - 80.0);
-            centered(draw, &title, cy - 20.0, theme::size::HERO, theme::GOLD);
+            centered(draw, fonts, &title, cy - 20.0, theme::size::HERO, theme::GOLD);
         }
         Overlay::GameOver { i_lost, draw: tie } => {
             let (title, color) = if matches!(hud, Hud::Solo { new_best: true, .. }) {
@@ -763,15 +766,17 @@ fn draw_overlay(
                 ("YOU WIN !", theme::GOLD)
             };
 
-            centered(draw, title, cy - 20.0, theme::size::HERO, color);
-            centered(draw, "Press R to Restart", cy + 50.0, theme::size::HEADING, pal.text);
+            centered(draw, fonts, title, cy - 20.0, theme::size::HERO, color);
+            centered(draw, fonts, "Press R to Restart", cy + 50.0, theme::size::HEADING, pal.text);
         }
         Overlay::QuitMenu => {
-            centered(draw, "FORFEIT ?", cy - 40.0, theme::size::HERO, pal.text);
-            centered(draw, "Press ESC to resume", cy + 30.0, theme::size::HEADING, pal.text_dim);
+            centered(draw, fonts, "FORFEIT ?", cy - 40.0, theme::size::HERO, pal.text);
+            centered(draw, fonts, "Press ESC to resume", cy + 30.0, theme::size::HEADING, pal.text_dim);
         }
         Overlay::Out => {}
-        Overlay::OpponentGone => centered(draw, "OPPONENT DISCONNECTED", cy - 20.0, theme::size::TITLE, theme::DANGER),
+        Overlay::OpponentGone => {
+            centered(draw, fonts, "OPPONENT DISCONNECTED", cy - 20.0, theme::size::TITLE, theme::DANGER)
+        }
         Overlay::Paused => {
             let blink = 0.2 + (elapsed * 2.0).sin().abs() * 0.8;
             let can_resume = match hud {
@@ -780,14 +785,14 @@ fn draw_overlay(
             };
             let hint = if can_resume { "Press ESC to continue" } else { "Seul l'hôte peut reprendre" };
 
-            centered(draw, "PAUSED", cy - 40.0, theme::size::HERO, pal.text.with_alpha(blink));
-            centered(draw, hint, cy + 30.0, theme::size::HEADING, pal.text.with_alpha(blink));
+            centered(draw, fonts, "PAUSED", cy - 40.0, theme::size::HERO, pal.text.with_alpha(blink));
+            centered(draw, fonts, hint, cy + 30.0, theme::size::HEADING, pal.text.with_alpha(blink));
         }
     }
 }
 
 #[cfg(debug_assertions)]
-fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32) {
+fn draw_debug(draw: &mut Draw, fonts: &mut Fonts, session: &GameSession, win_h: f32) {
     let ping = session.net.ping_rtt_ms.map_or_else(|| "--".to_string(), |ms| format!("{ms:.0} ms"));
     let board = |label: &str, b: &Board| {
         format!(
@@ -817,7 +822,8 @@ fn draw_debug(draw: &mut Draw, fonts: &Fonts, session: &GameSession, win_h: f32)
     ];
 
     for (i, (text, color)) in lines.iter().enumerate() {
-        draw.sharp_text(&fonts.text, text)
+        fonts
+            .write(draw, Face::Text, text)
             .position(10.0, win_h - 30.0 - i as f32 * 25.0)
             .size(theme::size::LABEL)
             .color(*color);
@@ -836,7 +842,7 @@ pub fn exit_rows(view: View, with_back: bool) -> (Rect, Rect) {
     }
 }
 
-fn draw_exit_buttons(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, hud: Hud, forfeits: bool) {
+fn draw_exit_buttons(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, hud: Hud, forfeits: bool) {
     let (leave, back, has_back) = match hud {
         Hud::Online(Role { series: Some(series), .. }) => {
             let leave = if series.over.is_some() { "Retour au menu" } else { "Abandonner (défaite)" };
@@ -879,24 +885,23 @@ fn draw_well(draw: &mut Draw, area: Rect, board: &Board, danger: bool, time: f32
     let edge =
         if danger { theme::mix(game::FRAME, theme::DANGER, 0.5 + 0.5 * (time * 6.0).sin()) } else { game::FRAME };
 
-    draw.rect((frame.x, frame.y + 5.0), (frame.w, frame.h)).corner_radius(18.0).color(Color::BLACK.with_alpha(0.35));
-    draw.rect((frame.x, frame.y), (frame.w, frame.h)).corner_radius(18.0).color(edge);
-    draw.rect((frame.x + 4.0, frame.y + 4.0), (frame.w - 8.0, frame.h - 8.0))
-        .corner_radius(14.0)
+    draw.rect(Rect::at(frame.x, frame.y + 5.0, frame.w, frame.h)).radius(18.0).color(Color::BLACK.with_alpha(0.35));
+    draw.rect(frame).radius(18.0).color(edge);
+    draw.rect(Rect::at(frame.x + 4.0, frame.y + 4.0, frame.w - 8.0, frame.h - 8.0))
+        .radius(14.0)
         .color(game::FRAME_INNER);
-    draw.rect((area.x - 2.0, area.y - 2.0), (area.w + 4.0, area.h + 4.0)).corner_radius(10.0).color(game::WELL);
+    draw.rect(Rect::at(area.x - 2.0, area.y - 2.0, area.w + 4.0, area.h + 4.0)).radius(10.0).color(game::WELL);
 
     let cell = config::CELL_SIZE;
     let cols = board.width();
     let rows = board.height() - config::VISIBLE_ROW_OFFSET;
 
     for c in (1..cols).step_by(2) {
-        draw.rect((area.x + c as f32 * cell, area.y), (cell, area.h)).color(game::WELL_LANE);
+        draw.rect(Rect::at(area.x + c as f32 * cell, area.y, cell, area.h)).color(game::WELL_LANE);
     }
     for r in 0..rows {
         for c in 0..cols {
-            draw.circle(1.6)
-                .position(area.x + (c as f32 + 0.5) * cell, area.y + (r as f32 + 0.5) * cell)
+            draw.circle(vec2(area.x + (c as f32 + 0.5) * cell, area.y + (r as f32 + 0.5) * cell), 1.6)
                 .color(game::WELL_DOT);
         }
     }
@@ -906,12 +911,7 @@ fn draw_well(draw: &mut Draw, area: Rect, board: &Board, danger: bool, time: f32
     let alpha = if danger { 0.75 + 0.25 * (time * 6.0).sin() } else { 0.55 };
 
     for (dx, dy) in [(arm, arm), (arm, -arm)] {
-        draw.path()
-            .move_to(cx - dx, cy - dy)
-            .line_to(cx + dx, cy + dy)
-            .stroke(5.0)
-            .round_cap()
-            .color(game::DEATH_CROSS.with_alpha(alpha));
+        draw.line(vec2(cx - dx, cy - dy), vec2(cx + dx, cy + dy), 5.0).color(game::DEATH_CROSS.with_alpha(alpha));
     }
 }
 
@@ -1047,7 +1047,7 @@ fn draw_piece(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, peek: bo
                 continue;
             }
             let at = cell_center(area, r as f32 - HIDDEN as f32, c as f32 + piece.offset.1);
-            draw.circle(RADIUS * 0.32).position(at.0, at.1).color(game::puyo(kind).with_alpha(0.6));
+            draw.circle(vec2(at.0, at.1), RADIUS * 0.32).color(game::puyo(kind).with_alpha(0.6));
         }
     }
 
@@ -1074,7 +1074,7 @@ fn draw_piece(draw: &mut Draw, board: &Board, area: Rect, piece: Piece, peek: bo
 
         sprites::single(draw, &puyo);
         if axis {
-            draw.circle(RADIUS + 1.0).position(at.0, at.1).stroke(2.5).color(Color::WHITE.with_alpha(pulse));
+            draw.circle(vec2(at.0, at.1), RADIUS + 1.0).stroke(Color::WHITE.with_alpha(pulse), 2.5);
         }
     }
 }
@@ -1096,7 +1096,7 @@ fn pop_look(puyo: &mut Puyo, frame: u32) {
 
 /// The help's demonstration: one board in a frame, its piece turning smoothly,
 /// with the chain counter over it.
-pub fn draw_demo(draw: &mut Draw, fonts: &Fonts, demo: &crate::demo::Demo, area: Rect, time: f32) {
+pub fn draw_demo(draw: &mut Draw, fonts: &mut Fonts, demo: &crate::demo::Demo, area: Rect, time: f32) {
     let (Some(rival), Some(names)) = (&demo.rival, demo.players()) else {
         let piece = Piece { offset: (fall_step(&demo.board), 0.0), satellite: demo.turn.satellite() };
         draw_board(draw, &demo.board, area, piece, false, time);
@@ -1112,7 +1112,8 @@ pub fn draw_demo(draw: &mut Draw, fonts: &Fonts, demo: &crate::demo::Demo, area:
         let piece = Piece { offset: (fall_step(board), 0.0), satellite: turn.satellite() };
         let screen = Rect::at(x, y, BOARD_W * scale, BOARD_H * scale);
 
-        draw.sharp_text(&fonts.display, name)
+        fonts
+            .write(draw, Face::Display, name)
             .center(x + BOARD_W * scale / 2.0, y - 20.0)
             .size(theme::size::LABEL)
             .color(Color::WHITE);
@@ -1135,7 +1136,7 @@ pub fn demo_boards(demo: &crate::demo::Demo, area: Rect) -> (Rect, f32) {
     (Rect::at(area.x, area.y + (area.h - h) / 2.0, area.w, h), scale)
 }
 
-fn draw_chain_anim(draw: &mut Draw, fonts: &Fonts, chain_display: Option<(u32, f32)>, board: Rect) {
+fn draw_chain_anim(draw: &mut Draw, fonts: &mut Fonts, chain_display: Option<(u32, f32)>, board: Rect) {
     let Some((count, t)) = chain_display else {
         return;
     };

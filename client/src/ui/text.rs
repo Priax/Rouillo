@@ -1,20 +1,16 @@
-use notan::draw::{Draw, DrawTextSection, DrawTransform, Font};
-use notan::prelude::Color;
+use aero::draw::Draw;
+use aero::geom::Color;
+use aero::math::Vec2;
 
-/// Text drawn at the resolution it is shown at. The canvas is scaled to fit
-/// the window, and notan rasterises glyphs at their nominal size before any
-/// transform, so scaled text would be a stretched, blurry bitmap. This builder
-/// rasterises at the on-screen size instead and shrinks the result back by the
-/// same factor around its anchor, which the canvas then scales up again.
-pub trait SharpText {
-    fn sharp_text<'a>(&'a mut self, font: &'a Font, text: &'a str) -> Text<'a>;
-}
+use super::{Face, Fonts};
 
-impl SharpText for Draw {
-    fn sharp_text<'a>(&'a mut self, font: &'a Font, text: &'a str) -> Text<'a> {
+impl Fonts {
+    /// One line of text, drawn once the builder goes: at the top left of its position until told otherwise.
+    pub fn write<'a>(&'a mut self, draw: &'a mut Draw, face: Face, text: &'a str) -> Text<'a> {
         Text {
-            draw: self,
-            font,
+            draw,
+            fonts: self,
+            face,
             text,
             pos: (0.0, 0.0),
             size: 16.0,
@@ -34,7 +30,8 @@ enum HAlign {
 
 pub struct Text<'a> {
     draw: &'a mut Draw,
-    font: &'a Font,
+    fonts: &'a mut Fonts,
+    face: Face,
     text: &'a str,
     pos: (f32, f32),
     size: f32,
@@ -92,54 +89,15 @@ impl Text<'_> {
 
 impl Drop for Text<'_> {
     fn drop(&mut self) {
-        let scale = self.draw.transform().matrix().x_axis.x.abs().max(f32::EPSILON);
-        let raster = raster_size(self.size, scale);
-        let (pos, h, middle) = (self.pos, self.h, self.middle);
-        let mut t = self.draw.text(self.font, self.text);
-        t.position(pos.0, pos.1).size(raster).color(self.color);
-        match h {
-            HAlign::Left => {}
-            HAlign::Center => {
-                t.h_align_center();
-            }
-            HAlign::Right => {
-                t.h_align_right();
-            }
-        }
-        if middle {
-            t.v_align_middle();
-        }
-        let shrink = self.size / raster;
-        if (shrink - 1.0).abs() > f32::EPSILON {
-            t.scale_from(pos, (shrink, shrink));
-        }
-    }
-}
-
-/// The on-screen size, rounded to half a pixel so an animated scale reuses a
-/// handful of rasterised sizes instead of filling the glyph cache.
-fn raster_size(size: f32, scale: f32) -> f32 {
-    ((size * scale * 2.0).round() / 2.0).max(1.0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn text_keeps_its_on_screen_size() {
-        for (size, scale) in [(18.0, 1.0), (18.0, 1.35), (24.0, 1.37), (15.0, 0.75)] {
-            let raster = raster_size(size, scale);
-            let shown = raster * (size / raster) * scale;
-            assert!((shown - size * scale).abs() < 1e-3, "{size} at {scale}");
-            assert!((raster - size * scale).abs() <= 0.25);
-        }
-    }
-
-    #[test]
-    fn a_hover_animation_reuses_few_sizes() {
-        let sizes: std::collections::HashSet<u32> =
-            (0..=30).map(|i| raster_size(26.0, 1.35 * (1.0 + 0.03 * i as f32 / 30.0)).to_bits()).collect();
-        assert!(sizes.len() <= 3, "{} sizes", sizes.len());
+        let line = (self.face, self.text, self.size);
+        let shown = self.fonts.layout(line.0, line.1, line.2).size();
+        let x = match self.h {
+            HAlign::Left => 0.0,
+            HAlign::Center => shown.x * 0.5,
+            HAlign::Right => shown.x,
+        };
+        let y = if self.middle { shown.y * 0.5 } else { 0.0 };
+        let at = Vec2::new(self.pos.0 - x, self.pos.1 - y);
+        self.fonts.draw(self.draw, line, at, self.color);
     }
 }

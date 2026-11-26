@@ -1,11 +1,11 @@
+use aero::draw::Draw;
 use aero::input::KeyCode;
-use notan::draw::Draw;
 
 use crate::controls::{Action, Bindings, KeyBinding, ACTIONS, RESERVED};
 use crate::pads::Pads;
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{self, Fonts, Frame, Icon, Rect, SharpText, Size, Ui, View};
+use crate::ui::{self, Face, Fonts, Frame, Icon, Rect, Size, Ui, View};
 
 const TOP: f32 = 360.0;
 const TITLE_H: f32 = 48.0;
@@ -123,7 +123,7 @@ impl BindingsPanel {
         false
     }
 
-    pub fn draw(&self, draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, bindings: &Bindings) {
+    pub fn draw(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, bindings: &Bindings) {
         let pal = ui.palette();
         let view = ui.view();
         let c = card(view);
@@ -136,14 +136,16 @@ impl BindingsPanel {
         let hint_color = if self.capturing() { pal.accent } else { pal.text_muted };
 
         ui::card(draw, &pal, c);
-        draw.sharp_text(&fonts.display, "Touches")
+        fonts
+            .write(draw, Face::Display, "Touches")
             .left(c.x + 20.0, c.y + TITLE_H / 2.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text_dim);
         for (slot, heading) in SLOTS.into_iter().zip(["Touche 1", "Touche 2", "Manette"]) {
             let r = cell(view, 0, slot);
 
-            draw.sharp_text(&fonts.text, heading)
+            fonts
+                .write(draw, Face::Text, heading)
                 .center(r.x + r.w / 2.0, c.y + TITLE_H / 2.0)
                 .size(theme::size::SMALL)
                 .color(pal.text_muted);
@@ -153,7 +155,8 @@ impl BindingsPanel {
         for (row, action) in Action::ALL.into_iter().enumerate() {
             let r = cell(view, row, Slot::Pad);
 
-            draw.sharp_text(&fonts.text, action.label())
+            fonts
+                .write(draw, Face::Text, action.label())
                 .left(c.x + 20.0, r.y + r.h / 2.0)
                 .size(theme::size::BODY)
                 .color(pal.text);
@@ -172,7 +175,8 @@ impl BindingsPanel {
             }
         }
 
-        draw.sharp_text(&fonts.text, hint)
+        fonts
+            .write(draw, Face::Text, hint)
             .left(reset.x + reset.w + 20.0, reset.y + reset.h / 2.0)
             .size(theme::size::SMALL)
             .color(hint_color);

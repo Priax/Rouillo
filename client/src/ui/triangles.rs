@@ -1,5 +1,6 @@
-use notan::draw::{Draw, DrawShapes};
-use notan::prelude::Color;
+use aero::draw::Draw;
+use aero::geom::Color;
+use aero::math::Vec2;
 
 use super::Rect;
 
@@ -45,7 +46,7 @@ impl Triangles {
             let color = self.color.with_alpha(self.color.a * (0.35 + 0.65 * alpha));
             match clip {
                 None => {
-                    draw.triangle(corners[0], corners[1], corners[2]).color(color);
+                    draw.triangle(Vec2::from(corners[0]), Vec2::from(corners[1]), Vec2::from(corners[2])).color(color);
                 }
                 Some(clip) => fill_polygon(draw, &clip_convex(&corners, clip), color),
             }
@@ -60,12 +61,8 @@ fn fill_polygon(draw: &mut Draw, points: &[(f32, f32)], color: Color) {
     if rest.len() < 2 {
         return;
     }
-    let mut path = draw.path();
-    path.move_to(first.0, first.1);
-    for &(x, y) in rest {
-        path.line_to(x, y);
-    }
-    path.close().fill().color(color);
+    let corners: Vec<Vec2> = std::iter::once(first).chain(rest.iter().copied()).map(Vec2::from).collect();
+    draw.polygon(&corners).color(color);
 }
 
 /// The part of `subject` inside the convex polygon `clip` (Sutherland-

@@ -1,4 +1,4 @@
-use notan::prelude::Color;
+use aero::geom::Color;
 
 pub mod hue {
     pub const PURPLE: f32 = 255.0;
@@ -47,12 +47,12 @@ const fn hsl(h: f32, s: f32, l: f32) -> Color {
         (c, 0.0, x)
     };
     let m = l - c / 2.0;
-    Color::from_rgb(r + m, g + m, b + m)
+    Color::srgb(r + m, g + m, b + m)
 }
 
 /// The colour `t` of the way from `a` to `b`.
 pub fn mix(a: Color, b: Color, t: f32) -> Color {
-    Color::from_rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t)
+    Color::srgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -102,31 +102,31 @@ impl Palette {
     }
 }
 
-pub const GOLD: Color = Color::from_rgb(1.0, 0.8, 0.13);
-pub const SUCCESS: Color = Color::from_rgb(0.45, 0.88, 0.5);
-pub const DANGER: Color = Color::from_rgb(0.95, 0.42, 0.42);
-pub const WARNING: Color = Color::from_rgb(0.95, 0.62, 0.22);
-pub const WARNING_TEXT: Color = Color::from_rgb(1.0, 0.85, 0.6);
-pub const WARNING_BANNER: Color = Color::from_rgba(0.35, 0.18, 0.05, 0.96);
-pub const LINK: Color = Color::from_rgb(0.6, 0.8, 1.0);
+pub const GOLD: Color = Color::srgb(1.0, 0.8, 0.13);
+pub const SUCCESS: Color = Color::srgb(0.45, 0.88, 0.5);
+pub const DANGER: Color = Color::srgb(0.95, 0.42, 0.42);
+pub const WARNING: Color = Color::srgb(0.95, 0.62, 0.22);
+pub const WARNING_TEXT: Color = Color::srgb(1.0, 0.85, 0.6);
+pub const WARNING_BANNER: Color = Color::srgba(0.35, 0.18, 0.05, 0.96);
+pub const LINK: Color = Color::srgb(0.6, 0.8, 1.0);
 
-pub const SCRIM_LIGHT: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.5);
-pub const SCRIM: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.6);
-pub const SCRIM_DARK: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.7);
+pub const SCRIM_LIGHT: Color = Color::srgba(0.0, 0.0, 0.0, 0.5);
+pub const SCRIM: Color = Color::srgba(0.0, 0.0, 0.0, 0.6);
+pub const SCRIM_DARK: Color = Color::srgba(0.0, 0.0, 0.0, 0.7);
 
 pub const RADIUS: f32 = 8.0;
 
 pub const HEADER_H: f32 = 110.0;
 
 pub mod bar {
-    use notan::prelude::Color;
+    use aero::geom::Color;
 
-    pub const GREEN: Color = Color::from_rgb(0.53, 0.72, 0.05);
-    pub const BLUE: Color = Color::from_rgb(0.2, 0.55, 0.85);
-    pub const PURPLE: Color = Color::from_rgb(0.52, 0.36, 0.86);
-    pub const YELLOW: Color = Color::from_rgb(0.95, 0.66, 0.05);
-    pub const RED: Color = Color::from_rgb(0.74, 0.14, 0.2);
-    pub const ORANGE: Color = Color::from_rgb(0.9, 0.42, 0.12);
+    pub const GREEN: Color = Color::srgb(0.53, 0.72, 0.05);
+    pub const BLUE: Color = Color::srgb(0.2, 0.55, 0.85);
+    pub const PURPLE: Color = Color::srgb(0.52, 0.36, 0.86);
+    pub const YELLOW: Color = Color::srgb(0.95, 0.66, 0.05);
+    pub const RED: Color = Color::srgb(0.74, 0.14, 0.2);
+    pub const ORANGE: Color = Color::srgb(0.9, 0.42, 0.12);
 }
 
 /// The teams a lobby offers, from team 1. Above them, a team is one player.
@@ -149,56 +149,56 @@ pub mod size {
 }
 
 pub mod game {
-    use notan::prelude::Color;
+    use aero::geom::Color;
     use shared::PuyoType;
 
-    pub const BACKGROUND: Color = Color::from_rgb(0.07, 0.08, 0.15);
-    pub const PATTERN: Color = Color::from_rgba(0.55, 0.6, 1.0, 0.035);
-    pub const FRAME: Color = Color::from_rgb(0.62, 0.68, 0.95);
-    pub const FRAME_INNER: Color = Color::from_rgb(0.2, 0.22, 0.4);
-    pub const WELL: Color = Color::from_rgb(0.05, 0.05, 0.1);
-    pub const WELL_LANE: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.018);
-    pub const WELL_DOT: Color = Color::from_rgba(0.6, 0.6, 1.0, 0.14);
-    pub const PANEL: Color = Color::from_rgb(0.1, 0.11, 0.2);
-    pub const DEATH_CROSS: Color = Color::from_rgb(1.0, 0.3, 0.5);
-    pub const GARBAGE_INK: Color = Color::from_rgb(0.3, 0.32, 0.42);
-    pub const STAR: Color = Color::from_rgb(1.0, 0.78, 0.2);
-    pub const MOON: Color = Color::from_rgb(0.95, 0.9, 0.6);
-    pub const TEXT_SHADOW: Color = Color::from_rgba(0.0, 0.0, 0.05, 0.75);
-    pub const ALL_CLEAR: Color = Color::from_rgb(1.0, 0.9, 0.3);
-    pub const DISCONNECT_SCRIM: Color = Color::from_rgba(0.5, 0.0, 0.0, 0.5);
+    pub const BACKGROUND: Color = Color::srgb(0.07, 0.08, 0.15);
+    pub const PATTERN: Color = Color::srgba(0.55, 0.6, 1.0, 0.035);
+    pub const FRAME: Color = Color::srgb(0.62, 0.68, 0.95);
+    pub const FRAME_INNER: Color = Color::srgb(0.2, 0.22, 0.4);
+    pub const WELL: Color = Color::srgb(0.05, 0.05, 0.1);
+    pub const WELL_LANE: Color = Color::srgba(1.0, 1.0, 1.0, 0.018);
+    pub const WELL_DOT: Color = Color::srgba(0.6, 0.6, 1.0, 0.14);
+    pub const PANEL: Color = Color::srgb(0.1, 0.11, 0.2);
+    pub const DEATH_CROSS: Color = Color::srgb(1.0, 0.3, 0.5);
+    pub const GARBAGE_INK: Color = Color::srgb(0.3, 0.32, 0.42);
+    pub const STAR: Color = Color::srgb(1.0, 0.78, 0.2);
+    pub const MOON: Color = Color::srgb(0.95, 0.9, 0.6);
+    pub const TEXT_SHADOW: Color = Color::srgba(0.0, 0.0, 0.05, 0.75);
+    pub const ALL_CLEAR: Color = Color::srgb(1.0, 0.9, 0.3);
+    pub const DISCONNECT_SCRIM: Color = Color::srgba(0.5, 0.0, 0.0, 0.5);
     #[cfg(debug_assertions)]
-    pub const DEBUG_NET: Color = Color::MAGENTA;
+    pub const DEBUG_NET: Color = Color::srgb(1.0, 0.0, 1.0);
     #[cfg(debug_assertions)]
-    pub const DEBUG_BOARDS: Color = Color::from_rgb(0.0, 1.0, 1.0);
+    pub const DEBUG_BOARDS: Color = Color::srgb(0.0, 1.0, 1.0);
 
     pub const fn puyo(puyo_type: PuyoType) -> Color {
         match puyo_type {
-            PuyoType::Red => Color::from_rgb(0.94, 0.27, 0.33),
-            PuyoType::Blue => Color::from_rgb(0.27, 0.56, 0.98),
-            PuyoType::Yellow => Color::from_rgb(1.0, 0.8, 0.2),
-            PuyoType::Green => Color::from_rgb(0.3, 0.82, 0.42),
-            PuyoType::Purple => Color::from_rgb(0.68, 0.42, 0.95),
-            PuyoType::Garbage => Color::from_rgb(0.8, 0.82, 0.9),
+            PuyoType::Red => Color::srgb(0.94, 0.27, 0.33),
+            PuyoType::Blue => Color::srgb(0.27, 0.56, 0.98),
+            PuyoType::Yellow => Color::srgb(1.0, 0.8, 0.2),
+            PuyoType::Green => Color::srgb(0.3, 0.82, 0.42),
+            PuyoType::Purple => Color::srgb(0.68, 0.42, 0.95),
+            PuyoType::Garbage => Color::srgb(0.8, 0.82, 0.9),
         }
     }
 
     pub const fn nuisance(points: u32) -> Color {
         match points {
-            0..=12 => Color::from_rgb(0.3, 0.9, 0.3),
-            13..=30 => Color::from_rgb(1.0, 0.8, 0.1),
-            31..=60 => Color::from_rgb(1.0, 0.5, 0.0),
-            _ => Color::from_rgb(1.0, 0.15, 0.15),
+            0..=12 => Color::srgb(0.3, 0.9, 0.3),
+            13..=30 => Color::srgb(1.0, 0.8, 0.1),
+            31..=60 => Color::srgb(1.0, 0.5, 0.0),
+            _ => Color::srgb(1.0, 0.15, 0.15),
         }
     }
 
     pub const fn chain(count: u32) -> Color {
         match count {
-            0 | 1 => Color::from_rgb(0.4, 1.0, 0.4),
-            2 => Color::from_rgb(0.4, 0.8, 1.0),
-            3 => Color::from_rgb(1.0, 0.9, 0.2),
-            4 => Color::from_rgb(1.0, 0.5, 0.1),
-            _ => Color::from_rgb(1.0, 0.2, 1.0),
+            0 | 1 => Color::srgb(0.4, 1.0, 0.4),
+            2 => Color::srgb(0.4, 0.8, 1.0),
+            3 => Color::srgb(1.0, 0.9, 0.2),
+            4 => Color::srgb(1.0, 0.5, 0.1),
+            _ => Color::srgb(1.0, 0.2, 1.0),
         }
     }
 }
@@ -213,11 +213,11 @@ mod tests {
 
     #[test]
     fn hsl_matches_known_colours() {
-        assert!(close(hsl(0.0, 1.0, 0.5), Color::from_rgb(1.0, 0.0, 0.0)));
-        assert!(close(hsl(120.0, 1.0, 0.5), Color::from_rgb(0.0, 1.0, 0.0)));
-        assert!(close(hsl(240.0, 1.0, 0.5), Color::from_rgb(0.0, 0.0, 1.0)));
-        assert!(close(hsl(300.0, 1.0, 0.25), Color::from_rgb(0.5, 0.0, 0.5)));
-        assert!(close(hsl(42.0, 0.0, 0.3), Color::from_rgb(0.3, 0.3, 0.3)));
+        assert!(close(hsl(0.0, 1.0, 0.5), Color::srgb(1.0, 0.0, 0.0)));
+        assert!(close(hsl(120.0, 1.0, 0.5), Color::srgb(0.0, 1.0, 0.0)));
+        assert!(close(hsl(240.0, 1.0, 0.5), Color::srgb(0.0, 0.0, 1.0)));
+        assert!(close(hsl(300.0, 1.0, 0.25), Color::srgb(0.5, 0.0, 0.5)));
+        assert!(close(hsl(42.0, 0.0, 0.3), Color::srgb(0.3, 0.3, 0.3)));
     }
 
     #[test]

@@ -1,6 +1,7 @@
+use aero::draw::Draw;
+use aero::geom::Color;
+use aero::image::Image;
 use aero::input::KeyCode;
-use notan::draw::{Draw, DrawShapes};
-use notan::prelude::*;
 use shared::{config, ClientMessage};
 
 use crate::connection::{now_secs, Connection};
@@ -9,7 +10,7 @@ use crate::nav::Transition;
 use crate::state::{ApiUserProfile, Room, Screen, State};
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
-use crate::ui::{self, Fonts, Gui, Persona, Pill, Rect, SharpText, View, FILL};
+use crate::ui::{self, Face, Fonts, Gui, Persona, Pill, Rect, View, FILL};
 
 const PORTRAIT_R: f32 = 56.0;
 
@@ -157,7 +158,7 @@ fn poll_stats(ranked: &mut RankedView) {
     }
 }
 
-pub fn update(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
+pub fn update(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
     poll_stats(&mut state.ranked);
     if state.room.as_ref().is_some_and(|r| r.info.ranked.is_some()) {
         return Transition::Stay;
@@ -203,19 +204,20 @@ pub fn update(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
 fn draw_opponent(
     draw: &mut Draw,
     pal: &Palette,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     (cx, cy): (f32, f32),
     name: &str,
     elo: i32,
-    picture: Option<&Texture>,
+    picture: Option<&Image>,
 ) {
     let who = Persona { name, glow: 0.0, picture };
     let elo = format!("ELO {elo}");
     let pill = Pill { text: &elo, color: theme::GOLD, size: theme::size::LABEL };
 
     ui::portrait(draw, pal, fonts, (cx, cy - 105.0), PORTRAIT_R, &who);
-    draw.sharp_text(&fonts.display, name).center(cx, cy - 25.0).size(theme::size::TITLE).color(pal.text);
-    pill.draw(draw, fonts, (cx - pill.width(fonts) / 2.0, cy + 15.0));
+    fonts.write(draw, Face::Display, name).center(cx, cy - 25.0).size(theme::size::TITLE).color(pal.text);
+    let left = cx - pill.width(fonts) / 2.0;
+    pill.draw(draw, fonts, (left, cy + 15.0));
 }
 
 fn opponent_avatar<'a>(room: Option<&'a Room>, ranked: &'a RankedView) -> Option<&'a str> {
@@ -231,35 +233,36 @@ fn clock(secs: u64) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
-pub fn draw(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
+pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State) {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let (cx, cy) = (view.w / 2.0, view.h / 2.0);
-    let fonts = &gui.fonts;
-    let picture = gui.images.get_opt(gfx, opponent_avatar(state.room.as_ref(), &state.ranked));
+    let fonts = &mut gui.fonts;
+    let picture = gui.images.get_opt(opponent_avatar(state.room.as_ref(), &state.ranked));
     let b = buttons(view);
-    let line = |draw: &mut Draw, text: &str, y: f32, size: f32, color: Color| {
-        draw.sharp_text(&fonts.text, text).center(cx, y).size(size).color(color);
+    let line = |draw: &mut Draw, fonts: &mut Fonts, text: &str, y: f32, size: f32, color: Color| {
+        fonts.write(draw, Face::Text, text).center(cx, y).size(size).color(color);
     };
     let first_to = format!("Premier à {} manches", config::RANKED_WINS);
-    let found = |draw: &mut Draw, opponent: &str, elo: i32| {
-        line(draw, "Adversaire trouvé", cy - 200.0, theme::size::HEADING, pal.text_dim);
+    let found = |draw: &mut Draw, fonts: &mut Fonts, opponent: &str, elo: i32| {
+        line(draw, fonts, "Adversaire trouvé", cy - 200.0, theme::size::HEADING, pal.text_dim);
         draw_opponent(draw, &pal, fonts, (cx, cy), opponent, elo, picture.as_ref());
     };
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    gui.ui.page_header(&mut draw, fonts, "Classé");
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    gui.ui.page_header(draw, fonts, "Classé");
 
     if let Some((lobby, ranked)) = state.room.as_ref().and_then(|r| Some((&r.info, r.info.ranked.as_ref()?))) {
-        found(&mut draw, &ranked.opponent, ranked.opponent_elo);
-        line(&mut draw, &first_to, cy + 55.0, theme::size::LABEL, pal.text_muted);
+        found(draw, fonts, &ranked.opponent, ranked.opponent_elo);
+        line(draw, fonts, &first_to, cy + 55.0, theme::size::LABEL, pal.text_muted);
         if let Some(n) = lobby.countdown {
-            draw.sharp_text(&fonts.display, &n.to_string())
+            fonts
+                .write(draw, Face::Display, &n.to_string())
                 .center(cx, cy + 135.0)
                 .size(theme::size::HERO)
                 .color(pal.title);
         }
-        gui.ui.render(gfx, &draw);
         return;
     }
 
@@ -272,38 +275,39 @@ pub fn draw(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
                 config::MATCH_ACCEPT_SECS
             );
 
-            line(&mut draw, "Votre ELO", cy - 170.0, theme::size::LABEL, pal.text_muted);
-            draw.sharp_text(&fonts.display, &elo.to_string())
+            line(draw, fonts, "Votre ELO", cy - 170.0, theme::size::LABEL, pal.text_muted);
+            fonts
+                .write(draw, Face::Display, &elo.to_string())
                 .center(cx, cy - 115.0)
                 .size(theme::size::HERO)
                 .color(pal.title);
             if let Some(stats) = &ranked.stats {
                 let record = format!("Séries: {} gagnées sur {}", stats.ranked_series_won, stats.ranked_series);
-                line(&mut draw, &record, cy - 50.0, theme::size::EMPHASIS, pal.text);
+                line(draw, fonts, &record, cy - 50.0, theme::size::EMPHASIS, pal.text);
             }
-            line(&mut draw, &first_to, cy, theme::size::LABEL, pal.text_dim);
-            line(&mut draw, &rule, cy + 35.0, theme::size::BODY, pal.text_muted);
+            line(draw, fonts, &first_to, cy, theme::size::LABEL, pal.text_dim);
+            line(draw, fonts, &rule, cy + 35.0, theme::size::BODY, pal.text_muted);
 
             let (label, enabled) = match (ranked.casual_missing(), ranked.cooldown_left()) {
                 (Some(n), _) => {
                     let plural = if n > 1 { "s" } else { "" };
                     let why = format!("Jouez encore {n} partie{plural} amicale{plural} pour débloquer le classé.");
-                    line(&mut draw, &why, cy + 75.0, theme::size::BODY, theme::WARNING_TEXT);
+                    line(draw, fonts, &why, cy + 75.0, theme::size::BODY, theme::WARNING_TEXT);
                     ("Rechercher une partie".to_string(), false)
                 }
                 (None, Some(left)) => (format!("Disponible dans {}", clock(left)), false),
                 (None, None) => ("Rechercher une partie".to_string(), true),
             };
-            gui.ui.button_enabled(&mut draw, fonts, b.main, label.as_str(), enabled);
-            gui.ui.button(&mut draw, fonts, b.second, "Retour");
+            gui.ui.button_enabled(draw, fonts, b.main, label.as_str(), enabled);
+            gui.ui.button(draw, fonts, b.second, "Retour");
         }
         Search::Searching { since } => {
             let text = format!("Recherche d'un adversaire{}", gui.ui.waiting_dots());
             let waited = clock((now_secs() - since).max(0.0) as u64);
 
-            line(&mut draw, &text, cy - 40.0, theme::size::HEADING, pal.text);
-            line(&mut draw, &waited, cy + 10.0, theme::size::EMPHASIS, pal.text_dim);
-            gui.ui.button(&mut draw, fonts, single_button(view), "Annuler");
+            line(draw, fonts, &text, cy - 40.0, theme::size::HEADING, pal.text);
+            line(draw, fonts, &waited, cy + 10.0, theme::size::EMPHASIS, pal.text_dim);
+            gui.ui.button(draw, fonts, single_button(view), "Annuler");
         }
         Search::Found { opponent, opponent_elo, deadline, accepted, .. } => {
             let total = f64::from(config::MATCH_ACCEPT_SECS);
@@ -311,25 +315,23 @@ pub fn draw(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
             let bar = Rect::at(cx - 200.0, cy + 48.0, 400.0, 10.0);
             let urgency = if left < 3.0 { theme::DANGER } else { pal.accent };
 
-            found(&mut draw, opponent, *opponent_elo);
-            draw.rect((bar.x, bar.y), (bar.w, bar.h)).corner_radius(5.0).color(pal.surface);
-            draw.rect((bar.x, bar.y), (bar.w * (left / total) as f32, bar.h)).corner_radius(5.0).color(urgency);
-            line(&mut draw, &format!("{} s", left.ceil() as u64), cy + 80.0, theme::size::EMPHASIS, pal.text_dim);
+            found(draw, fonts, opponent, *opponent_elo);
+            draw.rect(bar).radius(5.0).color(pal.surface);
+            draw.rect(Rect::at(bar.x, bar.y, bar.w * (left / total) as f32, bar.h)).radius(5.0).color(urgency);
+            line(draw, fonts, &format!("{} s", left.ceil() as u64), cy + 80.0, theme::size::EMPHASIS, pal.text_dim);
             if *accepted {
-                line(&mut draw, "En attente de l'adversaire...", cy + 104.0, theme::size::LABEL, pal.text_muted);
-                gui.ui.button(&mut draw, fonts, single_button(view), "Annuler");
+                line(draw, fonts, "En attente de l'adversaire...", cy + 104.0, theme::size::LABEL, pal.text_muted);
+                gui.ui.button(draw, fonts, single_button(view), "Annuler");
             } else {
-                gui.ui.button(&mut draw, fonts, b.main, "Accepter");
-                gui.ui.button(&mut draw, fonts, b.second, "Refuser");
+                gui.ui.button(draw, fonts, b.main, "Accepter");
+                gui.ui.button(draw, fonts, b.second, "Refuser");
             }
         }
     }
 
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        line(&mut draw, msg, view.h - 60.0, theme::size::EMPHASIS, color);
+        line(draw, fonts, msg, view.h - 60.0, theme::size::EMPHASIS, color);
     }
-
-    gui.ui.render(gfx, &draw);
 }
 
 #[cfg(test)]

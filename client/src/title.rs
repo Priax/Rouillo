@@ -1,12 +1,11 @@
+use aero::draw::Draw;
 use aero::input::{KeyCode, MouseButton};
-use notan::draw::Draw;
-use notan::prelude::*;
 
 use crate::nav::Transition;
 use crate::state::{Screen, State};
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{Fonts, Gui, SharpText, Ui};
+use crate::ui::{Face, Fonts, Gui, Ui};
 
 const PROMPT: &str = "Appuyez sur une touche !!";
 const PULSE_SPEED: f64 = 3.0;
@@ -39,28 +38,30 @@ pub fn update_title(tick: &Tick, state: &mut State) -> Transition {
     Transition::To(if state.auth.is_none() && checking { Screen::Auth } else { Screen::Menu })
 }
 
-pub fn draw_title(gfx: &mut Graphics, gui: &mut Gui) {
+pub fn draw_title(draw: &mut Draw, gui: &mut Gui) {
     let pal = gui.ui.palette();
     let (ww, wh) = gui.ui.view().size();
     let pulse = 0.6 + 0.4 * (gui.ui.time() * PULSE_SPEED).sin() as f32;
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    draw.sharp_text(&gui.fonts.display, "Rouillo")
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    gui.fonts
+        .write(draw, Face::Display, "Rouillo")
         .center(ww / 2.0, wh / 2.0 - 60.0)
         .size(theme::size::HUGE)
         .color(pal.title);
-    draw.sharp_text(&gui.fonts.text, PROMPT)
+    gui.fonts
+        .write(draw, Face::Text, PROMPT)
         .center(ww / 2.0, wh / 2.0 + 90.0)
         .size(theme::size::EMPHASIS)
         .color(pal.text_dim.with_alpha(pulse));
-    draw_version(&mut draw, &gui.ui, &gui.fonts);
-
-    gui.ui.render(gfx, &draw);
+    draw_version(draw, &gui.ui, &mut gui.fonts);
 }
 
-pub fn draw_version(draw: &mut Draw, ui: &Ui, fonts: &Fonts) {
+pub fn draw_version(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts) {
     let (ww, wh) = ui.view().size();
-    draw.sharp_text(&fonts.text, concat!("v", env!("CARGO_PKG_VERSION")))
+    fonts
+        .write(draw, Face::Text, concat!("v", env!("CARGO_PKG_VERSION")))
         .right(ww - 20.0, wh - 24.0)
         .size(theme::size::SMALL)
         .color(ui.palette().text_dim);

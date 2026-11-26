@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use notan::prelude::*;
+use aero::image::{Filter, Image};
 
 use crate::http::{self, HttpSlot};
 
 enum Entry {
     Loading(HttpSlot),
-    Ready(Texture),
+    Ready(Image),
     Failed,
 }
 
@@ -20,7 +20,7 @@ pub struct Images {
 
 impl Images {
     /// The picture at `url`, a path on the API server, once it has loaded.
-    pub fn get(&mut self, gfx: &mut Graphics, url: &str) -> Option<Texture> {
+    pub fn get(&mut self, url: &str) -> Option<Image> {
         let entries = &mut self.entries;
         let entry = entries.entry(url.to_owned()).or_insert_with(|| {
             let slot = http::new_slot();
@@ -30,12 +30,7 @@ impl Images {
         if let Entry::Loading(slot) = entry {
             match http::poll(slot) {
                 Some(Ok(resp)) if resp.status == 200 => {
-                    *entry = gfx
-                        .create_texture()
-                        .from_image(&resp.bytes)
-                        .with_filter(TextureFilter::Linear, TextureFilter::Linear)
-                        .build()
-                        .map_or(Entry::Failed, Entry::Ready);
+                    *entry = picture(&resp.bytes).map_or(Entry::Failed, Entry::Ready);
                 }
                 Some(_) => *entry = Entry::Failed,
                 None => {}
@@ -47,7 +42,18 @@ impl Images {
         }
     }
 
-    pub fn get_opt(&mut self, gfx: &mut Graphics, url: Option<&str>) -> Option<Texture> {
-        url.and_then(|u| self.get(gfx, u))
+    pub fn get_opt(&mut self, url: Option<&str>) -> Option<Image> {
+        url.and_then(|u| self.get(u))
     }
+}
+
+/// Width, height and RGBA pixels of an encoded picture: PNG, JPEG or ICO, the largest image of an ICO.
+pub fn decode(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let picture = image::load_from_memory(bytes).map_err(|e| e.to_string())?.into_rgba8();
+    Ok((picture.width(), picture.height(), picture.into_raw()))
+}
+
+fn picture(bytes: &[u8]) -> Result<Image, String> {
+    let (width, height, rgba) = decode(bytes)?;
+    Image::from_rgba(width, height, rgba, Filter::Linear).map_err(|e| e.to_string())
 }

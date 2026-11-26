@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
+use aero::draw::Draw;
 use aero::input::KeyCode;
-use notan::draw::Draw;
-use notan::prelude::*;
 use shared::config::CLIENT_SIM_DT;
 use shared::{Board, Playback, Replay};
 
@@ -11,7 +10,7 @@ use crate::http::{self, HttpSlot};
 use crate::nav::{Nav, Transition};
 use crate::state::{GameSession, Player, Rival, Room, Screen, State};
 use crate::tick::Tick;
-use crate::ui::{Fonts, Gui, Icon, Rect, SharpText, Status, Ui, View};
+use crate::ui::{Face, Fonts, Gui, Icon, Rect, Status, Ui, View};
 use crate::{logic, theme};
 
 const MAX_REPLAY_SIZE: usize = 64 << 20;
@@ -64,7 +63,7 @@ fn keep_button(view: View) -> Rect {
     Rect::at(view.w - 236.0, 56.0, 220.0, 44.0)
 }
 
-pub fn update_keep(gui: &Gui, state: &mut State) {
+pub fn update_keep(gui: &mut Gui, state: &mut State) {
     let finished = state.room.as_ref().is_some_and(Room::finished);
     let view = gui.ui.view();
     let Some(offer) = state.room.as_mut().and_then(|r| r.keep.as_mut()) else {
@@ -84,7 +83,7 @@ pub fn update_keep(gui: &Gui, state: &mut State) {
     }
 }
 
-pub fn draw_keep(d: &mut Draw, gui: &mut Gui, state: &State) {
+pub fn draw_keep(draw: &mut Draw, gui: &mut Gui, state: &State) {
     let Some(offer) = state.room.as_ref().and_then(|r| r.keep.as_ref()) else {
         return;
     };
@@ -96,9 +95,10 @@ pub fn draw_keep(d: &mut Draw, gui: &mut Gui, state: &State) {
     let label = if offer.kept { "Replay gardé" } else { "Garder le replay" };
     let enabled = !offer.kept && offer.slot.is_none();
 
-    gui.ui.button_enabled(d, &gui.fonts, rect, label, enabled);
+    gui.ui.button_enabled(draw, &mut gui.fonts, rect, label, enabled);
     if let Some((msg, color)) = offer.status.shown(&gui.ui.palette()) {
-        d.sharp_text(&gui.fonts.text, msg)
+        gui.fonts
+            .write(draw, Face::Text, msg)
             .right(rect.x + rect.w, rect.y + rect.h + 16.0)
             .size(theme::size::SMALL)
             .color(color);
@@ -265,7 +265,7 @@ fn controls(view: View) -> [Rect; 4] {
     std::array::from_fn(|i| Rect::at(x + i as f32 * (W + GAP), y, W, H))
 }
 
-pub fn update(tick: &Tick, gui: &Gui, viewer: &mut ReplayViewer) -> Transition {
+pub fn update(tick: &Tick, gui: &mut Gui, viewer: &mut ReplayViewer) -> Transition {
     let dt = tick.dt;
     let view = gui.ui.view();
     let [play, speed, player, quit] = controls(view);
@@ -290,30 +290,28 @@ pub fn update(tick: &Tick, gui: &Gui, viewer: &mut ReplayViewer) -> Transition {
     Transition::Stay
 }
 
-pub fn draw(gfx: &mut Graphics, gui: &mut Gui, viewer: &ReplayViewer) {
-    draw::draw_game(gfx, &viewer.session, &mut gui.ui, &gui.fonts, Hud::Replay);
+pub fn draw(draw: &mut Draw, gui: &mut Gui, viewer: &ReplayViewer) {
+    draw::draw_game(draw, &viewer.session, &mut gui.ui, &mut gui.fonts, Hud::Replay);
     if viewer.over() {
         return;
     }
 
     let [play, speed, player, quit] = controls(gui.ui.view());
-    let fonts = &gui.fonts;
+    let fonts = &mut gui.fonts;
     let icon = if viewer.paused { Icon::Play } else { Icon::Pause };
     let label = format!("Vitesse x{}", SPEEDS[viewer.speed]);
     let multi = viewer.playback.replay().players.len() > 1;
 
-    let mut d = gui.ui.canvas(gfx);
-    gui.ui.button(&mut d, fonts, play, icon);
-    gui.ui.button(&mut d, fonts, speed, label.as_str());
-    gui.ui.button_enabled(&mut d, fonts, player, "Joueur suivant", multi);
-    gui.ui.button(&mut d, fonts, quit, "Quitter");
-    draw_clock(&mut d, &gui.ui, fonts, &viewer.clock(), play);
-
-    gui.ui.render(gfx, &d);
+    gui.ui.button(draw, fonts, play, icon);
+    gui.ui.button(draw, fonts, speed, label.as_str());
+    gui.ui.button_enabled(draw, fonts, player, "Joueur suivant", multi);
+    gui.ui.button(draw, fonts, quit, "Quitter");
+    draw_clock(draw, &gui.ui, fonts, &viewer.clock(), play);
 }
 
-fn draw_clock(d: &mut Draw, ui: &Ui, fonts: &Fonts, clock: &str, play: Rect) {
-    d.sharp_text(&fonts.display, clock)
+fn draw_clock(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, clock: &str, play: Rect) {
+    fonts
+        .write(draw, Face::Display, clock)
         .right(play.x - 20.0, play.y + play.h / 2.0)
         .size(theme::size::LABEL)
         .color(ui.palette().text_dim);

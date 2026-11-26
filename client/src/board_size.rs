@@ -1,11 +1,13 @@
+use aero::draw::Draw;
+use aero::geom::Color;
 use aero::input::KeyCode;
-use notan::draw::{Draw, DrawShapes};
-use notan::prelude::*;
+use aero::math::{vec2, Vec2};
+use aero::path::Cap;
 use shared::{RoomSetting, Rules, BOARD_COLUMNS, BOARD_ROWS};
 
 use crate::draw::{draw_empty_well, FRAME_PAD};
 use crate::tick::Tick;
-use crate::ui::{Fonts, Icon, Modal, Rect, SharpText, Ui, View};
+use crate::ui::{Face, Fonts, Icon, Modal, Rect, Ui, View};
 use crate::{config, theme};
 
 const CARD_W: f32 = 600.0;
@@ -144,7 +146,7 @@ pub fn update(tick: &Tick, ui: &Ui, rules: &Rules, editable: bool) -> Option<Act
     None
 }
 
-pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, rules: &Rules, editable: bool) {
+pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, rules: &Rules, editable: bool) {
     let pal = ui.palette();
     let layout = Layout::new(ui.view());
     let well = layout.well(rules.columns, rules.rows);
@@ -156,7 +158,8 @@ pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, rules: &Rules, editable
     draw_empty_well(draw, rules, well, ui.time() as f32);
     if !is_standard(rules) {
         dashed_rect(draw, outline, dim);
-        draw.sharp_text(&fonts.text, "standard")
+        fonts
+            .write(draw, Face::Text, "standard")
             .left(outline.x + 4.0, outline.y - 12.0)
             .size(theme::size::SMALL)
             .color(dim);
@@ -170,14 +173,15 @@ pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, rules: &Rules, editable
         ui.button_enabled(draw, fonts, layout.standard, "Taille standard", !is_standard(rules));
     } else {
         let (x, y) = layout.standard.center();
-        draw.sharp_text(&fonts.text, "Seul l'hôte peut changer la taille.")
+        fonts
+            .write(draw, Face::Text, "Seul l'hôte peut changer la taille.")
             .center(x, y)
             .size(theme::size::BODY)
             .color(pal.text_dim);
     }
 }
 
-fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &Fonts, layout: &Layout, rules: &Rules) {
+fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules: &Rules) {
     let pal = ui.palette();
     let (cx, cy) = layout.corner;
     let (x_end, y_end) = (layout.x_end, layout.y_end);
@@ -191,26 +195,30 @@ fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &Fonts, layout: &Layout, rules: &R
         ((well.x, cy), (right, cy), pal.accent),
         ((cx, well.y + well.h), (cx, top), pal.accent),
     ] {
-        draw.line(from, to).width(3.0).color(color);
+        draw.line_with(Vec2::from(from), Vec2::from(to), 3.0, Cap::Butt).color(color);
     }
-    draw.triangle((x_end + head, cy), (x_end - head, cy - head), (x_end - head, cy + head)).color(pal.border);
-    draw.triangle((cx, y_end - head), (cx - head, y_end + head), (cx + head, y_end + head)).color(pal.border);
+    draw.triangle(vec2(x_end + head, cy), vec2(x_end - head, cy - head), vec2(x_end - head, cy + head))
+        .color(pal.border);
+    draw.triangle(vec2(cx, y_end - head), vec2(cx - head, y_end + head), vec2(cx + head, y_end + head))
+        .color(pal.border);
 
     for c in 0..=*BOARD_COLUMNS.end() {
         let x = well.x + f32::from(c) * layout.cell;
-        draw.line((x, cy - TICK), (x, cy + TICK)).width(2.0).color(pal.border);
+        draw.line_with(vec2(x, cy - TICK), vec2(x, cy + TICK), 2.0, Cap::Butt).color(pal.border);
     }
     for r in 0..=*BOARD_ROWS.end() {
         let y = well.y + well.h - f32::from(r) * layout.cell;
-        draw.line((cx - TICK, y), (cx + TICK, y)).width(2.0).color(pal.border);
+        draw.line_with(vec2(cx - TICK, y), vec2(cx + TICK, y), 2.0, Cap::Butt).color(pal.border);
     }
 
-    draw.sharp_text(&fonts.display, &rules.columns.to_string())
+    fonts
+        .write(draw, Face::Display, &rules.columns.to_string())
         .position(right, cy + TICK + 4.0)
         .size(theme::size::HEADING)
         .h_align_center()
         .color(theme::GOLD);
-    draw.sharp_text(&fonts.display, &rules.rows.to_string())
+    fonts
+        .write(draw, Face::Display, &rules.rows.to_string())
         .right(cx - TICK - 8.0, top)
         .size(theme::size::HEADING)
         .color(theme::GOLD);
@@ -227,7 +235,7 @@ fn dashed_rect(draw: &mut Draw, r: Rect, color: Color) {
         for d in 0..dashes {
             let t0 = d as f32 * 2.0 * DASH / length;
             let t1 = ((d as f32 * 2.0 + 1.0) * DASH / length).min(1.0);
-            draw.line(at(t0), at(t1)).width(2.0).color(color);
+            draw.line_with(Vec2::from(at(t0)), Vec2::from(at(t1)), 2.0, Cap::Butt).color(color);
         }
     }
 }

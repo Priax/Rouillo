@@ -1,9 +1,8 @@
 use std::borrow::Cow;
 
-use notan::draw::{Draw, DrawShapes};
+use aero::draw::Draw;
 
-use super::fonts::Metrics;
-use super::{EditKeys, Face, Fonts, Rect, SharpText, TextInput, Ui};
+use super::{EditKeys, Face, Fonts, Rect, TextInput, Ui};
 use crate::theme::{self, Palette};
 
 pub struct Field<'a> {
@@ -20,20 +19,20 @@ const AREA_LINE_H: f32 = 26.0;
 
 fn frame(draw: &mut Draw, pal: &Palette, r: Rect, focused: bool) {
     let border = if focused { pal.accent } else { pal.border };
-    draw.rect((r.x, r.y), (r.w, r.h)).corner_radius(theme::RADIUS).color(pal.surface);
-    draw.rect((r.x, r.y), (r.w, r.h)).corner_radius(theme::RADIUS).stroke(2.0).color(border);
+    draw.rect(r).radius(theme::RADIUS).color(pal.surface);
+    draw.rect(r).radius(theme::RADIUS).stroke(border, 2.0);
 }
 
 fn caret(draw: &mut Draw, ui: &mut Ui, input: &TextInput, x: f32, mid: f32, size: f32) {
     if ui.caret_on(input, input.caret()) {
         let h = size * 1.2;
-        draw.rect((x - CARET_W / 2.0, mid - h / 2.0), (CARET_W, h)).color(ui.palette().text);
+        draw.rect(Rect::at(x - CARET_W / 2.0, mid - h / 2.0, CARET_W, h)).color(ui.palette().text);
     }
 }
 
 fn highlight(draw: &mut Draw, ui: &Ui, x0: f32, x1: f32, mid: f32, size: f32) {
     let h = size * 1.3;
-    draw.rect((x0, mid - h / 2.0), (x1 - x0, h)).color(ui.palette().accent.with_alpha(0.35));
+    draw.rect(Rect::at(x0, mid - h / 2.0, x1 - x0, h)).color(ui.palette().accent.with_alpha(0.35));
 }
 
 fn room(r: Rect) -> f32 {
@@ -53,16 +52,16 @@ impl Line<'_> {
     }
 }
 
-fn line<'a>(fonts: &Metrics, r: Rect, input: &'a TextInput) -> Line<'a> {
+fn line<'a>(fonts: &mut Fonts, r: Rect, input: &'a TextInput) -> Line<'a> {
     let size = (r.h * 0.45).clamp(16.0, 24.0);
     let (text, caret) = input.shown();
-    let fitting = |t: &str| t.len() - fonts.tail(Face::Text, t, size, room(r)).len();
+    let mut fitting = |t: &str| t.len() - fonts.tail(Face::Text, t, size, room(r)).len();
     let from = text.floor_char_boundary(input.scroll().min(fitting(&text))).clamp(fitting(&text[..caret]), caret);
     input.set_scroll(from);
     Line { text, from, caret, size }
 }
 
-pub fn text_field(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, r: Rect, field: &Field) {
+pub fn text_field(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, r: Rect, field: &Field) {
     let pal = ui.palette();
     frame(draw, &pal, r, field.focused);
 
@@ -76,10 +75,10 @@ pub fn text_field(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, r: Rect, field: &
     if let Some((a, b)) = field.input.shown_selection().filter(|_| field.focused) {
         let end = line.from + text.len();
         let (a, b) = (a.clamp(line.from, end), b.clamp(line.from, end));
-        let at = |i: usize| x + fonts.width(Face::Text, &line.text[line.from..i], line.size);
+        let mut at = |i: usize| x + fonts.width(Face::Text, &line.text[line.from..i], line.size);
         highlight(draw, ui, at(a), at(b), mid, line.size);
     }
-    draw.sharp_text(&fonts.text, text).left(x + placeholder_shift(field), mid).size(line.size).color(color);
+    fonts.write(draw, Face::Text, text).left(x + placeholder_shift(field), mid).size(line.size).color(color);
     if field.focused {
         let before = &line.text[line.from..line.caret];
         let caret_x = x + fonts.width(Face::Text, before, line.size);
@@ -89,8 +88,8 @@ pub fn text_field(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, r: Rect, field: &
 
 /// Places the caret where the field is clicked, and selects while the
 /// button stays down. Returns whether the field was clicked.
-pub fn field_clicked(ui: &Ui, fonts: &Fonts, r: Rect, input: &mut TextInput) -> bool {
-    let at = |input: &TextInput, x: f32| {
+pub fn field_clicked(ui: &Ui, fonts: &mut Fonts, r: Rect, input: &mut TextInput) -> bool {
+    let mut at = |input: &TextInput, x: f32| {
         let line = line(fonts, r, input);
         line.from + fonts.index_at(Face::Text, line.visible(), line.size, x - r.x - PADDING)
     };
@@ -131,7 +130,7 @@ struct Row<'a> {
 }
 
 impl Row<'_> {
-    fn at(&self, fonts: &Metrics, x: f32) -> usize {
+    fn at(&self, fonts: &mut Fonts, x: f32) -> usize {
         let last = self.text.chars().next_back().map_or(0, char::len_utf8);
         let end = self.text.len() - if self.wrapped { last } else { 0 };
         self.start + fonts.index_at(Face::Text, self.text, AREA_TEXT, x).min(end)
@@ -146,13 +145,13 @@ struct Area<'a> {
 }
 
 impl Area<'_> {
-    fn caret_x(&self, fonts: &Metrics, caret: usize) -> f32 {
+    fn caret_x(&self, fonts: &mut Fonts, caret: usize) -> f32 {
         let row = &self.rows[self.caret_row];
         fonts.width(Face::Text, &row.text[..caret - row.start], AREA_TEXT)
     }
 }
 
-fn rows<'a>(fonts: &Metrics, text: &'a str, max: f32) -> Vec<Row<'a>> {
+fn rows<'a>(fonts: &mut Fonts, text: &'a str, max: f32) -> Vec<Row<'a>> {
     let mut start = 0;
     fonts
         .wrap(Face::Text, text, AREA_TEXT, max)
@@ -167,7 +166,7 @@ fn rows<'a>(fonts: &Metrics, text: &'a str, max: f32) -> Vec<Row<'a>> {
         .collect()
 }
 
-fn area<'a>(fonts: &Metrics, r: Rect, input: &'a TextInput) -> Area<'a> {
+fn area<'a>(fonts: &mut Fonts, r: Rect, input: &'a TextInput) -> Area<'a> {
     let rows = rows(fonts, input, room(r));
     let visible = (((r.h - 2.0 * PADDING) / AREA_LINE_H) as usize).max(1);
     let caret_row = rows.iter().rposition(|row| row.start <= input.caret()).unwrap_or(0);
@@ -179,7 +178,7 @@ fn area<'a>(fonts: &Metrics, r: Rect, input: &'a TextInput) -> Area<'a> {
     Area { rows, first, visible, caret_row }
 }
 
-pub fn text_area(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, r: Rect, field: &Field) {
+pub fn text_area(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, r: Rect, field: &Field) {
     let pal = ui.palette();
     frame(draw, &pal, r, field.focused);
 
@@ -188,7 +187,8 @@ pub fn text_area(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, r: Rect, field: &F
     let area = area(fonts, r, field.input);
 
     if field.input.is_empty() {
-        draw.sharp_text(&fonts.text, field.placeholder)
+        fonts
+            .write(draw, Face::Text, field.placeholder)
             .left(x + placeholder_shift(field), line_mid(0))
             .size(AREA_TEXT)
             .color(pal.text_muted);
@@ -198,10 +198,10 @@ pub fn text_area(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, r: Rect, field: &F
         let end = row.start + row.text.len();
         if let Some((a, b)) = selection.filter(|&(a, b)| a <= end && b > row.start) {
             let (a, b) = (a.max(row.start), b.min(end));
-            let at = |j: usize| x + fonts.width(Face::Text, &row.text[..j - row.start], AREA_TEXT);
+            let mut at = |j: usize| x + fonts.width(Face::Text, &row.text[..j - row.start], AREA_TEXT);
             highlight(draw, ui, at(a), at(b).max(at(a) + 4.0), line_mid(i), AREA_TEXT);
         }
-        draw.sharp_text(&fonts.text, row.text).left(x, line_mid(i)).size(AREA_TEXT).color(pal.text);
+        fonts.write(draw, Face::Text, row.text).left(x, line_mid(i)).size(AREA_TEXT).color(pal.text);
     }
     if field.focused {
         caret(
@@ -215,8 +215,8 @@ pub fn text_area(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, r: Rect, field: &F
     }
 }
 
-pub fn area_clicked(ui: &Ui, fonts: &Fonts, r: Rect, input: &mut TextInput) -> bool {
-    let at = |input: &TextInput, x: f32, y: f32| {
+pub fn area_clicked(ui: &Ui, fonts: &mut Fonts, r: Rect, input: &mut TextInput) -> bool {
+    let mut at = |input: &TextInput, x: f32, y: f32| {
         let area = area(fonts, r, input);
         let row = (area.first as f32 + ((y - r.y - PADDING) / AREA_LINE_H).floor()).max(0.0) as usize;
         area.rows[row.min(area.rows.len() - 1)].at(fonts, x - r.x - PADDING)
@@ -239,7 +239,7 @@ pub fn area_clicked(ui: &Ui, fonts: &Fonts, r: Rect, input: &mut TextInput) -> b
     false
 }
 
-pub fn area_keys(fonts: &Fonts, r: Rect, input: &mut TextInput, keys: &EditKeys) {
+pub fn area_keys(fonts: &mut Fonts, r: Rect, input: &mut TextInput, keys: &EditKeys) {
     input.edit_line(keys);
     for (key, down) in [(&keys.up, false), (&keys.down, true)] {
         if key.fired() {
@@ -255,11 +255,14 @@ pub fn area_keys(fonts: &Fonts, r: Rect, input: &mut TextInput, keys: &EditKeys)
     }
 }
 
-fn vertical_step(fonts: &Metrics, r: Rect, input: &TextInput, down: bool) -> usize {
+fn vertical_step(fonts: &mut Fonts, r: Rect, input: &TextInput, down: bool) -> usize {
     let area = area(fonts, r, input);
     let to = if down { area.caret_row + 1 } else { area.caret_row.wrapping_sub(1) };
     match area.rows.get(to) {
-        Some(row) => row.at(fonts, area.caret_x(fonts, input.caret())),
+        Some(row) => {
+            let x = area.caret_x(fonts, input.caret());
+            row.at(fonts, x)
+        }
         None if down => input.len(),
         None => 0,
     }
@@ -272,8 +275,8 @@ mod tests {
     const WIDE: f32 = 500.0;
     const NARROW: f32 = 120.0;
 
-    fn fonts() -> Metrics {
-        Metrics::load().expect("bundled fonts")
+    fn fonts() -> Fonts {
+        Fonts::load().expect("bundled fonts")
     }
 
     fn input(text: &str, caret: usize) -> TextInput {
@@ -288,9 +291,9 @@ mod tests {
 
     #[test]
     fn rows_know_where_they_start_in_the_text() {
-        let fonts = fonts();
+        let mut fonts = fonts();
         let text = "un deux trois quatre\n\ncinq";
-        let rows = rows(&fonts, text, NARROW);
+        let rows = rows(&mut fonts, text, NARROW);
         assert!(rows.len() > 3, "{} rows", rows.len());
         for row in &rows {
             assert_eq!(&text[row.start..row.start + row.text.len()], row.text);
@@ -303,22 +306,22 @@ mod tests {
 
     #[test]
     fn the_caret_at_a_wrap_belongs_to_the_row_below() {
-        let fonts = fonts();
+        let mut fonts = fonts();
         let text = "un deux trois quatre";
-        let second = rows(&fonts, text, NARROW)[1].start;
+        let second = rows(&mut fonts, text, NARROW)[1].start;
         let at = input(text, second);
-        let area = area(&fonts, box_of(NARROW, 6), &at);
+        let area = area(&mut fonts, box_of(NARROW, 6), &at);
         assert_eq!(area.caret_row, 1);
-        assert!(area.caret_x(&fonts, second).abs() < f32::EPSILON);
-        assert!(area.rows[0].at(&fonts, 5000.0) < second, "so the end of a wrapped row stops short of it");
+        assert!(area.caret_x(&mut fonts, second).abs() < f32::EPSILON);
+        assert!(area.rows[0].at(&mut fonts, 5000.0) < second, "so the end of a wrapped row stops short of it");
     }
 
     #[test]
     fn up_and_down_keep_the_column_and_run_to_the_ends() {
-        let fonts = fonts();
+        let mut fonts = fonts();
         let r = box_of(WIDE, 6);
         let text = "abcdef\nab\nabcdef";
-        let step = |caret: usize, down: bool| vertical_step(&fonts, r, &input(text, caret), down);
+        let mut step = |caret: usize, down: bool| vertical_step(&mut fonts, r, &input(text, caret), down);
         assert_eq!(step(14, false), 9, "a shorter row is entered at its end");
         assert_eq!(step(8, true), 11);
         assert_eq!(step(8, false), 1);
@@ -328,39 +331,39 @@ mod tests {
 
     #[test]
     fn an_area_scrolls_only_to_keep_the_caret_in_sight() {
-        let fonts = fonts();
+        let mut fonts = fonts();
         let r = box_of(WIDE, 2);
         let text = "a\nb\nc\nd\ne";
         let mut field = input(text, text.len());
-        assert_eq!(area(&fonts, r, &field).first, 3, "the end of the text at first");
+        assert_eq!(area(&mut fonts, r, &field).first, 3, "the end of the text at first");
         field.set_caret(6);
-        assert_eq!(area(&fonts, r, &field).first, 3, "the caret is still in sight");
+        assert_eq!(area(&mut fonts, r, &field).first, 3, "the caret is still in sight");
         field.set_caret(2);
-        assert_eq!(area(&fonts, r, &field).first, 1);
+        assert_eq!(area(&mut fonts, r, &field).first, 1);
         field.set_caret(4);
-        assert_eq!(area(&fonts, r, &field).first, 1);
+        assert_eq!(area(&mut fonts, r, &field).first, 1);
         field.set_caret(8);
-        assert_eq!(area(&fonts, r, &field).first, 3);
+        assert_eq!(area(&mut fonts, r, &field).first, 3);
         let emptied = input("a", 1);
         emptied.set_scroll(3);
-        assert_eq!(area(&fonts, r, &emptied).first, 0);
+        assert_eq!(area(&mut fonts, r, &emptied).first, 0);
     }
 
     #[test]
     fn a_field_scrolls_only_to_keep_the_caret_in_sight() {
-        let fonts = fonts();
+        let mut fonts = fonts();
         let r = box_of(NARROW, 1);
         let text = "abcdefghij".repeat(4);
         let mut field = input(&text, text.len());
-        let end = line(&fonts, r, &field).from;
+        let end = line(&mut fonts, r, &field).from;
         assert!(end > 0, "the end of the text at first");
         field.set_caret(end + 2);
-        assert_eq!(line(&fonts, r, &field).from, end, "the caret is still in sight");
+        assert_eq!(line(&mut fonts, r, &field).from, end, "the caret is still in sight");
         field.set_caret(3);
-        assert_eq!(line(&fonts, r, &field).from, 3);
+        assert_eq!(line(&mut fonts, r, &field).from, 3);
         field.set_caret(5);
-        assert_eq!(line(&fonts, r, &field).from, 3);
+        assert_eq!(line(&mut fonts, r, &field).from, 3);
         field.set_caret(text.len());
-        assert_eq!(line(&fonts, r, &field).from, end);
+        assert_eq!(line(&mut fonts, r, &field).from, end);
     }
 }

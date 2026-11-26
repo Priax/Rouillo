@@ -1,10 +1,13 @@
 use std::f32::consts::TAU;
 
-use notan::draw::{Draw, DrawShapes};
-use notan::prelude::Color;
+use aero::draw::Draw;
+use aero::geom::Color;
+use aero::math::{vec2, Affine2, Vec2};
+use aero::path::Cap;
 use shared::PuyoType;
 
 use crate::theme::{game, mix};
+use crate::ui::{self, Rect};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mood {
@@ -92,14 +95,14 @@ fn potato(draw: &mut Draw, p: &Puyo, (sx, sy): (f32, f32), dy: f32, color: Color
         let (p, q) = (points[i % OUTLINE_POINTS], points[(i + 1) % OUTLINE_POINTS]);
         ((p.0 + q.0) / 2.0, (p.1 + q.1) / 2.0)
     };
-    let mut path = draw.path();
-    let start = mid(0);
-    path.move_to(start.0, start.1);
-    for i in 1..=OUTLINE_POINTS {
-        let to = mid(i);
-        path.quadratic_bezier_to(points[i % OUTLINE_POINTS], to);
-    }
-    path.close().fill().color(color.with_alpha(p.alpha));
+    draw.path(|path| {
+        path.move_to(Vec2::from(mid(0)));
+        for i in 1..=OUTLINE_POINTS {
+            path.quad_to(Vec2::from(points[i % OUTLINE_POINTS]), Vec2::from(mid(i)));
+        }
+        path.close();
+    })
+    .color(color.with_alpha(p.alpha));
 }
 
 pub fn layer(draw: &mut Draw, p: &Puyo, layer: Layer) {
@@ -109,9 +112,8 @@ pub fn layer(draw: &mut Draw, p: &Puyo, layer: Layer) {
             potato(draw, p, (0.94, 0.91), -p.radius * 0.03, p.base());
             let (rx, ry) = p.radii();
             let (cx, cy) = p.body_center();
-            draw.ellipse((cx - rx * 0.32, cy - ry * 0.48), (rx * 0.24, ry * 0.13))
-                .rotate(-0.5)
-                .color(Color::WHITE.with_alpha(0.5 * p.alpha));
+            let sheen = Color::WHITE.with_alpha(0.5 * p.alpha);
+            tilted_ellipse(draw, vec2(cx - rx * 0.32, cy - ry * 0.48), vec2(rx * 0.24, ry * 0.13), -0.5, sheen);
         }
     }
 }
@@ -130,29 +132,39 @@ pub fn face(draw: &mut Draw, p: &Puyo) {
         match p.mood {
             Mood::Popping => {
                 let w = rx * 0.18;
-                draw.path()
-                    .move_to(ex - w, eye_y + ry * 0.08)
-                    .quadratic_bezier_to((ex, eye_y - ry * 0.18), (ex + w, eye_y + ry * 0.08))
-                    .stroke(p.radius * 0.11)
-                    .round_cap()
-                    .color(ink);
+                draw.path(|path| {
+                    path.move_to(vec2(ex - w, eye_y + ry * 0.08))
+                        .quad_to(vec2(ex, eye_y - ry * 0.18), vec2(ex + w, eye_y + ry * 0.08));
+                })
+                .stroke_with(ink, ui::pointed(p.radius * 0.11).cap(Cap::Round));
             }
             Mood::Blinking => {
-                draw.line((ex - rx * 0.15, eye_y + ry * 0.08), (ex + rx * 0.15, eye_y + ry * 0.08))
-                    .width(p.radius * 0.1)
-                    .color(ink);
+                draw.line_with(
+                    vec2(ex - rx * 0.15, eye_y + ry * 0.08),
+                    vec2(ex + rx * 0.15, eye_y + ry * 0.08),
+                    p.radius * 0.1,
+                    Cap::Butt,
+                )
+                .color(ink);
             }
             Mood::Awake if garbage => {
-                draw.ellipse((ex, eye_y + ry * 0.08), (rx * 0.1, ry * 0.13)).color(ink);
+                draw.ellipse(vec2(ex, eye_y + ry * 0.08), vec2(rx * 0.1, ry * 0.13)).color(ink);
             }
             Mood::Awake => {
-                draw.ellipse((ex, eye_y), (rx * 0.21, ry * 0.31)).rotate(side * 0.18).color(white);
+                tilted_ellipse(draw, vec2(ex, eye_y), vec2(rx * 0.21, ry * 0.31), side * 0.18, white);
                 let (px, py) = (ex - side * rx * 0.05, eye_y + ry * 0.09);
-                draw.ellipse((px, py), (rx * 0.13, ry * 0.2)).color(ink);
-                draw.circle(rx * 0.05).position(px - rx * 0.04, py - ry * 0.08).color(white);
+                draw.ellipse(vec2(px, py), vec2(rx * 0.13, ry * 0.2)).color(ink);
+                draw.circle(vec2(px - rx * 0.04, py - ry * 0.08), rx * 0.05).color(white);
             }
         }
     }
+}
+
+/// An ellipse turned by `angle` about its center.
+fn tilted_ellipse(draw: &mut Draw, center: Vec2, radii: Vec2, angle: f32, color: Color) {
+    draw.push_transform(Affine2::from_angle_translation(angle, center));
+    draw.ellipse(Vec2::ZERO, radii).color(color);
+    draw.pop_transform();
 }
 
 pub fn single(draw: &mut Draw, p: &Puyo) {
@@ -172,7 +184,7 @@ pub fn bridge(draw: &mut Draw, p: &Puyo, joint: Joint, cell: f32, layer: Layer) 
         Joint::Right => ((cx, cy - thick / 2.0 + dy), (cell, w)),
         Joint::Down => ((cx - w / 2.0, cy + dy), (w, cell)),
     };
-    draw.rect(pos, size).color(color.with_alpha(p.alpha));
+    draw.rect(Rect::at(pos.0, pos.1, size.0, size.1)).color(color.with_alpha(p.alpha));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,36 +245,35 @@ pub fn nuisance_icon(
         Nuisance::Big => blob(draw, (cx, cy), unit * 0.95),
         Nuisance::Rock => {
             let (w, h) = (unit * 1.6, unit * 1.3);
-            draw.rect((cx - w / 2.0, cy - h / 2.0 + unit * 0.1), (w, h))
-                .corner_radius(unit * 0.35)
+            draw.rect(Rect::at(cx - w / 2.0, cy - h / 2.0 + unit * 0.1, w, h))
+                .radius(unit * 0.35)
                 .color(lit(shade(tint)));
-            draw.rect((cx - w / 2.0, cy - h / 2.0), (w, h * 0.92)).corner_radius(unit * 0.35).color(lit(tint));
-            draw.rect((cx - w * 0.3, cy - h * 0.32), (w * 0.3, h * 0.14))
-                .corner_radius(unit * 0.07)
+            draw.rect(Rect::at(cx - w / 2.0, cy - h / 2.0, w, h * 0.92)).radius(unit * 0.35).color(lit(tint));
+            draw.rect(Rect::at(cx - w * 0.3, cy - h * 0.32, w * 0.3, h * 0.14))
+                .radius(unit * 0.07)
                 .color(Color::WHITE.with_alpha(0.35));
         }
         Nuisance::Star => {
-            draw.star(5, unit * 0.95, unit * 0.45).position(cx, cy + unit * 0.06).color(lit(shade(game::STAR)));
-            draw.star(5, unit * 0.9, unit * 0.42).position(cx, cy).color(lit(game::STAR));
+            draw.star(vec2(cx, cy + unit * 0.06), 5, unit * 0.45, unit * 0.95).color(lit(shade(game::STAR)));
+            draw.star(vec2(cx, cy), 5, unit * 0.42, unit * 0.9).color(lit(game::STAR));
         }
         Nuisance::Moon => {
-            draw.circle(unit * 0.85).position(cx, cy).color(lit(game::MOON));
-            draw.circle(unit * 0.72).position(cx + unit * 0.42, cy - unit * 0.22).color(backdrop);
+            draw.circle(vec2(cx, cy), unit * 0.85).color(lit(game::MOON));
+            draw.circle(vec2(cx + unit * 0.42, cy - unit * 0.22), unit * 0.72).color(backdrop);
         }
         Nuisance::Crown => {
             let (w, h) = (unit * 1.7, unit * 1.2);
             let (left, top) = (cx - w / 2.0, cy - h / 2.0);
-            draw.path()
-                .move_to(left, top + h)
-                .line_to(left, top + h * 0.15)
-                .line_to(left + w * 0.27, top + h * 0.55)
-                .line_to(cx, top)
-                .line_to(left + w * 0.73, top + h * 0.55)
-                .line_to(left + w, top + h * 0.15)
-                .line_to(left + w, top + h)
-                .close()
-                .fill()
-                .color(lit(game::STAR));
+            draw.polygon(&[
+                vec2(left, top + h),
+                vec2(left, top + h * 0.15),
+                vec2(left + w * 0.27, top + h * 0.55),
+                vec2(cx, top),
+                vec2(left + w * 0.73, top + h * 0.55),
+                vec2(left + w, top + h * 0.15),
+                vec2(left + w, top + h),
+            ])
+            .color(lit(game::STAR));
         }
     }
 }

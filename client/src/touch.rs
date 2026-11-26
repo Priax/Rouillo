@@ -1,12 +1,14 @@
 use std::f32::consts::{FRAC_PI_2, PI};
 
+use aero::draw::Draw;
+use aero::geom::Color;
 use aero::input::{Finger, Input};
-use notan::draw::{Draw, DrawShapes};
-use notan::prelude::*;
+use aero::math::{vec2, Vec2};
+use aero::path::Cap;
 
 use crate::controls::{Action, ACTIONS};
 use crate::theme;
-use crate::ui::{Fonts, Rect, SharpText, View};
+use crate::ui::{self, Face, Fonts, Rect, View};
 
 const SIZE: f32 = 120.0;
 const GAP: f32 = 14.0;
@@ -63,7 +65,7 @@ impl TouchPad {
         (held, pause)
     }
 
-    pub fn draw(&self, draw: &mut Draw, fonts: &Fonts, view: View) {
+    pub fn draw(&self, draw: &mut Draw, fonts: &mut Fonts, view: View) {
         if !self.active {
             return;
         }
@@ -74,11 +76,11 @@ impl TouchPad {
             let ink = Color::WHITE.with_alpha(if down { 0.95 } else { 0.7 });
             match button {
                 Button::Pause => {
-                    draw.rect((rect.x, rect.y), (rect.w, rect.h)).corner_radius(16.0).color(fill);
-                    draw.sharp_text(&fonts.display, "II").center(cx, cy).size(theme::size::TITLE).color(ink);
+                    draw.rect(rect).radius(16.0).color(fill);
+                    fonts.write(draw, Face::Display, "II").center(cx, cy).size(theme::size::TITLE).color(ink);
                 }
                 Button::Act(action) => {
-                    draw.circle(rect.w / 2.0).position(cx, cy).color(fill);
+                    draw.circle(vec2(cx, cy), rect.w / 2.0).color(fill);
                     icon(draw, action, cx, cy, rect.w * 0.22, ink);
                 }
             }
@@ -88,7 +90,8 @@ impl TouchPad {
 
 fn arrow(draw: &mut Draw, cx: f32, cy: f32, r: f32, angle: f32, color: Color) {
     let point = |a: f32, d: f32| (cx + d * a.cos(), cy + d * a.sin());
-    draw.triangle(point(angle, r), point(angle + 2.4, r), point(angle - 2.4, r)).color(color);
+    draw.triangle(Vec2::from(point(angle, r)), Vec2::from(point(angle + 2.4, r)), Vec2::from(point(angle - 2.4, r)))
+        .color(color);
 }
 
 fn curl(draw: &mut Draw, cx: f32, cy: f32, r: f32, clockwise: bool, color: Color) {
@@ -98,16 +101,13 @@ fn curl(draw: &mut Draw, cx: f32, cy: f32, r: f32, clockwise: bool, color: Color
         let a = -FRAC_PI_2 + dir * (start + sweep * t);
         (cx + r * a.cos(), cy + r * a.sin())
     };
-    {
-        let mut path = draw.path();
-        let (x, y) = at(0.0);
-        path.move_to(x, y);
+    draw.path(|path| {
+        path.move_to(Vec2::from(at(0.0)));
         for i in 1..=24 {
-            let (x, y) = at(i as f32 / 24.0);
-            path.line_to(x, y);
+            path.line_to(Vec2::from(at(i as f32 / 24.0)));
         }
-        path.stroke(7.0).round_cap().color(color);
-    }
+    })
+    .stroke_with(color, ui::pointed(7.0).cap(Cap::Round));
     let end = -FRAC_PI_2 + dir * (start + sweep);
     let (ex, ey) = at(1.0);
     arrow(draw, ex, ey, r * 0.55, end + dir * FRAC_PI_2, color);
@@ -130,10 +130,11 @@ fn icon(draw: &mut Draw, action: Action, cx: f32, cy: f32, r: f32, color: Color)
 
 /// A game needs a landscape window: a phone held upright gets a request to
 /// turn instead.
-pub fn draw_turn_hint(draw: &mut Draw, fonts: &Fonts, view: View) {
+pub fn draw_turn_hint(draw: &mut Draw, fonts: &mut Fonts, view: View) {
     let (w, h) = view.size();
-    draw.rect((0.0, 0.0), (w, h)).color(Color::from_rgb(0.07, 0.07, 0.09));
-    draw.sharp_text(&fonts.display, "Tournez votre téléphone")
+    draw.rect(Rect::at(0.0, 0.0, w, h)).color(Color::srgb(0.07, 0.07, 0.09));
+    fonts
+        .write(draw, Face::Display, "Tournez votre téléphone")
         .center(w / 2.0, h / 2.0)
         .size(theme::size::TITLE)
         .color(Color::WHITE);

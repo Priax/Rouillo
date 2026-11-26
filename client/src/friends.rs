@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use aero::draw::Draw;
+use aero::image::Image;
 use aero::input::KeyCode;
-use notan::draw::Draw;
-use notan::prelude::*;
 
 use crate::images::Images;
 use crate::nav::Transition;
@@ -11,7 +11,7 @@ use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
     self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Gui, Label, Pager, Pill,
-    Rect, SharpText, Size, Status, TextInput, Ui, View,
+    Rect, Size, Status, TextInput, Ui, View,
 };
 use crate::{http, theme};
 
@@ -117,16 +117,16 @@ fn watch_btn(view: View, row: usize) -> Rect {
     row_button(list_row_rect(view, 0, row), 122.0, 110.0)
 }
 
-type Pictures = HashMap<String, Texture>;
+type Pictures = HashMap<String, Image>;
 
-fn pictures<'a>(gfx: &mut Graphics, images: &mut Images, urls: impl Iterator<Item = &'a Option<String>>) -> Pictures {
-    urls.flatten().filter_map(|url| Some((url.clone(), images.get(gfx, url)?))).collect()
+fn pictures<'a>(images: &mut Images, urls: impl Iterator<Item = &'a Option<String>>) -> Pictures {
+    urls.flatten().filter_map(|url| Some((url.clone(), images.get(url)?))).collect()
 }
 
 fn avatar(
     draw: &mut Draw,
     ui: &Ui,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     (x, cy): (f32, f32),
     name: &str,
     url: Option<&String>,
@@ -317,7 +317,7 @@ enum FriendAction {
     Cancel(String),
 }
 
-pub fn update_friends(tick: &Tick, gui: &Gui, state: &mut State, f: &mut FriendsData) -> Transition {
+pub fn update_friends(tick: &Tick, gui: &mut Gui, state: &mut State, f: &mut FriendsData) -> Transition {
     poll_list(f);
     poll_search(f);
     poll_add(state, f);
@@ -326,7 +326,7 @@ pub fn update_friends(tick: &Tick, gui: &Gui, state: &mut State, f: &mut Friends
     let view = gui.ui.view();
     let paging = f.pages.iter().any(Pager::focused);
 
-    if field_clicked(&gui.ui, &gui.fonts, search_box(view), &mut f.search_input) {
+    if field_clicked(&gui.ui, &mut gui.fonts, search_box(view), &mut f.search_input) {
         f.search_focused = true;
     } else if gui.ui.clicked(Rect::at(0.0, 0.0, view.w, view.h)) {
         f.search_focused = false;
@@ -339,7 +339,7 @@ pub fn update_friends(tick: &Tick, gui: &Gui, state: &mut State, f: &mut Friends
     for col in 0..3 {
         let pages = page_count(lists(f)[col].len(), rows_for(view));
         f.pages[col].clamp(pages);
-        f.pages[col].update(tick, &gui.ui, &gui.fonts, &state.input.keys, pager_area(view, col), pages);
+        f.pages[col].update(tick, &gui.ui, &mut gui.fonts, &state.input.keys, pager_area(view, col), pages);
     }
 
     if gui.ui.clicked(search_submit_btn(view)) || (searching && tick.pressed(KeyCode::Enter)) {
@@ -494,31 +494,31 @@ fn apply_action(state: &State, f: &mut FriendsData, action: FriendAction) {
     }
 }
 
-pub fn draw_friends(gfx: &mut Graphics, gui: &mut Gui, f: &FriendsData) {
+pub fn draw_friends(draw: &mut Draw, gui: &mut Gui, f: &FriendsData) {
     let view = gui.ui.view();
     let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
-    let pics = pictures(gfx, &mut gui.images, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
+    let pics = pictures(&mut gui.images, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
     let label = Label::busy_or(f.list_slot.is_some(), "Rafraîchir");
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    gui.ui.page_header(&mut draw, &gui.fonts, "Amis");
-    draw_search(&mut draw, &mut gui.ui, &gui.fonts, f, (view, &pics));
-    draw_lists(&mut draw, &mut gui.ui, &gui.fonts, f, (view, &pics));
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    gui.ui.page_header(draw, &mut gui.fonts, "Amis");
+    draw_search(draw, &mut gui.ui, &mut gui.fonts, f, (view, &pics));
+    draw_lists(draw, &mut gui.ui, &mut gui.fonts, f, (view, &pics));
 
-    gui.ui.button(&mut draw, &gui.fonts, back_btn(view), "Retour");
-    gui.ui.button_enabled(&mut draw, &gui.fonts, refresh_btn(view), label, can_refresh(f));
-
-    gui.ui.render(gfx, &draw);
+    gui.ui.button(draw, &mut gui.fonts, back_btn(view), "Retour");
+    gui.ui.button_enabled(draw, &mut gui.fonts, refresh_btn(view), label, can_refresh(f));
 }
 
-fn draw_search(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
+fn draw_search(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
     let pal = ui.palette();
     let field = search_box(view);
     let searching = f.search_slot.is_some();
     let search = Field { placeholder: "Pseudo ou UUID", input: &f.search_input, focused: f.search_focused };
     let submit = Label::busy_or(searching, "Rechercher");
 
-    draw.sharp_text(&fonts.text, "Rechercher un ami")
+    fonts
+        .write(draw, Face::Text, "Rechercher un ami")
         .left(field.x, field.y - 14.0)
         .size(theme::size::SMALL)
         .color(pal.text_dim);
@@ -535,7 +535,8 @@ fn draw_search(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, f: &FriendsData, (vi
 
     ui::card(draw, &pal, card);
     if let (true, Some((msg, color))) = (f.search_results.is_empty(), status) {
-        draw.sharp_text(&fonts.text, msg)
+        fonts
+            .write(draw, Face::Text, msg)
             .center(card.x + card.w / 2.0, card.y + card.h / 2.0)
             .size(theme::size::LABEL)
             .color(color);
@@ -548,7 +549,8 @@ fn draw_search(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, f: &FriendsData, (vi
 
         list_row(draw, &pal, row, i);
         avatar(draw, ui, fonts, (row.x + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
-        draw.sharp_text(&fonts.text, &e.username)
+        fonts
+            .write(draw, Face::Text, &e.username)
             .left(row.x + 10.0 + AVATAR_ROOM, mid)
             .size(theme::size::LABEL)
             .color(pal.text);
@@ -560,11 +562,11 @@ fn draw_search(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, f: &FriendsData, (vi
     }
 
     if let Some((msg, color)) = f.add_status.shown(&pal) {
-        draw.sharp_text(&fonts.text, msg).center(view.w / 2.0, ADD_STATUS_Y).size(theme::size::BODY).color(color);
+        fonts.write(draw, Face::Text, msg).center(view.w / 2.0, ADD_STATUS_Y).size(theme::size::BODY).color(color);
     }
 }
 
-fn draw_lists(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
+fn draw_lists(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
     let pal = ui.palette();
     let columns = [
         ("Amis", &f.friends, "Aucun ami pour l'instant"),
@@ -578,13 +580,15 @@ fn draw_lists(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, f: &FriendsData, (vie
         let tally = Pill::small(&count, pal.accent);
 
         ui::card(draw, &pal, card);
-        draw.sharp_text(&fonts.display, title).left(card.x + 16.0, mid).size(theme::size::EMPHASIS).color(pal.text);
-        tally.draw(draw, fonts, (card.x + card.w - 16.0 - tally.width(fonts), mid));
+        fonts.write(draw, Face::Display, title).left(card.x + 16.0, mid).size(theme::size::EMPHASIS).color(pal.text);
+        let left = card.x + card.w - 16.0 - tally.width(fonts);
+        tally.draw(draw, fonts, (left, mid));
         divider(draw, &pal, card.x + 16.0, card.y + CARD_TITLE_H, card.w - 32.0);
     }
 
     if f.list_slot.is_some() {
-        draw.sharp_text(&fonts.text, "Chargement...")
+        fonts
+            .write(draw, Face::Text, "Chargement...")
             .center(view.w / 2.0, list_top(column_card(view, 0)) + 24.0)
             .size(theme::size::LABEL)
             .color(pal.text_muted);
@@ -644,7 +648,8 @@ fn draw_lists(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, f: &FriendsData, (vie
     }
 
     if let Some((msg, color)) = f.action_status.shown(&pal) {
-        draw.sharp_text(&fonts.text, msg)
+        fonts
+            .write(draw, Face::Text, msg)
             .center(view.w / 2.0, column_card(view, 2).bottom() + 10.0)
             .size(theme::size::SMALL)
             .color(color);
@@ -654,18 +659,19 @@ fn draw_lists(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, f: &FriendsData, (vie
 fn draw_col<F>(
     draw: &mut Draw,
     ui: &mut Ui,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     (view, col): (View, usize),
     (list, pager, pics): (&[FriendEntry], &Pager, &Pictures),
     empty_msg: &str,
     draw_buttons: F,
 ) where
-    F: Fn(&mut Draw, &mut Ui, &Fonts, &FriendEntry, usize),
+    F: Fn(&mut Draw, &mut Ui, &mut Fonts, &FriendEntry, usize),
 {
     let pal = &ui.palette();
     if list.is_empty() {
         let card = column_card(view, col);
-        draw.sharp_text(&fonts.text, empty_msg)
+        fonts
+            .write(draw, Face::Text, empty_msg)
             .center(card.x + card.w / 2.0, list_top(card) + 24.0)
             .size(theme::size::SMALL)
             .color(pal.text_muted);
@@ -681,8 +687,9 @@ fn draw_col<F>(
         list_row(draw, pal, row, i);
         ui.row(draw, zone, i, &format!("friend:{col}:{}", e.user_id));
         avatar(draw, ui, fonts, (row.x + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
-        draw.sharp_text(&fonts.text, &name).left(text_x, mid - 8.0).size(theme::size::BODY).color(pal.text);
-        draw.sharp_text(&fonts.text, &format!("ELO {}", e.elo))
+        fonts.write(draw, Face::Text, &name).left(text_x, mid - 8.0).size(theme::size::BODY).color(pal.text);
+        fonts
+            .write(draw, Face::Text, &format!("ELO {}", e.elo))
             .left(text_x, mid + 10.0)
             .size(theme::size::SMALL)
             .color(theme::GOLD);

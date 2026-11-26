@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use notan::draw::Draw;
+use aero::draw::Draw;
 
 use crate::http::{self, HttpSlot};
 use crate::state::ApiMatchEntry;
@@ -56,7 +56,7 @@ impl History {
         &mut self,
         tick: &Tick,
         ui: &Ui,
-        fonts: &Fonts,
+        fonts: &mut Fonts,
         keys: &EditKeys,
         area: Rect,
         total: i64,
@@ -72,7 +72,7 @@ impl History {
         }
     }
 
-    pub fn draw_pager(&self, draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, area: Rect, total: i64) {
+    pub fn draw_pager(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect, total: i64) {
         self.pager.draw(draw, ui, fonts, area, self.pages(total));
     }
 }

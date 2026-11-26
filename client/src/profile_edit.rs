@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use aero::draw::Draw;
 use aero::input::KeyCode;
-use notan::draw::Draw;
 
 use crate::http::{self, HttpSlot};
 use crate::picker::{self, Picked};
@@ -9,8 +9,8 @@ use crate::state::{ApiUserProfile, Input, ProfileData, State};
 use crate::theme;
 use crate::tick::Tick;
 use crate::ui::{
-    area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field, Fonts, Gui, Rect, SharpText,
-    Status, TextInput, Ui, FILL,
+    area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Face, Field, Fonts, Gui, Rect, Status,
+    TextInput, Ui, FILL,
 };
 
 const BIO_LINES: usize = 6;
@@ -246,7 +246,7 @@ fn save(form: &mut EditForm, token: Option<String>) {
     form.status.clear();
 }
 
-pub fn update(tick: &Tick, gui: &Gui, state: &mut State, profile: &mut ProfileData) {
+pub fn update(tick: &Tick, gui: &mut Gui, state: &mut State, profile: &mut ProfileData) {
     let cx = gui.ui.view().w / 2.0;
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let (save_btn, cancel_btn) = buttons(cx);
@@ -293,7 +293,7 @@ pub fn update(tick: &Tick, gui: &Gui, state: &mut State, profile: &mut ProfileDa
     }
 }
 
-pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: &ApiUserProfile, cx: f32) {
+pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &mut Fonts, form: &EditForm, info: &ApiUserProfile, cx: f32) {
     let pal = ui.palette();
     let (save_btn, cancel_btn) = buttons(cx);
     let saving = form.pending.is_some();
@@ -311,8 +311,9 @@ pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: 
         let field =
             Field { placeholder: which.placeholder(), input: form.value(which), focused: form.focused == which };
 
-        draw.sharp_text(&fonts.text, which.label()).left(rect.x, label_y).size(theme::size::LABEL).color(pal.text_dim);
-        draw.sharp_text(&fonts.text, &left.to_string())
+        fonts.write(draw, Face::Text, which.label()).left(rect.x, label_y).size(theme::size::LABEL).color(pal.text_dim);
+        fonts
+            .write(draw, Face::Text, &left.to_string())
             .right(rect.x + rect.w, label_y)
             .size(theme::size::SMALL)
             .color(left_color);
@@ -337,7 +338,8 @@ pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &Fonts, form: &EditForm, info: 
     }
 
     if let Some((msg, color)) = form.status.shown(&pal) {
-        draw.sharp_text(&fonts.text, msg)
+        fonts
+            .write(draw, Face::Text, msg)
             .center(cx, save_btn.y + save_btn.h + 21.0)
             .size(theme::size::LABEL)
             .color(color);

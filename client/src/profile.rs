@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use notan::draw::{Draw, DrawImages, DrawShapes};
-use notan::prelude::*;
+use aero::draw::Draw;
+use aero::geom::Color;
+use aero::image::Image;
 
 use crate::account::{self, AccountForm, Outcome};
 use crate::history::History;
@@ -14,8 +15,8 @@ use crate::state::{
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
 use crate::ui::{
-    self, divider, list_row, portrait, Face, Fonts, Gui, Icon, Pill, Rect, SharpText, Size, Status, TextInput, Ui,
-    View, FILL, PAGER_H,
+    self, divider, list_row, portrait, Face, Fonts, Gui, Icon, Pill, Rect, Size, Status, TextInput, Ui, View, FILL,
+    PAGER_H,
 };
 use crate::{http, profile_about};
 
@@ -85,7 +86,7 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
     }
 }
 
-fn update_history(tick: &Tick, gui: &Gui, state: &mut State, core: &mut ProfileCore, other: bool) {
+fn update_history(tick: &Tick, gui: &mut Gui, state: &mut State, core: &mut ProfileCore, other: bool) {
     let view = gui.ui.view();
     let area = pager_area(view);
     let (_, card) = cards(view);
@@ -140,19 +141,20 @@ fn friendship_with(
 }
 
 /// Draws `picture` over the whole of `r`, cropped to keep its proportions.
-fn cover(draw: &mut Draw, picture: &Texture, r: Rect) {
+fn cover(draw: &mut Draw, picture: &Image, r: Rect) {
     let (tw, th) = picture.size();
+    let (tw, th) = (tw as f32, th as f32);
     let scale = (r.w / tw).max(r.h / th);
     let (sw, sh) = (r.w / scale, r.h / scale);
-    draw.image(picture).position(r.x, r.y).size(r.w, r.h).crop(((tw - sw) / 2.0, (th - sh) / 2.0), (sw, sh));
+    draw.image(picture, r).crop(Rect::at((tw - sw) / 2.0, (th - sh) / 2.0, sw, sh));
 }
 
-fn draw_header(draw: &mut Draw, gfx: &mut Graphics, gui: &mut Gui, core: &ProfileCore) {
-    let (ui, fonts) = (&gui.ui, &gui.fonts);
+fn draw_header(draw: &mut Draw, gui: &mut Gui, core: &ProfileCore) {
+    let (ui, fonts) = (&gui.ui, &mut gui.fonts);
     let pal = ui.palette();
     let view = ui.view();
-    let banner = gui.images.get_opt(gfx, core.info.banner_url.as_deref());
-    let avatar = gui.images.get_opt(gfx, core.info.avatar_url.as_deref());
+    let banner = gui.images.get_opt(core.info.banner_url.as_deref());
+    let avatar = gui.images.get_opt(core.info.avatar_url.as_deref());
     let radius = 48.0;
     let (px, py) = (60.0 + radius, PROFILE_HEADER_H / 2.0);
     let who = ui::Persona { name: &core.info.username, glow: 0.0, picture: avatar.as_ref() };
@@ -165,10 +167,10 @@ fn draw_header(draw: &mut Draw, gfx: &mut Graphics, gui: &mut Gui, core: &Profil
     if let Some(banner) = banner {
         let r = Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H - 2.0);
         cover(draw, &banner, r);
-        draw.rect((r.x, r.y), (r.w, r.h)).color(Color::BLACK.with_alpha(0.35));
+        draw.rect(r).color(Color::BLACK.with_alpha(0.35));
     }
     portrait(draw, &pal, fonts, (px, py), radius, &who);
-    draw.sharp_text(&fonts.display, &name).left(text_x, py - 16.0).size(theme::size::TITLE).color(pal.text);
+    fonts.write(draw, Face::Display, &name).left(text_x, py - 16.0).size(theme::size::TITLE).color(pal.text);
     rating.draw(draw, fonts, (text_x, py + 30.0));
 }
 
@@ -214,22 +216,24 @@ fn bottom_buttons<const N: usize>(view: View, widths: [f32; N]) -> [Rect; N] {
     Rect::centered_on(cx, top, total, BUTTON_H).columns(gap, widths.map(Size::Px))
 }
 
-fn card_title(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card: Rect, title: &str) {
-    draw.sharp_text(&fonts.display, title)
+fn card_title(draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, card: Rect, title: &str) {
+    fonts
+        .write(draw, Face::Display, title)
         .left(card.x + CARD_PAD, card.y + CARD_TITLE_H / 2.0)
         .size(theme::size::EMPHASIS)
         .color(pal.text_dim);
     divider(draw, pal, card.x + CARD_PAD, card.y + CARD_TITLE_H, card.w - 2.0 * CARD_PAD);
 }
 
-fn card_message(draw: &mut Draw, fonts: &Fonts, card: Rect, text: &str, color: Color) {
-    draw.sharp_text(&fonts.text, text)
+fn card_message(draw: &mut Draw, fonts: &mut Fonts, card: Rect, text: &str, color: Color) {
+    fonts
+        .write(draw, Face::Text, text)
         .center(card.x + card.w / 2.0, card.y + CARD_TITLE_H + 40.0)
         .size(theme::size::LABEL)
         .color(color);
 }
 
-fn draw_stats_panel(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, core: &ProfileCore, load_failed: bool) {
+fn draw_stats_panel(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, core: &ProfileCore, load_failed: bool) {
     let pal = ui.palette();
     let (card, _) = cards(ui.view());
 
@@ -259,8 +263,8 @@ fn draw_stats_panel(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, core: &ProfileC
 
     for (i, (label, value)) in stats.iter().enumerate() {
         let y = first + i as f32 * STAT_ROW_H;
-        draw.sharp_text(&fonts.text, label).left(label_x, y).size(theme::size::LABEL).color(pal.text_muted);
-        draw.sharp_text(&fonts.display, value).right(value_x, y).size(theme::size::EMPHASIS).color(pal.text);
+        fonts.write(draw, Face::Text, label).left(label_x, y).size(theme::size::LABEL).color(pal.text_muted);
+        fonts.write(draw, Face::Display, value).right(value_x, y).size(theme::size::EMPHASIS).color(pal.text);
     }
 
     divider(draw, &pal, label_x, stats_end(card), card.w - 2.0 * CARD_PAD);
@@ -277,7 +281,7 @@ fn win_rate(wins: i64, played: i64) -> String {
     format!("{wins} / {played} ({}%)", wins * 100 / played)
 }
 
-fn draw_about_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, core: &ProfileCore) {
+fn draw_about_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, core: &ProfileCore) {
     if core.about_open {
         profile_about::draw_overlay(draw, ui, fonts, &core.info);
     }
@@ -301,14 +305,15 @@ fn update_about(tick: &Tick, ui: &Ui, core: &mut ProfileCore) -> bool {
     core.about_open
 }
 
-fn draw_history_panel(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, core: &ProfileCore, clickable: bool) {
+fn draw_history_panel(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, core: &ProfileCore, clickable: bool) {
     let pal = ui.palette();
     let (_, card) = cards(ui.view());
 
     ui::card(draw, &pal, card);
     card_title(draw, &pal, fonts, card, "Matchs");
     if let Some((msg, color)) = core.replay_status.shown(&pal) {
-        draw.sharp_text(&fonts.text, msg)
+        fonts
+            .write(draw, Face::Text, msg)
             .right(card.x + card.w - CARD_PAD, card.y + CARD_TITLE_H / 2.0)
             .size(theme::size::SMALL)
             .color(color);
@@ -372,7 +377,7 @@ fn history_row_zone(view: View, i: usize) -> Rect {
 fn draw_match_row(
     draw: &mut Draw,
     ui: &mut Ui,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     (row, index): (Rect, usize),
     m: &ApiMatchEntry,
     viewed_id: &str,
@@ -404,13 +409,15 @@ fn draw_match_row(
     let secs = m.duration_secs as u32;
 
     list_row(draw, &pal, row, index);
-    result.draw(draw, fonts, (row.x + row.w * 0.1 - result.width(fonts) / 2.0, mid));
+    let left = row.x + row.w * 0.1 - result.width(fonts) / 2.0;
+    result.draw(draw, fonts, (left, mid));
     if m.ranked {
         Pill::small("CLASSÉ", theme::bar::ORANGE).draw(draw, fonts, (row.x + row.w * 0.2, mid));
     }
     ui.link(draw, fonts, opponent_zone(row), &label, linked);
     if wide {
-        draw.sharp_text(&fonts.text, &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent))
+        fonts
+            .write(draw, Face::Text, &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent))
             .right(replay_zone(row).x - 14.0, mid)
             .size(theme::size::SMALL)
             .color(theme::GOLD);
@@ -422,7 +429,8 @@ fn draw_match_row(
         ui.button(draw, fonts, favorite_zone(row), star);
     }
     if wide {
-        draw.sharp_text(&fonts.text, &format!("{}:{:02}", secs / 60, secs % 60))
+        fonts
+            .write(draw, Face::Text, &format!("{}:{:02}", secs / 60, secs % 60))
             .right(row.x + row.w - CARD_PAD, mid)
             .size(theme::size::SMALL)
             .color(pal.text_muted);
@@ -442,7 +450,7 @@ fn own_buttons(view: View) -> [Rect; 4] {
     bottom_buttons(view, [200.0; 4])
 }
 
-pub fn update_profile(tick: &Tick, gui: &Gui, state: &mut State, p: &mut ProfileData) -> Transition {
+pub fn update_profile(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut ProfileData) -> Transition {
     poll_core_profile(&mut p.core);
     p.core.history.poll();
     profile_edit::poll(state, p);
@@ -486,7 +494,7 @@ pub fn update_profile(tick: &Tick, gui: &Gui, state: &mut State, p: &mut Profile
     }
 }
 
-fn update_account(tick: &Tick, gui: &Gui, state: &mut State, p: &mut ProfileData) -> Transition {
+fn update_account(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut ProfileData) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let Gui { ui, fonts, .. } = gui;
     let State { input: Input { keys, .. }, .. } = state;
@@ -512,28 +520,27 @@ fn update_account(tick: &Tick, gui: &Gui, state: &mut State, p: &mut ProfileData
     Transition::Stay
 }
 
-pub fn draw_profile(gfx: &mut Graphics, gui: &mut Gui, profile: &ProfileData) {
+pub fn draw_profile(draw: &mut Draw, gui: &mut Gui, profile: &ProfileData) {
     let cx = gui.ui.view().w / 2.0;
     let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(gui.ui.view());
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    draw_header(&mut draw, gfx, gui, &profile.core);
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    draw_header(draw, gui, &profile.core);
     if let Some(form) = &profile.edit {
-        profile_edit::draw(&mut gui.ui, &mut draw, &gui.fonts, form, &profile.core.info, cx);
+        profile_edit::draw(&mut gui.ui, draw, &mut gui.fonts, form, &profile.core.info, cx);
     } else if let Some(form) = &profile.account {
-        account::draw(&mut gui.ui, &mut draw, &gui.fonts, form, cx);
+        account::draw(&mut gui.ui, draw, &mut gui.fonts, form, cx);
     } else {
         gui.ui.set_input(!profile.core.about_open);
-        draw_stats_panel(&mut draw, &mut gui.ui, &gui.fonts, &profile.core, false);
-        draw_history_panel(&mut draw, &mut gui.ui, &gui.fonts, &profile.core, true);
-        gui.ui.button(&mut draw, &gui.fonts, back_btn, "Retour");
-        gui.ui.button(&mut draw, &gui.fonts, edit_btn, "Modifier");
-        gui.ui.button(&mut draw, &gui.fonts, account_btn, "Compte");
-        gui.ui.button(&mut draw, &gui.fonts, logout_btn, "Déconnexion");
-        draw_about_overlay(&mut draw, &mut gui.ui, &gui.fonts, &profile.core);
+        draw_stats_panel(draw, &mut gui.ui, &mut gui.fonts, &profile.core, false);
+        draw_history_panel(draw, &mut gui.ui, &mut gui.fonts, &profile.core, true);
+        gui.ui.button(draw, &mut gui.fonts, back_btn, "Retour");
+        gui.ui.button(draw, &mut gui.fonts, edit_btn, "Modifier");
+        gui.ui.button(draw, &mut gui.fonts, account_btn, "Compte");
+        gui.ui.button(draw, &mut gui.fonts, logout_btn, "Déconnexion");
+        draw_about_overlay(draw, &mut gui.ui, &mut gui.fonts, &profile.core);
     }
-
-    gui.ui.render(gfx, &draw);
 }
 
 /// Opens a player's profile. `friends`, when at hand, spares asking whether
@@ -604,7 +611,7 @@ fn other_buttons(view: View) -> (Rect, Rect) {
     (add, back)
 }
 
-pub fn update_other_profile(tick: &Tick, gui: &Gui, state: &mut State, p: &mut OtherProfileData) -> Transition {
+pub fn update_other_profile(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut OtherProfileData) -> Transition {
     poll_friendship_check(p);
     match poll_core_profile(&mut p.core) {
         Some(ProfileLoad::HttpError) => {
@@ -637,7 +644,7 @@ pub fn update_other_profile(tick: &Tick, gui: &Gui, state: &mut State, p: &mut O
     Transition::Stay
 }
 
-pub fn draw_other_profile(gfx: &mut Graphics, gui: &mut Gui, p: &OtherProfileData) {
+pub fn draw_other_profile(draw: &mut Draw, gui: &mut Gui, p: &OtherProfileData) {
     let pal = gui.ui.palette();
     let cx = gui.ui.view().w / 2.0;
     let btn_y = buttons_top(gui.ui.view());
@@ -646,23 +653,26 @@ pub fn draw_other_profile(gfx: &mut Graphics, gui: &mut Gui, p: &OtherProfileDat
     let can_add = !p.load_failed && p.friendship == FriendshipStatus::NotFriends;
     let label = if sending { "Envoi..." } else { "Ajouter en ami" };
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    draw_header(&mut draw, gfx, gui, &p.core);
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    draw_header(draw, gui, &p.core);
     gui.ui.set_input(!p.core.about_open);
-    draw_stats_panel(&mut draw, &mut gui.ui, &gui.fonts, &p.core, p.load_failed);
-    draw_history_panel(&mut draw, &mut gui.ui, &gui.fonts, &p.core, false);
+    draw_stats_panel(draw, &mut gui.ui, &mut gui.fonts, &p.core, p.load_failed);
+    draw_history_panel(draw, &mut gui.ui, &mut gui.fonts, &p.core, false);
 
     if can_add {
-        gui.ui.button_enabled(&mut draw, &gui.fonts, add_btn, label, !sending);
+        gui.ui.button_enabled(draw, &mut gui.fonts, add_btn, label, !sending);
     }
-    gui.ui.button(&mut draw, &gui.fonts, back_btn, "Retour");
+    gui.ui.button(draw, &mut gui.fonts, back_btn, "Retour");
 
     if let Some((msg, color)) = p.friend_status.shown(&pal) {
-        draw.sharp_text(&gui.fonts.text, msg).center(cx, btn_y - STATUS_GAP / 2.0).size(theme::size::BODY).color(color);
+        gui.fonts
+            .write(draw, Face::Text, msg)
+            .center(cx, btn_y - STATUS_GAP / 2.0)
+            .size(theme::size::BODY)
+            .color(color);
     }
-    draw_about_overlay(&mut draw, &mut gui.ui, &gui.fonts, &p.core);
-
-    gui.ui.render(gfx, &draw);
+    draw_about_overlay(draw, &mut gui.ui, &mut gui.fonts, &p.core);
 }
 
 #[cfg(test)]

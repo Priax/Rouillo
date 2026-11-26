@@ -1,8 +1,9 @@
-use notan::draw::{Draw, DrawShapes};
-use notan::math::{vec2, Mat3};
-use notan::prelude::*;
+use aero::draw::Draw;
+use aero::geom::Color;
+use aero::math::{vec2, Affine2};
+use aero::path::Cap;
 
-use super::{Face, Fonts, Rect, Response, SharpText, Ui};
+use super::{Face, Fonts, Rect, Response, Ui};
 use crate::theme::{self, Palette};
 
 const HOVER_GROW: f32 = 0.03;
@@ -87,14 +88,14 @@ impl<'a> Label<'a> {
 }
 
 impl Ui {
-    pub fn button<'a>(&mut self, draw: &mut Draw, fonts: &Fonts, rect: Rect, label: impl Into<Label<'a>>) {
+    pub fn button<'a>(&mut self, draw: &mut Draw, fonts: &mut Fonts, rect: Rect, label: impl Into<Label<'a>>) {
         self.button_enabled(draw, fonts, rect, label, true);
     }
 
     pub fn button_enabled<'a>(
         &mut self,
         draw: &mut Draw,
-        fonts: &Fonts,
+        fonts: &mut Fonts,
         rect: Rect,
         label: impl Into<Label<'a>>,
         enabled: bool,
@@ -112,7 +113,7 @@ impl Ui {
 fn paint(
     draw: &mut Draw,
     pal: &Palette,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     b: Rect,
     (label, time): (Label, f32),
     r: Response,
@@ -120,15 +121,18 @@ fn paint(
 ) {
     let center = vec2(b.x + b.w / 2.0, b.y + b.h / 2.0);
     let scale = 1.0 + HOVER_GROW * r.hover - PRESS_SHRINK * r.press;
-    draw.transform()
-        .push(Mat3::from_translation(center) * Mat3::from_scale(vec2(scale, scale)) * Mat3::from_translation(-center));
+    draw.push_transform(
+        Affine2::from_translation(center)
+            * Affine2::from_scale(vec2(scale, scale))
+            * Affine2::from_translation(-center),
+    );
 
     if enabled {
         let lift = 1.0 + r.hover - r.press;
         for i in 1..=SHADOW_LAYERS {
             let spread = f32::from(i);
-            draw.rect((b.x - spread, b.y - spread + spread * lift), (b.w + 2.0 * spread, b.h + 2.0 * spread))
-                .corner_radius(theme::RADIUS + spread)
+            draw.rect(Rect::at(b.x - spread, b.y - spread + spread * lift, b.w + 2.0 * spread, b.h + 2.0 * spread))
+                .radius(theme::RADIUS + spread)
                 .color(Color::BLACK.with_alpha(SHADOW_ALPHA));
         }
     }
@@ -138,15 +142,14 @@ fn paint(
     } else {
         (pal.disabled, pal.divider, pal.text_disabled)
     };
-    draw.rect((b.x, b.y), (b.w, b.h)).corner_radius(theme::RADIUS).color(fill);
-    draw.rect((b.x, b.y), (b.w, b.h / 2.0))
-        .top_left_radius(theme::RADIUS)
-        .top_right_radius(theme::RADIUS)
+    draw.rect(b).radius(theme::RADIUS).color(fill);
+    draw.rect(Rect::at(b.x, b.y, b.w, b.h / 2.0))
+        .radii([theme::RADIUS, theme::RADIUS, 0.0, 0.0])
         .color(Color::WHITE.with_alpha(SHEEN_ALPHA + SHEEN_ALPHA * r.hover));
     if r.flash > 0.0 {
-        draw.rect((b.x, b.y), (b.w, b.h)).corner_radius(theme::RADIUS).color(Color::WHITE.with_alpha(0.25 * r.flash));
+        draw.rect(b).radius(theme::RADIUS).color(Color::WHITE.with_alpha(0.25 * r.flash));
     }
-    draw.rect((b.x, b.y), (b.w, b.h)).corner_radius(theme::RADIUS).stroke(BORDER_WIDTH).color(border);
+    draw.rect(b).radius(theme::RADIUS).stroke(border, BORDER_WIDTH);
 
     match label {
         Label::Text(label) => {
@@ -155,32 +158,29 @@ fn paint(
             let width = fonts.width(Face::Display, label, tall);
             let room = b.w - TEXT_PADDING;
             let size = if width > room { tall * room / width } else { tall }.max(TEXT_MIN);
-            draw.sharp_text(&fonts.display, label).center(center.x, center.y).size(size).color(text);
+            fonts.write(draw, Face::Display, label).center(center.x, center.y).size(size).color(text);
         }
         Label::Icon(icon) => paint_icon(draw, icon, (center.x, center.y), b.h.min(b.w), text, time),
     }
 
-    draw.transform().pop();
+    draw.pop_transform();
 }
 
 fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, color: Color, time: f32) {
     let (long, thick) = (size * ICON_LENGTH, size * ICON_THICKNESS);
     let bar = |draw: &mut Draw, x: f32, w: f32, h: f32| {
-        draw.rect((x - w / 2.0, cy - h / 2.0), (w, h)).corner_radius(thick / 2.0).color(color);
+        draw.rect(Rect::at(x - w / 2.0, cy - h / 2.0, w, h)).radius(thick / 2.0).color(color);
     };
     let half = long / 2.0;
     // Pointing along `(dx, dy)`, a unit step on one axis.
     let chevron = |draw: &mut Draw, (x, y): (f32, f32), (dx, dy): (f32, f32)| {
         let (tx, ty) = (dx * half / 2.0, dy * half / 2.0);
         let (ax, ay) = (-dy * half, dx * half);
-        draw.path()
-            .move_to(x - tx - ax, y - ty - ay)
-            .line_to(x + tx, y + ty)
-            .line_to(x - tx + ax, y - ty + ay)
-            .stroke(thick)
-            .round_cap()
-            .round_join()
-            .color(color);
+        let points = [vec2(x - tx - ax, y - ty - ay), vec2(x + tx, y + ty), vec2(x - tx + ax, y - ty + ay)];
+        draw.path(|p| {
+            p.move_to(points[0]).line_to(points[1]).line_to(points[2]);
+        })
+        .stroke(color, thick);
     };
     match icon {
         Icon::Minus => bar(draw, cx, long, thick),
@@ -202,7 +202,7 @@ fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, colo
         Icon::Up | Icon::Down => chevron(draw, (cx, cy), (0.0, if icon == Icon::Down { 1.0 } else { -1.0 })),
         Icon::Play => {
             let left = cx - half * 0.7;
-            draw.triangle((left, cy - half), (left, cy + half), (cx + half, cy)).color(color);
+            draw.triangle(vec2(left, cy - half), vec2(left, cy + half), vec2(cx + half, cy)).color(color);
         }
         Icon::Pause => {
             bar(draw, cx - half * 0.45, thick * 1.4, long);
@@ -211,22 +211,22 @@ fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, colo
         Icon::Close => {
             let arm = half * 0.8;
             for dy in [arm, -arm] {
-                draw.line((cx - arm, cy - dy), (cx + arm, cy + dy)).width(thick).color(color);
+                draw.line_with(vec2(cx - arm, cy - dy), vec2(cx + arm, cy + dy), thick, Cap::Butt).color(color);
             }
         }
         Icon::Star | Icon::StarOutline => {
-            let mut star = draw.star(5, half * 1.2, half * 0.55);
-            star.position(cx, cy).color(color);
+            let star = draw.star(vec2(cx, cy), 5, half * 0.55, half * 1.2);
             if icon == Icon::StarOutline {
-                star.stroke(thick * 0.7);
+                star.stroke_with(color, super::pointed(thick * 0.7));
+            } else {
+                star.color(color);
             }
         }
         Icon::Busy => {
             for i in 0..3u8 {
                 let phase = time * 5.0 - f32::from(i) * 0.9;
                 let alpha = 0.3 + 0.7 * (0.5 + 0.5 * phase.sin());
-                draw.circle(size * 0.07)
-                    .position(cx + (f32::from(i) - 1.0) * size * 0.2, cy)
+                draw.circle(vec2(cx + (f32::from(i) - 1.0) * size * 0.2, cy), size * 0.07)
                     .color(color.with_alpha(color.a * alpha));
             }
         }

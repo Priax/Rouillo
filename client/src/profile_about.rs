@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 
-use notan::draw::Draw;
+use aero::draw::Draw;
 
 use crate::state::ApiUserProfile;
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{Face, Fonts, Modal, Rect, SharpText, Ui};
+use crate::ui::{Face, Fonts, Modal, Rect, Ui};
 
 const LINE_H: f32 = 24.0;
 const LABEL_H: f32 = 22.0;
@@ -33,7 +33,7 @@ fn bio_room(height: f32, music: usize) -> usize {
     (((height - block_height(music) - LABEL_H) / LINE_H) as usize).max(1)
 }
 
-fn clamp<'a>(fonts: &Fonts, text: &'a str, room: f32, max: usize) -> (Vec<Cow<'a, str>>, bool) {
+fn clamp<'a>(fonts: &mut Fonts, text: &'a str, room: f32, max: usize) -> (Vec<Cow<'a, str>>, bool) {
     if text.is_empty() {
         return (Vec::new(), false);
     }
@@ -52,13 +52,13 @@ fn clamp<'a>(fonts: &Fonts, text: &'a str, room: f32, max: usize) -> (Vec<Cow<'a
     (lines, cut)
 }
 
-pub fn summary<'a>(fonts: &Fonts, info: &'a ApiUserProfile, area: Rect, music_lines: usize) -> Summary<'a> {
+pub fn summary<'a>(fonts: &mut Fonts, info: &'a ApiUserProfile, area: Rect, music_lines: usize) -> Summary<'a> {
     let (music, music_cut) = clamp(fonts, info.favorite_music.as_deref().unwrap_or_default(), area.w, music_lines);
     let (bio, bio_cut) = clamp(fonts, info.bio.as_deref().unwrap_or_default(), area.w, bio_room(area.h, music.len()));
     Summary { bio, music, cut: bio_cut || music_cut }
 }
 
-pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &Fonts, summary: &Summary, area: Rect) {
+pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, summary: &Summary, area: Rect) {
     let pal = ui.palette();
     let blocks = [("Bio", &summary.bio, pal.text), ("Musique", &summary.music, pal.accent)];
 
@@ -67,9 +67,10 @@ pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &Fonts, summary: &Summary, 
         if lines.is_empty() {
             continue;
         }
-        draw.sharp_text(&fonts.text, label).left(area.x, y).size(theme::size::SMALL).color(pal.text_dim);
+        fonts.write(draw, Face::Text, label).left(area.x, y).size(theme::size::SMALL).color(pal.text_dim);
         for (i, line) in lines.iter().enumerate() {
-            draw.sharp_text(&fonts.text, line)
+            fonts
+                .write(draw, Face::Text, line)
                 .left(area.x, y + LABEL_H + i as f32 * LINE_H)
                 .size(theme::size::BODY)
                 .color(color);
@@ -78,7 +79,7 @@ pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &Fonts, summary: &Summary, 
     }
 }
 
-pub fn draw_more_link(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, area: Rect) {
+pub fn draw_more_link(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect) {
     let w = fonts.width(Face::Text, MORE, theme::size::BODY) + 8.0;
     let link = Rect::at(area.x + area.w - w, area.y - 13.0, w, 26.0);
 
@@ -89,13 +90,14 @@ pub fn overlay_closed(tick: &Tick, ui: &Ui) -> bool {
     Modal::new(ui.view(), OVERLAY_W).dismissed(ui) || tick.back()
 }
 
-pub fn draw_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, info: &ApiUserProfile) {
+pub fn draw_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, info: &ApiUserProfile) {
     let modal = Modal::new(ui.view(), OVERLAY_W);
     let title = fonts.fit(Face::Display, &info.username, theme::size::HEADING, modal.card.w - 120.0);
     let area = modal.body().below(LABEL_H);
 
     modal.draw(draw, ui, fonts, &title);
-    draw_summary(draw, ui, fonts, &summary(fonts, info, area, OVERLAY_MUSIC_LINES), area);
+    let lines = summary(fonts, info, area, OVERLAY_MUSIC_LINES);
+    draw_summary(draw, ui, fonts, &lines, area);
 }
 
 #[cfg(test)]

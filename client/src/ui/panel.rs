@@ -1,6 +1,6 @@
-use notan::draw::Draw;
+use aero::draw::Draw;
 
-use super::{card, divider, Fonts, Frame, Rect, SharpText, Stepper, View};
+use super::{card, divider, Face, Fonts, Frame, Rect, Stepper, View};
 use crate::theme::{self, Palette};
 
 const TITLE_H: f32 = 56.0;
@@ -32,9 +32,10 @@ pub fn action_row(card: Rect, view_w: f32, k: usize) -> Rect {
 }
 
 /// A settings card: its title over a divider.
-pub fn panel_card(draw: &mut Draw, pal: &Palette, fonts: &Fonts, card_rect: Rect, title: &str) {
+pub fn panel_card(draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, card_rect: Rect, title: &str) {
     card(draw, pal, card_rect);
-    draw.sharp_text(&fonts.display, title)
+    fonts
+        .write(draw, Face::Display, title)
         .left(card_rect.x + CARD_PAD, card_rect.y + TITLE_H / 2.0)
         .size(theme::size::EMPHASIS)
         .color(pal.text_dim);
@@ -62,7 +63,7 @@ impl SettingsPanel {
         Stepper::at(self.card.x + self.card.w / 2.0 + 20.0, self.card.y + TITLE_H + 8.0 + i as f32 * self.row_h)
     }
 
-    pub fn draw(self, draw: &mut Draw, pal: &Palette, fonts: &Fonts, title: &str) {
+    pub fn draw(self, draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, title: &str) {
         panel_card(draw, pal, fonts, self.card, title);
     }
 }
@@ -96,10 +97,11 @@ impl SettingsGrid {
         action_row(self.card, self.view_w, k)
     }
 
-    pub fn draw(self, draw: &mut Draw, pal: &Palette, fonts: &Fonts, title: &str, sections: [&str; 2]) {
+    pub fn draw(self, draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, title: &str, sections: [&str; 2]) {
         panel_card(draw, pal, fonts, self.card, title);
         for (column, section) in sections.into_iter().enumerate() {
-            draw.sharp_text(&fonts.display, section)
+            fonts
+                .write(draw, Face::Display, section)
                 .left(self.column_x(column).0, self.card.y + TITLE_H + SECTION_H / 2.0 + 2.0)
                 .size(theme::size::LABEL)
                 .color(pal.accent);

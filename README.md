@@ -19,7 +19,7 @@ Un workspace Cargo en quatre crates:
 
 - `shared`: la logique du jeu et le protocole, communs au client et au serveur
 - `server`: le serveur de jeu (tokio, axum, PostgreSQL avec sqlx)
-- `client`: le jeu, compilé en natif avec notan et en WebAssembly pour le navigateur
+- `client`: le jeu, dessiné avec Aero, compilé en natif et en WebAssembly pour le navigateur
 - `loadbot`: des bots pour tester la charge du serveur
 
 ## Lancer le projet

@@ -24,6 +24,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use aero::path::{Cap, Join, Stroke};
 pub use button::{Icon, Label};
 pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge, Persona, Pill};
 mod clipboard;
@@ -36,17 +37,18 @@ pub use keys::EditKeys;
 pub use keys::Shortcuts;
 pub use layout::{Frame, ListCard, Size, FILL};
 pub use modal::Modal;
-use notan::draw::{CreateDraw, Draw};
-use notan::math::{vec2, Mat3};
-use notan::prelude::Graphics;
 pub use pager::{page_count, Pager, PAGER_H};
 pub use panel::{action_row, card_body, card_height, panel_card, SettingsGrid, SettingsPanel, TILE_H};
 pub use rect::Rect;
 pub use status::Status;
 pub use stepper::Stepper;
-pub use text::SharpText;
 pub use triangles::Triangles;
 pub use view::View;
+
+/// A stroke with flat ends and pointed corners, bevelled where a corner would point past 10 half widths.
+pub fn pointed(width: f32) -> Stroke {
+    Stroke::new(width).cap(Cap::Butt).join(Join::Miter(10.0))
+}
 
 /// The option `dir` steps away from `at`, going round.
 pub fn cycle<T: Copy + PartialEq>(options: &[T], at: T, dir: i32) -> T {
@@ -268,19 +270,6 @@ impl Ui {
 
     pub fn view(&self) -> View {
         self.view
-    }
-
-    /// A canvas for this frame, in the view's units: Aero smooths every edge
-    /// itself.
-    pub fn canvas(&mut self, gfx: &mut Graphics) -> Draw {
-        let mut draw = gfx.create_draw();
-        let scale = self.view().scale;
-        draw.transform().push(Mat3::from_scale(vec2(scale, scale)));
-        draw
-    }
-
-    pub fn render(&mut self, gfx: &mut Graphics, draw: &Draw) {
-        gfx.render(draw);
     }
 
     /// Keeps this frame's click from what lies under the widget that took it.

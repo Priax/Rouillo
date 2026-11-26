@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use aero::draw::Draw;
+use aero::geom::Color;
 use aero::input::KeyCode;
-use notan::draw::{Draw, DrawShapes};
-use notan::prelude::*;
 use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSetting, RoomSettings};
 
 use crate::connection::Connection;
@@ -12,7 +12,7 @@ use crate::state::{ApiFriendsResponse, Input, Invite, Network, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
     self, field_clicked, list_row, text_field, EditKeys, Face, Field, Fonts, Frame, Gui, Icon, ListCard, Modal, Pill,
-    Rect, SettingsGrid, SharpText, Size, Stepper, TextInput, Ui, View, FILL, PAGER_H,
+    Rect, SettingsGrid, Size, Stepper, TextInput, Ui, View, FILL, PAGER_H,
 };
 use crate::{board_size, http, theme};
 
@@ -48,13 +48,13 @@ fn browser_buttons(view: View) -> BrowserButtons {
     BrowserButtons { create, join_id, refresh, back: frame.back }
 }
 
-pub fn update_browser(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
+pub fn update_browser(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
     let view = gui.ui.view();
     let b = browser_buttons(view);
     let pages = room_pages(&state.rooms, view);
 
     state.room_pager.clamp(pages);
-    state.room_pager.update(tick, &gui.ui, &gui.fonts, &state.input.keys, room_list(view).pager(), pages);
+    state.room_pager.update(tick, &gui.ui, &mut gui.fonts, &state.input.keys, room_list(view).pager(), pages);
 
     let clicked = shown_rooms(gui.ui.view(), state)
         .find(|&(i, _)| gui.ui.clicked(room_list(view).row(i)))
@@ -85,43 +85,44 @@ pub fn update_browser(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
     Transition::Stay
 }
 
-pub fn draw_browser(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
+pub fn draw_browser(draw: &mut Draw, gui: &mut Gui, state: &State) {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let card = room_list(view).card;
     let pages = room_pages(&state.rooms, view);
     let b = browser_buttons(view);
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    gui.ui.page_header(&mut draw, &gui.fonts, "Rooms");
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    gui.ui.page_header(draw, &mut gui.fonts, "Rooms");
 
-    ui::card(&mut draw, &pal, card);
+    ui::card(draw, &pal, card);
     if state.rooms.is_empty() {
-        draw.sharp_text(&gui.fonts.text, "Aucune room. Créez-en une !")
+        gui.fonts
+            .write(draw, Face::Text, "Aucune room. Créez-en une !")
             .center(card.x + card.w / 2.0, card.y + 60.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text_muted);
     }
     for (i, room) in shown_rooms(gui.ui.view(), state) {
-        draw_room_row(&mut draw, gui, room_list(view).row(i), i, room);
+        draw_room_row(draw, gui, room_list(view).row(i), i, room);
     }
     if pages > 1 {
-        state.room_pager.draw(&mut draw, &mut gui.ui, &gui.fonts, room_list(view).pager(), pages);
+        state.room_pager.draw(draw, &mut gui.ui, &mut gui.fonts, room_list(view).pager(), pages);
     }
 
-    gui.ui.button(&mut draw, &gui.fonts, b.create, "Créer une room");
-    gui.ui.button(&mut draw, &gui.fonts, b.join_id, "Rejoindre par ID");
-    gui.ui.button(&mut draw, &gui.fonts, b.refresh, "Rafraîchir");
-    gui.ui.button(&mut draw, &gui.fonts, b.back, "Retour");
+    gui.ui.button(draw, &mut gui.fonts, b.create, "Créer une room");
+    gui.ui.button(draw, &mut gui.fonts, b.join_id, "Rejoindre par ID");
+    gui.ui.button(draw, &mut gui.fonts, b.refresh, "Rafraîchir");
+    gui.ui.button(draw, &mut gui.fonts, b.back, "Retour");
 
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        draw.sharp_text(&gui.fonts.text, msg)
+        gui.fonts
+            .write(draw, Face::Text, msg)
             .center(view.w / 2.0, b.back.y + b.back.h / 2.0)
             .size(theme::size::EMPHASIS)
             .color(color);
     }
-
-    gui.ui.render(gfx, &draw);
 }
 
 /// A full room, or one already playing, is joined as a spectator.
@@ -131,7 +132,7 @@ fn watch_only(room: &RoomInfo) -> bool {
 
 fn draw_room_row(draw: &mut Draw, gui: &mut Gui, row: Rect, index: usize, room: &RoomInfo) {
     let pal = gui.ui.palette();
-    let fonts = &gui.fonts;
+    let fonts = &mut gui.fonts;
     let mid = row.y + row.h / 2.0;
     let players = format!("{}/{} joueurs", room.players, room.max);
     let watchers = format!("{} spectateur{}", room.spectators, if room.spectators > 1 { "s" } else { "" });
@@ -153,14 +154,15 @@ fn draw_room_row(draw: &mut Draw, gui: &mut Gui, row: Rect, index: usize, room: 
     }
 
     gui.ui.row(draw, row, index, &format!("room:{}", room.id));
-    draw.sharp_text(&fonts.text, &format!("#{}", room.id))
+    fonts
+        .write(draw, Face::Text, &format!("#{}", room.id))
         .left(row.x + 18.0, mid)
         .size(theme::size::BODY)
         .color(pal.text_muted);
     let pills_start = ui::pills_ending_at(draw, fonts, &pills, row.x + row.w - 16.0, mid);
     let name_x = row.x + 90.0;
     let name = fonts.fit(Face::Display, &room.name, theme::size::EMPHASIS, pills_start - 20.0 - name_x);
-    draw.sharp_text(&fonts.display, &name).left(name_x, mid).size(theme::size::EMPHASIS).color(pal.text);
+    fonts.write(draw, Face::Display, &name).left(name_x, mid).size(theme::size::EMPHASIS).color(pal.text);
 }
 
 fn entry_card(w: f32, h: f32) -> Rect {
@@ -184,12 +186,12 @@ enum Entry {
     Confirmed(String),
 }
 
-fn update_entry(tick: &Tick, gui: &Gui, state: &mut State) -> Entry {
+fn update_entry(tick: &Tick, gui: &mut Gui, state: &mut State) -> Entry {
     let (w, h) = gui.ui.view().size();
     let (confirm, back) = entry_buttons(w, h);
 
     state.text_input.edit(&state.input.keys);
-    field_clicked(&gui.ui, &gui.fonts, entry_box(w, h), &mut state.text_input);
+    field_clicked(&gui.ui, &mut gui.fonts, entry_box(w, h), &mut state.text_input);
     if gui.ui.clicked(confirm) || tick.pressed(KeyCode::Enter) {
         return Entry::Confirmed(state.text_input.trim().to_string());
     }
@@ -199,7 +201,7 @@ fn update_entry(tick: &Tick, gui: &Gui, state: &mut State) -> Entry {
     Entry::Typing
 }
 
-pub fn update_create_room(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
+pub fn update_create_room(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
     match update_entry(tick, gui, state) {
         Entry::Back => return Transition::To(Screen::RoomBrowser),
         Entry::Confirmed(name) if !name.is_empty() => {
@@ -212,7 +214,7 @@ pub fn update_create_room(tick: &Tick, gui: &Gui, state: &mut State) -> Transiti
     Transition::Stay
 }
 
-pub fn update_join_by_id(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
+pub fn update_join_by_id(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
     match update_entry(tick, gui, state) {
         Entry::Back => return Transition::To(Screen::RoomBrowser),
         Entry::Confirmed(text) => {
@@ -227,39 +229,40 @@ pub fn update_join_by_id(tick: &Tick, gui: &Gui, state: &mut State) -> Transitio
     Transition::Stay
 }
 
-fn draw_entry(gfx: &mut Graphics, gui: &mut Gui, state: &State, title: &str, confirm: &str, placeholder: &str) {
+fn draw_entry(draw: &mut Draw, gui: &mut Gui, state: &State, title: &str, confirm: &str, placeholder: &str) {
     let pal = gui.ui.palette();
     let (w, h) = gui.ui.view().size();
     let card = entry_card(w, h);
     let field = Field { placeholder, input: &state.text_input, focused: true };
     let (cbtn, back) = entry_buttons(w, h);
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    ui::card(&mut draw, &pal, card);
-    draw.sharp_text(&gui.fonts.display, title)
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    ui::card(draw, &pal, card);
+    gui.fonts
+        .write(draw, Face::Display, title)
         .center(card.x + card.w / 2.0, card.y + 58.0)
         .size(theme::size::TITLE)
         .color(pal.text);
-    text_field(&mut draw, &mut gui.ui, &gui.fonts, entry_box(w, h), &field);
-    gui.ui.button(&mut draw, &gui.fonts, cbtn, confirm);
-    gui.ui.button(&mut draw, &gui.fonts, back, "Retour");
+    text_field(draw, &mut gui.ui, &mut gui.fonts, entry_box(w, h), &field);
+    gui.ui.button(draw, &mut gui.fonts, cbtn, confirm);
+    gui.ui.button(draw, &mut gui.fonts, back, "Retour");
 
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        draw.sharp_text(&gui.fonts.text, msg)
+        gui.fonts
+            .write(draw, Face::Text, msg)
             .center(card.x + card.w / 2.0, card.y + card.h + 40.0)
             .size(theme::size::EMPHASIS)
             .color(color);
     }
-
-    gui.ui.render(gfx, &draw);
 }
 
-pub fn draw_create_room(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
-    draw_entry(gfx, gui, state, "Créer une room", "Créer", "Nom de la room...");
+pub fn draw_create_room(draw: &mut Draw, gui: &mut Gui, state: &State) {
+    draw_entry(draw, gui, state, "Créer une room", "Créer", "Nom de la room...");
 }
 
-pub fn draw_join_by_id(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
-    draw_entry(gfx, gui, state, "Rejoindre par ID", "Rejoindre", "Numéro de la room...");
+pub fn draw_join_by_id(draw: &mut Draw, gui: &mut Gui, state: &State) {
+    draw_entry(draw, gui, state, "Rejoindre par ID", "Rejoindre", "Numéro de la room...");
 }
 
 const INVITE_ROW_H: f32 = 52.0;
@@ -459,7 +462,7 @@ fn has_sides(info: &LobbyInfo) -> bool {
     first.is_none() && info.teams.len() > 1 || teams.any(|t| t.is_none() || t != first)
 }
 
-fn draw_lobby_players(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, state: &State, info: &LobbyInfo) {
+fn draw_lobby_players(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, state: &State, info: &LobbyInfo) {
     let pal = ui.palette();
     let view = ui.view();
     let card = lobby_players(view);
@@ -472,7 +475,8 @@ fn draw_lobby_players(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, state: &State
     let picker = team_picker(info);
 
     ui::card(draw, &pal, card);
-    draw.sharp_text(&fonts.display, "Joueurs")
+    fonts
+        .write(draw, Face::Display, "Joueurs")
         .left(card.x + 16.0, card.y + PLAYERS_TITLE_H / 2.0)
         .size(theme::size::EMPHASIS)
         .color(pal.text_dim);
@@ -499,7 +503,7 @@ fn draw_lobby_players(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, state: &State
         } else {
             list_row(draw, &pal, row, i);
         }
-        draw.sharp_text(&fonts.text, &name).left(row.x + 10.0, row.y + row.h / 2.0).size(theme::size::BODY).color(ink);
+        fonts.write(draw, Face::Text, &name).left(row.x + 10.0, row.y + row.h / 2.0).size(theme::size::BODY).color(ink);
         pill.draw(draw, fonts, (row.x + row.w - 10.0 - pill_w, row.y + row.h / 2.0));
     }
 
@@ -542,7 +546,7 @@ fn invite_button(view: View, i: usize) -> Rect {
 fn update_invite(
     tick: &Tick,
     ui: &Ui,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     keys: &EditKeys,
     invite: &mut Invite,
     view: View,
@@ -620,7 +624,7 @@ fn clicked_setting(ui: &Ui, view: View) -> Option<(RoomSetting, i32)> {
     })
 }
 
-pub fn update_lobby(tick: &Tick, gui: &Gui, state: &mut State) {
+pub fn update_lobby(tick: &Tick, gui: &mut Gui, state: &mut State) {
     let view = gui.ui.view();
     let Gui { ui, fonts, .. } = gui;
     let State { room, auth, input: Input { keys, .. }, net: Network { conn, maintenance, .. }, .. } = state;
@@ -734,7 +738,7 @@ pub fn update_lobby(tick: &Tick, gui: &Gui, state: &mut State) {
     }
 }
 
-pub fn draw_lobby(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
+pub fn draw_lobby(draw: &mut Draw, gui: &mut Gui, state: &State) {
     let Gui { ui, fonts, .. } = gui;
     let pal = ui.palette();
     let Some(room) = &state.room else {
@@ -746,54 +750,54 @@ pub fn draw_lobby(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
     let (label, color, enabled) = launch_bar(info, state.net.maintenance);
     let editing = room.cpu_edit.filter(|&(_, seats)| seats == info.names.len());
 
-    let mut draw = ui.screen_canvas(gfx);
+    let mut canvas = ui.screen_canvas(draw);
+    let draw = &mut *canvas;
     ui.set_input(!room.invite.open && !room.sizing && room.cpu_edit.is_none());
-    draw_lobby_header(&mut draw, ui, fonts, info);
-    draw_lobby_players(&mut draw, ui, fonts, state, info);
+    draw_lobby_header(draw, ui, fonts, info);
+    draw_lobby_players(draw, ui, fonts, state, info);
 
-    lobby_panel(view).draw(&mut draw, &pal, fonts, "Réglages de la room", LOBBY_SETTINGS.map(|(section, _)| section));
+    lobby_panel(view).draw(draw, &pal, fonts, "Réglages de la room", LOBBY_SETTINGS.map(|(section, _)| section));
     for (setting, tile) in lobby_tiles(view) {
         let Tile::Setting(setting) = setting else {
             let size = board_size::label(&info.settings.rules);
-            ui.button_tile(&mut draw, fonts, tile, "Taille", &size);
+            ui.button_tile(draw, fonts, tile, "Taille", &size);
             continue;
         };
         let label = setting_label(setting);
         if setting == RoomSetting::FriendsOnly {
             let on = info.settings.friends_only;
-            ui.switch_tile(&mut draw, fonts, tile, label, on, editable);
+            ui.switch_tile(draw, fonts, tile, label, on, editable);
         } else {
             let value = setting_value(&info.settings, setting);
-            ui.stepper_tile(&mut draw, fonts, tile, label, &value, editable);
+            ui.stepper_tile(draw, fonts, tile, label, &value, editable);
         }
     }
 
-    ui.menu_bar_enabled(&mut draw, fonts, lobby_launch(view), label, color, enabled);
+    ui.menu_bar_enabled(draw, fonts, lobby_launch(view), label, color, enabled);
     if info.your_slot != 0 && state.auth.is_some() {
-        ui.menu_bar(&mut draw, fonts, lobby_invite(view), "Inviter un ami", theme::bar::BLUE);
+        ui.menu_bar(draw, fonts, lobby_invite(view), "Inviter un ami", theme::bar::BLUE);
     }
-    room.chat.draw_card(&mut draw, ui, fonts, lobby_chat(view));
-    ui.menu_bar(&mut draw, fonts, lobby_leave(view), "Quitter la room", theme::bar::RED);
+    room.chat.draw_card(draw, ui, fonts, lobby_chat(view));
+    ui.menu_bar(draw, fonts, lobby_leave(view), "Quitter la room", theme::bar::RED);
 
     if let Some(n) = info.countdown {
-        draw.rect((0.0, 0.0), (view.w, view.h)).color(theme::SCRIM);
-        draw.sharp_text(&fonts.display, &n.to_string())
+        draw.rect(Rect::at(0.0, 0.0, view.w, view.h)).color(theme::SCRIM);
+        fonts
+            .write(draw, Face::Display, &n.to_string())
             .center(view.w / 2.0, view.h / 2.0)
             .size(theme::size::HUGE)
             .color(theme::GOLD);
     }
 
     if room.invite.open {
-        draw_invite_overlay(&mut draw, ui, fonts, &room.invite);
+        draw_invite_overlay(draw, ui, fonts, &room.invite);
     }
     if room.sizing {
-        board_size::draw(&mut draw, ui, fonts, &info.settings.rules, editable);
+        board_size::draw(draw, ui, fonts, &info.settings.rules, editable);
     }
     if let Some(seat) = editing.and_then(|(i, _)| cpu_seat_at(info, i)) {
-        cpu_seat::draw(&mut draw, ui, fonts, seat);
+        cpu_seat::draw(draw, ui, fonts, seat);
     }
-
-    ui.render(gfx, &draw);
 }
 
 fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool) {
@@ -818,7 +822,7 @@ fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool
     }
 }
 
-fn draw_lobby_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, info: &LobbyInfo) {
+fn draw_lobby_header(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, info: &LobbyInfo) {
     let pal = ui.palette();
     let view = ui.view();
     let mid = theme::HEADER_H / 2.0;
@@ -838,10 +842,10 @@ fn draw_lobby_header(draw: &mut Draw, ui: &Ui, fonts: &Fonts, info: &LobbyInfo) 
     ui.header_band(draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     let pills_start = ui::pills_ending_at(draw, fonts, &pills, view.w - 60.0, mid);
     let name = fonts.fit(Face::Display, &info.name, theme::size::TITLE, pills_start - 30.0 - 60.0);
-    draw.sharp_text(&fonts.display, &name).left(60.0, mid).size(theme::size::TITLE).color(pal.text);
+    fonts.write(draw, Face::Display, &name).left(60.0, mid).size(theme::size::TITLE).color(pal.text);
 }
 
-fn draw_invite_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, invite: &Invite) {
+fn draw_invite_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, invite: &Invite) {
     let pal = ui.palette();
     let view = ui.view();
     let modal = invite_modal(view);
@@ -856,7 +860,8 @@ fn draw_invite_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, invite: &Inv
 
     modal.draw(draw, ui, fonts, "Inviter un ami");
     if let Some(message) = message {
-        draw.sharp_text(&fonts.text, message)
+        fonts
+            .write(draw, Face::Text, message)
             .center(card.x + card.w / 2.0, card.y + 110.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text_muted);
@@ -872,7 +877,8 @@ fn draw_invite_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, invite: &Inv
         let row = invite_row(view, i);
 
         list_row(draw, &pal, row, i);
-        draw.sharp_text(&fonts.text, &friend.username)
+        fonts
+            .write(draw, Face::Text, &friend.username)
             .left(row.x + 16.0, row.y + row.h / 2.0)
             .size(theme::size::LABEL)
             .color(pal.text);

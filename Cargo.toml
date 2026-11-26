@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "aero",
-    "aero-notan",
     "client",
     "loadbot",
     "server",

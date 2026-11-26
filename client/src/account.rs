@@ -1,15 +1,13 @@
 use std::sync::Arc;
 
+use aero::draw::Draw;
 use aero::input::KeyCode;
-use notan::draw::Draw;
 
 use crate::http::{self, HttpSlot};
 use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{
-    field_clicked, text_field, EditKeys, Field, Fonts, Label, Rect, SharpText, Status, TextInput, Ui, FILL,
-};
+use crate::ui::{field_clicked, text_field, EditKeys, Face, Field, Fonts, Label, Rect, Status, TextInput, Ui, FILL};
 
 const MIN_PASSWORD: usize = 8;
 const FIELD_W: f32 = 460.0;
@@ -239,7 +237,7 @@ const fn warning(page: Page) -> Option<&'static str> {
 pub fn update(
     tick: &Tick,
     ui: &Ui,
-    fonts: &Fonts,
+    fonts: &mut Fonts,
     keys: &EditKeys,
     form: &mut AccountForm,
     token: Option<String>,
@@ -293,7 +291,7 @@ pub fn update(
     Outcome::Stay
 }
 
-pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &Fonts, form: &AccountForm, cx: f32) {
+pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &mut Fonts, form: &AccountForm, cx: f32) {
     let pal = ui.palette();
     let choosing = form.page == Page::Choose;
     let (confirm_btn, cancel_btn) = buttons(cx, form);
@@ -308,13 +306,14 @@ pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &Fonts, form: &AccountForm, cx:
         }
     } else {
         if let Some(text) = warning(form.page) {
-            draw.sharp_text(&fonts.text, text).center(cx, TOP + 20.0).size(theme::size::LABEL).color(warning_color);
+            fonts.write(draw, Face::Text, text).center(cx, TOP + 20.0).size(theme::size::LABEL).color(warning_color);
         }
         for (i, label) in form.labels().iter().enumerate() {
             let rect = field_rect(cx, form.page, i);
             let field = Field { placeholder: "", input: form.input(i), focused: form.focused == i };
 
-            draw.sharp_text(&fonts.text, label)
+            fonts
+                .write(draw, Face::Text, label)
                 .left(rect.x, rect.y - 15.0)
                 .size(theme::size::LABEL)
                 .color(pal.text_dim);
@@ -325,7 +324,7 @@ pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &Fonts, form: &AccountForm, cx:
     }
 
     if let Some((msg, color)) = form.status.shown(&pal) {
-        draw.sharp_text(&fonts.text, msg).center(cx, status_y).size(theme::size::LABEL).color(color);
+        fonts.write(draw, Face::Text, msg).center(cx, status_y).size(theme::size::LABEL).color(color);
     }
 }
 

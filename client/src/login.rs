@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
+use aero::draw::Draw;
 use aero::input::KeyCode;
-use notan::prelude::*;
 
 use crate::connection::now_secs;
 use crate::nav::{Nav, Transition};
 use crate::state::{ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State};
 use crate::tick::Tick;
-use crate::ui::{self, field_clicked, text_field, Field, Gui, Rect, SharpText, Status, View, FILL};
+use crate::ui::{self, field_clicked, text_field, Face, Field, Gui, Rect, Status, View, FILL};
 use crate::{http, theme};
 
 const STARTUP_RETRY_SECS: f64 = 5.0;
@@ -139,7 +139,7 @@ pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
     }
 }
 
-pub fn update_auth(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
+pub fn update_auth(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
     if poll_auth(state) {
         return Transition::To(Screen::Menu);
     }
@@ -161,10 +161,10 @@ pub fn update_auth(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
         }
     }
 
-    if field_clicked(&gui.ui, &gui.fonts, layout.username, &mut state.auth_form.username) {
+    if field_clicked(&gui.ui, &mut gui.fonts, layout.username, &mut state.auth_form.username) {
         state.auth_form.focused = AuthField::Username;
     }
-    if field_clicked(&gui.ui, &gui.fonts, layout.password, &mut state.auth_form.password) {
+    if field_clicked(&gui.ui, &mut gui.fonts, layout.password, &mut state.auth_form.password) {
         state.auth_form.focused = AuthField::Password;
     }
 
@@ -181,7 +181,7 @@ pub fn update_auth(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
     Transition::Stay
 }
 
-pub fn draw_auth(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
+pub fn draw_auth(draw: &mut Draw, gui: &mut Gui, state: &State) {
     let pal = gui.ui.palette();
     let layout = auth_layout(gui.ui.view(), state.auth_form.focused);
     let AuthLayout { cx, base_y, .. } = layout;
@@ -198,22 +198,21 @@ pub fn draw_auth(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
         (false, AuthMode::Register) => "S'inscrire",
     };
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    draw.sharp_text(&gui.fonts.display, "Rouillo").center(cx, base_y - 110.0).size(theme::size::HERO).color(pal.title);
-    ui::card(&mut draw, &pal, layout.card);
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    gui.fonts.write(draw, Face::Display, "Rouillo").center(cx, base_y - 110.0).size(theme::size::HERO).color(pal.title);
+    ui::card(draw, &pal, layout.card);
     for (&tab, (label, mode)) in layout.tabs.iter().zip(modes) {
-        gui.ui.tab(&mut draw, &gui.fonts, tab, label, form.mode == mode);
+        gui.ui.tab(draw, &mut gui.fonts, tab, label, form.mode == mode);
     }
     for (rect, placeholder, input, which) in fields {
         let field = Field { placeholder, input, focused: form.focused == which };
-        text_field(&mut draw, &mut gui.ui, &gui.fonts, rect, &field);
+        text_field(draw, &mut gui.ui, &mut gui.fonts, rect, &field);
     }
-    gui.ui.button_enabled(&mut draw, &gui.fonts, layout.submit, submit_label, !loading);
-    gui.ui.button(&mut draw, &gui.fonts, layout.guest, "Jouer en invité");
+    gui.ui.button_enabled(draw, &mut gui.fonts, layout.submit, submit_label, !loading);
+    gui.ui.button(draw, &mut gui.fonts, layout.guest, "Jouer en invité");
 
     if let Some((msg, color)) = form.status.shown(&pal) {
-        draw.sharp_text(&gui.fonts.text, msg).center(cx, base_y + 370.0).size(theme::size::LABEL).color(color);
+        gui.fonts.write(draw, Face::Text, msg).center(cx, base_y + 370.0).size(theme::size::LABEL).color(color);
     }
-
-    gui.ui.render(gfx, &draw);
 }

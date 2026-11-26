@@ -1,6 +1,7 @@
+use aero::draw::Draw;
+use aero::geom::Color;
 use aero::input::KeyCode;
-use notan::draw::{Draw, DrawShapes};
-use notan::prelude::*;
+use aero::math::vec2;
 
 use crate::controls::{Action, Bindings};
 use crate::demo::Demo;
@@ -8,7 +9,7 @@ use crate::nav::Transition;
 use crate::pads::Pad;
 use crate::state::{Screen, State};
 use crate::tick::Tick;
-use crate::ui::{self, Face, Fonts, Frame, Gui, Icon, Rect, SharpText, Size, Ui, View, FILL};
+use crate::ui::{self, Face, Fonts, Frame, Gui, Icon, Rect, Size, Ui, View, FILL};
 use crate::{draw as game_draw, theme};
 
 const RULES: [(&str, &str); 7] = [
@@ -78,7 +79,7 @@ pub fn enter() -> Transition {
     Transition::To(Screen::Help(Box::new(HelpView { demo: Demo::new(), rules: false })))
 }
 
-pub fn update(tick: &Tick, gui: &Gui, help: &mut HelpView) -> Transition {
+pub fn update(tick: &Tick, gui: &mut Gui, help: &mut HelpView) -> Transition {
     let view = gui.ui.view();
     let (info, demo_card) = cards(view);
     let [previous, next] = lesson_arrows(demo_card);
@@ -104,26 +105,26 @@ pub fn update(tick: &Tick, gui: &Gui, help: &mut HelpView) -> Transition {
 
 /// A small game controller, drawn in front of a pad button's name.
 fn pad_icon(draw: &mut Draw, (x, cy): (f32, f32), color: Color, hole: Color) {
-    draw.rect((x, cy - 8.0), (26.0, 16.0)).corner_radius(7.0).color(color);
-    draw.rect((x + 5.0, cy - 1.0), (7.0, 2.0)).color(hole);
-    draw.rect((x + 7.5, cy - 3.5), (2.0, 7.0)).color(hole);
-    draw.circle(1.8).position(x + 19.0, cy - 2.0).color(hole);
-    draw.circle(1.8).position(x + 21.5, cy + 2.0).color(hole);
+    draw.rect(Rect::at(x, cy - 8.0, 26.0, 16.0)).radius(7.0).color(color);
+    draw.rect(Rect::at(x + 5.0, cy - 1.0, 7.0, 2.0)).color(hole);
+    draw.rect(Rect::at(x + 7.5, cy - 3.5, 2.0, 7.0)).color(hole);
+    draw.circle(vec2(x + 19.0, cy - 2.0), 1.8).color(hole);
+    draw.circle(vec2(x + 21.5, cy + 2.0), 1.8).color(hole);
 }
 
 /// A key or pad button as a small cap; returns where the next one goes.
-fn chip(draw: &mut Draw, ui: &Ui, fonts: &Fonts, (x, cy): (f32, f32), label: &str, pad: bool) -> f32 {
+fn chip(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, (x, cy): (f32, f32), label: &str, pad: bool) -> f32 {
     let pal = ui.palette();
     let size = theme::size::LABEL;
     let icon = if pad { 32.0 } else { 0.0 };
     let w = fonts.width(Face::Text, label, size) + 24.0 + icon;
 
-    draw.rect((x, cy - CHIP_H / 2.0), (w, CHIP_H)).corner_radius(8.0).color(pal.surface_alt);
-    draw.rect((x, cy - CHIP_H / 2.0), (w, CHIP_H)).corner_radius(8.0).stroke(1.5).color(pal.border);
+    draw.rect(Rect::at(x, cy - CHIP_H / 2.0, w, CHIP_H)).radius(8.0).color(pal.surface_alt);
+    draw.rect(Rect::at(x, cy - CHIP_H / 2.0, w, CHIP_H)).radius(8.0).stroke(pal.border, 1.5);
     if pad {
         pad_icon(draw, (x + 12.0, cy), theme::GOLD, pal.surface_alt);
     }
-    draw.sharp_text(&fonts.text, label).left(x + 12.0 + icon, cy).size(size).color(theme::GOLD);
+    fonts.write(draw, Face::Text, label).left(x + 12.0 + icon, cy).size(size).color(theme::GOLD);
 
     x + w + 8.0
 }
@@ -142,7 +143,7 @@ fn controls_rows(bindings: &Bindings) -> Vec<(&'static str, Vec<String>, Option<
     rows
 }
 
-fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, bindings: &Bindings) {
+fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect, bindings: &Bindings) {
     let pal = ui.palette();
     let label_w = 300.0_f32.min(card.w * 0.42);
     let note = "Les touches se changent dans Paramètres. Sur téléphone, des boutons apparaissent \
@@ -154,7 +155,7 @@ fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, bindings: 
 
     let mut y = card.y + TAB_H + 36.0;
     for (label, keys, pad) in rows {
-        draw.sharp_text(&fonts.text, label).left(card.x + 24.0, y).size(theme::size::EMPHASIS).color(pal.text);
+        fonts.write(draw, Face::Text, label).left(card.x + 24.0, y).size(theme::size::EMPHASIS).color(pal.text);
         let mut x = card.x + 24.0 + label_w;
         if keys.is_empty() && pad.is_none() {
             chip(draw, ui, fonts, (x, y), "aucune touche", false);
@@ -170,19 +171,19 @@ fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect, bindings: 
 
     y += 4.0;
     for line in note {
-        draw.sharp_text(&fonts.text, line).left(card.x + 24.0, y).size(theme::size::BODY).color(pal.text_muted);
+        fonts.write(draw, Face::Text, line).left(card.x + 24.0, y).size(theme::size::BODY).color(pal.text_muted);
         y += LINE_H;
     }
 }
 
-fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect) {
+fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect) {
     let pal = ui.palette();
     let mut y = card.y + TAB_H + 30.0;
     for (title, text) in RULES {
-        draw.sharp_text(&fonts.display, title).left(card.x + 24.0, y).size(theme::size::EMPHASIS).color(pal.accent);
+        fonts.write(draw, Face::Display, title).left(card.x + 24.0, y).size(theme::size::EMPHASIS).color(pal.accent);
         y += LINE_H + 4.0;
         for line in fonts.wrap(Face::Text, text, theme::size::BODY, card.w - 48.0) {
-            draw.sharp_text(&fonts.text, line).left(card.x + 24.0, y).size(theme::size::BODY).color(pal.text);
+            fonts.write(draw, Face::Text, line).left(card.x + 24.0, y).size(theme::size::BODY).color(pal.text);
             y += LINE_H;
         }
         y += 8.0;
@@ -191,7 +192,7 @@ fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &Fonts, card: Rect) {
 
 /// The demo: its lesson above the board, the key just pressed below it, and
 /// the explanation over the board while the game stands still.
-fn draw_demo(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, card: Rect, demo: &Demo, time: f32) {
+fn draw_demo(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, card: Rect, demo: &Demo, time: f32) {
     let pal = ui.palette();
     let title = demo.title();
     let title = fonts.fit(Face::Display, &title, theme::size::LABEL, card.w - 110.0);
@@ -204,7 +205,8 @@ fn draw_demo(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, card: Rect, demo: &Dem
     let [previous, next] = lesson_arrows(card);
 
     ui::card(draw, &pal, card);
-    draw.sharp_text(&fonts.display, &title)
+    fonts
+        .write(draw, Face::Display, &title)
         .center(card.x + card.w / 2.0, card.y + 22.0)
         .size(theme::size::LABEL)
         .color(pal.text);
@@ -212,7 +214,8 @@ fn draw_demo(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, card: Rect, demo: &Dem
     ui.button(draw, fonts, previous, Icon::Previous);
     ui.button(draw, fonts, next, Icon::Next);
     if let Some((key, left)) = demo.key {
-        draw.sharp_text(&fonts.display, key)
+        fonts
+            .write(draw, Face::Display, key)
             .center(card.x + card.w / 2.0, board.y + board.h + 24.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text.with_alpha(left.min(1.0)));
@@ -223,9 +226,10 @@ fn draw_demo(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, card: Rect, demo: &Dem
         let (boards, scale) = game_draw::demo_boards(demo, board);
         let bubble = Rect::at(boards.x + 6.0, boards.y + 50.0 * scale, boards.w - 12.0, h);
 
-        draw.rect((bubble.x, bubble.y), (bubble.w, bubble.h)).corner_radius(10.0).color(Color::BLACK.with_alpha(0.78));
+        draw.rect(bubble).radius(10.0).color(Color::BLACK.with_alpha(0.78));
         for (i, line) in lines.iter().enumerate() {
-            draw.sharp_text(&fonts.text, line)
+            fonts
+                .write(draw, Face::Text, line)
                 .center(bubble.x + bubble.w / 2.0, bubble.y + 12.0 + LINE_H * (i as f32 + 0.5))
                 .size(theme::size::BODY)
                 .color(Color::WHITE);
@@ -233,26 +237,25 @@ fn draw_demo(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, card: Rect, demo: &Dem
     }
 }
 
-pub fn draw(gfx: &mut Graphics, gui: &mut Gui, state: &State, help: &HelpView) {
+pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State, help: &HelpView) {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let (info, demo_card) = cards(view);
     let rules = help.rules;
     let [controls_tab, rules_tab] = tabs(info);
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    gui.ui.page_header(&mut draw, &gui.fonts, "Comment jouer");
-    ui::card(&mut draw, &pal, info);
-    gui.ui.tab(&mut draw, &gui.fonts, controls_tab, "Contrôles", !rules);
-    gui.ui.tab(&mut draw, &gui.fonts, rules_tab, "Règles", rules);
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    gui.ui.page_header(draw, &mut gui.fonts, "Comment jouer");
+    ui::card(draw, &pal, info);
+    gui.ui.tab(draw, &mut gui.fonts, controls_tab, "Contrôles", !rules);
+    gui.ui.tab(draw, &mut gui.fonts, rules_tab, "Règles", rules);
     if rules {
-        draw_rules(&mut draw, &gui.ui, &gui.fonts, info);
+        draw_rules(draw, &gui.ui, &mut gui.fonts, info);
     } else {
-        draw_controls(&mut draw, &gui.ui, &gui.fonts, info, &state.input.controls.bindings);
+        draw_controls(draw, &gui.ui, &mut gui.fonts, info, &state.input.controls.bindings);
     }
     let time = gui.ui.time() as f32;
-    draw_demo(&mut draw, &mut gui.ui, &gui.fonts, demo_card, &help.demo, time);
-    gui.ui.button(&mut draw, &gui.fonts, back_btn(view), "Retour");
-
-    gui.ui.render(gfx, &draw);
+    draw_demo(draw, &mut gui.ui, &mut gui.fonts, demo_card, &help.demo, time);
+    gui.ui.button(draw, &mut gui.fonts, back_btn(view), "Retour");
 }

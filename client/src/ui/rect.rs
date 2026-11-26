@@ -29,6 +29,12 @@ impl Rect {
     }
 }
 
+impl From<Rect> for aero::geom::Rect {
+    fn from(r: Rect) -> Self {
+        Self::new(r.x, r.y, r.w, r.h)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

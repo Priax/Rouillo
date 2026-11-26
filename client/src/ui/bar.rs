@@ -1,24 +1,25 @@
-use notan::draw::{Draw, DrawShapes};
-use notan::prelude::Color;
+use aero::draw::Draw;
+use aero::geom::{Color, Gradient};
+use aero::math::Vec2;
 
-use super::{Area, Fonts, Rect, SharpText, Triangles, Ui};
+use super::{Area, Face, Fonts, Rect, Triangles, Ui};
 
 const WIDTH: f32 = 0.56;
 const HOVER_WIDTH: f32 = 0.10;
 const SLANT: f32 = 0.28;
 const GLOW_WIDTH: f32 = 90.0;
-const BAND: Color = Color::new(0.0, 0.0, 0.0, 0.28);
+const BAND: Color = Color::srgba(0.0, 0.0, 0.0, 0.28);
 const TEXT_HEIGHT: f32 = 0.42;
 
 impl Ui {
-    pub fn menu_bar(&mut self, draw: &mut Draw, fonts: &Fonts, row: Rect, label: &str, color: Color) {
+    pub fn menu_bar(&mut self, draw: &mut Draw, fonts: &mut Fonts, row: Rect, label: &str, color: Color) {
         self.menu_bar_enabled(draw, fonts, row, label, color, true);
     }
 
     pub fn menu_bar_enabled(
         &mut self,
         draw: &mut Draw,
-        fonts: &Fonts,
+        fonts: &mut Fonts,
         row: Rect,
         label: &str,
         color: Color,
@@ -31,7 +32,7 @@ impl Ui {
             crate::audio::play_ui_hover();
         }
 
-        draw.rect((row.x, row.y), (row.w, row.h)).color(BAND);
+        draw.rect(row).color(BAND);
 
         let cx = row.x + row.w / 2.0;
         let bar = Slanted::of(row, r.hover);
@@ -54,7 +55,8 @@ impl Ui {
             bar.fill(draw, Color::WHITE.with_alpha(0.3 * r.flash));
         }
         let shrink = 1.0 - 0.03 * r.press;
-        draw.sharp_text(&fonts.display, label)
+        fonts
+            .write(draw, Face::Display, label)
             .center(cx, row.y + row.h / 2.0)
             .size(row.h * TEXT_HEIGHT * shrink)
             .color(if enabled { Color::WHITE } else { pal.text_disabled });
@@ -92,7 +94,7 @@ impl Slanted {
 
     fn fill(self, draw: &mut Draw, color: Color) {
         let [a, b, c, d] = self.corners();
-        draw.path().move_to(a.0, a.1).line_to(b.0, b.1).line_to(c.0, c.1).line_to(d.0, d.1).close().fill().color(color);
+        draw.polygon(&[a, b, c, d].map(Vec2::from)).color(color);
     }
 }
 
@@ -109,11 +111,13 @@ fn glow(draw: &mut Draw, bar: Slanted, color: Color) {
     glow_quad(draw, (right + slant, top), (right - slant, bottom), GLOW_WIDTH, color);
 }
 
+/// Fades from the edge `top`-`bottom` to nothing `reach` sideways, across the edge.
 fn glow_quad(draw: &mut Draw, top: (f32, f32), bottom: (f32, f32), reach: f32, color: Color) {
-    let clear = color.with_alpha(0.0);
-    let (far_top, far_bottom) = ((top.0 + reach, top.1), (bottom.0 + reach, bottom.1));
-    draw.triangle(far_top, top, bottom).color_vertex(clear, color, color);
-    draw.triangle(far_top, bottom, far_bottom).color_vertex(clear, color, clear);
+    let (top, bottom, shift) = (Vec2::from(top), Vec2::from(bottom), Vec2::new(reach, 0.0));
+    let along = (bottom - top).normalize_or_zero();
+    let across = shift - along * shift.dot(along);
+    let fade = Gradient::linear(top, color, top + across, color.with_alpha(0.0));
+    draw.polygon(&[top, bottom, bottom + shift, top + shift]).color(fade);
 }
 
 fn seed_of(label: &str) -> u64 {

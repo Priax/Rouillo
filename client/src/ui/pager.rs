@@ -1,7 +1,7 @@
+use aero::draw::Draw;
 use aero::input::KeyCode;
-use notan::draw::Draw;
 
-use super::{field_clicked, text_field, EditKeys, Field, Fonts, Icon, Rect, SharpText, TextInput, Ui};
+use super::{field_clicked, text_field, EditKeys, Face, Field, Fonts, Icon, Rect, TextInput, Ui};
 use crate::theme;
 use crate::tick::Tick;
 
@@ -95,7 +95,15 @@ impl Pager {
     }
 
     /// Returns whether the page changed.
-    pub fn update(&mut self, tick: &Tick, ui: &Ui, fonts: &Fonts, keys: &EditKeys, area: Rect, pages: usize) -> bool {
+    pub fn update(
+        &mut self,
+        tick: &Tick,
+        ui: &Ui,
+        fonts: &mut Fonts,
+        keys: &EditKeys,
+        area: Rect,
+        pages: usize,
+    ) -> bool {
         let pages = pages.max(1);
         let l = Layout::new(area);
         if field_clicked(ui, fonts, l.field, &mut self.input) {
@@ -133,7 +141,7 @@ impl Pager {
         changed
     }
 
-    pub fn draw(&self, draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, area: Rect, pages: usize) {
+    pub fn draw(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect, pages: usize) {
         let pages = pages.max(1);
         let l = Layout::new(area);
         let back = self.page > 0;
@@ -142,7 +150,8 @@ impl Pager {
         ui.button_enabled(draw, fonts, l.prev, Icon::Previous, back);
         let field = Field { placeholder: "", input: &self.input, focused: self.focused };
         text_field(draw, ui, fonts, l.field, &field);
-        draw.sharp_text(&fonts.text, &format!("/ {pages}"))
+        fonts
+            .write(draw, Face::Text, &format!("/ {pages}"))
             .left(l.of_x, l.field.y + l.field.h / 2.0)
             .size(theme::size::LABEL)
             .color(ui.palette().text_dim);

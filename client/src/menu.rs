@@ -1,10 +1,11 @@
-use notan::draw::DrawShapes;
-use notan::prelude::*;
+use aero::draw::Draw;
+use aero::geom::Color;
+use aero::math::vec2;
 
 use crate::nav::Transition;
 use crate::state::{AuthForm, Screen, Settings, State};
 use crate::tick::Tick;
-use crate::ui::{Frame, Gui, Rect, SettingsPanel, SharpText, Status, View};
+use crate::ui::{Face, Frame, Gui, Rect, SettingsPanel, Status, View};
 use crate::{http, theme};
 
 const ROW_H: f32 = 64.0;
@@ -89,7 +90,7 @@ fn outdated_btn(ww: f32) -> Rect {
     Rect::at(0.0, avatar.y, avatar.x - 20.0, avatar.h).right(190.0).middle(50.0)
 }
 
-pub fn update_menu(tick: &Tick, gui: &Gui, state: &mut State, play: bool) -> Transition {
+pub fn update_menu(tick: &Tick, gui: &mut Gui, state: &mut State, play: bool) -> Transition {
     let view = gui.ui.view();
     let ww = view.w;
     let logged_in = state.auth.is_some();
@@ -159,32 +160,35 @@ pub fn clear_auth(state: &mut State) {
     state.solo.best_slot = None;
 }
 
-pub fn draw_menu(gfx: &mut Graphics, gui: &mut Gui, state: &State, play: bool) {
+pub fn draw_menu(draw: &mut Draw, gui: &mut Gui, state: &State, play: bool) {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let (ww, wh) = view.size();
     let items = items(play, state.auth.is_some());
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    draw.sharp_text(&gui.fonts.display, "Rouillo")
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    gui.fonts
+        .write(draw, Face::Display, "Rouillo")
         .center(ww / 2.0, menu_top(view, items.len()) - 80.0)
         .size(theme::size::HERO)
         .color(pal.title);
     for (item, row) in menu_rows(view, items) {
-        gui.ui.menu_bar(&mut draw, &gui.fonts, row, item.label(), item.color());
+        gui.ui.menu_bar(draw, &mut gui.fonts, row, item.label(), item.color());
     }
 
     if state.outdated {
         let btn = outdated_btn(ww);
-        gui.ui.button(&mut draw, &gui.fonts, btn, "Mettre à jour");
+        gui.ui.button(draw, &mut gui.fonts, btn, "Mettre à jour");
         if let Some((text, done)) = crate::update::progress() {
             let bar = Rect::at(btn.x, btn.y + btn.h + 10.0, btn.w, 6.0);
             let y = btn.y + btn.h + if done.is_some() { 30.0 } else { 18.0 };
             if let Some(done) = done {
-                draw.rect((bar.x, bar.y), (bar.w, bar.h)).corner_radius(3.0).color(pal.text_dim.with_alpha(0.3));
-                draw.rect((bar.x, bar.y), (bar.w * done, bar.h)).corner_radius(3.0).color(pal.title);
+                draw.rect(bar).radius(3.0).color(pal.text_dim.with_alpha(0.3));
+                draw.rect(Rect::at(bar.x, bar.y, bar.w * done, bar.h)).radius(3.0).color(pal.title);
             }
-            draw.sharp_text(&gui.fonts.text, &text)
+            gui.fonts
+                .write(draw, Face::Text, &text)
                 .center(btn.x + btn.w / 2.0, y)
                 .size(theme::size::SMALL)
                 .color(pal.text_dim);
@@ -193,30 +197,30 @@ pub fn draw_menu(gfx: &mut Graphics, gui: &mut Gui, state: &State, play: bool) {
 
     if let Some(auth) = &state.auth {
         let avatar = avatar_rect(ww);
-        let picture = gui.images.get_opt(gfx, auth.avatar_url.as_deref());
+        let picture = gui.images.get_opt(auth.avatar_url.as_deref());
         let (x, y) = (avatar.x + 6.0, avatar.y + avatar.h - 6.0);
 
-        gui.ui.avatar(&mut draw, &gui.fonts, avatar, &auth.username, picture.as_ref());
+        gui.ui.avatar(draw, &mut gui.fonts, avatar, &auth.username, picture.as_ref());
         if gui.ui.pad_active() {
-            draw.circle(14.0).position(x, y).color(theme::GOLD);
-            draw.sharp_text(&gui.fonts.display, crate::pads::Pad::North.label())
+            draw.circle(vec2(x, y), 14.0).color(theme::GOLD);
+            gui.fonts
+                .write(draw, Face::Display, crate::pads::Pad::North.label())
                 .center(x, y)
                 .size(theme::size::LABEL)
                 .color(Color::BLACK);
         }
-        draw.sharp_text(&gui.fonts.text, &auth.username)
+        gui.fonts
+            .write(draw, Face::Text, &auth.username)
             .center(avatar.x + avatar.w / 2.0, avatar.y + avatar.h + 16.0)
             .size(theme::size::BODY)
             .color(pal.text_dim);
     }
 
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        draw.sharp_text(&gui.fonts.text, msg).center(ww / 2.0, wh - 60.0).size(theme::size::EMPHASIS).color(color);
+        gui.fonts.write(draw, Face::Text, msg).center(ww / 2.0, wh - 60.0).size(theme::size::EMPHASIS).color(color);
     }
 
-    crate::title::draw_version(&mut draw, &gui.ui, &gui.fonts);
-
-    gui.ui.render(gfx, &draw);
+    crate::title::draw_version(draw, &gui.ui, &mut gui.fonts);
 }
 
 fn settings_panel(view: View) -> SettingsPanel {
@@ -227,7 +231,7 @@ fn settings_back(view: View) -> Rect {
     Frame::of(view).back
 }
 
-pub fn update_settings(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
+pub fn update_settings(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
     let view = gui.ui.view();
     let panel = settings_panel(view);
     let capturing = state.bindings_panel.capturing();
@@ -259,23 +263,22 @@ pub fn update_settings(tick: &Tick, gui: &Gui, state: &mut State) -> Transition 
     Transition::Stay
 }
 
-pub fn draw_settings(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
+pub fn draw_settings(draw: &mut Draw, gui: &mut Gui, state: &State) {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let panel = settings_panel(view);
 
-    let mut draw = gui.ui.screen_canvas(gfx);
-    gui.ui.page_header(&mut draw, &gui.fonts, "Paramètres");
-    panel.draw(&mut draw, &pal, &gui.fonts, "Contrôles");
+    let mut canvas = gui.ui.screen_canvas(draw);
+    let draw = &mut *canvas;
+    gui.ui.page_header(draw, &mut gui.fonts, "Paramètres");
+    panel.draw(draw, &pal, &mut gui.fonts, "Contrôles");
     for i in 0..Settings::COUNT {
         let value = format!("{:.0} ms", state.settings.value(i) * 1000.0);
-        gui.ui.stepper(&mut draw, &gui.fonts, panel.stepper(i), Settings::label(i), &value, true);
+        gui.ui.stepper(draw, &mut gui.fonts, panel.stepper(i), Settings::label(i), &value, true);
     }
 
-    state.bindings_panel.draw(&mut draw, &mut gui.ui, &gui.fonts, &state.input.controls.bindings);
-    gui.ui.button(&mut draw, &gui.fonts, settings_back(view), "Retour");
-
-    gui.ui.render(gfx, &draw);
+    state.bindings_panel.draw(draw, &mut gui.ui, &mut gui.fonts, &state.input.controls.bindings);
+    gui.ui.button(draw, &mut gui.fonts, settings_back(view), "Retour");
 }
 
 fn start_play(state: &mut State) -> Transition {

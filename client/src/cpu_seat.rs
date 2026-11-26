@@ -1,4 +1,4 @@
-use notan::draw::Draw;
+use aero::draw::Draw;
 use shared::cpu::{Difficulty, Style};
 use shared::ClientMessage;
 
@@ -87,7 +87,7 @@ pub fn update(tick: &Tick, ui: &Ui, seat: CpuSeat) -> Option<Action> {
     None
 }
 
-pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, seat: CpuSeat) {
+pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, seat: CpuSeat) {
     let pal = ui.palette();
     let modal = modal(ui.view());
 
