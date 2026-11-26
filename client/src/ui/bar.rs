@@ -3,7 +3,7 @@ use aero::geom::{Color, Gradient};
 use aero::math::Vec2;
 use aero::theme::Visual;
 
-use super::{Face, Fonts, Rect, Triangles};
+use super::{Face, Fonts, Rect, Triangles, Typeset};
 use crate::theme::Palette;
 
 const WIDTH: f32 = 0.56;

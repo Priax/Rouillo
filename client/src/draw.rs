@@ -9,7 +9,7 @@ use crate::config;
 use crate::sprites::{self, Joint, Layer, Mood, Nuisance, Puyo};
 use crate::state::GameSession;
 use crate::theme::{self, game, Palette};
-use crate::ui::{widgets, Face, Fonts, Gui, Rect, Ui, View};
+use crate::ui::{widgets, Face, Fonts, Gui, Rect, Typeset, View};
 
 pub const FRAME_PAD: f32 = 10.0;
 pub const BOARD_W: f32 = config::GRID_WIDTH as f32 * config::CELL_SIZE;
@@ -203,26 +203,42 @@ pub struct GameClicks {
     pub click: Option<GameClick>,
 }
 
-/// The strategies and the rivals' boards, which a click picks.
-fn game_click(ui: &mut aero::ui::Ui<'_>, layout: &GameLayout, session: &GameSession) -> Option<GameClick> {
+/// What the pointer is over among the strategies and the rivals' boards, and what a click picked.
+#[derive(Default)]
+struct ArenaPointer {
+    click: Option<GameClick>,
+    strategy: Option<usize>,
+    board: Option<u8>,
+}
+
+fn arena_pointer(ui: &mut aero::ui::Ui<'_>, layout: &GameLayout, session: &GameSession) -> ArenaPointer {
+    let mut pointer = ArenaPointer::default();
     if session.rivals.len() < 2 {
-        return None;
+        return pointer;
     }
-    let mut click = None;
     if !session.spectating() {
         for (i, row) in layout.strategy_rows().into_iter().enumerate() {
-            if ui.interact(ui.id(("strategy", i)), row.into(), Sense::CLICK).clicked {
-                click = Some(GameClick::Strategy(i));
+            let response = ui.interact(ui.id(("strategy", i)), row.into(), Sense::CLICK);
+            if response.hovered {
+                pointer.strategy = Some(i);
+            }
+            if response.clicked {
+                pointer.click = Some(GameClick::Strategy(i));
             }
         }
     }
     for (i, rival) in session.rivals.iter().enumerate() {
         let Some(frame) = layout.thumb_frame(i) else { continue };
-        if ui.interact(ui.id(("board", rival.player.slot)), frame.into(), Sense::CLICK).clicked {
-            click = Some(GameClick::Board(rival.player.slot));
+        let slot = rival.player.slot;
+        let response = ui.interact(ui.id(("board", slot)), frame.into(), Sense::CLICK);
+        if response.hovered {
+            pointer.board = Some(slot);
+        }
+        if response.clicked {
+            pointer.click = Some(GameClick::Board(slot));
         }
     }
-    click
+    pointer
 }
 
 #[derive(Clone, Copy)]
@@ -336,14 +352,15 @@ pub fn draw_game(ui: &mut aero::ui::Ui<'_>, session: &GameSession, gui: &mut Gui
     let layout = GameLayout::new(gui.ui.view(), session);
     let pal = gui.ui.palette();
     let time = gui.ui.time() as f32;
-    let fonts = &mut gui.fonts;
+    let pointer = arena_pointer(ui, &layout, session);
+    let fonts = &mut ui.cx.fonts;
     let draw = &mut *ui.draw;
 
     draw.background(game::BACKGROUND);
     draw_backdrop(draw, layout.win_w, layout.win_h, time);
 
     if !layout.thumbs.is_empty() {
-        draw_arena(draw, &pal, fonts, &gui.ui, session, &layout, time);
+        draw_arena(draw, &pal, fonts, &pointer, session, &layout, time);
     }
     draw_boards(draw, &pal, fonts, session, &layout, hud, time);
     draw_sidebar(draw, &pal, fonts, session, &layout, hud, time);
@@ -358,13 +375,13 @@ pub fn draw_game(ui: &mut aero::ui::Ui<'_>, session: &GameSession, gui: &mut Gui
         shadowed(draw, fonts, "ALL CLEAR!", (cx, cy), theme::size::TITLE, game::ALL_CLEAR.with_alpha(alpha));
     }
 
-    let mut clicks = GameClicks { click: game_click(ui, &layout, session), ..GameClicks::default() };
+    let mut clicks = GameClicks { click: pointer.click, ..GameClicks::default() };
     match Overlay::of(session, hud) {
         Some(Overlay::Out) => clicks.leave = draw_out(ui, gui, layout.mine, hud),
         Some(overlay) => {
             let game_over = matches!(overlay, Overlay::GameOver { .. } | Overlay::Watched(_));
             let leaving_forfeits = !game_over && !session.opponent_disconnected;
-            draw_overlay(ui.draw, &pal, &mut gui.fonts, &overlay, &layout, hud, time);
+            draw_overlay(ui.draw, &pal, &mut ui.cx.fonts, &overlay, &layout, hud, time);
             (clicks.leave, clicks.back) = draw_exit_buttons(ui, gui, hud, leaving_forfeits);
         }
         None => {}
@@ -372,7 +389,7 @@ pub fn draw_game(ui: &mut aero::ui::Ui<'_>, session: &GameSession, gui: &mut Gui
 
     #[cfg(debug_assertions)]
     if matches!(hud, Hud::Online(_)) {
-        draw_debug(ui.draw, &mut gui.fonts, session, layout.win_h);
+        draw_debug(ui.draw, &mut ui.cx.fonts, session, layout.win_h);
     }
     clicks
 }
@@ -459,7 +476,7 @@ fn draw_arena(
     draw: &mut Draw,
     pal: &Palette,
     fonts: &mut Fonts,
-    ui: &Ui,
+    pointer: &ArenaPointer,
     session: &GameSession,
     layout: &GameLayout,
     time: f32,
@@ -505,7 +522,7 @@ fn draw_arena(
         let nuisance = rival.nuisance();
         let count = if nuisance > 0 { nuisance.to_string() } else { String::new() };
         let count_w = if count.is_empty() { 0.0 } else { 40.0 };
-        let hovered = frame.contains(ui.mouse().x, ui.mouse().y);
+        let hovered = pointer.board == Some(rival.player.slot);
         let ink = if rival.out() {
             pal.text_dim
         } else if hovered {
@@ -539,7 +556,7 @@ fn draw_arena(
     label(draw, pal, fonts, "CIBLE", (rows[0].x, rows[0].y - LABEL_H));
     for (i, (row, name)) in rows.into_iter().zip(STRATEGIES).enumerate() {
         let on = i == chosen;
-        let hovered = row.contains(ui.mouse().x, ui.mouse().y);
+        let hovered = pointer.strategy == Some(i);
         let fill = if on { theme::GOLD.with_alpha(0.18) } else { game::PANEL };
         let edge = if on || hovered { theme::GOLD } else { game::FRAME_INNER };
         let ink = if on { theme::GOLD } else { pal.text };
@@ -565,7 +582,7 @@ fn draw_out(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, mine: Rect, hud: Hud) -> b
     };
 
     ui.draw.rect(frame).radius(18.0).color(theme::SCRIM_DARK);
-    shadowed(ui.draw, &mut gui.fonts, "K.O.", (cx, cy - 40.0), theme::size::HERO, theme::DANGER);
+    shadowed(ui.draw, &mut ui.cx.fonts, "K.O.", (cx, cy - 40.0), theme::size::HERO, theme::DANGER);
     widgets::menu_bar(ui, gui, out_row(gui.ui.view()), (label, theme::bar::RED), true)
 }
 

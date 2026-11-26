@@ -9,7 +9,7 @@ use crate::nav::Transition;
 use crate::pads::Pad;
 use crate::state::{Screen, State};
 use crate::tick::Tick;
-use crate::ui::{self, widgets, Face, Fonts, Frame, Gui, Icon, Rect, Size, Ui, View, FILL};
+use crate::ui::{self, widgets, Face, Fonts, Frame, Gui, Icon, Rect, Size, Typeset, Ui, View, FILL};
 use crate::{draw as game_draw, theme};
 
 const RULES: [(&str, &str); 7] = [
@@ -185,9 +185,8 @@ fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect) {
 /// The demo's card; returns the lesson its arrows step to: -1, 1, or 0.
 fn show_demo(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, card: Rect, demo: &Demo, time: f32) -> i32 {
     let pal = gui.ui.palette();
-    let fonts = &mut gui.fonts;
     let title = demo.title();
-    let title = fonts.fit(Face::Display, &title, theme::size::LABEL, card.w - 110.0);
+    let title = ui.cx.fonts.fit(Face::Display, &title, theme::size::LABEL, card.w - 110.0);
     let board = if demo.rival.is_some() {
         Rect::at(card.x + 20.0, card.y + 44.0, card.w - 40.0, game_draw::BOARD_H)
     } else {
@@ -197,30 +196,33 @@ fn show_demo(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, card: Rect, demo: &Demo, 
     let [previous, next] = lesson_arrows(card);
 
     ui::card(ui.draw, &pal, card);
-    fonts
+    ui.cx
+        .fonts
         .write(ui.draw, Face::Display, &title)
         .center(card.x + card.w / 2.0, card.y + 22.0)
         .size(theme::size::LABEL)
         .color(pal.text);
-    game_draw::draw_demo(ui.draw, fonts, demo, board, time);
+    game_draw::draw_demo(ui.draw, &mut ui.cx.fonts, demo, board, time);
     let step = i32::from(widgets::button(ui, "next lesson", next, Icon::Next, true))
         - i32::from(widgets::button(ui, "previous lesson", previous, Icon::Previous, true));
     if let Some((key, left)) = demo.key {
-        fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Display, key)
             .center(card.x + card.w / 2.0, board.y + board.h + 24.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text.with_alpha(left.min(1.0)));
     }
     if let Some(text) = demo.text() {
-        let lines = fonts.wrap(Face::Text, text, theme::size::BODY, board.w - 28.0);
+        let lines = ui.cx.fonts.wrap(Face::Text, text, theme::size::BODY, board.w - 28.0);
         let h = lines.len() as f32 * LINE_H + 24.0;
         let (boards, scale) = game_draw::demo_boards(demo, board);
         let bubble = Rect::at(boards.x + 6.0, boards.y + 50.0 * scale, boards.w - 12.0, h);
 
         ui.draw.rect(bubble).radius(10.0).color(Color::BLACK.with_alpha(0.78));
         for (i, line) in lines.iter().enumerate() {
-            fonts
+            ui.cx
+                .fonts
                 .write(ui.draw, Face::Text, line)
                 .center(bubble.x + bubble.w / 2.0, bubble.y + 12.0 + LINE_H * (i as f32 + 0.5))
                 .size(theme::size::BODY)
@@ -238,7 +240,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State, help: &mut 
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut gui.fonts, "Comment jouer");
+    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Comment jouer");
     ui::card(ui.draw, &pal, info);
     if widgets::tab(ui, controls_tab, "Contrôles", !help.rules) {
         help.rules = false;
@@ -247,9 +249,9 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State, help: &mut 
         help.rules = true;
     }
     if help.rules {
-        draw_rules(ui.draw, &gui.ui, &mut gui.fonts, info);
+        draw_rules(ui.draw, &gui.ui, &mut ui.cx.fonts, info);
     } else {
-        draw_controls(ui.draw, &gui.ui, &mut gui.fonts, info, &state.input.controls.bindings);
+        draw_controls(ui.draw, &gui.ui, &mut ui.cx.fonts, info, &state.input.controls.bindings);
     }
     let time = gui.ui.time() as f32;
     match show_demo(ui, gui, demo_card, &help.demo, time) {

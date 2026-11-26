@@ -4,7 +4,7 @@ use aero::math::vec2;
 use crate::nav::Transition;
 use crate::state::{AuthForm, Screen, Settings, State};
 use crate::tick::Tick;
-use crate::ui::{widgets, Face, Frame, Gui, Rect, SettingsPanel, Status, View};
+use crate::ui::{widgets, Face, Frame, Gui, Rect, SettingsPanel, Status, Typeset, View};
 use crate::{http, theme};
 
 const ROW_H: f32 = 64.0;
@@ -159,7 +159,8 @@ pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, pl
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.fonts
+    ui.cx
+        .fonts
         .write(ui.draw, Face::Display, "Rouillo")
         .center(ww / 2.0, menu_top(view, items.len()) - 80.0)
         .size(theme::size::HERO)
@@ -182,7 +183,8 @@ pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, pl
                 ui.draw.rect(bar).radius(3.0).color(pal.text_dim.with_alpha(0.3));
                 ui.draw.rect(Rect::at(bar.x, bar.y, bar.w * done, bar.h)).radius(3.0).color(pal.title);
             }
-            gui.fonts
+            ui.cx
+                .fonts
                 .write(ui.draw, Face::Text, &text)
                 .center(btn.x + btn.w / 2.0, y)
                 .size(theme::size::SMALL)
@@ -199,13 +201,15 @@ pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, pl
         profile = widgets::avatar(ui, gui, avatar, &auth.username, picture.as_ref());
         if gui.ui.pad_active() {
             ui.draw.circle(vec2(x, y), 14.0).color(theme::GOLD);
-            gui.fonts
+            ui.cx
+                .fonts
                 .write(ui.draw, Face::Display, crate::pads::Pad::North.label())
                 .center(x, y)
                 .size(theme::size::LABEL)
                 .color(Color::BLACK);
         }
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, &auth.username)
             .center(avatar.x + avatar.w / 2.0, avatar.y + avatar.h + 16.0)
             .size(theme::size::BODY)
@@ -213,9 +217,14 @@ pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, pl
     }
 
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        gui.fonts.write(ui.draw, Face::Text, msg).center(ww / 2.0, wh - 60.0).size(theme::size::EMPHASIS).color(color);
+        ui.cx
+            .fonts
+            .write(ui.draw, Face::Text, msg)
+            .center(ww / 2.0, wh - 60.0)
+            .size(theme::size::EMPHASIS)
+            .color(color);
     }
-    crate::title::draw_version(ui.draw, &gui.ui, &mut gui.fonts);
+    crate::title::draw_version(ui.draw, &gui.ui, &mut ui.cx.fonts);
 
     if let Some(item) = chosen {
         return choose(item, state);
@@ -253,8 +262,8 @@ pub fn show_settings(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut gui.fonts, "Paramètres");
-    panel.draw(ui.draw, &pal, &mut gui.fonts, "Contrôles");
+    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Paramètres");
+    panel.draw(ui.draw, &pal, &mut ui.cx.fonts, "Contrôles");
     let before = state.settings;
     for i in 0..Settings::COUNT {
         let value = format!("{:.0} ms", state.settings.value(i) * 1000.0);

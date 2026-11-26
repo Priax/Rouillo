@@ -4,7 +4,7 @@ use crate::controls::{Action, Bindings, KeyBinding, ACTIONS, RESERVED};
 use crate::pads::Pads;
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{self, widgets, Face, Frame, Gui, Icon, Label, Rect, Size, View};
+use crate::ui::{self, widgets, Face, Frame, Gui, Icon, Label, Rect, Size, Typeset, View};
 
 const TOP: f32 = 360.0;
 const TITLE_H: f32 = 48.0;
@@ -122,7 +122,7 @@ impl BindingsPanel {
             None => "Start met en pause, Select relance une partie terminée.",
         };
         let hint_color = if self.capturing() { pal.accent } else { pal.text_muted };
-        let fonts = &mut gui.fonts;
+        let fonts = &mut ui.cx.fonts;
 
         ui::card(ui.draw, &pal, c);
         fonts
@@ -143,7 +143,8 @@ impl BindingsPanel {
         let mut clicked = None;
         for (row, action) in Action::ALL.into_iter().enumerate() {
             let r = cell(view, row, Slot::Pad);
-            gui.fonts
+            ui.cx
+                .fonts
                 .write(ui.draw, Face::Text, action.label())
                 .left(c.x + 20.0, r.y + r.h / 2.0)
                 .size(theme::size::BODY)
@@ -163,7 +164,8 @@ impl BindingsPanel {
             }
         }
 
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, hint)
             .left(reset.x + reset.w + 20.0, reset.y + reset.h / 2.0)
             .size(theme::size::SMALL)

@@ -9,8 +9,8 @@ use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
-    self, divider, list_row, page_count, widgets, Face, Fonts, Frame, Gui, Label, Pager, Pill, Rect, Size, Status, Ui,
-    View,
+    self, divider, list_row, page_count, widgets, Face, Fonts, Frame, Gui, Label, Pager, Pill, Rect, Size, Status,
+    Typeset, Ui, View,
 };
 use crate::{http, theme};
 
@@ -393,7 +393,7 @@ pub fn show_friends(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State,
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut gui.fonts, "Amis");
+    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Amis");
     let mut clicks = Clicks::default();
     let searched = show_search(ui, gui, f, (view, &pics), &mut clicks);
     show_lists(ui, gui, f, (view, &pics), &mut clicks);
@@ -437,9 +437,9 @@ fn show_search(
     let field = search_box(view);
     let searching = f.search_slot.is_some();
     let submit = Label::busy_or(searching, "Rechercher");
-    let fonts = &mut gui.fonts;
 
-    fonts
+    ui.cx
+        .fonts
         .write(ui.draw, Face::Text, "Rechercher un ami")
         .left(field.x, field.y - 14.0)
         .size(theme::size::SMALL)
@@ -450,7 +450,6 @@ fn show_search(
         .accepts(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | ' '));
     let typed = widgets::text_field(ui, gui, "search", field, search, &mut f.search_input);
     let searched = widgets::button(ui, "search button", search_submit_btn(view), submit, !searching) || typed.submitted;
-    let fonts = &mut gui.fonts;
 
     let status = f.search_status.shown(&pal);
     if f.search_results.is_empty() && status.is_none() {
@@ -462,7 +461,8 @@ fn show_search(
 
     ui::card(ui.draw, &pal, card);
     if let (true, Some((msg, color))) = (f.search_results.is_empty(), status) {
-        fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, msg)
             .center(card.x + card.w / 2.0, card.y + card.h / 2.0)
             .size(theme::size::LABEL)
@@ -475,13 +475,14 @@ fn show_search(
         let rating = Pill::small(&elo, theme::GOLD);
 
         list_row(ui.draw, &pal, row, i);
-        avatar(ui.draw, &gui.ui, fonts, (row.x + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
-        fonts
+        avatar(ui.draw, &gui.ui, &mut ui.cx.fonts, (row.x + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, &e.username)
             .left(row.x + 10.0 + AVATAR_ROOM, mid)
             .size(theme::size::LABEL)
             .color(pal.text);
-        rating.draw(ui.draw, fonts, (row.x + 260.0, mid));
+        rating.draw(ui.draw, &mut ui.cx.fonts, (row.x + 260.0, mid));
         let befriended = f.friends.iter().any(|fr| fr.user_id == e.user_id);
         if !befriended && widgets::button(ui, ("add", &e.user_id), result_add_btn(view, i), "Ajouter", !adding) {
             clicks.add = Some(e.user_id.clone());
@@ -492,7 +493,12 @@ fn show_search(
     }
 
     if let Some((msg, color)) = f.add_status.shown(&pal) {
-        fonts.write(ui.draw, Face::Text, msg).center(view.w / 2.0, ADD_STATUS_Y).size(theme::size::BODY).color(color);
+        ui.cx
+            .fonts
+            .write(ui.draw, Face::Text, msg)
+            .center(view.w / 2.0, ADD_STATUS_Y)
+            .size(theme::size::BODY)
+            .color(color);
     }
     searched
 }
@@ -515,7 +521,7 @@ fn show_lists(
         let mid = card.y + CARD_TITLE_H / 2.0;
         let count = list.len().to_string();
         let tally = Pill::small(&count, pal.accent);
-        let fonts = &mut gui.fonts;
+        let fonts = &mut ui.cx.fonts;
 
         ui::card(ui.draw, &pal, card);
         fonts.write(ui.draw, Face::Display, title).left(card.x + 16.0, mid).size(theme::size::EMPHASIS).color(pal.text);
@@ -525,7 +531,8 @@ fn show_lists(
     }
 
     if f.list_slot.is_some() {
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, "Chargement...")
             .center(view.w / 2.0, list_top(column_card(view, 0)) + 24.0)
             .size(theme::size::LABEL)
@@ -581,7 +588,8 @@ fn show_lists(
     }
 
     if let Some((msg, color)) = f.action_status.shown(&pal) {
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, msg)
             .center(view.w / 2.0, column_card(view, 2).bottom() + 10.0)
             .size(theme::size::SMALL)
@@ -601,7 +609,8 @@ fn show_col(
     let pal = gui.ui.palette();
     if list.is_empty() {
         let card = column_card(view, col);
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, empty_msg)
             .center(card.x + card.w / 2.0, list_top(card) + 24.0)
             .size(theme::size::SMALL)
@@ -618,7 +627,7 @@ fn show_col(
         if widgets::row(ui, gui, ("friend", col, &e.user_id), zone, i) {
             clicks.profile = Some((e.user_id.clone(), e.username.clone()));
         }
-        let fonts = &mut gui.fonts;
+        let fonts = &mut ui.cx.fonts;
         let name = fonts.fit(Face::Text, &e.username, theme::size::BODY, zone.w - 12.0 - AVATAR_ROOM);
         avatar(ui.draw, &gui.ui, fonts, (row.x + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
         fonts.write(ui.draw, Face::Text, &name).left(text_x, mid - 8.0).size(theme::size::BODY).color(pal.text);

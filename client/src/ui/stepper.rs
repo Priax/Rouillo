@@ -2,7 +2,7 @@ use aero::draw::Draw;
 use aero::math::vec2;
 use aero::theme::Visual;
 
-use super::{Face, Fonts, Rect};
+use super::{Face, Fonts, Rect, Typeset};
 use crate::theme::{self, Palette};
 
 const BUTTON: f32 = 50.0;

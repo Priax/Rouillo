@@ -2,7 +2,7 @@ use aero::geom::{Color, Rect as Area};
 use aero::math::{vec2, Affine2, Vec2};
 use aero::theme::{Content, Painter, Theme, Visual};
 
-use super::{Face, Faces, Rect};
+use super::{faces, Face, Rect};
 use crate::theme::{self, Palette};
 
 const HOVER_GROW: f32 = 0.03;
@@ -20,14 +20,13 @@ const UNDERLINE: f32 = 3.0;
 /// the screen shown.
 #[derive(Clone)]
 pub struct Look {
-    pub faces: Faces,
     pub palette: Palette,
 }
 
 impl Look {
     /// `text` centred on `center`.
     fn write(&self, p: &mut Painter<'_>, (face, text, size): (Face, &str, f32), center: Vec2, color: Color) {
-        let layout = p.fonts.layout_kept(text, &self.faces.style(face, size));
+        let layout = p.fonts.layout_kept(text, &faces().style(face, size));
         p.draw.text_colored(p.fonts, &layout, center - layout.size() * 0.5, color);
     }
 }
@@ -74,7 +73,7 @@ impl Theme for Look {
             Content::Text(text) => {
                 // As tall as the button allows, narrowed only if it would overflow.
                 let tall = b.h * TEXT_HEIGHT;
-                let width = p.fonts.layout_kept(text, &self.faces.style(Face::Display, tall)).size().x;
+                let width = p.fonts.layout_kept(text, &faces().style(Face::Display, tall)).size().x;
                 let room = b.w - TEXT_PADDING;
                 let size = if width > room { tall * room / width } else { tall }.max(TEXT_MIN);
                 self.write(p, (Face::Display, text, size), center, ink);

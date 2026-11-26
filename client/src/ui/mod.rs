@@ -1,4 +1,3 @@
-use aero::input::{Input, MouseButton};
 mod bar;
 mod button;
 mod controls;
@@ -21,7 +20,7 @@ pub mod widgets;
 use aero::path::{Cap, Join, Stroke};
 pub use button::{Icon, Label};
 pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge, Persona, Pill};
-pub use fonts::{register as register_fonts, Face, Faces, Fonts};
+pub use fonts::{faces, register as register_fonts, Face, Fonts, Typeset};
 pub use layout::{Frame, ListCard, Size, FILL};
 pub use look::Look;
 pub use modal::Modal;
@@ -55,13 +54,12 @@ const DOT_STEP: f64 = 0.5;
 /// fetched from the server.
 pub struct Gui {
     pub ui: Ui,
-    pub fonts: Fonts,
     pub images: crate::images::Images,
 }
 
 impl Gui {
-    pub fn new(fonts: Fonts) -> Self {
-        Self { ui: Ui::default(), fonts, images: crate::images::Images::default() }
+    pub fn new() -> Self {
+        Self { ui: Ui::default(), images: crate::images::Images::default() }
     }
 }
 
@@ -76,10 +74,9 @@ pub struct Ui {
     entered_at: f64,
     fade: f32,
     palette: Palette,
-    mouse: Mouse,
     /// Whether the gamepad steers: the mouse moving hands control back to it.
     pad: bool,
-    pointer: (f32, f32),
+    pointer: Option<aero::math::Vec2>,
     /// Something shown moves on its own: the next frame is wanted.
     moving: bool,
     /// Seconds of the real clock: the caret blinks on it, frames or not.
@@ -101,9 +98,8 @@ impl Default for Ui {
             entered_at: f64::NEG_INFINITY,
             fade: TRANSITION,
             palette: Palette::new(hue::PURPLE),
-            mouse: Mouse::default(),
             pad: false,
-            pointer: (0.0, 0.0),
+            pointer: None,
             moving: false,
             clock: 0.0,
             change_in: None,
@@ -111,25 +107,9 @@ impl Default for Ui {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct Mouse {
-    pub x: f32,
-    pub y: f32,
-    pub pressed: bool,
-}
-
-impl Mouse {
-    /// A finger is the left button: browsers report touches only as such.
-    pub fn of(input: &Input, view: View) -> Self {
-        let finger = input.fingers().first();
-        let at = finger.map(|f| f.at).or_else(|| input.pointer()).unwrap_or_default() / view.scale;
-        Self { x: at.x, y: at.y, pressed: input.was_clicked(MouseButton::Left) || finger.is_some_and(|f| f.new) }
-    }
-}
-
 impl Ui {
     /// Called at the start of each frame, before the screen reacts to input.
-    pub fn begin_frame(&mut self, dt: f32, view: View, mouse: Mouse) {
+    pub fn begin_frame(&mut self, dt: f32, view: View) {
         self.dt = dt.clamp(0.0, MAX_DT);
         self.time += f64::from(self.dt);
         self.view = view;
@@ -138,7 +118,6 @@ impl Ui {
         self.moving |= progress < 1.0;
         self.hue = (self.from_hue + turn * progress).rem_euclid(360.0);
         self.palette = Palette::new(self.hue);
-        self.mouse = mouse;
     }
 
     /// Tells which screen is shown, and its section's hue. A change of
@@ -171,8 +150,8 @@ impl Ui {
     }
 
     /// The look of the game's widgets, in this screen's colors.
-    pub fn look(&self, fonts: &Fonts) -> Look {
-        Look { faces: fonts.faces(), palette: self.palette }
+    pub const fn look(&self) -> Look {
+        Look { palette: self.palette }
     }
 
     pub fn keep_moving(&mut self) {
@@ -201,24 +180,10 @@ impl Ui {
         self.view
     }
 
-    /// Keeps this frame's click from what lies under the widget that took it.
-    pub fn swallow_click(&mut self) {
-        self.mouse.pressed = false;
-    }
-
-    pub fn clicked(&self, r: Rect) -> bool {
-        self.click_in(r).is_some()
-    }
-
-    pub fn click_in(&self, r: Rect) -> Option<(f32, f32)> {
-        let m = self.mouse;
-        (m.pressed && r.contains(m.x, m.y)).then_some((m.x, m.y))
-    }
-
     /// Leaves gamepad control as soon as the mouse moves.
-    pub fn note_pointer(&mut self, real: Mouse) {
-        if (real.x, real.y) != self.pointer {
-            self.pointer = (real.x, real.y);
+    pub fn note_pointer(&mut self, at: Option<aero::math::Vec2>) {
+        if at != self.pointer {
+            self.pointer = at;
             self.pad = false;
         }
     }
@@ -230,10 +195,6 @@ impl Ui {
 
     pub fn pad_active(&self) -> bool {
         self.pad
-    }
-
-    pub fn mouse(&self) -> Mouse {
-        self.mouse
     }
 
     /// The real clock, in seconds.
@@ -269,12 +230,10 @@ fn ease_out(t: f32) -> f32 {
 mod tests {
     use super::*;
 
-    const AWAY: Mouse = Mouse { x: 500.0, y: 500.0, pressed: false };
-
     #[test]
     fn frames_are_wanted_only_while_something_moves() {
         let mut ui = Ui::default();
-        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
+        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default());
         ui.set_screen(0, hue::GREEN, TRANSITION);
         frame(&mut ui);
         assert!(!ui.take_moving(), "a still screen wants no frame");
@@ -293,7 +252,7 @@ mod tests {
     fn the_first_screen_shows_up_at_once() {
         let mut ui = Ui::default();
         ui.set_screen(0, hue::GREEN, TRANSITION);
-        ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
+        ui.begin_frame(1.0 / 60.0, View::default());
         assert!((ui.transition() - 1.0).abs() < f32::EPSILON);
         assert!((ui.hue - hue::GREEN).abs() < f32::EPSILON);
     }
@@ -301,7 +260,7 @@ mod tests {
     #[test]
     fn a_new_screen_brings_its_colours_the_short_way_round() {
         let mut ui = Ui::default();
-        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
+        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default());
         ui.set_screen(0, hue::PURPLE, TRANSITION);
         frame(&mut ui);
         ui.set_screen(1, hue::PINK, TRANSITION);
@@ -325,7 +284,7 @@ mod tests {
     #[test]
     fn a_transition_lasts_its_own_fade() {
         let mut ui = Ui::default();
-        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
+        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default());
         ui.set_screen(0, hue::PURPLE, TRANSITION);
         frame(&mut ui);
         ui.set_screen(1, hue::PURPLE, 1.2);

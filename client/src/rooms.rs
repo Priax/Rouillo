@@ -4,6 +4,7 @@ use aero::draw::Draw;
 use aero::edit::TextField;
 use aero::geom::Color;
 use aero::input::KeyCode;
+use aero::ui::Sense;
 use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSetting, RoomSettings};
 
 use crate::connection::Connection;
@@ -12,8 +13,8 @@ use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, Invite, Network, Room, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
-    self, list_row, widgets, Face, Frame, Gui, Icon, ListCard, Modal, Pill, Rect, SettingsGrid, Size, Ui, View, FILL,
-    PAGER_H,
+    self, list_row, widgets, Face, Fonts, Frame, Gui, Icon, ListCard, Modal, Pill, Rect, SettingsGrid, Size, Typeset,
+    View, FILL, PAGER_H,
 };
 use crate::{board_size, http, theme};
 
@@ -75,11 +76,12 @@ pub fn show_browser(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State)
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut gui.fonts, "Rooms");
+    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Rooms");
 
     ui::card(ui.draw, &pal, card);
     if state.rooms.is_empty() {
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, "Aucune room. Créez-en une !")
             .center(card.x + card.w / 2.0, card.y + 60.0)
             .size(theme::size::EMPHASIS)
@@ -91,7 +93,7 @@ pub fn show_browser(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State)
         if widgets::row(ui, gui, ("room", room.id), row, i) {
             chosen = Some((room.id, watch_only(room)));
         }
-        draw_room_row(ui.draw, gui, row, room);
+        draw_room_row(ui.draw, &mut ui.cx.fonts, gui, row, room);
     }
     if pages > 1 {
         state.room_pager.show(ui, gui, "pages", room_list(view).pager(), pages);
@@ -102,7 +104,8 @@ pub fn show_browser(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State)
     let refresh = widgets::button(ui, "refresh", b.refresh, "Rafraîchir", true);
     let back = widgets::button(ui, "back", b.back, "Retour", true);
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, msg)
             .center(view.w / 2.0, b.back.y + b.back.h / 2.0)
             .size(theme::size::EMPHASIS)
@@ -135,9 +138,8 @@ fn watch_only(room: &RoomInfo) -> bool {
 }
 
 /// What a room's row holds, drawn over the row itself.
-fn draw_room_row(draw: &mut Draw, gui: &mut Gui, row: Rect, room: &RoomInfo) {
+fn draw_room_row(draw: &mut Draw, fonts: &mut Fonts, gui: &mut Gui, row: Rect, room: &RoomInfo) {
     let pal = gui.ui.palette();
-    let fonts = &mut gui.fonts;
     let mid = row.y + row.h / 2.0;
     let players = format!("{}/{} joueurs", room.players, room.max);
     let watchers = format!("{} spectateur{}", room.spectators, if room.spectators > 1 { "s" } else { "" });
@@ -242,7 +244,8 @@ fn show_entry(
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
     ui::card(ui.draw, &pal, card);
-    gui.fonts
+    ui.cx
+        .fonts
         .write(ui.draw, Face::Display, title)
         .center(card.x + card.w / 2.0, card.y + 58.0)
         .size(theme::size::TITLE)
@@ -254,7 +257,8 @@ fn show_entry(
     let confirmed = widgets::button(ui, "confirm", cbtn, confirm, true) || typed.submitted;
     let back = widgets::button(ui, "back", back, "Retour", true);
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, msg)
             .center(card.x + card.w / 2.0, card.y + card.h + 40.0)
             .size(theme::size::EMPHASIS)
@@ -491,15 +495,20 @@ fn show_players(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo, firs
     let own = usize::from(info.your_slot).checked_sub(1);
     let picker = team_picker(info);
     let mut clicked = None;
+    let wheel = ui.interact(ui.id("players wheel"), card.into(), Sense::SCROLL).wheel;
 
     ui::card(ui.draw, &pal, card);
-    gui.fonts
+    ui.cx
+        .fonts
         .write(ui.draw, Face::Display, "Joueurs")
         .left(card.x + 16.0, card.y + PLAYERS_TITLE_H / 2.0)
         .size(theme::size::EMPHASIS)
         .color(pal.text_dim);
     ui::divider(ui.draw, &pal, card.x + 16.0, card.y + PLAYERS_TITLE_H, card.w - 32.0);
     if list.scrolls() {
+        if let Some((delta, _)) = wheel.filter(|(delta, _)| delta.y != 0.0) {
+            clicked = Some(PlayersClick::Scroll(if delta.y > 0.0 { -1 } else { 1 }));
+        }
         let [up, down] = list.scroll_buttons();
         if widgets::button(ui, "players up", up, Icon::Up, list.first > 0) {
             clicked = Some(PlayersClick::Scroll(-1));
@@ -514,8 +523,8 @@ fn show_players(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo, firs
 
         let (label, color) = team_look(info.teams.get(i).copied().flatten(), &pal);
         let pill = Pill::small(label, color);
-        let pill_w = pill.width(&mut gui.fonts);
-        let name = gui.fonts.fit(Face::Text, name, theme::size::BODY, row.w - pill_w - 36.0);
+        let pill_w = pill.width(&mut ui.cx.fonts);
+        let name = ui.cx.fonts.fit(Face::Text, name, theme::size::BODY, row.w - pill_w - 36.0);
         let ink = if own == Some(i) { pal.text } else { pal.text_dim };
 
         let clickable = picker == Some(i) || edits_cpus(info) && cpu_seat_at(info, i).is_some();
@@ -526,12 +535,13 @@ fn show_players(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo, firs
         } else {
             list_row(ui.draw, &pal, row, i);
         }
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, &name)
             .left(row.x + 10.0, row.y + row.h / 2.0)
             .size(theme::size::BODY)
             .color(ink);
-        pill.draw(ui.draw, &mut gui.fonts, (row.x + row.w - 10.0 - pill_w, row.y + row.h / 2.0));
+        pill.draw(ui.draw, &mut ui.cx.fonts, (row.x + row.w - 10.0 - pill_w, row.y + row.h / 2.0));
     }
 
     if may_add_cpu(info) && widgets::button(ui, "add cpu", add_cpu_button(view), "Ajouter un CPU", true) {
@@ -570,21 +580,9 @@ fn invite_button(view: View, i: usize) -> Rect {
     invite_row(view, i).pad(0.0, 8.0, 0.0, 0.0).right(120.0).middle(32.0)
 }
 
-/// Which way the wheel scrolls the players list this frame, when the pointer is over it.
-fn wheel_scroll(tick: &Tick, ui: &Ui, view: View, list: &PlayerList) -> Option<i32> {
-    let wheel = tick.input.wheel().y;
-    let over = lobby_players(view).contains(ui.mouse().x, ui.mouse().y);
-    match () {
-        () if !list.scrolls() || !over || wheel == 0.0 => None,
-        () if wheel > 0.0 => Some(-1),
-        () => Some(1),
-    }
-}
-
-/// What the lobby does with the keys, the wheel and the server's answers; its clicks are in [`show_lobby`].
+/// What the lobby does with the keys and the server's answers; its clicks are in [`show_lobby`].
 pub fn update_lobby(tick: &Tick, gui: &mut Gui, state: &mut State) {
     let view = gui.ui.view();
-    let ui = &gui.ui;
     let State { room, net: Network { conn, .. }, .. } = state;
     let Some(room) = room.as_mut() else { return };
     let info = &room.info;
@@ -619,10 +617,6 @@ pub fn update_lobby(tick: &Tick, gui: &mut Gui, state: &mut State) {
 
     let list = PlayerList::new(view, info, room.players_first);
     room.players_first = list.first;
-    if let Some(dir) = wheel_scroll(tick, ui, view, &list) {
-        room.players_first = list.scrolled(dir);
-        return;
-    }
 
     if tick.typing() {
         if tick.back() {
@@ -727,13 +721,13 @@ pub fn show_lobby(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    draw_lobby_header(ui.draw, gui, &room.info);
+    draw_lobby_header(ui.draw, &mut ui.cx.fonts, gui, &room.info);
     let players = show_players(ui, gui, &room.info, room.players_first);
 
     lobby_panel(view).draw(
         ui.draw,
         &pal,
-        &mut gui.fonts,
+        &mut ui.cx.fonts,
         "Réglages de la room",
         LOBBY_SETTINGS.map(|(section, _)| section),
     );
@@ -749,7 +743,8 @@ pub fn show_lobby(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
 
     if let Some(n) = room.info.countdown {
         ui.draw.rect(Rect::at(0.0, 0.0, view.w, view.h)).color(theme::SCRIM);
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Display, &n.to_string())
             .center(view.w / 2.0, view.h / 2.0)
             .size(theme::size::HUGE)
@@ -829,10 +824,9 @@ fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool
     }
 }
 
-fn draw_lobby_header(draw: &mut Draw, gui: &mut Gui, info: &LobbyInfo) {
+fn draw_lobby_header(draw: &mut Draw, fonts: &mut Fonts, gui: &mut Gui, info: &LobbyInfo) {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
-    let fonts = &mut gui.fonts;
     let mid = theme::HEADER_H / 2.0;
     let id = format!("Room #{}", info.id);
     let players = format!("{}/{} joueurs", info.players, info.settings.max_players);
@@ -868,7 +862,8 @@ fn show_invite(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, invite: &mut Invite) ->
     let (invited, dismissed) = widgets::modal(ui, gui, (modal, "Inviter un ami"), |ui, gui| {
         let pal = gui.ui.palette();
         if let Some(message) = message {
-            gui.fonts
+            ui.cx
+                .fonts
                 .write(ui.draw, Face::Text, message)
                 .center(card.x + card.w / 2.0, card.y + 110.0)
                 .size(theme::size::EMPHASIS)
@@ -884,7 +879,8 @@ fn show_invite(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, invite: &mut Invite) ->
         for (i, friend) in invite.pager.shown(&invite.friends, per_page) {
             let row = invite_row(view, i);
             list_row(ui.draw, &pal, row, i);
-            gui.fonts
+            ui.cx
+                .fonts
                 .write(ui.draw, Face::Text, &friend.username)
                 .left(row.x + 16.0, row.y + row.h / 2.0)
                 .size(theme::size::LABEL)

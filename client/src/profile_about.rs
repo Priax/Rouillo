@@ -4,7 +4,7 @@ use aero::draw::Draw;
 
 use crate::state::ApiUserProfile;
 use crate::theme;
-use crate::ui::{widgets, Face, Fonts, Gui, Modal, Rect, Ui};
+use crate::ui::{widgets, Face, Fonts, Gui, Modal, Rect, Typeset, Ui};
 
 const LINE_H: f32 = 24.0;
 const LABEL_H: f32 = 22.0;
@@ -79,19 +79,19 @@ pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, summary: &Summa
 }
 
 /// Returns whether it was clicked.
-pub fn show_more_link(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, area: Rect) -> bool {
-    let w = gui.fonts.width(Face::Text, MORE, theme::size::BODY) + 8.0;
+pub fn show_more_link(ui: &mut aero::ui::Ui<'_>, area: Rect) -> bool {
+    let w = ui.cx.fonts.width(Face::Text, MORE, theme::size::BODY) + 8.0;
     widgets::link(ui, "more", Rect::at(area.x + area.w - w, area.y - 13.0, w, 26.0), MORE, true)
 }
 
 /// The whole bio and music over the profile. Returns whether it was dismissed.
 pub fn show_overlay(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &ApiUserProfile) -> bool {
     let modal = Modal::new(gui.ui.view(), OVERLAY_W);
-    let title = gui.fonts.fit(Face::Display, &info.username, theme::size::HEADING, modal.card.w - 120.0);
+    let title = ui.cx.fonts.fit(Face::Display, &info.username, theme::size::HEADING, modal.card.w - 120.0);
     let area = modal.body().below(LABEL_H);
     let ((), dismissed) = widgets::modal(ui, gui, (modal, &title), |ui, gui| {
-        let lines = summary(&mut gui.fonts, info, area, OVERLAY_MUSIC_LINES);
-        draw_summary(ui.draw, &gui.ui, &mut gui.fonts, &lines, area);
+        let lines = summary(&mut ui.cx.fonts, info, area, OVERLAY_MUSIC_LINES);
+        draw_summary(ui.draw, &gui.ui, &mut ui.cx.fonts, &lines, area);
     });
     dismissed
 }

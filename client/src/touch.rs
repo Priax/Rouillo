@@ -8,7 +8,7 @@ use aero::path::Cap;
 
 use crate::controls::{Action, ACTIONS};
 use crate::theme;
-use crate::ui::{self, Face, Fonts, Rect, View};
+use crate::ui::{self, Face, Fonts, Rect, Typeset, View};
 
 const SIZE: f32 = 120.0;
 const GAP: f32 = 14.0;

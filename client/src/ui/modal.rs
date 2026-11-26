@@ -1,6 +1,6 @@
 use aero::draw::Draw;
 
-use super::{card, Face, Fonts, Rect, View};
+use super::{card, Face, Fonts, Rect, Typeset, View};
 use crate::theme::{self, Palette};
 
 const MARGIN: f32 = 110.0;

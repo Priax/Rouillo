@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use aero::draw::Draw;
 use aero::math::{vec2, Affine2};
 
-use super::{Face, Fonts, Rect, Triangles, Ui};
+use super::{Face, Fonts, Rect, Triangles, Typeset, Ui};
 use crate::theme;
 
 /// How far a new screen slides in from, rightwards.

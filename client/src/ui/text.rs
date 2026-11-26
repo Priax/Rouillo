@@ -2,24 +2,7 @@ use aero::draw::Draw;
 use aero::geom::Color;
 use aero::math::Vec2;
 
-use super::{Face, Fonts};
-
-impl Fonts {
-    /// One line of text, drawn once the builder goes: at the top left of its position until told otherwise.
-    pub fn write<'a>(&'a mut self, draw: &'a mut Draw, face: Face, text: &'a str) -> Text<'a> {
-        Text {
-            draw,
-            fonts: self,
-            face,
-            text,
-            pos: (0.0, 0.0),
-            size: 16.0,
-            color: Color::WHITE,
-            h: HAlign::Left,
-            middle: false,
-        }
-    }
-}
+use super::{Face, Fonts, Typeset};
 
 #[derive(Clone, Copy)]
 enum HAlign {
@@ -40,7 +23,21 @@ pub struct Text<'a> {
     middle: bool,
 }
 
-impl Text<'_> {
+impl<'a> Text<'a> {
+    pub(super) fn new(draw: &'a mut Draw, fonts: &'a mut Fonts, face: Face, text: &'a str) -> Self {
+        Self {
+            draw,
+            fonts,
+            face,
+            text,
+            pos: (0.0, 0.0),
+            size: 16.0,
+            color: Color::WHITE,
+            h: HAlign::Left,
+            middle: false,
+        }
+    }
+
     pub fn position(&mut self, x: f32, y: f32) -> &mut Self {
         self.pos = (x, y);
         self
@@ -90,7 +87,7 @@ impl Text<'_> {
 impl Drop for Text<'_> {
     fn drop(&mut self) {
         let line = (self.face, self.text, self.size);
-        let shown = self.fonts.layout(line.0, line.1, line.2).size();
+        let shown = self.fonts.laid(line.0, line.1, line.2).size();
         let x = match self.h {
             HAlign::Left => 0.0,
             HAlign::Center => shown.x * 0.5,
@@ -98,6 +95,6 @@ impl Drop for Text<'_> {
         };
         let y = if self.middle { shown.y * 0.5 } else { 0.0 };
         let at = Vec2::new(self.pos.0 - x, self.pos.1 - y);
-        self.fonts.draw(self.draw, line, at, self.color);
+        self.fonts.draw_line(self.draw, line, at, self.color);
     }
 }

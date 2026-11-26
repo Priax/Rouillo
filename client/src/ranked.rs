@@ -10,7 +10,7 @@ use crate::nav::Transition;
 use crate::state::{ApiUserProfile, Room, Screen, State};
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
-use crate::ui::{self, widgets, Face, Fonts, Gui, Persona, Pill, Rect, View, FILL};
+use crate::ui::{self, widgets, Face, Fonts, Gui, Persona, Pill, Rect, Typeset, View, FILL};
 
 const PORTRAIT_R: f32 = 56.0;
 
@@ -270,14 +270,15 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut gui.fonts, "Classé");
+    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Classé");
     let mut pressed = None;
 
     if let Some((lobby, ranked)) = state.room.as_ref().and_then(|r| Some((&r.info, r.info.ranked.as_ref()?))) {
-        found(ui.draw, &mut gui.fonts, &ranked.opponent, ranked.opponent_elo);
-        line(ui.draw, &mut gui.fonts, &first_to, cy + 55.0, theme::size::LABEL, pal.text_muted);
+        found(ui.draw, &mut ui.cx.fonts, &ranked.opponent, ranked.opponent_elo);
+        line(ui.draw, &mut ui.cx.fonts, &first_to, cy + 55.0, theme::size::LABEL, pal.text_muted);
         if let Some(n) = lobby.countdown {
-            gui.fonts
+            ui.cx
+                .fonts
                 .write(ui.draw, Face::Display, &n.to_string())
                 .center(cx, cy + 135.0)
                 .size(theme::size::HERO)
@@ -294,8 +295,8 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
             gui.ui.next_second();
             let waited = clock((now_secs() - since).max(0.0) as u64);
 
-            line(ui.draw, &mut gui.fonts, &text, cy - 40.0, theme::size::HEADING, pal.text);
-            line(ui.draw, &mut gui.fonts, &waited, cy + 10.0, theme::size::EMPHASIS, pal.text_dim);
+            line(ui.draw, &mut ui.cx.fonts, &text, cy - 40.0, theme::size::HEADING, pal.text);
+            line(ui.draw, &mut ui.cx.fonts, &waited, cy + 10.0, theme::size::EMPHASIS, pal.text_dim);
             if widgets::button(ui, "single", single_button(view), "Annuler", true) {
                 pressed = Some(Pressed::Single);
             }
@@ -307,12 +308,12 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
             let urgency = if left < 3.0 { theme::DANGER } else { pal.accent };
             gui.ui.keep_moving();
 
-            found(ui.draw, &mut gui.fonts, opponent, *opponent_elo);
+            found(ui.draw, &mut ui.cx.fonts, opponent, *opponent_elo);
             ui.draw.rect(bar).radius(5.0).color(pal.surface);
             ui.draw.rect(Rect::at(bar.x, bar.y, bar.w * (left / total) as f32, bar.h)).radius(5.0).color(urgency);
             line(
                 ui.draw,
-                &mut gui.fonts,
+                &mut ui.cx.fonts,
                 &format!("{} s", left.ceil() as u64),
                 cy + 80.0,
                 theme::size::EMPHASIS,
@@ -321,7 +322,7 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
             if *accepted {
                 line(
                     ui.draw,
-                    &mut gui.fonts,
+                    &mut ui.cx.fonts,
                     "En attente de l'adversaire...",
                     cy + 104.0,
                     theme::size::LABEL,
@@ -342,7 +343,7 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
     }
 
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        line(ui.draw, &mut gui.fonts, msg, view.h - 60.0, theme::size::EMPHASIS, color);
+        line(ui.draw, &mut ui.cx.fonts, msg, view.h - 60.0, theme::size::EMPHASIS, color);
     }
     pressed
 }
@@ -363,24 +364,25 @@ fn paint_idle(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option
     let rule =
         format!("Quand une partie sera trouvée, vous aurez {} secondes pour l'accepter.", config::MATCH_ACCEPT_SECS);
 
-    line(ui.draw, &mut gui.fonts, "Votre ELO", cy - 170.0, theme::size::LABEL, pal.text_muted);
-    gui.fonts
+    line(ui.draw, &mut ui.cx.fonts, "Votre ELO", cy - 170.0, theme::size::LABEL, pal.text_muted);
+    ui.cx
+        .fonts
         .write(ui.draw, Face::Display, &elo.to_string())
         .center(cx, cy - 115.0)
         .size(theme::size::HERO)
         .color(pal.title);
     if let Some(stats) = &ranked.stats {
         let record = format!("Séries: {} gagnées sur {}", stats.ranked_series_won, stats.ranked_series);
-        line(ui.draw, &mut gui.fonts, &record, cy - 50.0, theme::size::EMPHASIS, pal.text);
+        line(ui.draw, &mut ui.cx.fonts, &record, cy - 50.0, theme::size::EMPHASIS, pal.text);
     }
-    line(ui.draw, &mut gui.fonts, &first_to, cy, theme::size::LABEL, pal.text_dim);
-    line(ui.draw, &mut gui.fonts, &rule, cy + 35.0, theme::size::BODY, pal.text_muted);
+    line(ui.draw, &mut ui.cx.fonts, &first_to, cy, theme::size::LABEL, pal.text_dim);
+    line(ui.draw, &mut ui.cx.fonts, &rule, cy + 35.0, theme::size::BODY, pal.text_muted);
 
     let (label, enabled) = match (ranked.casual_missing(), ranked.cooldown_left()) {
         (Some(n), _) => {
             let plural = if n > 1 { "s" } else { "" };
             let why = format!("Jouez encore {n} partie{plural} amicale{plural} pour débloquer le classé.");
-            line(ui.draw, &mut gui.fonts, &why, cy + 75.0, theme::size::BODY, theme::WARNING_TEXT);
+            line(ui.draw, &mut ui.cx.fonts, &why, cy + 75.0, theme::size::BODY, theme::WARNING_TEXT);
             ("Rechercher une partie".to_string(), false)
         }
         (None, Some(left)) => {

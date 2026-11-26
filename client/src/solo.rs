@@ -8,7 +8,7 @@ use crate::draw::Hud;
 use crate::nav::Transition;
 use crate::state::{AuthInfo, GameSession, Input, Player, Rival, Screen, State};
 use crate::tick::Tick;
-use crate::ui::{self, widgets, Face, Frame, Gui, Icon, Pill, Rect, Size, View, FILL};
+use crate::ui::{self, widgets, Face, Frame, Gui, Icon, Pill, Rect, Size, Typeset, View, FILL};
 use crate::{board_size, http, logic, rooms, theme};
 
 /// The most CPUs a solo game takes on: each one thinks on this device.
@@ -486,13 +486,13 @@ pub fn show_setup(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut gui.fonts, "Solo");
+    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Solo");
     if state.solo.best > 0 {
         let pill = [Pill::small(&best, theme::GOLD)];
-        ui::pills_ending_at(ui.draw, &mut gui.fonts, &pill, view.w - 60.0, theme::HEADER_H / 2.0);
+        ui::pills_ending_at(ui.draw, &mut ui.cx.fonts, &pill, view.w - 60.0, theme::HEADER_H / 2.0);
     }
 
-    ui::panel_card(ui.draw, &pal, &mut gui.fonts, setup.game, "Partie");
+    ui::panel_card(ui.draw, &pal, &mut ui.cx.fonts, setup.game, "Partie");
     let mut sizing = false;
     for i in 0..GAME_ROWS {
         let (tile, label, value) = (setup.tile(i), SoloSettings::label(i), settings.value(i));
@@ -506,13 +506,14 @@ pub fn show_setup(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
         }
     }
 
-    ui::panel_card(ui.draw, &pal, &mut gui.fonts, setup.foes, "Adversaires");
+    ui::panel_card(ui.draw, &pal, &mut ui.cx.fonts, setup.foes, "Adversaires");
     let mut removed = None;
     for i in 0..settings.opponents.len() {
         let (difficulty, style) = settings.opponents[i];
         let row = setup.foe(i);
         let (x, y) = row.number.center();
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Display, &(i + 1).to_string())
             .center(x, y)
             .size(theme::size::EMPHASIS)
@@ -520,7 +521,7 @@ pub fn show_setup(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
         for (part, (band, value)) in
             [(row.difficulty, difficulty.label()), (row.style, style.character())].into_iter().enumerate()
         {
-            let step = widgets::stepper_band(ui, gui, ("foe", i, part), band, value, true);
+            let step = widgets::stepper_band(ui, ("foe", i, part), band, value, true);
             if step != 0 {
                 settings.adjust_opponent(i, part, step);
             }

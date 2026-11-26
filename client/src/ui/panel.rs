@@ -1,6 +1,6 @@
 use aero::draw::Draw;
 
-use super::{card, divider, Face, Fonts, Frame, Rect, Stepper, View};
+use super::{card, divider, Face, Fonts, Frame, Rect, Stepper, Typeset, View};
 use crate::theme::{self, Palette};
 
 const TITLE_H: f32 = 56.0;

@@ -3,7 +3,7 @@ use aero::geom::Color;
 use aero::image::Image;
 use aero::math::vec2;
 
-use super::{Face, Fonts, Rect};
+use super::{Face, Fonts, Rect, Typeset};
 use crate::theme::{self, Palette};
 
 /// A line of a list, its background alternating so rows read apart.

@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use super::{widgets, Face, Gui, Icon, Rect};
+use super::{widgets, Face, Gui, Icon, Rect, Typeset};
 use crate::theme;
 
 const PAGE_DIGITS: usize = 4;
@@ -124,7 +124,8 @@ impl Pager {
             ui.blur();
             wanted = Some(self.input.parse::<usize>().unwrap_or(1).max(1) - 1);
         }
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, &format!("/ {pages}"))
             .left(l.of_x, l.field.y + l.field.h / 2.0)
             .size(theme::size::LABEL)

@@ -10,7 +10,7 @@ use crate::http::{self, HttpSlot};
 use crate::nav::{Nav, Transition};
 use crate::state::{GameSession, Player, Rival, Room, Screen, State};
 use crate::tick::Tick;
-use crate::ui::{widgets, Face, Fonts, Gui, Icon, Rect, Status, Ui, View};
+use crate::ui::{widgets, Face, Fonts, Gui, Icon, Rect, Status, Typeset, Ui, View};
 use crate::{logic, theme};
 
 const MAX_REPLAY_SIZE: usize = 64 << 20;
@@ -95,7 +95,8 @@ pub fn show_keep(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) {
         offer.slot = Some(set_favorite(&offer.id, true, auth.token.clone()));
     }
     if let Some((msg, color)) = offer.status.shown(&gui.ui.palette()) {
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, msg)
             .right(rect.x + rect.w, rect.y + rect.h + 16.0)
             .size(theme::size::SMALL)
@@ -302,7 +303,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, viewer: &mut ReplayViewer)
     let faster = widgets::button(ui, "speed", speed, label.as_str(), true);
     let next = widgets::button(ui, "player", player, "Joueur suivant", multi);
     let quit = widgets::button(ui, "quit", quit, "Quitter", true);
-    draw_clock(ui.draw, &gui.ui, &mut gui.fonts, &viewer.clock(), play);
+    draw_clock(ui.draw, &gui.ui, &mut ui.cx.fonts, &viewer.clock(), play);
 
     if toggled {
         viewer.paused = !viewer.paused;

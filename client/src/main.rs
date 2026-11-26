@@ -64,7 +64,7 @@ use state::{Network, Screen, State};
 use tick::Tick;
 use ui::{Rect, Size};
 
-use crate::ui::Gui;
+use crate::ui::{Gui, Typeset};
 
 const BANNER_H: f32 = 80.0;
 const MAINTENANCE_H: f32 = 30.0;
@@ -92,7 +92,7 @@ pub fn server_url() -> String {
 }
 
 fn setup() -> Root {
-    let gui = ui::Gui::new(ui::Fonts::load().expect("the bundled fonts are valid"));
+    let gui = ui::Gui::new();
     let mut state = State::new();
     #[cfg(target_arch = "wasm32")]
     {
@@ -200,14 +200,6 @@ fn banner_buttons(ww: f32, wh: f32) -> (Rect, Rect) {
     (accept, decline)
 }
 
-/// Keeps a click on the banner from the text fields under it, which still read the pointer in the update.
-fn update_invitation(gui: &mut Gui, state: &State) {
-    let (ww, wh) = gui.ui.view().size();
-    if state.pending_invitation.is_some() && gui.ui.clicked(Rect::at(0.0, wh - BANNER_H, ww, BANNER_H)) {
-        gui.ui.swallow_click();
-    }
-}
-
 fn accept_invitation(state: &mut State) -> Transition {
     let Some((_, room_id, _)) = state.pending_invitation.take() else {
         return Transition::Stay;
@@ -282,19 +274,19 @@ fn update(cx: &mut Cx, root: &mut Root) {
     let dt = cx.dt();
     let Some(window) = cx.window(aero::WindowId::MAIN) else { return };
     let view = ui::View::of(window);
-    let real = ui::Mouse::of(&cx.input, view);
 
     state.input.pads.update();
     if state.input.pads.connected() {
         gui.ui.keep_moving();
     }
     let pad_nav = pad_menus(state, nav.current());
-    gui.ui.note_pointer(real);
+    let finger = cx.input.fingers().first().map(|f| f.at);
+    gui.ui.note_pointer(finger.or_else(|| cx.input.pointer()));
     if pad_nav && state.input.pads.pressed(Pad::South) {
         cx.press_focus(aero::WindowId::MAIN);
     }
     gui.ui.set_clock(connection::now_secs());
-    gui.ui.begin_frame(dt, view, real);
+    gui.ui.begin_frame(dt, view);
     if pad_nav {
         if let Some(dir) = pad_direction(&state.input.pads) {
             gui.ui.use_pad();
@@ -332,7 +324,6 @@ fn update(cx: &mut Cx, root: &mut Root) {
     replay::poll(state, nav);
 
     network::keep_linked(&mut state.net, state.auth.is_some(), nav.current());
-    update_invitation(gui, state);
     network::handle_server_messages(state, nav);
 
     let transition = match nav.current_mut() {
@@ -384,7 +375,7 @@ fn show_invitation(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) 
     let (joined, ignored) = ui.layer(aero::draw::Layer::Popup, |ui| {
         ui.interact(ui.id("invitation"), band.into(), aero::ui::Sense::CLICK);
         ui::banner(ui.draw, band, pal.banner, pal.accent, ui::Edge::Top);
-        gui.fonts.write(ui.draw, Face::Text, &msg).left(20.0, band.y + 40.0).size(theme::size::LABEL).color(pal.text);
+        ui.cx.fonts.write(ui.draw, Face::Text, &msg).left(20.0, band.y + 40.0).size(theme::size::LABEL).color(pal.text);
         let joined = ui::widgets::button(ui, "join invitation", accept_btn, "Rejoindre", true);
         (joined, ui::widgets::button(ui, "ignore invitation", decline_btn, "Ignorer", true))
     });
@@ -407,7 +398,7 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     let ui = &mut aero::ui::Ui::new(cx, draw);
     let mut transition = Transition::Stay;
     match nav.current_mut() {
-        Screen::Title => title::draw_title(ui.draw, gui),
+        Screen::Title => title::draw_title(ui.draw, &mut ui.cx.fonts, gui),
         Screen::Auth => transition = login::show(ui, gui, state),
         Screen::Menu => transition = menu::show_menu(ui, gui, state, false),
         Screen::PlayMenu => transition = menu::show_menu(ui, gui, state, true),
@@ -447,26 +438,25 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
         if matches!(screen, Screen::Game) {
             replay::show_keep(ui, gui, state);
         }
-        state.input.touch.draw(ui.draw, &mut gui.fonts, gui.ui.view());
+        state.input.touch.draw(ui.draw, &mut ui.cx.fonts, gui.ui.view());
     }
 
     let invited = show_invitation(ui, gui, state);
     if !matches!(invited, Transition::Stay) {
         transition = invited;
     }
-    draw_maintenance_banner(ui.draw, gui, state, screen);
-    draw_too_old_banner(ui.draw, gui, state, screen);
-    draw_reconnect_banner(ui.draw, gui, state, screen);
+    draw_maintenance_banner(ui.draw, &mut ui.cx.fonts, gui, state, screen);
+    draw_too_old_banner(ui.draw, &mut ui.cx.fonts, gui, state, screen);
+    draw_reconnect_banner(ui.draw, &mut ui.cx.fonts, gui, state, screen);
 
     let view = gui.ui.view();
     // A game, and the screens that lead straight into one, need the phone
     // turned: the boards are laid out side by side.
     let needs_landscape = matches!(screen, Screen::RoomLobby | Screen::Game | Screen::Ranked | Screen::Solo(_));
     if state.input.touch.active && view.portrait() && needs_landscape {
-        touch::draw_turn_hint(ui.draw, &mut gui.fonts, view);
+        touch::draw_turn_hint(ui.draw, &mut ui.cx.fonts, view);
     }
     ui.draw.pop_transform();
-    gui.fonts.end_frame();
     if !matches!(transition, Transition::Stay) {
         nav.apply(transition);
         ui.cx.request_redraw();
@@ -490,22 +480,22 @@ fn online_role(room: &state::Room) -> draw::Role {
     }
 }
 
-fn draw_maintenance_banner(draw: &mut Draw, gui: &mut Gui, state: &State, screen: &Screen) {
+fn draw_maintenance_banner(draw: &mut Draw, fonts: &mut ui::Fonts, gui: &mut Gui, state: &State, screen: &Screen) {
     let playing = matches!(screen, Screen::Game) && state.session().is_some_and(|s| !s.decided());
     if state.net.maintenance && state.net.conn.is_live() && screen.needs_connection() && !playing {
         draw_warning_banner(
             draw,
             &mut gui.ui,
-            &mut gui.fonts,
+            fonts,
             "Le serveur redémarre: les parties en cours se terminent, aucune autre ne démarre.",
         );
     }
 }
 
 /// Says why online play is closed while the server refuses this version.
-fn draw_too_old_banner(draw: &mut Draw, gui: &mut Gui, state: &State, screen: &Screen) {
+fn draw_too_old_banner(draw: &mut Draw, fonts: &mut ui::Fonts, gui: &mut Gui, state: &State, screen: &Screen) {
     if state.net.too_old && matches!(screen, Screen::Menu | Screen::PlayMenu) {
-        draw_warning_banner(draw, &mut gui.ui, &mut gui.fonts, crate::update::TOO_OLD);
+        draw_warning_banner(draw, &mut gui.ui, fonts, crate::update::TOO_OLD);
     }
 }
 
@@ -520,7 +510,7 @@ fn draw_warning_banner(draw: &mut Draw, ui: &mut ui::Ui, fonts: &mut ui::Fonts, 
         .color(theme::WARNING_TEXT);
 }
 
-fn draw_reconnect_banner(draw: &mut Draw, gui: &mut Gui, state: &State, screen: &Screen) {
+fn draw_reconnect_banner(draw: &mut Draw, fonts: &mut ui::Fonts, gui: &mut Gui, state: &State, screen: &Screen) {
     let Some((attempts, secs_left)) = state.net.conn.recovering(connection::now_secs()) else {
         return;
     };
@@ -534,18 +524,15 @@ fn draw_reconnect_banner(draw: &mut Draw, gui: &mut Gui, state: &State, screen: 
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
 
     ui::banner(draw, Rect::at(0.0, 0.0, ww, 46.0), theme::WARNING_BANNER, theme::WARNING, ui::Edge::Bottom);
-    gui.fonts.write(draw, Face::Text, &msg).center(ww / 2.0, 22.0).size(theme::size::LABEL).color(theme::WARNING_TEXT);
+    fonts.write(draw, Face::Text, &msg).center(ww / 2.0, 22.0).size(theme::size::LABEL).color(theme::WARNING_TEXT);
 }
 
 struct Rouillo(Root);
 
 impl aero::App for Rouillo {
-    fn event(&mut self, cx: &mut Cx, event: &Event) {
-        match event {
-            Event::GpuReset => self.0.gui.images.rebuild(),
-            // Aero knows none of the game's widgets, so it cannot tell when the pointer enters one.
-            Event::PointerMoved { .. } => cx.request_redraw(),
-            _ => {}
+    fn event(&mut self, _: &mut Cx, event: &Event) {
+        if matches!(event, Event::GpuReset) {
+            self.0.gui.images.rebuild();
         }
         bind_typed(&mut self.0, event);
     }
@@ -588,7 +575,7 @@ fn main() -> Result<(), aero::Error> {
         wake::init(cx.waker());
         let root = setup();
         ui::register_fonts(&mut cx.fonts);
-        cx.set_theme(root.gui.ui.look(&root.gui.fonts));
+        cx.set_theme(root.gui.ui.look());
         Rouillo(root)
     })
 }

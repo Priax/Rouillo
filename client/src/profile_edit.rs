@@ -5,7 +5,7 @@ use crate::picker::{self, Picked};
 use crate::state::{ApiUserProfile, ProfileData, State};
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{widgets, Face, Gui, Rect, Status, FILL};
+use crate::ui::{widgets, Face, Gui, Rect, Status, Typeset, FILL};
 
 const BIO_LINES: usize = 6;
 
@@ -248,13 +248,14 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
             1..=20 => theme::WARNING,
             _ => pal.text_muted,
         };
-        let fonts = &mut gui.fonts;
-        fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, which.label())
             .left(rect.x, label_y)
             .size(theme::size::LABEL)
             .color(pal.text_dim);
-        fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, &left.to_string())
             .right(rect.x + rect.w, label_y)
             .size(theme::size::SMALL)
@@ -267,7 +268,6 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
         }
         submitted |= typed.submitted;
     }
-    let fonts = &mut gui.fonts;
 
     let saved = widgets::button(ui, "save", save_btn, if saving { "Sauvegarde..." } else { "Enregistrer" }, !saving);
     let cancelled = widgets::button(ui, "cancel", cancel_btn, "Annuler", true);
@@ -285,7 +285,8 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
         }
     }
     if let Some((msg, color)) = form.status.shown(&pal) {
-        fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, msg)
             .center(cx, save_btn.y + save_btn.h + 21.0)
             .size(theme::size::LABEL)

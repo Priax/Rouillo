@@ -7,7 +7,7 @@ use shared::MAX_CHAT_CHARS;
 
 use crate::connection::now_secs;
 use crate::theme;
-use crate::ui::{widgets, Face, Fonts, Gui, Rect, Ui};
+use crate::ui::{widgets, Face, Fonts, Gui, Rect, Typeset, Ui};
 
 const KEPT: usize = 50;
 const LINE_H: f32 = 20.0;
@@ -114,7 +114,7 @@ impl Chat {
     /// The lobby's chat: a card with the conversation and its field. Returns the message to send.
     pub fn show_card(&mut self, ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, area: Rect) -> Option<String> {
         crate::ui::card(ui.draw, &gui.ui.palette(), area);
-        self.draw_lines(ui.draw, &mut gui.ui, &mut gui.fonts, area, false);
+        self.draw_lines(ui.draw, &mut gui.ui, &mut ui.cx.fonts, area, false);
         self.show_field(ui, gui, area, "Écrire un message...")
     }
 
@@ -132,9 +132,10 @@ impl Chat {
             if ui.is_focused(ui.id(FIELD)) {
                 ui.blur();
             }
-            self.draw_lines(ui.draw, &mut gui.ui, &mut gui.fonts, area, true);
+            self.draw_lines(ui.draw, &mut gui.ui, &mut ui.cx.fonts, area, true);
             if let Some(hint) = hint {
-                gui.fonts
+                ui.cx
+                    .fonts
                     .write(ui.draw, Face::Text, hint)
                     .left(area.x + PAD, area.y + area.h - INPUT_H / 2.0 - PAD / 2.0)
                     .size(theme::size::SMALL)
@@ -147,7 +148,7 @@ impl Chat {
             return None;
         }
         ui.draw.rect(area).radius(theme::RADIUS).color(Color::BLACK.with_alpha(0.55));
-        self.draw_lines(ui.draw, &mut gui.ui, &mut gui.fonts, area, false);
+        self.draw_lines(ui.draw, &mut gui.ui, &mut ui.cx.fonts, area, false);
         let said = self.show_field(ui, gui, area, "Entrée pour envoyer, Échap pour fermer");
         if said.is_some() {
             self.open = false;

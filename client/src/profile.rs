@@ -15,7 +15,8 @@ use crate::state::{
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
 use crate::ui::{
-    self, divider, list_row, portrait, widgets, Face, Fonts, Gui, Icon, Pill, Rect, Size, Status, View, FILL, PAGER_H,
+    self, divider, list_row, portrait, widgets, Face, Fonts, Gui, Icon, Pill, Rect, Size, Status, Typeset, View, FILL,
+    PAGER_H,
 };
 use crate::{http, profile_about};
 
@@ -134,8 +135,8 @@ fn cover(draw: &mut Draw, picture: &Image, r: Rect) {
     draw.image(picture, r).crop(Rect::at((tw - sw) / 2.0, (th - sh) / 2.0, sw, sh));
 }
 
-fn draw_header(draw: &mut Draw, gui: &mut Gui, core: &ProfileCore) {
-    let (ui, fonts) = (&mut gui.ui, &mut gui.fonts);
+fn draw_header(draw: &mut Draw, fonts: &mut Fonts, gui: &mut Gui, core: &ProfileCore) {
+    let ui = &mut gui.ui;
     let pal = ui.palette();
     let view = ui.view();
     let banner = gui.images.get_opt(core.info.banner_url.as_deref());
@@ -222,7 +223,7 @@ fn card_message(draw: &mut Draw, fonts: &mut Fonts, card: Rect, text: &str, colo
 fn show_stats_panel(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, core: &ProfileCore, load_failed: bool) -> bool {
     let pal = gui.ui.palette();
     let (card, _) = cards(gui.ui.view());
-    let fonts = &mut gui.fonts;
+    let fonts = &mut ui.cx.fonts;
     let draw = &mut *ui.draw;
 
     ui::card(draw, &pal, card);
@@ -257,7 +258,7 @@ fn show_stats_panel(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, core: &ProfileCore
 
     divider(draw, &pal, label_x, stats_end(card), card.w - 2.0 * CARD_PAD);
     profile_about::draw_summary(draw, &gui.ui, fonts, &summary, area);
-    summary.cut && profile_about::show_more_link(ui, gui, area)
+    summary.cut && profile_about::show_more_link(ui, area)
 }
 
 fn win_rate(wins: i64, played: i64) -> String {
@@ -295,7 +296,7 @@ fn show_history_panel(
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let (_, card) = cards(view);
-    let fonts = &mut gui.fonts;
+    let fonts = &mut ui.cx.fonts;
 
     ui::card(ui.draw, &pal, card);
     card_title(ui.draw, &pal, fonts, card, "Matchs");
@@ -370,7 +371,7 @@ fn show_match_row(
     let me = m.me(viewed_id)?;
 
     let pal = gui.ui.palette();
-    let fonts = &mut gui.fonts;
+    let fonts = &mut ui.cx.fonts;
     let mid = row.y + row.h / 2.0;
     let opp = m.opponent(viewed_id);
     let place = format!("{}e", me.place);
@@ -494,7 +495,7 @@ pub fn show_profile(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State,
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    draw_header(ui.draw, gui, &p.core);
+    draw_header(ui.draw, &mut ui.cx.fonts, gui, &p.core);
     if p.edit.is_some() {
         profile_edit::show(ui, gui, token, p);
         return Transition::Stay;
@@ -637,13 +638,14 @@ pub fn show_other_profile(
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    draw_header(ui.draw, gui, &p.core);
+    draw_header(ui.draw, &mut ui.cx.fonts, gui, &p.core);
     let more = show_stats_panel(ui, gui, &p.core, p.load_failed);
     let click = show_history_panel(ui, gui, &mut p.core, false);
     let add = can_add && widgets::button(ui, "add", add_btn, label, !sending);
     let back = widgets::button(ui, "back", back_btn, "Retour", true);
     if let Some((msg, color)) = p.friend_status.shown(&pal) {
-        gui.fonts
+        ui.cx
+            .fonts
             .write(ui.draw, Face::Text, msg)
             .center(cx, btn_y - STATUS_GAP / 2.0)
             .size(theme::size::BODY)

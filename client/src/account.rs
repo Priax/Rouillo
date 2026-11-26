@@ -6,7 +6,7 @@ use crate::http::{self, HttpSlot};
 use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{widgets, Face, Gui, Label, Rect, Status, FILL};
+use crate::ui::{widgets, Face, Gui, Label, Rect, Status, Typeset, FILL};
 
 const MIN_PASSWORD: usize = 8;
 const FIELD_W: f32 = 460.0;
@@ -256,7 +256,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, form: &mut AccountForm, to
         }
     } else {
         if let Some(text) = warning(form.page) {
-            let fonts = &mut gui.fonts;
+            let fonts = &mut ui.cx.fonts;
             fonts.write(ui.draw, Face::Text, text).center(cx, TOP + 20.0).size(theme::size::LABEL).color(warning_color);
         }
         if !ui.cx.wants_keyboard() {
@@ -264,7 +264,8 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, form: &mut AccountForm, to
         }
         for (i, label) in form.labels().iter().enumerate() {
             let rect = field_rect(cx, form.page, i);
-            gui.fonts
+            ui.cx
+                .fonts
                 .write(ui.draw, Face::Text, label)
                 .left(rect.x, rect.y - 15.0)
                 .size(theme::size::LABEL)
@@ -280,7 +281,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, form: &mut AccountForm, to
         cancelled = widgets::button(ui, "cancel", cancel_btn, "Annuler", true);
     }
     if let Some((msg, color)) = form.status.shown(&pal) {
-        gui.fonts.write(ui.draw, Face::Text, msg).center(cx, status_y).size(theme::size::LABEL).color(color);
+        ui.cx.fonts.write(ui.draw, Face::Text, msg).center(cx, status_y).size(theme::size::LABEL).color(color);
     }
 
     match chosen {

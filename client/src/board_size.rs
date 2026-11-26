@@ -7,7 +7,7 @@ use shared::{RoomSetting, Rules, BOARD_COLUMNS, BOARD_ROWS};
 
 use crate::draw::{draw_empty_well, FRAME_PAD};
 use crate::tick::Tick;
-use crate::ui::{widgets, Face, Fonts, Gui, Icon, Modal, Rect, Ui, View};
+use crate::ui::{widgets, Face, Fonts, Gui, Icon, Modal, Rect, Typeset, Ui, View};
 use crate::{config, theme};
 
 const CARD_W: f32 = 600.0;
@@ -146,9 +146,9 @@ pub fn update_keys(tick: &Tick, editable: bool) -> Option<Action> {
 pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, rules: &Rules, editable: bool) -> Option<Action> {
     let layout = Layout::new(gui.ui.view());
     let (action, dismissed) = widgets::modal(ui, gui, (layout.modal, "Taille du plateau"), |ui, gui| {
-        paint(ui.draw, &gui.ui, &mut gui.fonts, &layout, rules);
+        paint(ui.draw, &gui.ui, &mut ui.cx.fonts, &layout, rules);
         if !editable {
-            footnote(ui.draw, &gui.ui, &mut gui.fonts, &layout);
+            footnote(ui.draw, &gui.ui, &mut ui.cx.fonts, &layout);
             return None;
         }
         let mut step = None;

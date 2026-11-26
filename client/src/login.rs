@@ -5,7 +5,7 @@ use crate::nav::{Nav, Transition};
 use crate::state::{
     ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State, MAX_PASSWORD_CHARS,
 };
-use crate::ui::{self, widgets, Face, Gui, Rect, Status, View, FILL};
+use crate::ui::{self, widgets, Face, Gui, Rect, Status, Typeset, View, FILL};
 use crate::{http, theme};
 
 const STARTUP_RETRY_SECS: f64 = 5.0;
@@ -159,7 +159,8 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Tran
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.fonts
+    ui.cx
+        .fonts
         .write(ui.draw, Face::Display, "Rouillo")
         .center(cx, base_y - 110.0)
         .size(theme::size::HERO)
@@ -188,7 +189,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Tran
         widgets::button(ui, "submit", layout.submit, submit_label, !loading) || name.submitted || password.submitted;
     let guest = widgets::button(ui, "guest", layout.guest, "Jouer en invité", true);
     if let Some((msg, color)) = form.status.shown(&pal) {
-        gui.fonts.write(ui.draw, Face::Text, msg).center(cx, base_y + 370.0).size(theme::size::LABEL).color(color);
+        ui.cx.fonts.write(ui.draw, Face::Text, msg).center(cx, base_y + 370.0).size(theme::size::LABEL).color(color);
     }
 
     if let Some(mode) = chosen {
