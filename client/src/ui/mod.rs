@@ -3,10 +3,7 @@ mod bar;
 mod button;
 mod controls;
 mod deco;
-mod field;
 mod fonts;
-mod input;
-mod keys;
 mod layout;
 mod look;
 mod modal;
@@ -21,20 +18,10 @@ mod triangles;
 mod view;
 pub mod widgets;
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
 use aero::path::{Cap, Join, Stroke};
 pub use button::{Icon, Label};
 pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge, Persona, Pill};
-mod clipboard;
-pub use clipboard::get as clipboard_text;
-pub use field::{area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field};
 pub use fonts::{register as register_fonts, Face, Faces, Fonts};
-pub use input::TextInput;
-pub use keys::EditKeys;
-#[cfg(target_arch = "wasm32")]
-pub use keys::Shortcuts;
 pub use layout::{Frame, ListCard, Size, FILL};
 pub use look::Look;
 pub use modal::Modal;
@@ -62,7 +49,6 @@ use crate::theme::{hue, Palette};
 const MAX_DT: f32 = 0.1;
 pub const TRANSITION: f32 = 0.3;
 
-const CARET_BLINK: f64 = 0.5;
 const DOT_STEP: f64 = 0.5;
 
 /// What screens draw with: the widgets, the fonts, and the pictures
@@ -91,8 +77,6 @@ pub struct Ui {
     fade: f32,
     palette: Palette,
     mouse: Mouse,
-    caret_text: Option<u64>,
-    caret_since: f64,
     /// Whether the gamepad steers: the mouse moving hands control back to it.
     pad: bool,
     pointer: (f32, f32),
@@ -118,8 +102,6 @@ impl Default for Ui {
             fade: TRANSITION,
             palette: Palette::new(hue::PURPLE),
             mouse: Mouse::default(),
-            caret_text: None,
-            caret_since: 0.0,
             pad: false,
             pointer: (0.0, 0.0),
             moving: false,
@@ -133,7 +115,6 @@ impl Default for Ui {
 pub struct Mouse {
     pub x: f32,
     pub y: f32,
-    pub down: bool,
     pub pressed: bool,
 }
 
@@ -142,12 +123,7 @@ impl Mouse {
     pub fn of(input: &Input, view: View) -> Self {
         let finger = input.fingers().first();
         let at = finger.map(|f| f.at).or_else(|| input.pointer()).unwrap_or_default() / view.scale;
-        Self {
-            x: at.x,
-            y: at.y,
-            down: input.is_button_down(MouseButton::Left) || finger.is_some_and(|f| !f.lifted),
-            pressed: input.was_clicked(MouseButton::Left) || finger.is_some_and(|f| f.new),
-        }
+        Self { x: at.x, y: at.y, pressed: input.was_clicked(MouseButton::Left) || finger.is_some_and(|f| f.new) }
     }
 }
 
@@ -260,20 +236,6 @@ impl Ui {
         self.mouse
     }
 
-    /// Whether the caret of the focused field, standing at `at` in `text`,
-    /// is lit this frame. It blinks, and starts over lit whenever the text
-    /// changes or the caret moves, so that it never vanishes under the typing.
-    pub fn caret_on(&mut self, text: &str, at: usize) -> bool {
-        let text = Some(hash_of(&(text, at)));
-        if self.caret_text != text {
-            self.caret_text = text;
-            self.caret_since = self.clock;
-        }
-        let phase = (self.clock - self.caret_since) % CARET_BLINK;
-        self.change_after(CARET_BLINK - phase);
-        (self.clock - self.caret_since) % (2.0 * CARET_BLINK) < CARET_BLINK
-    }
-
     /// The real clock, in seconds.
     pub fn set_clock(&mut self, now: f64) {
         self.clock = now;
@@ -295,12 +257,6 @@ impl Ui {
     }
 }
 
-fn hash_of<T: Hash + ?Sized>(value: &T) -> u64 {
-    let mut h = DefaultHasher::new();
-    value.hash(&mut h);
-    h.finish()
-}
-
 fn transition_progress(time: f64, entered_at: f64, fade: f32) -> f32 {
     ((time - entered_at) / f64::from(fade)).clamp(0.0, 1.0) as f32
 }
@@ -313,7 +269,7 @@ fn ease_out(t: f32) -> f32 {
 mod tests {
     use super::*;
 
-    const AWAY: Mouse = Mouse { x: 500.0, y: 500.0, down: false, pressed: false };
+    const AWAY: Mouse = Mouse { x: 500.0, y: 500.0, pressed: false };
 
     #[test]
     fn frames_are_wanted_only_while_something_moves() {
@@ -381,23 +337,5 @@ mod tests {
             frame(&mut ui);
         }
         assert!((ui.transition() - 1.0).abs() < f32::EPSILON, "done in 1.2s");
-    }
-
-    #[test]
-    fn the_caret_blinks_and_typing_lights_it_again() {
-        let mut ui = Ui::default();
-        let at = |ui: &mut Ui, frames: u32, text: &str, at: usize| {
-            ui.set_clock(ui.clock + f64::from(frames) / 60.0);
-            ui.caret_on(text, at)
-        };
-        let after = |ui: &mut Ui, frames: u32, text: &str| at(ui, frames, text, text.len());
-        assert!(after(&mut ui, 1, "a"));
-        assert!(after(&mut ui, 15, "a"), "lit for half a second");
-        assert!(!after(&mut ui, 21, "a"), "then off");
-        assert!(after(&mut ui, 1, "ab"), "a keystroke must not type blind");
-        assert!(!after(&mut ui, 36, "ab"));
-        assert!(after(&mut ui, 30, "ab"), "and back on");
-        assert!(!after(&mut ui, 36, "ab"));
-        assert!(at(&mut ui, 1, "ab", 1), "nor may it move unseen");
     }
 }

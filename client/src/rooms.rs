@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use aero::draw::Draw;
+use aero::edit::TextField;
 use aero::geom::Color;
 use aero::input::KeyCode;
 use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSetting, RoomSettings};
@@ -8,11 +9,11 @@ use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSettin
 use crate::connection::Connection;
 use crate::cpu_seat::{self, CpuSeat};
 use crate::nav::Transition;
-use crate::state::{ApiFriendsResponse, Input, Invite, Network, Room, Screen, State};
+use crate::state::{ApiFriendsResponse, Invite, Network, Room, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
-    self, field_clicked, list_row, text_field, widgets, Face, Field, Frame, Gui, Icon, ListCard, Modal, Pill, Rect,
-    SettingsGrid, Size, TextInput, Ui, View, FILL, PAGER_H,
+    self, list_row, widgets, Face, Frame, Gui, Icon, ListCard, Modal, Pill, Rect, SettingsGrid, Size, Ui, View, FILL,
+    PAGER_H,
 };
 use crate::{board_size, http, theme};
 
@@ -53,7 +54,6 @@ pub fn update_browser(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transiti
     let view = gui.ui.view();
     let pages = room_pages(&state.rooms, view);
     state.room_pager.clamp(pages);
-    state.room_pager.update_keys(tick, &gui.ui, &mut gui.fonts, &state.input.keys, room_list(view).pager(), pages);
     if tick.back() {
         return leave_browser(state);
     }
@@ -114,11 +114,11 @@ pub fn show_browser(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State)
         let msg = if watch { ClientMessage::Spectate { id } } else { ClientMessage::JoinRoom { id } };
         state.net.conn.send(&msg);
     } else if create {
-        state.text_input = TextInput::default().max_chars(24);
+        state.text_input.clear();
         state.notice.clear();
         return Transition::To(Screen::CreateRoom);
     } else if join_id {
-        state.text_input = TextInput::default().max_chars(9).only(|c| c.is_ascii_digit());
+        state.text_input.clear();
         state.notice.clear();
         return Transition::To(Screen::JoinById);
     } else if refresh {
@@ -190,26 +190,12 @@ enum Entry {
     Confirmed(String),
 }
 
-/// What a one-field screen does with the keys: typing, Enter to confirm, Escape to go back.
-fn update_entry(tick: &Tick, gui: &mut Gui, state: &mut State) -> Entry {
-    let (w, h) = gui.ui.view().size();
-    state.text_input.edit(&state.input.keys);
-    field_clicked(&gui.ui, &mut gui.fonts, entry_box(w, h), &mut state.text_input);
-    if tick.pressed(KeyCode::Enter) {
-        return Entry::Confirmed(state.text_input.trim().to_string());
-    }
+/// Escape goes back from a one-field screen; the field and its Enter are in [`show_entry`].
+pub fn update_entry(tick: &Tick) -> Transition {
     if tick.back() {
-        return Entry::Back;
+        return Transition::To(Screen::RoomBrowser);
     }
-    Entry::Typing
-}
-
-pub fn update_create_room(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
-    create_room(update_entry(tick, gui, state), state)
-}
-
-pub fn update_join_by_id(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
-    join_by_id(update_entry(tick, gui, state), state)
+    Transition::Stay
 }
 
 fn create_room(entry: Entry, state: &mut State) -> Transition {
@@ -244,13 +230,13 @@ fn join_by_id(entry: Entry, state: &mut State) -> Transition {
 fn show_entry(
     ui: &mut aero::ui::Ui<'_>,
     gui: &mut Gui,
-    state: &State,
-    (title, confirm, placeholder): (&str, &str, &str),
+    state: &mut State,
+    (title, confirm): (&str, &str),
+    field: TextField<'_>,
 ) -> Entry {
     let pal = gui.ui.palette();
     let (w, h) = gui.ui.view().size();
     let card = entry_card(w, h);
-    let field = Field { placeholder, input: &state.text_input, focused: true };
     let (cbtn, back) = entry_buttons(w, h);
 
     let mut canvas = gui.ui.screen_canvas(ui);
@@ -261,8 +247,11 @@ fn show_entry(
         .center(card.x + card.w / 2.0, card.y + 58.0)
         .size(theme::size::TITLE)
         .color(pal.text);
-    text_field(ui.draw, &mut gui.ui, &mut gui.fonts, entry_box(w, h), &field);
-    let confirmed = widgets::button(ui, "confirm", cbtn, confirm, true);
+    if !ui.cx.wants_keyboard() {
+        widgets::focus_field(ui, "entry");
+    }
+    let typed = widgets::text_field(ui, gui, "entry", entry_box(w, h), field, &mut state.text_input);
+    let confirmed = widgets::button(ui, "confirm", cbtn, confirm, true) || typed.submitted;
     let back = widgets::button(ui, "back", back, "Retour", true);
     if let Some((msg, color)) = state.notice.shown(&pal) {
         gui.fonts
@@ -281,12 +270,14 @@ fn show_entry(
 }
 
 pub fn show_create_room(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
-    let entry = show_entry(ui, gui, state, ("Créer une room", "Créer", "Nom de la room..."));
+    let field = widgets::field().placeholder("Nom de la room...").max_chars(24);
+    let entry = show_entry(ui, gui, state, ("Créer une room", "Créer"), field);
     create_room(entry, state)
 }
 
 pub fn show_join_by_id(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
-    let entry = show_entry(ui, gui, state, ("Rejoindre par ID", "Rejoindre", "Numéro de la room..."));
+    let field = widgets::field().placeholder("Numéro de la room...").max_chars(9).accepts(|c| c.is_ascii_digit());
+    let entry = show_entry(ui, gui, state, ("Rejoindre par ID", "Rejoindre"), field);
     join_by_id(entry, state)
 }
 
@@ -593,8 +584,8 @@ fn wheel_scroll(tick: &Tick, ui: &Ui, view: View, list: &PlayerList) -> Option<i
 /// What the lobby does with the keys, the wheel and the server's answers; its clicks are in [`show_lobby`].
 pub fn update_lobby(tick: &Tick, gui: &mut Gui, state: &mut State) {
     let view = gui.ui.view();
-    let Gui { ui, fonts, .. } = gui;
-    let State { room, input: Input { keys, .. }, net: Network { conn, .. }, .. } = state;
+    let ui = &gui.ui;
+    let State { room, net: Network { conn, .. }, .. } = state;
     let Some(room) = room.as_mut() else { return };
     let info = &room.info;
     let editable = info.is_host && info.countdown.is_none();
@@ -605,7 +596,6 @@ pub fn update_lobby(tick: &Tick, gui: &mut Gui, state: &mut State) {
     if room.invite.open {
         let pages = ui::page_count(room.invite.friends.len(), visible_invites(view));
         room.invite.pager.clamp(pages);
-        room.invite.pager.update_keys(tick, ui, fonts, keys, invite_pager_area(view), pages);
         if tick.back() {
             room.invite.open = false;
         }
@@ -634,12 +624,13 @@ pub fn update_lobby(tick: &Tick, gui: &mut Gui, state: &mut State) {
         return;
     }
 
-    let chatting = room.chat.focused;
-    if let Some(text) = room.chat.update_lobby(tick, keys) {
-        conn.send(&ClientMessage::Chat { text });
-    }
-    room.chat.click(ui, fonts, lobby_chat(view));
-    if !chatting && tick.back() {
+    if tick.typing() {
+        if tick.back() {
+            room.chat.release_keyboard();
+        }
+    } else if tick.pressed(KeyCode::Enter) || tick.pressed(KeyCode::NumpadEnter) {
+        room.chat.take_keyboard();
+    } else if tick.back() {
         leave_room(room, conn);
     }
 }
@@ -751,7 +742,9 @@ pub fn show_lobby(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
     let launch = widgets::menu_bar(ui, gui, lobby_launch(view), (label, color), enabled);
     let invite =
         may_invite && widgets::menu_bar(ui, gui, lobby_invite(view), ("Inviter un ami", theme::bar::BLUE), true);
-    room.chat.draw_card(ui.draw, &mut gui.ui, &mut gui.fonts, lobby_chat(view));
+    if let Some(text) = room.chat.show_card(ui, gui, lobby_chat(view)) {
+        conn.send(&ClientMessage::Chat { text });
+    }
     let leave = widgets::menu_bar(ui, gui, lobby_leave(view), ("Quitter la room", theme::bar::RED), true);
 
     if let Some(n) = room.info.countdown {

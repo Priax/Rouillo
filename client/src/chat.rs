@@ -2,13 +2,12 @@ use std::collections::VecDeque;
 
 use aero::draw::Draw;
 use aero::geom::Color;
-use aero::input::KeyCode;
+use aero::ui::Sense;
 use shared::MAX_CHAT_CHARS;
 
 use crate::connection::now_secs;
 use crate::theme;
-use crate::tick::Tick;
-use crate::ui::{field_clicked, text_field, EditKeys, Face, Field, Fonts, Rect, TextInput, Ui};
+use crate::ui::{widgets, Face, Fonts, Gui, Rect, Ui};
 
 const KEPT: usize = 50;
 const LINE_H: f32 = 20.0;
@@ -23,25 +22,17 @@ struct Line {
     at: f64,
 }
 
+#[derive(Default)]
 pub struct Chat {
     lines: VecDeque<Line>,
-    pub input: TextInput,
-    /// In a game, whether the player is typing (the box takes the keys).
+    pub input: String,
+    /// In a game, whether the field is open, with the keyboard.
     pub open: bool,
-    /// Whether the field was touched: only then does a phone show its keyboard.
-    pub focused: bool,
+    /// The field takes the keyboard, or lets go of it, at its next frame.
+    focus: Option<bool>,
 }
 
-impl Default for Chat {
-    fn default() -> Self {
-        Self {
-            lines: VecDeque::new(),
-            input: TextInput::default().max_chars(MAX_CHAT_CHARS),
-            open: false,
-            focused: false,
-        }
-    }
-}
+const FIELD: &str = "chat";
 
 impl Chat {
     pub fn push(&mut self, from: &str, text: &str, spectator: bool) {
@@ -51,49 +42,36 @@ impl Chat {
         self.lines.push_back(Line { text: format!("{from}: {text}"), spectator, at: now_secs() });
     }
 
-    /// The lobby's field, once focused.
-    pub fn typing(&mut self) -> Option<&mut TextInput> {
-        self.focused.then_some(&mut self.input)
+    /// The field takes the keyboard at its next frame.
+    pub const fn take_keyboard(&mut self) {
+        self.focus = Some(true);
     }
 
-    /// Applies editing keys; returns the message to send when Enter was pressed.
-    pub fn edit(&mut self, tick: &Tick, keys: &EditKeys) -> Option<String> {
-        self.input.edit(keys);
-        if !tick.pressed(KeyCode::Enter) && !tick.pressed(KeyCode::NumpadEnter) {
+    /// The field lets go of the keyboard at its next frame.
+    pub const fn release_keyboard(&mut self) {
+        self.focus = Some(false);
+    }
+
+    /// The field; returns the message Enter sends.
+    fn show_field(
+        &mut self,
+        ui: &mut aero::ui::Ui<'_>,
+        gui: &mut Gui,
+        area: Rect,
+        placeholder: &str,
+    ) -> Option<String> {
+        match self.focus.take() {
+            Some(true) => widgets::focus_field(ui, FIELD),
+            Some(false) if ui.is_focused(ui.id(FIELD)) => ui.blur(),
+            _ => {}
+        }
+        let field = widgets::field().placeholder(placeholder).max_chars(MAX_CHAT_CHARS);
+        if !widgets::text_field(ui, gui, FIELD, input_rect(area), field, &mut self.input).submitted {
             return None;
         }
         let text = self.input.trim().to_owned();
         self.input.clear();
-
         (!text.is_empty()).then_some(text)
-    }
-
-    pub fn click(&mut self, ui: &Ui, fonts: &mut Fonts, area: Rect) -> bool {
-        let clicked = field_clicked(ui, fonts, input_rect(area), &mut self.input);
-        let mouse = ui.mouse();
-
-        if clicked {
-            self.focused = true;
-        } else if mouse.pressed && !area.contains(mouse.x, mouse.y) {
-            self.focused = false;
-        }
-
-        clicked || ui.clicked(area)
-    }
-
-    /// The lobby's chat: typing goes to it once its field was clicked, or
-    /// after Enter; Escape lets go of it.
-    pub fn update_lobby(&mut self, tick: &Tick, keys: &EditKeys) -> Option<String> {
-        if !self.focused {
-            self.focused = tick.pressed(KeyCode::Enter) || tick.pressed(KeyCode::NumpadEnter);
-            return None;
-        }
-        if tick.back() {
-            self.focused = false;
-            return None;
-        }
-
-        self.edit(tick, keys)
     }
 
     fn draw_lines(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect, fade: bool) {
@@ -133,35 +111,49 @@ impl Chat {
         }
     }
 
-    /// The lobby's chat: a card with the conversation and its field.
-    pub fn draw_card(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect) {
-        let pal = ui.palette();
-        let field = Field { placeholder: "Écrire un message...", input: &self.input, focused: self.focused };
-
-        crate::ui::card(draw, &pal, area);
-        self.draw_lines(draw, ui, fonts, area, false);
-        text_field(draw, ui, fonts, input_rect(area), &field);
+    /// The lobby's chat: a card with the conversation and its field. Returns the message to send.
+    pub fn show_card(&mut self, ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, area: Rect) -> Option<String> {
+        crate::ui::card(ui.draw, &gui.ui.palette(), area);
+        self.draw_lines(ui.draw, &mut gui.ui, &mut gui.fonts, area, false);
+        self.show_field(ui, gui, area, "Écrire un message...")
     }
 
-    /// The in-game chat: recent messages that fade, and the field once open.
-    pub fn draw_overlay(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect, hint: Option<&str>) {
-        let pal = ui.palette();
-        let field =
-            Field { placeholder: "Entrée pour envoyer, Échap pour fermer", input: &self.input, focused: true };
-
-        if self.open {
-            draw.rect(area).radius(theme::RADIUS).color(Color::BLACK.with_alpha(0.55));
+    /// The in-game chat: recent messages that fade, and the field once open; a click on it opens it. Returns the
+    /// message to send.
+    pub fn show_overlay(
+        &mut self,
+        ui: &mut aero::ui::Ui<'_>,
+        gui: &mut Gui,
+        area: Rect,
+        hint: Option<&str>,
+    ) -> Option<String> {
+        let pal = gui.ui.palette();
+        if !self.open {
+            if ui.is_focused(ui.id(FIELD)) {
+                ui.blur();
+            }
+            self.draw_lines(ui.draw, &mut gui.ui, &mut gui.fonts, area, true);
+            if let Some(hint) = hint {
+                gui.fonts
+                    .write(ui.draw, Face::Text, hint)
+                    .left(area.x + PAD, area.y + area.h - INPUT_H / 2.0 - PAD / 2.0)
+                    .size(theme::size::SMALL)
+                    .color(pal.text_muted);
+                if ui.interact(ui.id("chat area"), area.into(), Sense::CLICK).clicked {
+                    self.open = true;
+                    self.take_keyboard();
+                }
+            }
+            return None;
         }
-        self.draw_lines(draw, ui, fonts, area, !self.open);
-        if self.open {
-            text_field(draw, ui, fonts, input_rect(area), &field);
-        } else if let Some(hint) = hint {
-            fonts
-                .write(draw, Face::Text, hint)
-                .left(area.x + PAD, area.y + area.h - INPUT_H / 2.0 - PAD / 2.0)
-                .size(theme::size::SMALL)
-                .color(pal.text_muted);
+        ui.draw.rect(area).radius(theme::RADIUS).color(Color::BLACK.with_alpha(0.55));
+        self.draw_lines(ui.draw, &mut gui.ui, &mut gui.fonts, area, false);
+        let said = self.show_field(ui, gui, area, "Entrée pour envoyer, Échap pour fermer");
+        if said.is_some() {
+            self.open = false;
+            ui.blur();
         }
+        said
     }
 }
 
@@ -181,14 +173,5 @@ mod tests {
         }
         assert_eq!(chat.lines.len(), KEPT);
         assert_eq!(chat.lines.front().map(|l| l.text.as_str()), Some("a: 5"));
-    }
-
-    #[test]
-    fn typing_stops_at_the_limit() {
-        let mut chat = Chat::default();
-        for _ in 0..MAX_CHAT_CHARS + 10 {
-            chat.input.type_char('x');
-        }
-        assert_eq!(chat.input.chars().count(), MAX_CHAT_CHARS);
     }
 }

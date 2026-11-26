@@ -102,36 +102,6 @@ impl Fonts {
         Cow::Owned(format!("{}…", text[..end].trim_end()))
     }
 
-    /// The end of `text` that fits in `max`.
-    pub fn tail<'a>(&mut self, face: Face, text: &'a str, size: f32, max: f32) -> &'a str {
-        let advances = self.advances(face, text, size);
-        let total = advances.last().map_or(0.0, |&(_, w)| w);
-        let starts = std::iter::once((0, 0.0)).chain(advances.iter().copied());
-        starts
-            .filter(|&(start, _)| start < text.len())
-            .find(|&(_, x)| total - x <= max)
-            .map_or("", |(start, _)| &text[start..])
-    }
-
-    /// The start of `text` that fits in `max`.
-    pub fn head<'a>(&mut self, face: Face, text: &'a str, size: f32, max: f32) -> &'a str {
-        let advances = self.advances(face, text, size);
-        let end = advances.iter().take_while(|&&(_, w)| w <= max).last().map_or(0, |&(end, _)| end);
-        &text[..end]
-    }
-
-    /// The gap between clusters nearest to `x`, as a byte index.
-    pub fn index_at(&mut self, face: Face, text: &str, size: f32, x: f32) -> usize {
-        let mut before = (0, 0.0);
-        for (end, width) in self.advances(face, text, size) {
-            if x < f32::midpoint(before.1, width) {
-                break;
-            }
-            before = (end, width);
-        }
-        before.0
-    }
-
     /// `text` in lines no wider than `max`, broken between words when it can be, keeping its line breaks.
     pub fn wrap<'a>(&mut self, face: Face, text: &'a str, size: f32, max: f32) -> Vec<&'a str> {
         let mut lines = Vec::new();
@@ -229,39 +199,6 @@ mod tests {
         assert!(fitted.ends_with('…') && fitted.len() < worst.len() + 3);
         assert!(width(&fitted, 48.0) <= 400.0, "{} wide", width(&fitted, 48.0));
         assert_eq!(fonts().fit(Face::Text, "Pas du tout la place", 20.0, 1.0), "…");
-    }
-
-    #[test]
-    fn the_tail_is_the_end_that_fits() {
-        assert_eq!(fonts().tail(Face::Text, "Salon", 20.0, 500.0), "Salon");
-        let long = "abcdefghij".repeat(10);
-        let end = fonts().tail(Face::Text, &long, 20.0, 200.0);
-        assert!(long.ends_with(end) && end.len() < long.len() && !end.is_empty());
-        assert!(width(end, 20.0) <= 200.0);
-        assert_eq!(fonts().tail(Face::Text, "Pas la place", 20.0, 1.0), "");
-    }
-
-    #[test]
-    fn the_head_is_the_start_that_fits() {
-        assert_eq!(fonts().head(Face::Text, "Salon", 20.0, 500.0), "Salon");
-        let long = "abcdefghij".repeat(10);
-        let start = fonts().head(Face::Text, &long, 20.0, 200.0);
-        assert!(long.starts_with(start) && start.len() < long.len() && !start.is_empty());
-        assert!(width(start, 20.0) <= 200.0);
-        assert_eq!(fonts().head(Face::Text, "Pas la place", 20.0, 1.0), "");
-    }
-
-    #[test]
-    fn a_point_falls_on_the_nearest_gap_between_characters() {
-        let text = "héWi";
-        let gaps = [0, 1, 3, 4, 5].map(|end| (end, width(&text[..end], 20.0)));
-        for (end, x) in gaps {
-            assert_eq!(fonts().index_at(Face::Text, text, 20.0, x + 0.4), end);
-            assert_eq!(fonts().index_at(Face::Text, text, 20.0, x - 0.4), end);
-        }
-        assert_eq!(fonts().index_at(Face::Text, text, 20.0, -50.0), 0);
-        assert_eq!(fonts().index_at(Face::Text, text, 20.0, 5000.0), text.len());
-        assert_eq!(fonts().index_at(Face::Text, "", 20.0, 10.0), 0);
     }
 
     #[test]

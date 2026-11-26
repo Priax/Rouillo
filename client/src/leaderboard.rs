@@ -91,7 +91,6 @@ pub fn update(tick: &Tick, gui: &mut Gui, state: &mut State, board: &mut Leaderb
     poll(board, me.as_deref());
     let pages = ui::page_count(board.top.len(), list.per_page());
     board.pager.clamp(pages);
-    board.pager.update_keys(tick, &gui.ui, &mut gui.fonts, &state.input.keys, list.pager(), pages);
     if tick.back() {
         return Transition::To(Screen::Menu);
     }

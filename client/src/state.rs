@@ -7,7 +7,7 @@ pub use crate::http::HttpSlot;
 use crate::interp::OpponentView;
 use crate::storage;
 use crate::theme::hue;
-use crate::ui::{Status, TextInput};
+use crate::ui::Status;
 
 pub const MAX_PASSWORD_CHARS: usize = 64;
 
@@ -89,15 +89,16 @@ pub enum AuthMode {
     Register,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AuthField {
     Username,
     Password,
 }
 
 pub struct AuthForm {
-    pub username: TextInput,
-    pub password: TextInput,
+    pub username: String,
+    pub password: String,
+    /// The field last typed in, which keeps the keyboard and the middle of a short window.
     pub focused: AuthField,
     pub mode: AuthMode,
     pub status: Status,
@@ -107,21 +108,12 @@ pub struct AuthForm {
 impl Default for AuthForm {
     fn default() -> Self {
         Self {
-            username: TextInput::default().max_chars(shared::MAX_USERNAME_CHARS),
-            password: TextInput::masked().max_chars(MAX_PASSWORD_CHARS),
+            username: String::new(),
+            password: String::new(),
             focused: AuthField::Username,
             mode: AuthMode::Login,
             status: Status::Empty,
             pending: None,
-        }
-    }
-}
-
-impl AuthForm {
-    pub const fn focused_input(&mut self) -> &mut TextInput {
-        match self.focused {
-            AuthField::Username => &mut self.username,
-            AuthField::Password => &mut self.password,
         }
     }
 }
@@ -187,9 +179,7 @@ pub struct FriendsData {
     pub sent: Vec<FriendEntry>,
     pub received: Vec<FriendEntry>,
     pub list_slot: Option<HttpSlot>,
-    pub search_input: TextInput,
-    /// Off on arrival: a phone would otherwise open its keyboard at once.
-    pub search_focused: bool,
+    pub search_input: String,
     pub search_results: Vec<FriendEntry>,
     pub search_slot: Option<HttpSlot>,
     pub search_status: Status,
@@ -733,7 +723,6 @@ pub struct Startup {
 
 /// All that reaches the game from the player's hands.
 pub struct Input {
-    pub keys: crate::ui::EditKeys,
     pub controls: crate::controls::Controls,
     pub pads: crate::pads::Pads,
     pub touch: crate::touch::TouchPad,
@@ -765,7 +754,7 @@ pub struct State {
     /// The room this player is in: dropped as a whole on leaving it.
     pub room: Option<Room>,
     pub room_pager: crate::ui::Pager,
-    pub text_input: TextInput,
+    pub text_input: String,
     pub notice: Status,
     pub auth: Option<AuthInfo>,
     pub auth_form: AuthForm,
@@ -788,7 +777,7 @@ impl State {
             rooms: Vec::new(),
             room: None,
             room_pager: crate::ui::Pager::default(),
-            text_input: TextInput::default(),
+            text_input: String::new(),
             notice: Status::Empty,
             auth: None,
             auth_form: AuthForm::default(),
@@ -797,7 +786,6 @@ impl State {
             ranked: crate::ranked::RankedView::default(),
             outdated: false,
             input: Input {
-                keys: crate::ui::EditKeys::default(),
                 controls: crate::controls::Controls::load(),
                 pads: crate::pads::Pads::new(),
                 touch: crate::touch::TouchPad::default(),

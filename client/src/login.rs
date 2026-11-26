@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use aero::input::KeyCode;
-
 use crate::connection::now_secs;
 use crate::nav::{Nav, Transition};
-use crate::state::{ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State};
-use crate::tick::Tick;
-use crate::ui::{self, field_clicked, text_field, widgets, Face, Field, Gui, Rect, Status, View, FILL};
+use crate::state::{
+    ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State, MAX_PASSWORD_CHARS,
+};
+use crate::ui::{self, widgets, Face, Gui, Rect, Status, View, FILL};
 use crate::{http, theme};
 
 const STARTUP_RETRY_SECS: f64 = 5.0;
@@ -138,46 +137,19 @@ pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
     }
 }
 
-pub fn update_auth(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
+pub fn update_auth(state: &mut State) -> Transition {
     if poll_auth(state) {
         return Transition::To(Screen::Menu);
     }
-
-    let layout = auth_layout(gui.ui.view(), state.auth_form.focused);
-
-    state.auth_form.focused_input().edit(&state.input.keys);
-    if tick.pressed(KeyCode::Tab) {
-        state.auth_form.focused = match state.auth_form.focused {
-            AuthField::Username => AuthField::Password,
-            AuthField::Password => AuthField::Username,
-        };
-    }
-
-    if field_clicked(&gui.ui, &mut gui.fonts, layout.username, &mut state.auth_form.username) {
-        state.auth_form.focused = AuthField::Username;
-    }
-    if field_clicked(&gui.ui, &mut gui.fonts, layout.password, &mut state.auth_form.password) {
-        state.auth_form.focused = AuthField::Password;
-    }
-
-    if tick.pressed(KeyCode::Enter) {
-        submit(&mut state.auth_form);
-    }
-
     Transition::Stay
 }
 
-/// Draws the form and answers its buttons; the fields still answer in [`update_auth`].
 pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
     let pal = gui.ui.palette();
     let layout = auth_layout(gui.ui.view(), state.auth_form.focused);
     let AuthLayout { cx, base_y, .. } = layout;
     let form = &state.auth_form;
     let modes = [("Connexion", AuthMode::Login), ("Inscription", AuthMode::Register)];
-    let fields = [
-        (layout.username, "Nom d'utilisateur", &form.username, AuthField::Username),
-        (layout.password, "Mot de passe", &form.password, AuthField::Password),
-    ];
     let loading = form.pending.is_some();
     let submit_label = match (loading, form.mode) {
         (true, _) => "Chargement...",
@@ -199,17 +171,26 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Tran
             chosen = Some(mode);
         }
     }
-    for (rect, placeholder, input, which) in fields {
-        let field = Field { placeholder, input, focused: form.focused == which };
-        text_field(ui.draw, &mut gui.ui, &mut gui.fonts, rect, &field);
+    if !ui.cx.wants_keyboard() {
+        widgets::focus_field(ui, form.focused);
     }
-    let submitted = widgets::button(ui, "submit", layout.submit, submit_label, !loading);
+    let form = &mut state.auth_form;
+    let name = widgets::field().placeholder("Nom d'utilisateur").max_chars(shared::MAX_USERNAME_CHARS);
+    let name = widgets::text_field(ui, gui, AuthField::Username, layout.username, name, &mut form.username);
+    let password = widgets::field().placeholder("Mot de passe").max_chars(MAX_PASSWORD_CHARS).masked(true);
+    let password = widgets::text_field(ui, gui, AuthField::Password, layout.password, password, &mut form.password);
+    if name.response.focused {
+        form.focused = AuthField::Username;
+    } else if password.response.focused {
+        form.focused = AuthField::Password;
+    }
+    let submitted =
+        widgets::button(ui, "submit", layout.submit, submit_label, !loading) || name.submitted || password.submitted;
     let guest = widgets::button(ui, "guest", layout.guest, "Jouer en invité", true);
     if let Some((msg, color)) = form.status.shown(&pal) {
         gui.fonts.write(ui.draw, Face::Text, msg).center(cx, base_y + 370.0).size(theme::size::LABEL).color(color);
     }
 
-    let form = &mut state.auth_form;
     if let Some(mode) = chosen {
         form.mode = mode;
         form.status.clear();

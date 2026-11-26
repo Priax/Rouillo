@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use crate::http::{self, HttpSlot};
 use crate::state::ApiMatchEntry;
-use crate::tick::Tick;
-use crate::ui::{page_count, EditKeys, Fonts, Gui, Pager, Rect, TextInput, Ui};
+use crate::ui::{page_count, Gui, Pager, Rect};
 
 pub const PAGE_SIZE: usize = 7;
 
@@ -45,28 +44,12 @@ impl History {
         }
     }
 
-    pub fn typing(&mut self) -> Option<&mut TextInput> {
-        self.pager.typing()
-    }
-
-    /// Fits the page to `rows` and takes the page typed; the pager's buttons are in [`Self::show_pager`].
-    #[allow(clippy::too_many_arguments)]
-    pub fn update(
-        &mut self,
-        tick: &Tick,
-        ui: &Ui,
-        fonts: &mut Fonts,
-        keys: &EditKeys,
-        area: Rect,
-        total: i64,
-        rows: usize,
-    ) {
+    /// Fits a page to `rows`, loading it again when that changes.
+    pub fn fit(&mut self, rows: usize) {
         let rows = rows.clamp(1, PAGE_SIZE);
         if rows != self.per_page {
             self.per_page = rows;
             self.pager = Pager::default();
-            self.fetch();
-        } else if self.pager.update_keys(tick, ui, fonts, keys, area, self.pages(total)) {
             self.fetch();
         }
     }

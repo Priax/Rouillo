@@ -1,11 +1,7 @@
 use std::hash::Hash;
 
-use aero::draw::Draw;
-use aero::input::KeyCode;
-
-use super::{field_clicked, text_field, widgets, EditKeys, Face, Field, Fonts, Gui, Icon, Rect, TextInput, Ui};
+use super::{widgets, Face, Gui, Icon, Rect};
 use crate::theme;
-use crate::tick::Tick;
 
 const PAGE_DIGITS: usize = 4;
 const BTN_W: f32 = 44.0;
@@ -19,8 +15,8 @@ const OF_W: f32 = 60.0;
 /// Page arrows, first and last page, and a field to jump to a page number.
 pub struct Pager {
     page: usize,
-    input: TextInput,
-    focused: bool,
+    /// The page field's text, the page shown unless something else was typed.
+    input: String,
 }
 
 struct Layout {
@@ -51,17 +47,13 @@ impl Layout {
     }
 }
 
-fn page_input(page: usize) -> TextInput {
-    TextInput::from(page.to_string()).max_chars(PAGE_DIGITS).only(|c| c.is_ascii_digit())
-}
-
 pub fn page_count(items: usize, per_page: usize) -> usize {
     items.div_ceil(per_page.max(1)).max(1)
 }
 
 impl Default for Pager {
     fn default() -> Self {
-        Self { page: 0, input: page_input(1), focused: false }
+        Self { page: 0, input: 1.to_string() }
     }
 }
 
@@ -70,22 +62,14 @@ impl Pager {
         self.page
     }
 
-    pub const fn focused(&self) -> bool {
-        self.focused
-    }
-
     /// The items of the current page, numbered from the top of the page.
     pub fn shown<'a, T>(&self, items: &'a [T], per_page: usize) -> impl Iterator<Item = (usize, &'a T)> {
         items.iter().skip(self.page * per_page).take(per_page).enumerate()
     }
 
-    pub fn typing(&mut self) -> Option<&mut TextInput> {
-        self.focused.then_some(&mut self.input)
-    }
-
     fn set(&mut self, page: usize) {
         self.page = page;
-        self.input = page_input(page + 1);
+        self.input = (page + 1).to_string();
     }
 
     /// Keeps the page within `pages`, for a list that shrank.
@@ -107,44 +91,6 @@ impl Pager {
     /// The page each button leads to: first, previous, next, last.
     fn targets(&self, pages: usize) -> [usize; 4] {
         [0, self.page.saturating_sub(1), self.page + 1, pages.max(1) - 1]
-    }
-
-    /// The page field: clicked into or away from, typed in, Enter to go. Returns whether the page changed.
-    pub fn update_keys(
-        &mut self,
-        tick: &Tick,
-        ui: &Ui,
-        fonts: &mut Fonts,
-        keys: &EditKeys,
-        area: Rect,
-        pages: usize,
-    ) -> bool {
-        let l = Layout::new(area);
-        if field_clicked(ui, fonts, l.field, &mut self.input) {
-            self.focused = true;
-        } else if ui.clicked(Rect::at(0.0, 0.0, ui.view().w, ui.view().h)) {
-            self.focused = false;
-        }
-        if !self.focused {
-            return false;
-        }
-        self.input.edit(keys);
-        if !tick.pressed(KeyCode::Enter) {
-            return false;
-        }
-        self.focused = false;
-        let page = self.input.parse::<usize>().unwrap_or(1).max(1) - 1;
-        self.go(page, pages)
-    }
-
-    fn paint_field(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, (l, pages): (&Layout, usize)) {
-        let field = Field { placeholder: "", input: &self.input, focused: self.focused };
-        text_field(draw, ui, fonts, l.field, &field);
-        fonts
-            .write(draw, Face::Text, &format!("/ {pages}"))
-            .left(l.of_x, l.field.y + l.field.h / 2.0)
-            .size(theme::size::LABEL)
-            .color(ui.palette().text_dim);
     }
 
     /// Draws the pager on Aero's interface and moves to the page its buttons ask; `key` names it among the widgets.
@@ -173,7 +119,16 @@ impl Pager {
                 wanted = Some(page);
             }
         }
-        self.paint_field(ui.draw, &mut gui.ui, &mut gui.fonts, (&l, pages));
+        let field = widgets::field().max_chars(PAGE_DIGITS).accepts(|c| c.is_ascii_digit());
+        if widgets::text_field(ui, gui, (key, "page"), l.field, field, &mut self.input).submitted {
+            ui.blur();
+            wanted = Some(self.input.parse::<usize>().unwrap_or(1).max(1) - 1);
+        }
+        gui.fonts
+            .write(ui.draw, Face::Text, &format!("/ {pages}"))
+            .left(l.of_x, l.field.y + l.field.h / 2.0)
+            .size(theme::size::LABEL)
+            .color(gui.ui.palette().text_dim);
         wanted.is_some_and(|page| self.go(page, pages))
     }
 }

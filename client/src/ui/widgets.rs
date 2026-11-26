@@ -4,15 +4,19 @@
 use std::hash::Hash;
 
 use aero::draw::Draw;
+use aero::edit::{EditResponse, TextField};
 use aero::geom::{Color, Rect as Area};
 use aero::image::Image;
+use aero::math::vec2;
+use aero::text::TextStyle;
 use aero::ui::{Response, Role, Sense, Ui};
 use aero::widgets::{control, Button, Link, Tab};
 
 use super::button::paint_icon;
 use super::controls::paint_row;
 use super::stepper::{paint_labelled, paint_switch, paint_value, tile_label};
-use super::{bar, portrait, Gui, Icon, Label, Modal, Persona, Rect, Stepper};
+use super::{bar, portrait, Face, Gui, Icon, Label, Modal, Persona, Rect, Stepper};
+use crate::theme;
 
 fn sounds(response: Response) -> Response {
     if response.entered {
@@ -161,4 +165,57 @@ pub fn modal<R>(
         let closed = button(ui, "modal close", modal.close(), Icon::Close, true);
         (inside(ui, gui), beside || closed)
     })
+}
+
+const FIELD_PADDING: f32 = 12.0;
+const AREA_TEXT: f32 = theme::size::LABEL;
+const AREA_LINE_H: f32 = 26.0;
+
+/// A field's options, to which [`text_field`] adds the game's look.
+pub fn field<'a>() -> TextField<'a> {
+    TextField::new(TextStyle::new())
+}
+
+/// The height of a field of `lines` lines.
+pub const fn area_height(lines: usize) -> f32 {
+    2.0 * FIELD_PADDING + lines as f32 * AREA_LINE_H
+}
+
+/// A field to type in, in the game's frame: `field` holds its options. `key` names it among the widgets.
+pub fn text_field(
+    ui: &mut Ui<'_>,
+    gui: &mut Gui,
+    key: impl Hash + Copy,
+    rect: Rect,
+    field: TextField<'_>,
+    text: &mut String,
+) -> EditResponse {
+    let pal = gui.ui.palette();
+    let border = if ui.is_focused(ui.id(key)) { pal.accent } else { pal.border };
+    ui.draw.rect(rect).radius(theme::RADIUS).color(pal.surface);
+    ui.draw.rect(rect).radius(theme::RADIUS).stroke(border, 2.0);
+
+    let faces = gui.fonts.faces();
+    let (style, padding) = if field.multiline {
+        let style = faces.style(Face::Text, AREA_TEXT);
+        let line = AREA_LINE_H / style.size;
+        (style.line_height(line).max_width(rect.w - 2.0 * FIELD_PADDING), vec2(FIELD_PADDING, FIELD_PADDING))
+    } else {
+        let size = (rect.h * 0.45).clamp(16.0, 24.0);
+        (faces.style(Face::Text, size), vec2(FIELD_PADDING, (rect.h - size) / 2.0))
+    };
+    field
+        .style(style.color(pal.text))
+        .padding(padding)
+        .caret(pal.text)
+        .selection(pal.accent.with_alpha(0.35))
+        .placeholder_color(pal.text_muted)
+        .show(ui, key, rect.into(), text)
+}
+
+/// Gives the field `key` the keyboard, without what was pressed this frame: the Enter that opened it types nothing.
+pub fn focus_field(ui: &mut Ui<'_>, key: impl Hash) {
+    let id = ui.id(key);
+    ui.focus(id);
+    let _ = ui.take_keyboard(id);
 }

@@ -1,20 +1,15 @@
 use std::sync::Arc;
 
-use aero::input::KeyCode;
-
 use crate::http::{self, HttpSlot};
 use crate::picker::{self, Picked};
-use crate::state::{ApiUserProfile, Input, ProfileData, State};
+use crate::state::{ApiUserProfile, ProfileData, State};
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{
-    area_clicked, area_height, area_keys, field_clicked, text_area, text_field, widgets, Face, Field, Gui, Rect,
-    Status, TextInput, FILL,
-};
+use crate::ui::{widgets, Face, Gui, Rect, Status, FILL};
 
 const BIO_LINES: usize = 6;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum EditField {
     #[default]
     Bio,
@@ -46,7 +41,7 @@ impl EditField {
     }
 
     fn rect(self, cx: f32) -> Rect {
-        let bio = Rect::centered_on(cx, 215.0, 600.0, area_height(BIO_LINES));
+        let bio = Rect::centered_on(cx, 215.0, 600.0, widgets::area_height(BIO_LINES));
 
         match self {
             Self::Bio => bio,
@@ -71,8 +66,9 @@ impl Picture {
 }
 
 pub struct EditForm {
-    pub bio: TextInput,
-    pub music: TextInput,
+    pub bio: String,
+    pub music: String,
+    /// The field last typed in, which keeps the keyboard.
     pub focused: EditField,
     pub pending: Option<HttpSlot>,
     pub status: Status,
@@ -89,8 +85,8 @@ impl Default for EditForm {
 impl EditForm {
     pub fn open(info: &ApiUserProfile) -> Self {
         Self {
-            bio: TextInput::from(info.bio.clone().unwrap_or_default()).max_chars(EditField::Bio.max()).multiline(),
-            music: TextInput::from(info.favorite_music.clone().unwrap_or_default()).max_chars(EditField::Music.max()),
+            bio: info.bio.clone().unwrap_or_default(),
+            music: info.favorite_music.clone().unwrap_or_default(),
             focused: EditField::default(),
             pending: None,
             status: Status::default(),
@@ -99,14 +95,7 @@ impl EditForm {
         }
     }
 
-    const fn value(&self, field: EditField) -> &TextInput {
-        match field {
-            EditField::Bio => &self.bio,
-            EditField::Music => &self.music,
-        }
-    }
-
-    const fn value_mut(&mut self, field: EditField) -> &mut TextInput {
+    const fn value_mut(&mut self, field: EditField) -> &mut String {
         match field {
             EditField::Bio => &mut self.bio,
             EditField::Music => &mut self.music,
@@ -114,26 +103,11 @@ impl EditForm {
     }
 
     fn left(&self, field: EditField) -> usize {
-        field.max().saturating_sub(self.value(field).chars().count())
-    }
-
-    pub const fn typing(&mut self) -> &mut TextInput {
-        self.value_mut(self.focused)
-    }
-
-    fn focus_next(&mut self) {
-        self.focused = match self.focused {
-            EditField::Bio => EditField::Music,
-            EditField::Music => EditField::Bio,
+        let text = match field {
+            EditField::Bio => &self.bio,
+            EditField::Music => &self.music,
         };
-    }
-
-    fn enter(&mut self) -> bool {
-        if self.focused != EditField::Bio {
-            return true;
-        }
-        self.bio.type_char('\n');
-        false
+        field.max().saturating_sub(text.chars().count())
     }
 
     fn body(&self) -> String {
@@ -245,31 +219,8 @@ fn save(form: &mut EditForm, token: Option<String>) {
     form.status.clear();
 }
 
-/// The fields and the keys; the buttons are in [`show`].
-pub fn update(tick: &Tick, gui: &mut Gui, state: &mut State, profile: &mut ProfileData) {
-    let cx = gui.ui.view().w / 2.0;
-    let token = state.auth.as_ref().map(|a| a.token.clone());
-    let Gui { ui, fonts, .. } = gui;
-    let State { input: Input { keys, .. }, .. } = state;
-    let Some(form) = profile.edit.as_mut() else { return };
-
-    match form.focused {
-        EditField::Bio => area_keys(fonts, EditField::Bio.rect(cx), &mut form.bio, keys),
-        EditField::Music => form.music.edit(keys),
-    }
-    if tick.pressed(KeyCode::Tab) {
-        form.focus_next();
-    }
-    if area_clicked(ui, fonts, EditField::Bio.rect(cx), &mut form.bio) {
-        form.focused = EditField::Bio;
-    }
-    if field_clicked(ui, fonts, EditField::Music.rect(cx), &mut form.music) {
-        form.focused = EditField::Music;
-    }
-
-    if tick.pressed(KeyCode::Enter) && form.enter() {
-        save(form, token);
-    }
+/// Escape closes the form; the fields and the buttons are in [`show`].
+pub fn update(tick: &Tick, profile: &mut ProfileData) {
     if tick.back() {
         profile.edit = None;
     }
@@ -281,10 +232,13 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
     let (save_btn, cancel_btn) = buttons(cx);
     let info = &profile.core.info;
     let Some(form) = profile.edit.as_mut() else { return };
-    let fonts = &mut gui.fonts;
     let saving = form.pending.is_some();
     let busy = form.uploading.is_some();
 
+    if !ui.cx.wants_keyboard() {
+        widgets::focus_field(ui, form.focused);
+    }
+    let mut submitted = false;
     for which in EditField::ALL {
         let rect = which.rect(cx);
         let label_y = rect.y - 15.0;
@@ -294,22 +248,26 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
             1..=20 => theme::WARNING,
             _ => pal.text_muted,
         };
-        let field =
-            Field { placeholder: which.placeholder(), input: form.value(which), focused: form.focused == which };
-
-        let draw = &mut *ui.draw;
-        fonts.write(draw, Face::Text, which.label()).left(rect.x, label_y).size(theme::size::LABEL).color(pal.text_dim);
+        let fonts = &mut gui.fonts;
         fonts
-            .write(draw, Face::Text, &left.to_string())
+            .write(ui.draw, Face::Text, which.label())
+            .left(rect.x, label_y)
+            .size(theme::size::LABEL)
+            .color(pal.text_dim);
+        fonts
+            .write(ui.draw, Face::Text, &left.to_string())
             .right(rect.x + rect.w, label_y)
             .size(theme::size::SMALL)
             .color(left_color);
-        if which == EditField::Bio {
-            text_area(draw, &mut gui.ui, fonts, rect, &field);
-        } else {
-            text_field(draw, &mut gui.ui, fonts, rect, &field);
+        let field =
+            widgets::field().placeholder(which.placeholder()).max_chars(which.max()).multiline(which == EditField::Bio);
+        let typed = widgets::text_field(ui, gui, which, rect, field, form.value_mut(which));
+        if typed.response.focused {
+            form.focused = which;
         }
+        submitted |= typed.submitted;
     }
+    let fonts = &mut gui.fonts;
 
     let saved = widgets::button(ui, "save", save_btn, if saving { "Sauvegarde..." } else { "Enregistrer" }, !saving);
     let cancelled = widgets::button(ui, "cancel", cancel_btn, "Annuler", true);
@@ -346,7 +304,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
         }
         None => {}
     }
-    if saved {
+    if saved || submitted {
         save(form, token);
     } else if cancelled {
         profile.edit = None;
@@ -357,70 +315,9 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
 mod tests {
     use super::*;
 
-    fn typed(form: &mut EditForm, text: &str) {
-        for c in text.chars() {
-            form.typing().type_char(c);
-        }
-    }
-
-    #[test]
-    fn enter_breaks_the_line_in_the_bio_and_saves_elsewhere() {
-        let mut form = EditForm::default();
-        typed(&mut form, "a");
-        assert!(!form.enter());
-        assert_eq!(&*form.bio, "a\n");
-        form.focus_next();
-        assert!(form.enter());
-        assert_eq!((&*form.bio, &*form.music), ("a\n", ""));
-    }
-
-    #[test]
-    fn enter_always_breaks_the_line_but_not_in_front() {
-        let mut form = EditForm::default();
-        form.enter();
-        typed(&mut form, "  ");
-        assert_eq!(&*form.bio, "", "nothing the save would trim off the front");
-        typed(&mut form, "a");
-        form.enter();
-        form.enter();
-        typed(&mut form, "b");
-        form.bio.set_caret(2);
-        form.enter();
-        assert_eq!(&*form.bio, "a\n\n\nb", "a line opened on a blank one, to write on");
-    }
-
-    #[test]
-    fn a_full_field_takes_nothing_more() {
-        let mut form = EditForm::default();
-        typed(&mut form, &"é".repeat(600));
-        assert_eq!(form.bio.chars().count(), EditField::Bio.max());
-        assert_eq!(form.left(EditField::Bio), 0);
-        assert!(!form.enter());
-        assert_eq!(form.bio.chars().count(), EditField::Bio.max());
-        form.bio.erase();
-        assert_eq!(form.left(EditField::Bio), 1);
-
-        form.focus_next();
-        typed(&mut form, &"m".repeat(600));
-        assert_eq!(form.music.len(), EditField::Music.max());
-    }
-
-    #[test]
-    fn typing_goes_to_the_focused_field_only() {
-        let mut form = EditForm::default();
-        typed(&mut form, "bio");
-        form.focus_next();
-        typed(&mut form, "musique");
-        form.music.erase();
-        form.focus_next();
-        assert_eq!((&*form.bio, &*form.music), ("bio", "musiqu"));
-        assert_eq!(form.focused, EditField::Bio);
-    }
-
     #[test]
     fn an_emptied_field_is_sent_empty_not_left_out() {
-        let mut form =
-            EditForm { bio: "  \n".to_owned().into(), music: " Tsu ".to_owned().into(), ..EditForm::default() };
+        let mut form = EditForm { bio: "  \n".to_owned(), music: " Tsu ".to_owned(), ..EditForm::default() };
         let body: serde_json::Value = serde_json::from_str(&form.body()).expect("json");
         assert_eq!(body["bio"], "");
         assert_eq!(body["favorite_music"], "Tsu");

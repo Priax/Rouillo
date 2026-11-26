@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
-use aero::input::KeyCode;
+use aero::edit::TextField;
 
 use crate::http::{self, HttpSlot};
 use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{
-    field_clicked, text_field, widgets, EditKeys, Face, Field, Fonts, Gui, Label, Rect, Status, TextInput, Ui, FILL,
-};
+use crate::ui::{widgets, Face, Gui, Label, Rect, Status, FILL};
 
 const MIN_PASSWORD: usize = 8;
 const FIELD_W: f32 = 460.0;
@@ -57,9 +55,10 @@ impl Choice {
 #[derive(Default)]
 pub struct AccountForm {
     page: Page,
-    current: TextInput,
-    new: TextInput,
-    confirm: TextInput,
+    current: String,
+    new: String,
+    confirm: String,
+    /// The field last typed in, which keeps the keyboard.
     focused: usize,
     pending: Option<HttpSlot>,
     status: Status,
@@ -81,17 +80,16 @@ impl AccountForm {
     }
 
     fn show(&mut self, page: Page) {
-        *self = Self {
-            page,
-            current: TextInput::masked().max_chars(MAX_PASSWORD_CHARS),
-            new: if page == Page::Username {
-                TextInput::default().max_chars(shared::MAX_USERNAME_CHARS)
-            } else {
-                TextInput::masked().max_chars(MAX_PASSWORD_CHARS)
-            },
-            confirm: TextInput::masked().max_chars(MAX_PASSWORD_CHARS),
-            ..Self::default()
-        };
+        *self = Self { page, ..Self::default() };
+    }
+
+    /// Field `i`'s options: the new username is the only one shown as typed.
+    fn field(&self, i: usize) -> TextField<'static> {
+        let label = self.labels()[i];
+        if self.page == Page::Username && i == 1 {
+            return widgets::field().label(label).max_chars(shared::MAX_USERNAME_CHARS);
+        }
+        widgets::field().label(label).max_chars(MAX_PASSWORD_CHARS).masked(true)
     }
 
     fn labels(&self) -> &'static [&'static str] {
@@ -103,24 +101,12 @@ impl AccountForm {
         }
     }
 
-    fn input(&self, i: usize) -> &TextInput {
-        match i {
-            0 => &self.current,
-            1 => &self.new,
-            _ => &self.confirm,
-        }
-    }
-
-    fn input_mut(&mut self, i: usize) -> &mut TextInput {
+    fn input_mut(&mut self, i: usize) -> &mut String {
         match i {
             0 => &mut self.current,
             1 => &mut self.new,
             _ => &mut self.confirm,
         }
-    }
-
-    pub fn typing(&mut self) -> Option<&mut TextInput> {
-        (self.focused < self.labels().len()).then(|| self.input_mut(self.focused))
     }
 
     fn check(&self) -> Result<(), &'static str> {
@@ -235,40 +221,14 @@ const fn warning(page: Page) -> Option<&'static str> {
     }
 }
 
-/// The answer to come, the fields and the keys; the buttons are in [`show`].
-pub fn update(
-    tick: &Tick,
-    ui: &Ui,
-    fonts: &mut Fonts,
-    keys: &EditKeys,
-    form: &mut AccountForm,
-    token: Option<String>,
-) -> Outcome {
-    let cx = ui.view().w / 2.0;
+/// The answer to come and Escape; the fields and the buttons are in [`show`].
+pub fn update(tick: &Tick, form: &mut AccountForm) -> Outcome {
     let outcome = form.poll();
     if !matches!(outcome, Outcome::Stay) {
         return outcome;
     }
     if form.page == Page::Choose {
         return if tick.back() { Outcome::Close } else { Outcome::Stay };
-    }
-
-    let fields = form.labels().len();
-    if fields > 0 {
-        let i = form.focused;
-        form.input_mut(i).edit(keys);
-        if tick.pressed(KeyCode::Tab) {
-            form.focused = (form.focused + 1) % fields;
-        }
-        for i in 0..fields {
-            if field_clicked(ui, fonts, field_rect(cx, form.page, i), form.input_mut(i)) {
-                form.focused = i;
-            }
-        }
-    }
-
-    if tick.pressed(KeyCode::Enter) {
-        form.submit(token);
     }
     if form.pending.is_none() && tick.back() {
         form.show(Page::Choose);
@@ -286,8 +246,6 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, form: &mut AccountForm, to
     let warning_color = if form.page == Page::Delete { theme::DANGER } else { pal.text_dim };
     let status_y = if choosing { TOP - 40.0 } else { confirm_btn.y + confirm_btn.h + 26.0 };
 
-    let fonts = &mut gui.fonts;
-
     let mut chosen = None;
     let (mut confirmed, mut cancelled) = (false, false);
     if choosing {
@@ -298,24 +256,31 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, form: &mut AccountForm, to
         }
     } else {
         if let Some(text) = warning(form.page) {
+            let fonts = &mut gui.fonts;
             fonts.write(ui.draw, Face::Text, text).center(cx, TOP + 20.0).size(theme::size::LABEL).color(warning_color);
+        }
+        if !ui.cx.wants_keyboard() {
+            widgets::focus_field(ui, ("account field", form.focused));
         }
         for (i, label) in form.labels().iter().enumerate() {
             let rect = field_rect(cx, form.page, i);
-            let field = Field { placeholder: "", input: form.input(i), focused: form.focused == i };
-
-            fonts
+            gui.fonts
                 .write(ui.draw, Face::Text, label)
                 .left(rect.x, rect.y - 15.0)
                 .size(theme::size::LABEL)
                 .color(pal.text_dim);
-            text_field(ui.draw, &mut gui.ui, fonts, rect, &field);
+            let field = form.field(i);
+            let typed = widgets::text_field(ui, gui, ("account field", i), rect, field, form.input_mut(i));
+            if typed.response.focused {
+                form.focused = i;
+            }
+            confirmed |= typed.submitted;
         }
-        confirmed = widgets::button(ui, "confirm", confirm_btn, confirm, !busy);
+        confirmed |= widgets::button(ui, "confirm", confirm_btn, confirm, !busy);
         cancelled = widgets::button(ui, "cancel", cancel_btn, "Annuler", true);
     }
     if let Some((msg, color)) = form.status.shown(&pal) {
-        fonts.write(ui.draw, Face::Text, msg).center(cx, status_y).size(theme::size::LABEL).color(color);
+        gui.fonts.write(ui.draw, Face::Text, msg).center(cx, status_y).size(theme::size::LABEL).color(color);
     }
 
     match chosen {
@@ -339,12 +304,7 @@ mod tests {
     use super::*;
 
     fn typed(form: &mut AccountForm, field: usize, text: &str) {
-        form.focused = field;
-        for c in text.chars() {
-            if let Some(input) = form.typing() {
-                input.type_char(c);
-            }
-        }
+        form.input_mut(field).push_str(text);
     }
 
     #[test]
@@ -360,21 +320,9 @@ mod tests {
         typed(&mut form, 1, "nouveau123");
         typed(&mut form, 2, "nouveau124");
         assert!(form.check().is_err());
-        form.confirm.erase();
+        form.confirm.pop();
         typed(&mut form, 2, "3");
         assert!(form.check().is_ok());
-    }
-
-    #[test]
-    fn typing_only_fills_the_fields_the_page_has() {
-        let mut form = AccountForm::open();
-        form.show(Page::Delete);
-        typed(&mut form, 0, "secret");
-        typed(&mut form, 1, "ailleurs");
-        assert_eq!((&*form.current, &*form.new), ("secret", ""));
-        form.show(Page::LogoutAll);
-        typed(&mut form, 0, "x");
-        assert_eq!(&*form.current, "");
     }
 
     #[test]
@@ -389,25 +337,14 @@ mod tests {
     }
 
     #[test]
-    fn a_new_username_is_checked_and_capped() {
+    fn a_new_username_is_checked() {
         let mut form = AccountForm::open();
         form.show(Page::Username);
         typed(&mut form, 0, "secret123");
         typed(&mut form, 1, "a b");
         assert!(form.check().is_err());
-        form.new.erase();
-        form.new.erase();
+        form.new.clear();
         typed(&mut form, 1, "_Été");
-        assert!(form.check().is_ok(), "{:?}", &*form.new);
-        typed(&mut form, 1, &"x".repeat(40));
-        assert_eq!(form.new.chars().count(), shared::MAX_USERNAME_CHARS);
-    }
-
-    #[test]
-    fn passwords_stop_at_the_limit() {
-        let mut form = AccountForm::open();
-        form.show(Page::Delete);
-        typed(&mut form, 0, &"a".repeat(100));
-        assert_eq!(form.current.len(), MAX_PASSWORD_CHARS);
+        assert!(form.check().is_ok(), "{:?}", form.new);
     }
 }

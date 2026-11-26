@@ -15,8 +15,7 @@ use crate::state::{
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
 use crate::ui::{
-    self, divider, list_row, portrait, widgets, Face, Fonts, Gui, Icon, Pill, Rect, Size, Status, TextInput, View,
-    FILL, PAGER_H,
+    self, divider, list_row, portrait, widgets, Face, Fonts, Gui, Icon, Pill, Rect, Size, Status, View, FILL, PAGER_H,
 };
 use crate::{http, profile_about};
 
@@ -61,18 +60,6 @@ fn poll_core_profile(core: &mut ProfileCore) -> Option<ProfileLoad> {
     }
 }
 
-/// The field the keyboard types into: an open form's, or the match list's
-/// page field.
-pub fn typing(p: &mut ProfileData) -> Option<&mut TextInput> {
-    if let Some(form) = p.edit.as_mut() {
-        Some(form.typing())
-    } else if let Some(form) = p.account.as_mut() {
-        form.typing()
-    } else {
-        p.core.history.typing()
-    }
-}
-
 fn load_core(user_id: String, username: String, elo: i32, token: Option<String>) -> ProfileCore {
     let profile_slot = http::get_user(&user_id, token.clone());
     ProfileCore {
@@ -86,13 +73,9 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
     }
 }
 
-/// The page typed in the match list, and the answer to a favorite; the clicks are in [`show_history_panel`].
-fn update_history(tick: &Tick, gui: &mut Gui, state: &mut State, core: &mut ProfileCore) {
-    let view = gui.ui.view();
-    let Gui { ui, fonts, .. } = gui;
-    let keys = &state.input.keys;
-
-    core.history.update(tick, ui, fonts, keys, pager_area(view), core.info.total_matches, history_rows(view));
+/// The match list's size, and the answer to a favorite; the clicks are in [`show_history_panel`].
+fn update_history(gui: &Gui, core: &mut ProfileCore) {
+    core.history.fit(history_rows(gui.ui.view()));
     match http::take_done(&mut core.favorite_slot) {
         Some(Ok(())) => core.history.fetch(),
         Some(Err(e)) => core.replay_status = Status::error(e),
@@ -462,28 +445,27 @@ pub fn update_profile(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut Pro
     profile_edit::poll(state, p);
 
     if p.edit.is_some() {
-        profile_edit::update(tick, gui, state, p);
+        profile_edit::update(tick, p);
         return Transition::Stay;
     }
     if p.account.is_some() {
-        return update_account(tick, gui, state, p);
+        return update_account(tick, state, p);
     }
     if update_about(tick, &mut p.core) {
         return Transition::Stay;
     }
-    update_history(tick, gui, state, &mut p.core);
+    update_history(gui, &mut p.core);
     if tick.back() {
         return Transition::Pop;
     }
     Transition::Stay
 }
 
-fn update_account(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut ProfileData) -> Transition {
-    let token = state.auth.as_ref().map(|a| a.token.clone());
+fn update_account(tick: &Tick, state: &mut State, p: &mut ProfileData) -> Transition {
     let Some(form) = p.account.as_mut() else {
         return Transition::Stay;
     };
-    let outcome = account::update(tick, &gui.ui, &mut gui.fonts, &state.input.keys, form, token);
+    let outcome = account::update(tick, form);
     account_outcome(state, p, outcome)
 }
 
@@ -614,7 +596,7 @@ fn other_buttons(view: View) -> (Rect, Rect) {
 }
 
 /// What comes back and the keys; the clicks are in [`show_other_profile`].
-pub fn update_other_profile(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut OtherProfileData) -> Transition {
+pub fn update_other_profile(tick: &Tick, gui: &Gui, p: &mut OtherProfileData) -> Transition {
     poll_friendship_check(p);
     match poll_core_profile(&mut p.core) {
         Some(ProfileLoad::HttpError) => {
@@ -632,7 +614,7 @@ pub fn update_other_profile(tick: &Tick, gui: &mut Gui, state: &mut State, p: &m
     if update_about(tick, &mut p.core) {
         return Transition::Stay;
     }
-    update_history(tick, gui, state, &mut p.core);
+    update_history(gui, &mut p.core);
     if tick.back() {
         return Transition::Pop;
     }

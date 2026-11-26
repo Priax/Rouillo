@@ -60,7 +60,7 @@ mod wt;
 
 use nav::{Nav, Root, Transition};
 use pads::{Pad, Pads};
-use state::{Input, Network, Screen, State};
+use state::{Network, Screen, State};
 use tick::Tick;
 use ui::{Rect, Size};
 
@@ -96,7 +96,6 @@ fn setup() -> Root {
     let mut state = State::new();
     #[cfg(target_arch = "wasm32")]
     {
-        web::start_text_input();
         web::start_back_button();
         audio::unlock_on_gesture();
     }
@@ -113,53 +112,13 @@ fn setup() -> Root {
     Root { nav: Nav::new(current), state, gui }
 }
 
-/// Types what the keyboard typed: browsers type through the page's own text input.
-#[cfg(not(target_arch = "wasm32"))]
-fn event_typed(root: &mut Root, event: &Event) {
-    let typed = match event {
-        Event::Key { pressed: true, text: Some(text), .. } => text,
-        Event::Ime { commit: Some(text), .. } => text,
-        _ => return,
-    };
-    for c in typed.chars() {
-        // Enter is read by its key on each screen, Shift held or not.
-        if let Some(c) = root.state.input.keys.key_char(c).filter(|c| !matches!(c, '\n' | '\r')) {
-            type_char(&mut root.state, &mut root.nav, c);
+/// Gives the bindings panel the character a key typed, to name the key it waits for.
+fn bind_typed(root: &mut Root, event: &Event) {
+    let Event::Key { pressed: true, text: Some(text), .. } = event else { return };
+    if matches!(root.nav.current(), Screen::Settings) {
+        for c in text.chars() {
+            root.state.bindings_panel.type_char(c);
         }
-    }
-}
-
-fn type_char(state: &mut State, nav: &mut Nav, c: char) {
-    if matches!(nav.current(), Screen::Settings) {
-        state.bindings_panel.type_char(c);
-    } else if let Some(input) = typing(state, nav) {
-        input.type_char(c);
-    }
-}
-
-/// The field the keyboard types into on this screen, if any. Each field
-/// carries its own limits.
-fn typing<'a>(state: &'a mut State, nav: &'a mut Nav) -> Option<&'a mut ui::TextInput> {
-    match nav.current_mut() {
-        Screen::Auth => Some(state.auth_form.focused_input()),
-        Screen::CreateRoom | Screen::JoinById => Some(&mut state.text_input),
-        Screen::RoomBrowser => state.room_pager.typing(),
-        Screen::RoomLobby => {
-            let room = state.room.as_mut()?;
-            if room.invite.open {
-                room.invite.pager.typing()
-            } else {
-                room.chat.typing()
-            }
-        }
-        Screen::Game => {
-            let chat = &mut state.room.as_mut()?.chat;
-            chat.open.then_some(&mut chat.input)
-        }
-        Screen::Friends(f) => friends::typing(f),
-        Screen::Profile(p) => profile::typing(p),
-        Screen::OtherProfile(p) => p.core.history.typing(),
-        _ => None,
     }
 }
 
@@ -181,15 +140,12 @@ fn can_chat(state: &State) -> bool {
     })
 }
 
-/// Runs the in-game chat and returns the game's input for this frame, without
-/// the keys the chat took.
-fn game_chat(tick: &Tick, gui: &mut Gui, state: &mut State) -> controls::Frame {
+/// Opens and closes the in-game chat and returns the game's input for this frame, without the keys the chat took;
+/// the field is in [`chat::Chat::show_overlay`].
+fn game_chat(tick: &Tick, state: &mut State) -> controls::Frame {
     let mut input = state.input.controls.frame;
     let allowed = can_chat(state);
-    let area = game_chat_area(gui.ui.view(), state.input.touch.active);
-    let Gui { ui, fonts, .. } = gui;
-    let State { room, input: Input { keys, .. }, net: Network { conn, .. }, .. } = state;
-    let Some(chat) = room.as_mut().map(|r| &mut r.chat) else {
+    let Some(chat) = state.room.as_mut().map(|r| &mut r.chat) else {
         return input;
     };
     if !allowed {
@@ -201,12 +157,10 @@ fn game_chat(tick: &Tick, gui: &mut Gui, state: &mut State) -> controls::Frame {
         input.restart = false;
         if tick.back() {
             chat.open = false;
-        } else if let Some(text) = chat.edit(tick, keys) {
-            conn.send(&ClientMessage::Chat { text });
-            chat.open = false;
         }
-    } else if tick.pressed(KeyCode::Enter) || chat.click(ui, fonts, area) {
+    } else if tick.pressed(KeyCode::Enter) {
         chat.open = true;
+        chat.take_keyboard();
     }
     input
 }
@@ -301,13 +255,13 @@ fn pace_frame() {
     });
 }
 
-fn update_online_game(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
+fn update_online_game(tick: &Tick, state: &mut State) -> Transition {
     let online = state.room.as_ref().map_or_else(logic::Online::default, |r| logic::Online {
         is_host: r.info.is_host,
         ranked: r.info.ranked.is_some(),
         ended: r.series_over.is_some(),
     });
-    let input = game_chat(tick, gui, state);
+    let input = game_chat(tick, state);
     let clicks = state.input.clicks;
     let State { room, settings, net: Network { conn, .. }, .. } = &mut *state;
     let left = room
@@ -353,13 +307,7 @@ fn update(cx: &mut Cx, root: &mut Root) {
     web::set_at_root(matches!(nav.current(), Screen::Title | Screen::Auth | Screen::Menu));
     #[cfg(target_arch = "wasm32")]
     let back = web::take_back() || back;
-    let tick = &Tick::new(&cx.input, dt, back);
-    state.input.keys.update(tick.input, dt);
-    if state.input.keys.paste {
-        for c in ui::clipboard_text().unwrap_or_default().chars() {
-            type_char(state, nav, c);
-        }
-    }
+    let tick = &Tick::new(&cx.input, dt, (back, cx.wants_text(aero::WindowId::MAIN)));
     #[cfg(not(target_arch = "wasm32"))]
     match updater::status() {
         updater::Status::Available(_) => state.outdated = true,
@@ -370,12 +318,6 @@ fn update(cx: &mut Cx, root: &mut Root) {
     let in_game = matches!(nav.current(), Screen::Game | Screen::Solo(_));
     let (touch_held, touch_pause) = state.input.touch.read(tick.input, view, in_game);
     state.input.controls.update(tick, &state.input.pads, touch_held, touch_pause);
-    #[cfg(target_arch = "wasm32")]
-    web::want_text(typing(state, nav).is_some());
-    #[cfg(target_arch = "wasm32")]
-    for c in web::take_typed().chars() {
-        type_char(state, nav, c);
-    }
 
     let was_title = matches!(nav.current(), Screen::Title);
     let (rtt, via) = (state.net.conn.rtt_ms(), state.net.conn.via());
@@ -395,27 +337,26 @@ fn update(cx: &mut Cx, root: &mut Root) {
 
     let transition = match nav.current_mut() {
         Screen::Title => title::update_title(tick, state),
-        Screen::Auth => login::update_auth(tick, gui, state),
+        Screen::Auth => login::update_auth(state),
         Screen::Menu => menu::update_menu(tick, state, false),
         Screen::PlayMenu => menu::update_menu(tick, state, true),
         Screen::Settings => menu::update_settings(tick, state),
         Screen::RoomBrowser => rooms::update_browser(tick, gui, state),
-        Screen::CreateRoom => rooms::update_create_room(tick, gui, state),
-        Screen::JoinById => rooms::update_join_by_id(tick, gui, state),
+        Screen::CreateRoom | Screen::JoinById => rooms::update_entry(tick),
         Screen::RoomLobby => {
             rooms::update_lobby(tick, gui, state);
             Transition::Stay
         }
         Screen::Profile(p) => profile::update_profile(tick, gui, state, p),
         Screen::Friends(f) => friends::update_friends(tick, gui, state, f),
-        Screen::OtherProfile(p) => profile::update_other_profile(tick, gui, state, p),
+        Screen::OtherProfile(p) => profile::update_other_profile(tick, gui, p),
         Screen::SoloSetup => solo::update_setup(tick, state),
         Screen::Ranked => ranked::update(tick, state),
         Screen::Leaderboard(board) => leaderboard::update(tick, gui, state, board),
         Screen::Help(view) => help::update(tick, view),
         Screen::Solo(game) => solo::update_game(tick, state, game),
         Screen::Replay(viewer) => replay::update(tick, viewer),
-        Screen::Game => update_online_game(tick, gui, state),
+        Screen::Game => update_online_game(tick, state),
     };
 
     nav.apply(transition);
@@ -496,10 +437,12 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
 
     let screen = nav.current();
     if matches!(screen, Screen::Game | Screen::Solo(_)) {
-        if let Some(room) = state.room.as_ref().filter(|_| matches!(screen, Screen::Game)) {
-            let hint = can_chat(state).then_some("Entrée pour écrire");
-            let area = game_chat_area(gui.ui.view(), state.input.touch.active);
-            room.chat.draw_overlay(ui.draw, &mut gui.ui, &mut gui.fonts, area, hint);
+        let hint = can_chat(state).then_some("Entrée pour écrire");
+        let area = game_chat_area(gui.ui.view(), state.input.touch.active);
+        if let Some(room) = state.room.as_mut().filter(|_| matches!(screen, Screen::Game)) {
+            if let Some(text) = room.chat.show_overlay(ui, gui, area, hint) {
+                state.net.conn.send(&ClientMessage::Chat { text });
+            }
         }
         if matches!(screen, Screen::Game) {
             replay::show_keep(ui, gui, state);
@@ -604,8 +547,7 @@ impl aero::App for Rouillo {
             Event::PointerMoved { .. } => cx.request_redraw(),
             _ => {}
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        event_typed(&mut self.0, event);
+        bind_typed(&mut self.0, event);
     }
 
     fn update(&mut self, cx: &mut Cx) {

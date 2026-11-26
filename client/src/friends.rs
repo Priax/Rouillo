@@ -3,15 +3,14 @@ use std::sync::Arc;
 
 use aero::draw::Draw;
 use aero::image::Image;
-use aero::input::KeyCode;
 
 use crate::images::Images;
 use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
-    self, divider, field_clicked, list_row, page_count, text_field, widgets, Face, Field, Fonts, Frame, Gui, Label,
-    Pager, Pill, Rect, Size, Status, TextInput, Ui, View,
+    self, divider, list_row, page_count, widgets, Face, Fonts, Frame, Gui, Label, Pager, Pill, Rect, Size, Status, Ui,
+    View,
 };
 use crate::{http, theme};
 
@@ -169,14 +168,6 @@ fn refresh_btn(view: View) -> Rect {
     Rect::at(back.x + back.w + 14.0, back.y, 160.0, back.h)
 }
 
-/// The focused page field, or else the search field when it has the focus.
-pub fn typing(f: &mut FriendsData) -> Option<&mut TextInput> {
-    if let Some(pager) = f.pages.iter_mut().find(|p| p.focused()) {
-        return pager.typing();
-    }
-    f.search_focused.then_some(&mut f.search_input)
-}
-
 pub fn enter_friends(state: &State) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let slot = http::new_slot();
@@ -187,8 +178,7 @@ pub fn enter_friends(state: &State) -> Transition {
         sent: Vec::new(),
         received: Vec::new(),
         list_slot: Some(slot),
-        search_focused: false,
-        search_input: TextInput::default().max_chars(36).only(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | ' ')),
+        search_input: String::new(),
         search_results: Vec::new(),
         search_slot: None,
         search_status: Status::Empty,
@@ -325,26 +315,9 @@ pub fn update_friends(tick: &Tick, gui: &mut Gui, state: &mut State, f: &mut Fri
     poll_action(state, f);
 
     let view = gui.ui.view();
-    let paging = f.pages.iter().any(Pager::focused);
-
-    if field_clicked(&gui.ui, &mut gui.fonts, search_box(view), &mut f.search_input) {
-        f.search_focused = true;
-    } else if gui.ui.clicked(Rect::at(0.0, 0.0, view.w, view.h)) {
-        f.search_focused = false;
-    }
-    let searching = f.search_focused && !paging;
-    if searching {
-        f.search_input.edit(&state.input.keys);
-    }
-
     for col in 0..3 {
         let pages = page_count(lists(f)[col].len(), rows_for(view));
         f.pages[col].clamp(pages);
-        f.pages[col].update_keys(tick, &gui.ui, &mut gui.fonts, &state.input.keys, pager_area(view, col), pages);
-    }
-
-    if searching && tick.pressed(KeyCode::Enter) {
-        return search(state, f);
     }
     if tick.back() {
         return Transition::To(Screen::Menu);
@@ -456,14 +429,13 @@ pub fn show_friends(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State,
 fn show_search(
     ui: &mut aero::ui::Ui<'_>,
     gui: &mut Gui,
-    f: &FriendsData,
+    f: &mut FriendsData,
     (view, pics): (View, &Pictures),
     clicks: &mut Clicks,
 ) -> bool {
     let pal = gui.ui.palette();
     let field = search_box(view);
     let searching = f.search_slot.is_some();
-    let search = Field { placeholder: "Pseudo ou UUID", input: &f.search_input, focused: f.search_focused };
     let submit = Label::busy_or(searching, "Rechercher");
     let fonts = &mut gui.fonts;
 
@@ -472,8 +444,13 @@ fn show_search(
         .left(field.x, field.y - 14.0)
         .size(theme::size::SMALL)
         .color(pal.text_dim);
-    text_field(ui.draw, &mut gui.ui, fonts, field, &search);
-    let searched = widgets::button(ui, "search", search_submit_btn(view), submit, !searching);
+    let search = widgets::field()
+        .placeholder("Pseudo ou UUID")
+        .max_chars(36)
+        .accepts(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | ' '));
+    let typed = widgets::text_field(ui, gui, "search", field, search, &mut f.search_input);
+    let searched = widgets::button(ui, "search button", search_submit_btn(view), submit, !searching) || typed.submitted;
+    let fonts = &mut gui.fonts;
 
     let status = f.search_status.shown(&pal);
     if f.search_results.is_empty() && status.is_none() {
