@@ -737,6 +737,8 @@ pub struct Input {
     pub controls: crate::controls::Controls,
     pub pads: crate::pads::Pads,
     pub touch: crate::touch::TouchPad,
+    /// What a game's last frame was clicked for, which its next update takes.
+    pub clicks: crate::draw::GameClicks,
 }
 
 /// The link to the server, and what waits for it to open.
@@ -799,6 +801,7 @@ impl State {
                 controls: crate::controls::Controls::load(),
                 pads: crate::pads::Pads::new(),
                 touch: crate::touch::TouchPad::default(),
+                clicks: crate::draw::GameClicks::default(),
             },
             net: Network {
                 conn: Connection::new(&player_id),

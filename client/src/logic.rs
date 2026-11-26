@@ -2,9 +2,9 @@ use shared::{config, ClientMessage, GameState, InputKind, SentInput, StampedInpu
 
 use crate::connection::Connection;
 use crate::controls::{Action, Frame};
+use crate::draw::GameClicks;
 use crate::state::{GameSession, PendingInput, Settings};
 use crate::tick::Tick;
-use crate::ui::Ui;
 
 #[derive(Clone, Copy, Default)]
 pub struct Online {
@@ -15,8 +15,7 @@ pub struct Online {
 
 pub fn update_game(
     tick: &Tick,
-    input: &Frame,
-    ui: &Ui,
+    (input, clicks): (&Frame, GameClicks),
     session: &mut GameSession,
     settings: Settings,
     conn: &mut Connection,
@@ -33,19 +32,18 @@ pub fn update_game(
 
     if menu || session.eliminated() {
         let with_back = menu && is_host && !online.ranked;
-        let (leave_row, back_row) = crate::draw::exit_rows(ui.view(), with_back);
-        if ui.bar_clicked(leave_row) {
+        if clicks.leave {
             conn.send(&ClientMessage::LeaveRoom);
             return true;
         }
-        if with_back && ui.bar_clicked(back_row) {
+        if with_back && clicks.back {
             conn.send(&ClientMessage::ReturnToLobby);
             return false;
         }
     }
 
     let dt = tick.dt;
-    let click = crate::draw::game_click(ui, session);
+    let click = clicks.click;
     if session.spectating() {
         if let Some(crate::draw::GameClick::Board(slot)) = click {
             session.follow(slot);

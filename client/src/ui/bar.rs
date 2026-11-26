@@ -3,7 +3,7 @@ use aero::geom::{Color, Gradient};
 use aero::math::Vec2;
 use aero::theme::Visual;
 
-use super::{Area, Face, Fonts, Rect, Triangles, Ui};
+use super::{Face, Fonts, Rect, Triangles};
 use crate::theme::Palette;
 
 const WIDTH: f32 = 0.56;
@@ -12,29 +12,6 @@ const SLANT: f32 = 0.28;
 const GLOW_WIDTH: f32 = 90.0;
 const BAND: Color = Color::srgba(0.0, 0.0, 0.0, 0.28);
 const TEXT_HEIGHT: f32 = 0.42;
-
-impl Ui {
-    pub fn menu_bar(&mut self, draw: &mut Draw, fonts: &mut Fonts, row: Rect, label: &str, color: Color) {
-        self.menu_bar_enabled(draw, fonts, row, label, color, true);
-    }
-
-    pub fn menu_bar_enabled(
-        &mut self,
-        draw: &mut Draw,
-        fonts: &mut Fonts,
-        row: Rect,
-        label: &str,
-        color: Color,
-        enabled: bool,
-    ) {
-        let r = self.interact_in(label, row, Area::Bar, enabled);
-        if r.entered {
-            crate::audio::play_ui_hover();
-        }
-        let time = self.time();
-        paint(draw, fonts, (&self.palette(), time), row, (label, color), r.visual(enabled));
-    }
-}
 
 /// A slanted bar across `row`, wider when hovered, with triangles rising through it.
 pub(super) fn paint(
@@ -98,14 +75,6 @@ impl Slanted {
         Self { left: cx - half, right: cx + half, top: row.y, bottom: row.y + row.h, slant: row.h * SLANT }
     }
 
-    fn contains(self, x: f32, y: f32) -> bool {
-        if y < self.top || y >= self.bottom {
-            return false;
-        }
-        let lean = self.slant * (1.0 - 2.0 * (y - self.top) / (self.bottom - self.top));
-        x >= self.left + lean && x < self.right + lean
-    }
-
     fn corners(self) -> [(f32, f32); 4] {
         let Self { left, right, top, bottom, slant } = self;
         [(left + slant, top), (right + slant, top), (right - slant, bottom), (left - slant, bottom)]
@@ -115,10 +84,6 @@ impl Slanted {
         let [a, b, c, d] = self.corners();
         draw.polygon(&[a, b, c, d].map(Vec2::from)).color(color);
     }
-}
-
-pub(super) fn contains(row: Rect, x: f32, y: f32) -> bool {
-    Slanted::of(row, 0.0).contains(x, y)
 }
 
 fn glow(draw: &mut Draw, bar: Slanted, color: Color) {

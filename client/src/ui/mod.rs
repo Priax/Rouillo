@@ -150,7 +150,6 @@ impl Default for Ui {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Area {
     Whole,
-    Bar,
     /// A whole rect the gamepad skips: it has its own button.
     Pointer,
 }
@@ -171,7 +170,6 @@ impl Widget {
     fn contains(&self, x: f32, y: f32) -> bool {
         match self.area {
             Area::Whole | Area::Pointer => self.rect.contains(x, y),
-            Area::Bar => bar::contains(self.rect, x, y),
         }
     }
 }
@@ -326,11 +324,6 @@ impl Ui {
     pub fn pressed(&self, label: &str) -> bool {
         let (m, label) = (self.mouse, hash_of(label));
         m.pressed && self.widgets.iter().any(|(&(l, _), w)| l == label && w.live && w.contains(m.x, m.y))
-    }
-
-    pub fn bar_clicked(&self, row: Rect) -> bool {
-        let m = self.mouse;
-        m.pressed && bar::contains(row, m.x, m.y)
     }
 
     /// Whether the caret of the focused field, standing at `at` in `text`,
@@ -692,59 +685,6 @@ mod tests {
         frame(&mut ui, CLICK_A, &[("Jouer", A)]);
         let later = (0..60).map(|_| frame(&mut ui, ON_A, &[("Jouer", A)])[0]).last();
         assert!(later.is_some_and(|r| r.flash < 0.01));
-    }
-
-    const ROW: Rect = Rect::at(0.0, 0.0, 1000.0, 60.0);
-
-    fn at(x: f32, y: f32) -> Mouse {
-        Mouse { x, y, down: false, pressed: false }
-    }
-
-    fn bar_frame(ui: &mut Ui, mouse: Mouse) -> Response {
-        ui.begin_frame(1.0 / 60.0, View::default(), mouse);
-        ui.interact_in("Solo", ROW, Area::Bar, true)
-    }
-
-    #[test]
-    fn a_menu_row_reacts_on_its_bar_only() {
-        let mut ui = Ui::default();
-        for _ in 0..30 {
-            bar_frame(&mut ui, at(100.0, 30.0));
-        }
-        let band = bar_frame(&mut ui, at(100.0, 30.0));
-        assert!(band.hover.abs() < f32::EPSILON, "the band beside the bar is not the button");
-        let click = Mouse { pressed: true, ..at(100.0, 30.0) };
-        assert!(!ui.begin_frame(1.0 / 60.0, View::default(), click));
-        assert!(!ui.bar_clicked(ROW));
-
-        assert!(bar_frame(&mut ui, at(500.0, 30.0)).hover > 0.0);
-        let click = Mouse { pressed: true, ..at(500.0, 30.0) };
-        assert!(ui.begin_frame(1.0 / 60.0, View::default(), click));
-        assert!(ui.bar_clicked(ROW));
-    }
-
-    #[test]
-    fn a_menu_bar_follows_its_slant() {
-        let mut ui = Ui::default();
-        bar_frame(&mut ui, at(225.0, 1.0));
-        assert!(bar_frame(&mut ui, at(225.0, 1.0)).hover.abs() < f32::EPSILON);
-        assert!(bar_frame(&mut ui, at(225.0, 59.0)).hover > 0.0);
-    }
-
-    #[test]
-    fn a_widened_menu_bar_reacts_where_it_did_at_rest() {
-        let mut ui = Ui::default();
-        let margin = at(800.0, 30.0);
-        for _ in 0..60 {
-            bar_frame(&mut ui, at(500.0, 30.0));
-        }
-        assert!(bar_frame(&mut ui, at(500.0, 30.0)).hover > 0.9);
-        for _ in 0..60 {
-            bar_frame(&mut ui, margin);
-        }
-        assert!(bar_frame(&mut ui, margin).hover < 0.01);
-        ui.begin_frame(1.0 / 60.0, View::default(), Mouse { pressed: true, ..margin });
-        assert!(!ui.bar_clicked(ROW));
     }
 
     #[test]

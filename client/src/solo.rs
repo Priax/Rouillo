@@ -333,15 +333,15 @@ pub fn poll_best(solo: &mut Solo, signed_in: bool) {
     }
 }
 
-pub fn update_game(tick: &Tick, gui: &mut Gui, state: &mut State, game: &mut SoloGame) -> Transition {
+pub fn update_game(tick: &Tick, state: &mut State, game: &mut SoloGame) -> Transition {
     let signed_in = state.auth.is_some();
     let mut record = None;
-    let Gui { ui, .. } = gui;
-    let State { solo, settings, input: Input { controls, .. }, .. } = state;
+    let State { solo, settings, input: Input { controls, clicks, .. }, .. } = state;
     let input = controls.frame;
+    let clicks = *clicks;
     let best = &mut solo.best;
 
-    if game.knocked_out() && (input.pause || ui.bar_clicked(crate::draw::out_row(ui.view()))) {
+    if game.knocked_out() && (input.pause || clicks.leave) {
         return Transition::To(Screen::SoloSetup);
     }
     if !game.over() && input.pause {
@@ -351,11 +351,10 @@ pub fn update_game(tick: &Tick, gui: &mut Gui, state: &mut State, game: &mut Sol
     let dt = tick.dt;
 
     if over || paused {
-        let (quit, again) = crate::draw::exit_rows(ui.view(), true);
-        if ui.bar_clicked(quit) {
+        if clicks.leave {
             return Transition::To(Screen::SoloSetup);
         }
-        if ui.bar_clicked(again) || (over && input.restart) {
+        if clicks.back || (over && input.restart) {
             *game = SoloGame::new(game.settings.clone());
             return Transition::Stay;
         }
@@ -365,8 +364,7 @@ pub fn update_game(tick: &Tick, gui: &mut Gui, state: &mut State, game: &mut Sol
         logic::hold(&mut game.session);
     } else {
         if game.pilot.is_none() && !game.knocked_out() {
-            let click = crate::draw::game_click(ui, &game.session);
-            logic::choose_target(&input, click, &mut game.session);
+            logic::choose_target(&input, clicks.click, &mut game.session);
             logic::read_controls(&input, &mut game.session, *settings, None, dt);
         }
         game.step(dt);

@@ -2,13 +2,14 @@ use aero::draw::Draw;
 use aero::geom::Color;
 use aero::math::{vec2, Affine2, Vec2};
 use aero::path::Cap;
+use aero::ui::Sense;
 use shared::{Board, GameState, Phase, PuyoType, Rules, Targeting};
 
 use crate::config;
 use crate::sprites::{self, Joint, Layer, Mood, Nuisance, Puyo};
 use crate::state::GameSession;
 use crate::theme::{self, game, Palette};
-use crate::ui::{Face, Fonts, Rect, Ui, View};
+use crate::ui::{widgets, Face, Fonts, Gui, Rect, Ui, View};
 
 pub const FRAME_PAD: f32 = 10.0;
 pub const BOARD_W: f32 = config::GRID_WIDTH as f32 * config::CELL_SIZE;
@@ -194,20 +195,34 @@ pub enum GameClick {
     Board(u8),
 }
 
-pub fn game_click(ui: &Ui, session: &GameSession) -> Option<GameClick> {
+/// What the game screen was clicked for, kept for the update that follows its drawing.
+#[derive(Clone, Copy, Default)]
+pub struct GameClicks {
+    pub leave: bool,
+    pub back: bool,
+    pub click: Option<GameClick>,
+}
+
+/// The strategies and the rivals' boards, which a click picks.
+fn game_click(ui: &mut aero::ui::Ui<'_>, layout: &GameLayout, session: &GameSession) -> Option<GameClick> {
     if session.rivals.len() < 2 {
         return None;
     }
-
-    let layout = GameLayout::new(ui.view(), session);
+    let mut click = None;
     if !session.spectating() {
-        if let Some(i) = layout.strategy_rows().into_iter().position(|r| ui.clicked(r)) {
-            return Some(GameClick::Strategy(i));
+        for (i, row) in layout.strategy_rows().into_iter().enumerate() {
+            if ui.interact(ui.id(("strategy", i)), row.into(), Sense::CLICK).clicked {
+                click = Some(GameClick::Strategy(i));
+            }
         }
     }
-
-    let i = (0..session.rivals.len()).find(|&i| layout.thumb_frame(i).is_some_and(|r| ui.clicked(r)))?;
-    Some(GameClick::Board(session.rivals[i].player.slot))
+    for (i, rival) in session.rivals.iter().enumerate() {
+        let Some(frame) = layout.thumb_frame(i) else { continue };
+        if ui.interact(ui.id(("board", rival.player.slot)), frame.into(), Sense::CLICK).clicked {
+            click = Some(GameClick::Board(rival.player.slot));
+        }
+    }
+    click
 }
 
 #[derive(Clone, Copy)]
@@ -315,17 +330,20 @@ fn winner(session: &GameSession, team: u8) -> String {
     format!("{} WINS", session.name_of(slot))
 }
 
-pub fn draw_game(draw: &mut Draw, session: &GameSession, ui: &mut Ui, fonts: &mut Fonts, hud: Hud) {
-    ui.keep_moving();
-    let layout = GameLayout::new(ui.view(), session);
-    let pal = ui.palette();
-    let time = ui.time() as f32;
+/// Draws a game, and returns what was clicked for the update to come.
+pub fn draw_game(ui: &mut aero::ui::Ui<'_>, session: &GameSession, gui: &mut Gui, hud: Hud) -> GameClicks {
+    gui.ui.keep_moving();
+    let layout = GameLayout::new(gui.ui.view(), session);
+    let pal = gui.ui.palette();
+    let time = gui.ui.time() as f32;
+    let fonts = &mut gui.fonts;
+    let draw = &mut *ui.draw;
 
     draw.background(game::BACKGROUND);
     draw_backdrop(draw, layout.win_w, layout.win_h, time);
 
     if !layout.thumbs.is_empty() {
-        draw_arena(draw, &pal, fonts, ui, session, &layout, time);
+        draw_arena(draw, &pal, fonts, &gui.ui, session, &layout, time);
     }
     draw_boards(draw, &pal, fonts, session, &layout, hud, time);
     draw_sidebar(draw, &pal, fonts, session, &layout, hud, time);
@@ -340,21 +358,23 @@ pub fn draw_game(draw: &mut Draw, session: &GameSession, ui: &mut Ui, fonts: &mu
         shadowed(draw, fonts, "ALL CLEAR!", (cx, cy), theme::size::TITLE, game::ALL_CLEAR.with_alpha(alpha));
     }
 
+    let mut clicks = GameClicks { click: game_click(ui, &layout, session), ..GameClicks::default() };
     match Overlay::of(session, hud) {
-        Some(Overlay::Out) => draw_out(draw, ui, fonts, layout.mine, hud),
+        Some(Overlay::Out) => clicks.leave = draw_out(ui, gui, layout.mine, hud),
         Some(overlay) => {
             let game_over = matches!(overlay, Overlay::GameOver { .. } | Overlay::Watched(_));
             let leaving_forfeits = !game_over && !session.opponent_disconnected;
-            draw_overlay(draw, &pal, fonts, &overlay, &layout, hud, time);
-            draw_exit_buttons(draw, ui, fonts, hud, leaving_forfeits);
+            draw_overlay(ui.draw, &pal, &mut gui.fonts, &overlay, &layout, hud, time);
+            (clicks.leave, clicks.back) = draw_exit_buttons(ui, gui, hud, leaving_forfeits);
         }
         None => {}
     }
 
     #[cfg(debug_assertions)]
     if matches!(hud, Hud::Online(_)) {
-        draw_debug(draw, fonts, session, layout.win_h);
+        draw_debug(ui.draw, &mut gui.fonts, session, layout.win_h);
     }
+    clicks
 }
 
 fn draw_watchers(draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, hud: Hud, win_w: f32) {
@@ -535,7 +555,8 @@ fn draw_arena(
 }
 
 /// One's board once out: the others play on, one may leave.
-fn draw_out(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, mine: Rect, hud: Hud) {
+/// Returns whether its way out was clicked.
+fn draw_out(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, mine: Rect, hud: Hud) -> bool {
     let frame = framed(mine);
     let (cx, cy) = mine.center();
     let label = match hud {
@@ -543,9 +564,9 @@ fn draw_out(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, mine: Rect, hud: Hu
         Hud::Online(_) | Hud::Replay => "Quitter la room",
     };
 
-    draw.rect(frame).radius(18.0).color(theme::SCRIM_DARK);
-    shadowed(draw, fonts, "K.O.", (cx, cy - 40.0), theme::size::HERO, theme::DANGER);
-    ui.menu_bar(draw, fonts, out_row(ui.view()), label, theme::bar::RED);
+    ui.draw.rect(frame).radius(18.0).color(theme::SCRIM_DARK);
+    shadowed(ui.draw, &mut gui.fonts, "K.O.", (cx, cy - 40.0), theme::size::HERO, theme::DANGER);
+    widgets::menu_bar(ui, gui, out_row(gui.ui.view()), (label, theme::bar::RED), true)
 }
 
 /// The way out for a player knocked out of a game the others play on.
@@ -843,7 +864,8 @@ pub fn exit_rows(view: View, with_back: bool) -> (Rect, Rect) {
     }
 }
 
-fn draw_exit_buttons(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, hud: Hud, forfeits: bool) {
+/// Returns whether the way out, then the other bar, were clicked.
+fn draw_exit_buttons(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, hud: Hud, forfeits: bool) -> (bool, bool) {
     let (leave, back, has_back) = match hud {
         Hud::Online(Role { series: Some(series), .. }) => {
             let leave = if series.over.is_some() { "Retour au menu" } else { "Abandonner (défaite)" };
@@ -854,12 +876,11 @@ fn draw_exit_buttons(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, hud: Hud, 
         Hud::Online(role) if forfeits => ("Abandonner (défaite)", "Lobby (défaite)", role.is_host),
         Hud::Online(role) => ("Quitter la room", "Retour au lobby", role.is_host),
     };
-    let (leave_row, back_row) = exit_rows(ui.view(), has_back);
+    let (leave_row, back_row) = exit_rows(gui.ui.view(), has_back);
 
-    ui.menu_bar(draw, fonts, leave_row, leave, theme::bar::RED);
-    if has_back {
-        ui.menu_bar(draw, fonts, back_row, back, theme::bar::YELLOW);
-    }
+    let left = widgets::menu_bar(ui, gui, leave_row, (leave, theme::bar::RED), true);
+    let went_back = has_back && widgets::menu_bar(ui, gui, back_row, (back, theme::bar::YELLOW), true);
+    (left, went_back)
 }
 
 pub fn fall_step(board: &Board) -> f32 {

@@ -314,15 +314,15 @@ fn update_online_game(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transiti
         ended: r.series_over.is_some(),
     });
     let input = game_chat(tick, gui, state);
-    let Gui { ui, .. } = gui;
+    let clicks = state.input.clicks;
     let State { room, settings, net: Network { conn, .. }, .. } = &mut *state;
     let left = room
         .as_mut()
         .and_then(|r| r.session.as_mut())
-        .is_some_and(|s| logic::update_game(tick, &input, ui, s, *settings, conn, online));
+        .is_some_and(|s| logic::update_game(tick, (&input, clicks), s, *settings, conn, online));
 
     let transition = if left && online.ranked { ranked::enter(state) } else { Transition::Stay };
-    replay::update_keep(gui, state);
+    replay::update_keep(state);
 
     transition
 }
@@ -421,12 +421,14 @@ fn update(cx: &mut Cx, root: &mut Root) {
         Screen::Ranked => ranked::update(tick, state),
         Screen::Leaderboard(board) => leaderboard::update(tick, gui, state, board),
         Screen::Help(view) => help::update(tick, view),
-        Screen::Solo(game) => solo::update_game(tick, gui, state, game),
-        Screen::Replay(viewer) => replay::update(tick, gui, viewer),
+        Screen::Solo(game) => solo::update_game(tick, state, game),
+        Screen::Replay(viewer) => replay::update(tick, viewer),
         Screen::Game => update_online_game(tick, gui, state),
     };
 
     nav.apply(transition);
+    // A game's clicks are for the update right after its frame: past it, they are stale.
+    state.input.clicks = draw::GameClicks::default();
     if matches!(nav.current(), Screen::Menu) && !state.startup.title_seen {
         nav.apply(Transition::To(Screen::Title));
     }
@@ -477,14 +479,14 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
         Screen::Ranked => transition = ranked::show(ui, gui, state),
         Screen::Leaderboard(board) => transition = leaderboard::show(ui, gui, state, board),
         Screen::Help(view) => transition = help::show(ui, gui, state, view),
-        Screen::Replay(viewer) => replay::draw(ui.draw, gui, viewer),
+        Screen::Replay(viewer) => transition = replay::show(ui, gui, viewer),
         Screen::Solo(game) => {
             let hud = game.hud(state.solo.best);
-            draw::draw_game(ui.draw, &game.session, &mut gui.ui, &mut gui.fonts, hud);
+            state.input.clicks = draw::draw_game(ui, &game.session, gui, hud);
         }
         Screen::Game => {
             if let Some((room, session)) = state.room.as_ref().and_then(|r| Some((r, r.session.as_ref()?))) {
-                draw::draw_game(ui.draw, session, &mut gui.ui, &mut gui.fonts, draw::Hud::Online(online_role(room)));
+                state.input.clicks = draw::draw_game(ui, session, gui, draw::Hud::Online(online_role(room)));
             }
         }
     }
@@ -495,7 +497,9 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
             let hint = can_chat(state).then_some("Entrée pour écrire");
             let area = game_chat_area(gui.ui.view(), state.input.touch.active);
             room.chat.draw_overlay(ui.draw, &mut gui.ui, &mut gui.fonts, area, hint);
-            replay::draw_keep(ui.draw, gui, state);
+        }
+        if matches!(screen, Screen::Game) {
+            replay::show_keep(ui, gui, state);
         }
         state.input.touch.draw(ui.draw, &mut gui.fonts, gui.ui.view());
     }
