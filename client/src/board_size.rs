@@ -142,24 +142,6 @@ pub fn update_keys(tick: &Tick, editable: bool) -> Option<Action> {
     Some(Action::Adjust(vec![(setting, dir)]))
 }
 
-pub fn update(tick: &Tick, ui: &Ui, rules: &Rules, editable: bool) -> Option<Action> {
-    let layout = Layout::new(ui.view());
-    if layout.modal.dismissed(ui) {
-        return Some(Action::Close);
-    }
-    if let Some(action) = update_keys(tick, editable) {
-        return Some(action);
-    }
-    if !editable {
-        return None;
-    }
-    let clicked = STEPS.into_iter().zip(layout.buttons()).find(|&(_, rect)| ui.clicked(rect));
-    if let Some(((setting, dir, _), _)) = clicked {
-        return Some(Action::Adjust(vec![(setting, dir)]));
-    }
-    (!is_standard(rules) && ui.clicked(layout.standard)).then(|| to_standard(rules))
-}
-
 /// The dialog, on Aero's interface, and what its buttons ask.
 pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, rules: &Rules, editable: bool) -> Option<Action> {
     let layout = Layout::new(gui.ui.view());
@@ -183,20 +165,6 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, rules: &Rules, editable: b
         Some(Action::Close)
     } else {
         action
-    }
-}
-
-pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, rules: &Rules, editable: bool) {
-    let layout = Layout::new(ui.view());
-    layout.modal.draw(draw, ui, fonts, "Taille du plateau");
-    paint(draw, ui, fonts, &layout, rules);
-    if editable {
-        for (rect, icon) in layout.buttons().into_iter().zip([Icon::Minus, Icon::Plus].repeat(2)) {
-            ui.button(draw, fonts, rect, icon);
-        }
-        ui.button_enabled(draw, fonts, layout.standard, "Taille standard", !is_standard(rules));
-    } else {
-        footnote(draw, ui, fonts, &layout);
     }
 }
 

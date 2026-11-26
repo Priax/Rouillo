@@ -8,11 +8,11 @@ use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSettin
 use crate::connection::Connection;
 use crate::cpu_seat::{self, CpuSeat};
 use crate::nav::Transition;
-use crate::state::{ApiFriendsResponse, Input, Invite, Network, Screen, State};
+use crate::state::{ApiFriendsResponse, Input, Invite, Network, Room, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
-    self, field_clicked, list_row, text_field, widgets, EditKeys, Face, Field, Fonts, Frame, Gui, Icon, ListCard,
-    Modal, Pill, Rect, SettingsGrid, Size, Stepper, TextInput, Ui, View, FILL, PAGER_H,
+    self, field_clicked, list_row, text_field, widgets, Face, Field, Frame, Gui, Icon, ListCard, Modal, Pill, Rect,
+    SettingsGrid, Size, TextInput, Ui, View, FILL, PAGER_H,
 };
 use crate::{board_size, http, theme};
 
@@ -359,12 +359,6 @@ fn lobby_tiles(view: View) -> impl Iterator<Item = (Tile, Rect)> {
     })
 }
 
-fn lobby_size_button(view: View) -> Rect {
-    lobby_tiles(view)
-        .find_map(|(t, rect)| (t == Tile::Size).then(|| Stepper::tile_band(rect)))
-        .expect("the lobby has a size tile")
-}
-
 fn lobby_launch(view: View) -> Rect {
     lobby_panel(view).action_row(0)
 }
@@ -487,29 +481,41 @@ fn has_sides(info: &LobbyInfo) -> bool {
     first.is_none() && info.teams.len() > 1 || teams.any(|t| t.is_none() || t != first)
 }
 
-fn draw_lobby_players(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, state: &State, info: &LobbyInfo) {
-    let pal = ui.palette();
-    let view = ui.view();
+/// What a click in the players card asks.
+enum PlayersClick {
+    Scroll(i32),
+    Row(usize),
+    AddCpu,
+}
+
+fn show_players(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo, first: usize) -> Option<PlayersClick> {
+    let pal = gui.ui.palette();
+    let view = gui.ui.view();
     let card = lobby_players(view);
     if card.w < 160.0 {
-        return;
+        return None;
     }
 
-    let list = PlayerList::new(view, info, state.room.as_ref().map_or(0, |r| r.players_first));
+    let list = PlayerList::new(view, info, first);
     let own = usize::from(info.your_slot).checked_sub(1);
     let picker = team_picker(info);
+    let mut clicked = None;
 
-    ui::card(draw, &pal, card);
-    fonts
-        .write(draw, Face::Display, "Joueurs")
+    ui::card(ui.draw, &pal, card);
+    gui.fonts
+        .write(ui.draw, Face::Display, "Joueurs")
         .left(card.x + 16.0, card.y + PLAYERS_TITLE_H / 2.0)
         .size(theme::size::EMPHASIS)
         .color(pal.text_dim);
-    ui::divider(draw, &pal, card.x + 16.0, card.y + PLAYERS_TITLE_H, card.w - 32.0);
+    ui::divider(ui.draw, &pal, card.x + 16.0, card.y + PLAYERS_TITLE_H, card.w - 32.0);
     if list.scrolls() {
         let [up, down] = list.scroll_buttons();
-        ui.button_enabled(draw, fonts, up, Icon::Up, list.first > 0);
-        ui.button_enabled(draw, fonts, down, Icon::Down, list.first + list.shown < list.count);
+        if widgets::button(ui, "players up", up, Icon::Up, list.first > 0) {
+            clicked = Some(PlayersClick::Scroll(-1));
+        }
+        if widgets::button(ui, "players down", down, Icon::Down, list.first + list.shown < list.count) {
+            clicked = Some(PlayersClick::Scroll(1));
+        }
     }
 
     for (i, name) in info.names.iter().enumerate() {
@@ -517,24 +523,30 @@ fn draw_lobby_players(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, state: &S
 
         let (label, color) = team_look(info.teams.get(i).copied().flatten(), &pal);
         let pill = Pill::small(label, color);
-        let pill_w = pill.width(fonts);
-        let name = fonts.fit(Face::Text, name, theme::size::BODY, row.w - pill_w - 36.0);
+        let pill_w = pill.width(&mut gui.fonts);
+        let name = gui.fonts.fit(Face::Text, name, theme::size::BODY, row.w - pill_w - 36.0);
         let ink = if own == Some(i) { pal.text } else { pal.text_dim };
 
-        if picker == Some(i) {
-            ui.row(draw, row, i, &format!("team:{i}"));
-        } else if edits_cpus(info) && cpu_seat_at(info, i).is_some() {
-            ui.row(draw, row, i, &format!("cpu:{i}"));
+        let clickable = picker == Some(i) || edits_cpus(info) && cpu_seat_at(info, i).is_some();
+        if clickable {
+            if widgets::row(ui, gui, ("player", i), row, i) {
+                clicked = Some(PlayersClick::Row(i));
+            }
         } else {
-            list_row(draw, &pal, row, i);
+            list_row(ui.draw, &pal, row, i);
         }
-        fonts.write(draw, Face::Text, &name).left(row.x + 10.0, row.y + row.h / 2.0).size(theme::size::BODY).color(ink);
-        pill.draw(draw, fonts, (row.x + row.w - 10.0 - pill_w, row.y + row.h / 2.0));
+        gui.fonts
+            .write(ui.draw, Face::Text, &name)
+            .left(row.x + 10.0, row.y + row.h / 2.0)
+            .size(theme::size::BODY)
+            .color(ink);
+        pill.draw(ui.draw, &mut gui.fonts, (row.x + row.w - 10.0 - pill_w, row.y + row.h / 2.0));
     }
 
-    if may_add_cpu(info) {
-        ui.button(draw, fonts, add_cpu_button(view), "Ajouter un CPU");
+    if may_add_cpu(info) && widgets::button(ui, "add cpu", add_cpu_button(view), "Ajouter un CPU", true) {
+        clicked = Some(PlayersClick::AddCpu);
     }
+    clicked
 }
 
 fn lobby_chat(view: View) -> Rect {
@@ -567,43 +579,109 @@ fn invite_button(view: View, i: usize) -> Rect {
     invite_row(view, i).pad(0.0, 8.0, 0.0, 0.0).right(120.0).middle(32.0)
 }
 
-/// The friend picked in the invitation window, which then closes.
-fn update_invite(
-    tick: &Tick,
-    ui: &Ui,
-    fonts: &mut Fonts,
-    keys: &EditKeys,
-    invite: &mut Invite,
-    view: View,
-) -> Option<String> {
-    if invite_modal(view).dismissed(ui) || tick.back() {
-        invite.open = false;
-        return None;
+/// Which way the wheel scrolls the players list this frame, when the pointer is over it.
+fn wheel_scroll(tick: &Tick, ui: &Ui, view: View, list: &PlayerList) -> Option<i32> {
+    let wheel = tick.input.wheel().y;
+    let over = lobby_players(view).contains(ui.mouse().x, ui.mouse().y);
+    match () {
+        () if !list.scrolls() || !over || wheel == 0.0 => None,
+        () if wheel > 0.0 => Some(-1),
+        () => Some(1),
+    }
+}
+
+/// What the lobby does with the keys, the wheel and the server's answers; its clicks are in [`show_lobby`].
+pub fn update_lobby(tick: &Tick, gui: &mut Gui, state: &mut State) {
+    let view = gui.ui.view();
+    let Gui { ui, fonts, .. } = gui;
+    let State { room, input: Input { keys, .. }, net: Network { conn, .. }, .. } = state;
+    let Some(room) = room.as_mut() else { return };
+    let info = &room.info;
+    let editable = info.is_host && info.countdown.is_none();
+
+    if let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut room.invite.slot) {
+        room.invite.friends = data.friends;
+    }
+    if room.invite.open {
+        let pages = ui::page_count(room.invite.friends.len(), visible_invites(view));
+        room.invite.pager.clamp(pages);
+        room.invite.pager.update_keys(tick, ui, fonts, keys, invite_pager_area(view), pages);
+        if tick.back() {
+            room.invite.open = false;
+        }
+        return;
+    }
+    if info.countdown.is_some() {
+        room.sizing = false;
+        room.cpu_edit = None;
+    }
+    if room.sizing {
+        let action = board_size::update_keys(tick, editable);
+        apply_size(room, conn, action);
+        return;
+    }
+    if room.cpu_edit.is_some() {
+        if cpu_seat::update_keys(tick).is_some() {
+            room.cpu_edit = None;
+        }
+        return;
     }
 
-    let per_page = visible_invites(view);
-    let pages = ui::page_count(invite.friends.len(), per_page);
-    let loaded = invite.slot.is_none();
-    invite.pager.clamp(pages);
-    invite.pager.update(tick, ui, fonts, keys, invite_pager_area(view), pages);
-
-    let invited = invite
-        .pager
-        .shown(&invite.friends, per_page)
-        .find(|&(i, _)| loaded && ui.clicked(invite_button(view, i)))
-        .map(|(_, friend)| friend.user_id.clone());
-    if invited.is_some() {
-        invite.open = false;
+    let list = PlayerList::new(view, info, room.players_first);
+    room.players_first = list.first;
+    if let Some(dir) = wheel_scroll(tick, ui, view, &list) {
+        room.players_first = list.scrolled(dir);
+        return;
     }
-    invited
+
+    let chatting = room.chat.focused;
+    if let Some(text) = room.chat.update_lobby(tick, keys) {
+        conn.send(&ClientMessage::Chat { text });
+    }
+    room.chat.click(ui, fonts, lobby_chat(view));
+    if !chatting && tick.back() {
+        leave_room(room, conn);
+    }
+}
+
+fn apply_size(room: &mut Room, conn: &mut Connection, action: Option<board_size::Action>) {
+    match action {
+        Some(board_size::Action::Close) => room.sizing = false,
+        Some(board_size::Action::Adjust(steps)) => {
+            for (setting, dir) in steps {
+                conn.send(&ClientMessage::SetRoomSetting { setting, dir });
+            }
+        }
+        None => {}
+    }
+}
+
+fn leave_room(room: &mut Room, conn: &mut Connection) {
+    conn.send(&ClientMessage::LeaveRoom);
+    room.invite = Invite::default();
+}
+
+fn open_invite(invite: &mut Invite, token: Option<String>) {
+    invite.open = true;
+    if invite.friends.is_empty() && invite.slot.is_none() {
+        let slot = http::new_slot();
+        http::get(http::api_url("friends"), token, Arc::clone(&slot));
+        invite.slot = Some(slot);
+    }
 }
 
 /// Runs the editor of the CPU in seat `i`, opened with `seats` taken; returns whether it stays open.
-fn update_cpu_edit(tick: &Tick, ui: &Ui, info: &LobbyInfo, (i, seats): (usize, usize), conn: &mut Connection) -> bool {
+fn edit_cpu(
+    ui: &mut aero::ui::Ui<'_>,
+    gui: &mut Gui,
+    info: &LobbyInfo,
+    (i, seats): (usize, usize),
+    conn: &mut Connection,
+) -> bool {
     let Some(seat) = cpu_seat_at(info, i).filter(|_| edits_cpus(info) && seats == info.names.len()) else {
         return false;
     };
-    match cpu_seat::update(tick, ui, seat) {
+    match cpu_seat::show(ui, gui, seat) {
         Some(cpu_seat::Action::Close) => false,
         Some(cpu_seat::Action::Send(msg)) => {
             conn.send(&msg);
@@ -613,216 +691,127 @@ fn update_cpu_edit(tick: &Tick, ui: &Ui, info: &LobbyInfo, (i, seats): (usize, u
     }
 }
 
-/// Which way the players list scrolls this frame, by its buttons or the wheel.
-fn list_scroll(tick: &Tick, ui: &Ui, view: View, list: &PlayerList) -> Option<i32> {
-    if !list.scrolls() {
-        return None;
-    }
-
-    let [up, down] = list.scroll_buttons();
-    let wheel = tick.input.wheel().y;
-    let over = lobby_players(view).contains(ui.mouse().x, ui.mouse().y);
-    if ui.clicked(up) || (over && wheel > 0.0) {
-        Some(-1)
-    } else if ui.clicked(down) || (over && wheel < 0.0) {
-        Some(1)
-    } else {
-        None
-    }
-}
-
-/// The setting a click changes, and which way.
-fn clicked_setting(ui: &Ui, view: View) -> Option<(RoomSetting, i32)> {
-    lobby_tiles(view).find_map(|(tile, rect)| {
-        let Tile::Setting(setting) = tile else { return None };
-        let stepper = Stepper::in_tile(rect);
-        let dir = if setting == RoomSetting::FriendsOnly {
-            ui.clicked(Stepper::tile_band(rect)).then_some(1)?
-        } else if ui.clicked(stepper.minus) {
-            -1
-        } else if ui.clicked(stepper.plus) {
-            1
-        } else {
-            return None;
-        };
-        Some((setting, dir))
-    })
-}
-
-pub fn update_lobby(tick: &Tick, gui: &mut Gui, state: &mut State) {
+/// The settings' tiles: whether the size was clicked, and the setting a click steps.
+fn show_tiles(
+    ui: &mut aero::ui::Ui<'_>,
+    gui: &mut Gui,
+    info: &LobbyInfo,
+    editable: bool,
+) -> (bool, Option<(RoomSetting, i32)>) {
     let view = gui.ui.view();
-    let Gui { ui, fonts, .. } = gui;
-    let State { room, auth, input: Input { keys, .. }, net: Network { conn, maintenance, .. }, .. } = state;
-    let Some(room) = room.as_mut() else { return };
-    let info = &room.info;
-    let editable = info.is_host && info.countdown.is_none();
-
-    if let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut room.invite.slot) {
-        room.invite.friends = data.friends;
-    }
-
-    if room.invite.open {
-        if let Some(user_id) = update_invite(tick, ui, fonts, keys, &mut room.invite, view) {
-            conn.send(&ClientMessage::InviteFriend { user_id });
-        }
-        return;
-    }
-
-    if info.countdown.is_some() {
-        room.sizing = false;
-        room.cpu_edit = None;
-    }
-    if room.sizing {
-        match board_size::update(tick, ui, &info.settings.rules, editable) {
-            Some(board_size::Action::Close) => room.sizing = false,
-            Some(board_size::Action::Adjust(steps)) => {
-                for (setting, dir) in steps {
-                    conn.send(&ClientMessage::SetRoomSetting { setting, dir });
-                }
-            }
-            None => {}
-        }
-        return;
-    }
-
-    if let Some(edit) = room.cpu_edit {
-        if !update_cpu_edit(tick, ui, info, edit, conn) {
-            room.cpu_edit = None;
-        }
-        return;
-    }
-
-    let list = PlayerList::new(view, info, room.players_first);
-    room.players_first = list.first;
-    if let Some(dir) = list_scroll(tick, ui, view, &list) {
-        room.players_first = list.scrolled(dir);
-        return;
-    }
-    let clicked_row = |i: usize| list.row(i).is_some_and(|row| ui.clicked(row));
-
-    if edits_cpus(info) {
-        let seats = info.names.len();
-        let clicked = (0..seats).find(|&i| cpu_seat_at(info, i).is_some() && clicked_row(i));
-        if let Some(i) = clicked {
-            room.cpu_edit = Some((i, seats));
-            return;
-        }
-        if may_add_cpu(info) && ui.clicked(add_cpu_button(view)) {
-            conn.send(&ClientMessage::AddCpu);
-            return;
-        }
-    }
-
-    if let Some(me) = team_picker(info) {
-        if clicked_row(me) {
-            let team = step_team(info.teams.get(me).copied().flatten(), 1);
-            conn.send(&ClientMessage::SetTeam { team });
-            return;
-        }
-    }
-
-    let chatting = room.chat.focused;
-    if let Some(text) = room.chat.update_lobby(tick, keys) {
-        conn.send(&ClientMessage::Chat { text });
-    }
-    room.chat.click(ui, fonts, lobby_chat(view));
-
-    if ui.clicked(lobby_size_button(view)) {
-        room.sizing = true;
-        return;
-    }
-
-    if let Some((setting, dir)) = clicked_setting(ui, view).filter(|_| editable) {
-        conn.send(&ClientMessage::SetRoomSetting { setting, dir });
-        return;
-    }
-
-    let (_, _, launch_enabled) = launch_bar(info, *maintenance);
-    if launch_enabled && ui.bar_clicked(lobby_launch(view)) {
-        let msg =
-            if info.your_slot == 0 { ClientMessage::JoinRoom { id: info.id } } else { ClientMessage::ToggleCountdown };
-        conn.send(&msg);
-        return;
-    }
-
-    let escape = !chatting && tick.back();
-    if ui.bar_clicked(lobby_leave(view)) || escape {
-        conn.send(&ClientMessage::LeaveRoom);
-        room.invite = Invite::default();
-        return;
-    }
-
-    if info.your_slot != 0 && auth.is_some() && ui.bar_clicked(lobby_invite(view)) {
-        room.invite.open = true;
-        if room.invite.friends.is_empty() && room.invite.slot.is_none() {
-            let token = auth.as_ref().map(|a| a.token.clone());
-            let slot = http::new_slot();
-            http::get(http::api_url("friends"), token, Arc::clone(&slot));
-            room.invite.slot = Some(slot);
-        }
-    }
-}
-
-pub fn draw_lobby(draw: &mut Draw, gui: &mut Gui, state: &State) {
-    let Gui { ui, fonts, .. } = gui;
-    let pal = ui.palette();
-    let Some(room) = &state.room else {
-        return;
-    };
-    let info = &room.info;
-    let view = ui.view();
-    let editable = info.is_host && info.countdown.is_none();
-    let (label, color, enabled) = launch_bar(info, state.net.maintenance);
-    let editing = room.cpu_edit.filter(|&(_, seats)| seats == info.names.len());
-
-    let mut canvas = ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    ui.set_input(!room.invite.open && !room.sizing && room.cpu_edit.is_none());
-    draw_lobby_header(draw, ui, fonts, info);
-    draw_lobby_players(draw, ui, fonts, state, info);
-
-    lobby_panel(view).draw(draw, &pal, fonts, "Réglages de la room", LOBBY_SETTINGS.map(|(section, _)| section));
-    for (setting, tile) in lobby_tiles(view) {
-        let Tile::Setting(setting) = setting else {
+    let mut sizing = false;
+    let mut setting = None;
+    for (tile, rect) in lobby_tiles(view) {
+        let Tile::Setting(which) = tile else {
             let size = board_size::label(&info.settings.rules);
-            ui.button_tile(draw, fonts, tile, "Taille", &size);
+            sizing |= widgets::button_tile(ui, gui, "size", rect, ("Taille", &size));
             continue;
         };
-        let label = setting_label(setting);
-        if setting == RoomSetting::FriendsOnly {
+        let label = setting_label(which);
+        if which == RoomSetting::FriendsOnly {
             let on = info.settings.friends_only;
-            ui.switch_tile(draw, fonts, tile, label, on, editable);
+            if widgets::switch_tile(ui, gui, ("setting", label), rect, (label, on), editable) {
+                setting = Some((which, 1));
+            }
         } else {
-            let value = setting_value(&info.settings, setting);
-            ui.stepper_tile(draw, fonts, tile, label, &value, editable);
+            let value = setting_value(&info.settings, which);
+            let step = widgets::stepper_tile(ui, gui, ("setting", label), rect, (label, &value), editable);
+            if step != 0 {
+                setting = Some((which, step));
+            }
         }
     }
 
-    ui.menu_bar_enabled(draw, fonts, lobby_launch(view), label, color, enabled);
-    if info.your_slot != 0 && state.auth.is_some() {
-        ui.menu_bar(draw, fonts, lobby_invite(view), "Inviter un ami", theme::bar::BLUE);
-    }
-    room.chat.draw_card(draw, ui, fonts, lobby_chat(view));
-    ui.menu_bar(draw, fonts, lobby_leave(view), "Quitter la room", theme::bar::RED);
+    (sizing, setting)
+}
 
-    if let Some(n) = info.countdown {
-        draw.rect(Rect::at(0.0, 0.0, view.w, view.h)).color(theme::SCRIM);
-        fonts
-            .write(draw, Face::Display, &n.to_string())
+pub fn show_lobby(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
+    let pal = gui.ui.palette();
+    let view = gui.ui.view();
+    let State { room, auth, net: Network { conn, maintenance, .. }, .. } = state;
+    let Some(room) = room.as_mut() else { return Transition::Stay };
+    let editable = room.info.is_host && room.info.countdown.is_none();
+    let (label, color, enabled) = launch_bar(&room.info, *maintenance);
+    let may_invite = room.info.your_slot != 0 && auth.is_some();
+
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    draw_lobby_header(ui.draw, gui, &room.info);
+    let players = show_players(ui, gui, &room.info, room.players_first);
+
+    lobby_panel(view).draw(
+        ui.draw,
+        &pal,
+        &mut gui.fonts,
+        "Réglages de la room",
+        LOBBY_SETTINGS.map(|(section, _)| section),
+    );
+    let (sizing, setting) = show_tiles(ui, gui, &room.info, editable);
+
+    let launch = widgets::menu_bar(ui, gui, lobby_launch(view), (label, color), enabled);
+    let invite =
+        may_invite && widgets::menu_bar(ui, gui, lobby_invite(view), ("Inviter un ami", theme::bar::BLUE), true);
+    room.chat.draw_card(ui.draw, &mut gui.ui, &mut gui.fonts, lobby_chat(view));
+    let leave = widgets::menu_bar(ui, gui, lobby_leave(view), ("Quitter la room", theme::bar::RED), true);
+
+    if let Some(n) = room.info.countdown {
+        ui.draw.rect(Rect::at(0.0, 0.0, view.w, view.h)).color(theme::SCRIM);
+        gui.fonts
+            .write(ui.draw, Face::Display, &n.to_string())
             .center(view.w / 2.0, view.h / 2.0)
             .size(theme::size::HUGE)
             .color(theme::GOLD);
     }
 
     if room.invite.open {
-        draw_invite_overlay(draw, ui, fonts, &room.invite);
+        if let Some(user_id) = show_invite(ui, gui, &mut room.invite) {
+            conn.send(&ClientMessage::InviteFriend { user_id });
+        }
+        return Transition::Stay;
     }
     if room.sizing {
-        board_size::draw(draw, ui, fonts, &info.settings.rules, editable);
+        let action = board_size::show(ui, gui, &room.info.settings.rules, editable);
+        apply_size(room, conn, action);
+        return Transition::Stay;
     }
-    if let Some(seat) = editing.and_then(|(i, _)| cpu_seat_at(info, i)) {
-        cpu_seat::draw(draw, ui, fonts, seat);
+    if let Some(edit) = room.cpu_edit {
+        if !edit_cpu(ui, gui, &room.info, edit, conn) {
+            room.cpu_edit = None;
+        }
+        return Transition::Stay;
     }
+
+    let info = &room.info;
+    match players {
+        Some(PlayersClick::Scroll(dir)) => {
+            let list = PlayerList::new(view, info, room.players_first);
+            room.players_first = list.scrolled(dir);
+        }
+        Some(PlayersClick::Row(i)) if team_picker(info) == Some(i) => {
+            let team = step_team(info.teams.get(i).copied().flatten(), 1);
+            conn.send(&ClientMessage::SetTeam { team });
+        }
+        Some(PlayersClick::Row(i)) => room.cpu_edit = Some((i, info.names.len())),
+        Some(PlayersClick::AddCpu) => conn.send(&ClientMessage::AddCpu),
+        None if sizing => room.sizing = true,
+        None if setting.is_some() && editable => {
+            if let Some((setting, dir)) = setting {
+                conn.send(&ClientMessage::SetRoomSetting { setting, dir });
+            }
+        }
+        None if launch => {
+            let msg = if info.your_slot == 0 {
+                ClientMessage::JoinRoom { id: info.id }
+            } else {
+                ClientMessage::ToggleCountdown
+            };
+            conn.send(&msg);
+        }
+        None if leave => leave_room(room, conn),
+        None if invite => open_invite(&mut room.invite, auth.as_ref().map(|a| a.token.clone())),
+        None => {}
+    }
+    Transition::Stay
 }
 
 fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool) {
@@ -847,9 +836,10 @@ fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool
     }
 }
 
-fn draw_lobby_header(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, info: &LobbyInfo) {
-    let pal = ui.palette();
-    let view = ui.view();
+fn draw_lobby_header(draw: &mut Draw, gui: &mut Gui, info: &LobbyInfo) {
+    let pal = gui.ui.palette();
+    let view = gui.ui.view();
+    let fonts = &mut gui.fonts;
     let mid = theme::HEADER_H / 2.0;
     let id = format!("Room #{}", info.id);
     let players = format!("{}/{} joueurs", info.players, info.settings.max_players);
@@ -864,15 +854,15 @@ fn draw_lobby_header(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, info: &Lob
         pills.push(Pill::small(&watchers, pal.text_dim));
     }
 
-    ui.header_band(draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    gui.ui.header_band(draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     let pills_start = ui::pills_ending_at(draw, fonts, &pills, view.w - 60.0, mid);
     let name = fonts.fit(Face::Display, &info.name, theme::size::TITLE, pills_start - 30.0 - 60.0);
     fonts.write(draw, Face::Display, &name).left(60.0, mid).size(theme::size::TITLE).color(pal.text);
 }
 
-fn draw_invite_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, invite: &Invite) {
-    let pal = ui.palette();
-    let view = ui.view();
+/// The invitation window: friends to invite, a page at a time. Returns the friend invited, which closes it.
+fn show_invite(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, invite: &mut Invite) -> Option<String> {
+    let view = gui.ui.view();
     let modal = invite_modal(view);
     let card = modal.card;
     let message = if invite.slot.is_some() {
@@ -882,33 +872,40 @@ fn draw_invite_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, invite: 
     } else {
         None
     };
-
-    modal.draw(draw, ui, fonts, "Inviter un ami");
-    if let Some(message) = message {
-        fonts
-            .write(draw, Face::Text, message)
-            .center(card.x + card.w / 2.0, card.y + 110.0)
-            .size(theme::size::EMPHASIS)
-            .color(pal.text_muted);
-        return;
+    let (invited, dismissed) = widgets::modal(ui, gui, (modal, "Inviter un ami"), |ui, gui| {
+        let pal = gui.ui.palette();
+        if let Some(message) = message {
+            gui.fonts
+                .write(ui.draw, Face::Text, message)
+                .center(card.x + card.w / 2.0, card.y + 110.0)
+                .size(theme::size::EMPHASIS)
+                .color(pal.text_muted);
+            return None;
+        }
+        let per_page = visible_invites(view);
+        let pages = ui::page_count(invite.friends.len(), per_page);
+        if pages > 1 {
+            invite.pager.show(ui, gui, "invite pages", invite_pager_area(view), pages);
+        }
+        let mut invited = None;
+        for (i, friend) in invite.pager.shown(&invite.friends, per_page) {
+            let row = invite_row(view, i);
+            list_row(ui.draw, &pal, row, i);
+            gui.fonts
+                .write(ui.draw, Face::Text, &friend.username)
+                .left(row.x + 16.0, row.y + row.h / 2.0)
+                .size(theme::size::LABEL)
+                .color(pal.text);
+            if widgets::button(ui, ("invite", &friend.user_id), invite_button(view, i), "Inviter", true) {
+                invited = Some(friend.user_id.clone());
+            }
+        }
+        invited
+    });
+    if dismissed || invited.is_some() {
+        invite.open = false;
     }
-
-    let per_page = visible_invites(view);
-    let pages = ui::page_count(invite.friends.len(), per_page);
-    if pages > 1 {
-        invite.pager.draw(draw, ui, fonts, invite_pager_area(view), pages);
-    }
-    for (i, friend) in invite.pager.shown(&invite.friends, per_page) {
-        let row = invite_row(view, i);
-
-        list_row(draw, &pal, row, i);
-        fonts
-            .write(draw, Face::Text, &friend.username)
-            .left(row.x + 16.0, row.y + row.h / 2.0)
-            .size(theme::size::LABEL)
-            .color(pal.text);
-        ui.button(draw, fonts, invite_button(view, i), "Inviter");
-    }
+    invited
 }
 
 #[cfg(test)]

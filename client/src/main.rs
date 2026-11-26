@@ -470,7 +470,7 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
         Screen::RoomBrowser => transition = rooms::show_browser(ui, gui, state),
         Screen::CreateRoom => transition = rooms::show_create_room(ui, gui, state),
         Screen::JoinById => transition = rooms::show_join_by_id(ui, gui, state),
-        Screen::RoomLobby => rooms::draw_lobby(ui.draw, gui, state),
+        Screen::RoomLobby => transition = rooms::show_lobby(ui, gui, state),
         Screen::Profile(p) => profile::draw_profile(ui.draw, gui, p),
         Screen::Friends(f) => friends::draw_friends(ui.draw, gui, f),
         Screen::OtherProfile(p) => profile::draw_other_profile(ui.draw, gui, p),

@@ -1,7 +1,8 @@
 use aero::draw::Draw;
 use aero::math::vec2;
+use aero::theme::Visual;
 
-use super::{Face, Fonts, Icon, Rect, Ui};
+use super::{Face, Fonts, Rect};
 use crate::theme::{self, Palette};
 
 const BUTTON: f32 = 50.0;
@@ -25,11 +26,6 @@ impl Stepper {
         let minus = Rect::at(x + LABEL_GAP, y, BUTTON, BUTTON);
         let plus = Rect::at(minus.x + BUTTON + VALUE_WIDTH, y, BUTTON, BUTTON);
         Self { minus, plus }
-    }
-
-    /// The controls of a settings tile: under its name, a button at each end.
-    pub fn in_tile(tile: Rect) -> Self {
-        Self::across(Self::tile_band(tile))
     }
 
     /// A square button at each end of `band`.
@@ -58,82 +54,25 @@ impl Stepper {
     }
 }
 
-impl Ui {
-    fn tile_label(&self, draw: &mut Draw, fonts: &mut Fonts, tile: Rect, label: &str) {
-        tile_label(draw, fonts, &self.palette(), tile, label);
-    }
-
-    /// A settings tile: its name, then its value between the buttons that
-    /// step it, the buttons only when `editable`.
-    pub fn stepper_tile(
-        &mut self,
-        draw: &mut Draw,
-        fonts: &mut Fonts,
-        tile: Rect,
-        label: &str,
-        value: &str,
-        editable: bool,
-    ) {
-        self.tile_label(draw, fonts, tile, label);
-        self.stepper_band(draw, fonts, Stepper::tile_band(tile), value, editable);
-    }
-
-    /// A value between the buttons that step it, across `band`.
-    pub fn stepper_band(&mut self, draw: &mut Draw, fonts: &mut Fonts, band: Rect, value: &str, editable: bool) {
-        let s = Stepper::across(band);
-        paint_value(draw, fonts, s, value);
-        if editable {
-            self.button(draw, fonts, s.minus, Icon::Minus);
-            self.button(draw, fonts, s.plus, Icon::Plus);
-        }
-    }
-
-    /// A settings tile whose value is a button over `Stepper::tile_band`,
-    /// for a setting changed somewhere else.
-    pub fn button_tile(&mut self, draw: &mut Draw, fonts: &mut Fonts, tile: Rect, label: &str, value: &str) {
-        self.tile_label(draw, fonts, tile, label);
-        self.button(draw, fonts, Stepper::tile_band(tile), value);
-    }
-
-    /// A settings tile for a yes or no: its name, then a switch and what it
-    /// says. Clicks on `Stepper::tile_band` flip it, when `editable`.
-    pub fn switch_tile(
-        &mut self,
-        draw: &mut Draw,
-        fonts: &mut Fonts,
-        tile: Rect,
-        label: &str,
-        on: bool,
-        editable: bool,
-    ) {
-        let pal = self.palette();
-        self.tile_label(draw, fonts, tile, label);
-        let band = Stepper::tile_band(tile);
-        let r = self.interact(label, band, editable);
-        if r.entered {
-            crate::audio::play_ui_hover();
-        }
-        let track = Rect::at(band.x, band.y + (band.h - SWITCH_H) / 2.0, SWITCH_W, SWITCH_H);
-        let fill = match (editable, on) {
-            (false, _) => pal.disabled,
-            (true, true) => pal.accent,
-            (true, false) => theme::mix(pal.raised, pal.raised_hover, r.hover),
-        };
-        draw.rect(track).radius(SWITCH_H / 2.0).color(fill);
-        draw.rect(track).radius(SWITCH_H / 2.0).stroke(theme::mix(pal.border, pal.accent, r.hover), 2.0);
-        let knob = SWITCH_H / 2.0 - 4.0;
-        let knob_x = if on { track.x + track.w - SWITCH_H / 2.0 } else { track.x + SWITCH_H / 2.0 };
-        draw.circle(vec2(knob_x, track.y + track.h / 2.0), knob).color(if editable {
-            pal.text
-        } else {
-            pal.text_disabled
-        });
-        fonts
-            .write(draw, Face::Display, if on { "Oui" } else { "Non" })
-            .left(track.x + track.w + 14.0, track.y + track.h / 2.0)
-            .size(theme::size::EMPHASIS)
-            .color(theme::GOLD);
-    }
+/// A yes or no as a switch across the band under a tile's name, with what it says.
+pub(super) fn paint_switch(draw: &mut Draw, fonts: &mut Fonts, pal: &Palette, band: Rect, on: bool, visual: Visual) {
+    let track = Rect::at(band.x, band.y + (band.h - SWITCH_H) / 2.0, SWITCH_W, SWITCH_H);
+    let fill = match (visual.enabled, on) {
+        (false, _) => pal.disabled,
+        (true, true) => pal.accent,
+        (true, false) => theme::mix(pal.raised, pal.raised_hover, visual.hover),
+    };
+    draw.rect(track).radius(SWITCH_H / 2.0).color(fill);
+    draw.rect(track).radius(SWITCH_H / 2.0).stroke(theme::mix(pal.border, pal.accent, visual.hover), 2.0);
+    let knob = SWITCH_H / 2.0 - 4.0;
+    let knob_x = if on { track.x + track.w - SWITCH_H / 2.0 } else { track.x + SWITCH_H / 2.0 };
+    let ink = if visual.enabled { pal.text } else { pal.text_disabled };
+    draw.circle(vec2(knob_x, track.y + track.h / 2.0), knob).color(ink);
+    fonts
+        .write(draw, Face::Display, if on { "Oui" } else { "Non" })
+        .left(track.x + track.w + 14.0, track.y + track.h / 2.0)
+        .size(theme::size::EMPHASIS)
+        .color(theme::GOLD);
 }
 
 /// A stepper's label before it and its value between its buttons.

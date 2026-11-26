@@ -11,7 +11,7 @@ use aero::widgets::{control, Button, Tab};
 
 use super::button::paint_icon;
 use super::controls::paint_row;
-use super::stepper::{paint_labelled, paint_value, tile_label};
+use super::stepper::{paint_labelled, paint_switch, paint_value, tile_label};
 use super::{bar, portrait, Gui, Icon, Label, Modal, Persona, Rect, Stepper};
 
 fn sounds(response: Response) -> Response {
@@ -119,6 +119,24 @@ pub fn stepper_tile(
 pub fn button_tile(ui: &mut Ui<'_>, gui: &mut Gui, key: impl Hash, tile: Rect, (label, value): (&str, &str)) -> bool {
     tile_label(ui.draw, &mut gui.fonts, &gui.ui.palette(), tile, label);
     button(ui, key, Stepper::tile_band(tile), value, true)
+}
+
+/// A settings tile for a yes or no: its name, then a switch that flips when clicked, if `editable`. Returns whether it
+/// was clicked.
+pub fn switch_tile(
+    ui: &mut Ui<'_>,
+    gui: &mut Gui,
+    key: impl Hash,
+    tile: Rect,
+    (label, on): (&str, bool),
+    editable: bool,
+) -> bool {
+    let pal = gui.ui.palette();
+    tile_label(ui.draw, &mut gui.fonts, &pal, tile, label);
+    let band = Stepper::tile_band(tile);
+    let (response, visual) = control(ui, key, band.into(), editable, Role::Button, label);
+    paint_switch(ui.draw, &mut gui.fonts, &pal, band, on, visual);
+    sounds(response).clicked
 }
 
 /// A dialog over the screen, `inside` drawing its body: nothing under it takes a click, and a click beside its card or

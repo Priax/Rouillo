@@ -1,11 +1,10 @@
-use aero::draw::Draw;
 use shared::cpu::{Difficulty, Style};
 use shared::ClientMessage;
 
 use crate::rooms::{step_team, team_look};
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{self, Fonts, Modal, Rect, Stepper, Ui, View};
+use crate::ui::{self, widgets, Gui, Modal, Rect, View};
 
 const CARD_W: f32 = 520.0;
 const REMOVE_W: f32 = 240.0;
@@ -66,34 +65,38 @@ impl CpuSeat {
     }
 }
 
-pub fn update(tick: &Tick, ui: &Ui, seat: CpuSeat) -> Option<Action> {
-    let modal = modal(ui.view());
-
-    if modal.dismissed(ui) || tick.back() {
-        return Some(Action::Close);
-    }
-    for i in 0..TILES {
-        let stepper = Stepper::in_tile(tile(modal, i));
-        for (rect, dir) in [(stepper.minus, -1), (stepper.plus, 1)] {
-            if ui.clicked(rect) {
-                return Some(Action::Send(seat.stepped(i, dir).message()));
-            }
-        }
-    }
-    if ui.clicked(remove_button(modal)) {
-        return Some(Action::Send(ClientMessage::RemoveCpu { slot: seat.slot }));
-    }
-
-    None
+/// Escape closes the editor; its clicks are in [`show`].
+pub fn update_keys(tick: &Tick) -> Option<Action> {
+    tick.back().then_some(Action::Close)
 }
 
-pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, seat: CpuSeat) {
-    let pal = ui.palette();
-    let modal = modal(ui.view());
-
-    modal.draw(draw, ui, fonts, "CPU");
-    for i in 0..TILES {
-        ui.stepper_tile(draw, fonts, tile(modal, i), CpuSeat::label(i), seat.value(i, &pal), true);
+/// The editor of a CPU's seat, and what its buttons ask.
+pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, seat: CpuSeat) -> Option<Action> {
+    let modal = modal(gui.ui.view());
+    let (action, dismissed) = widgets::modal(ui, gui, (modal, "CPU"), |ui, gui| {
+        let pal = gui.ui.palette();
+        let mut action = None;
+        for i in 0..TILES {
+            let step = widgets::stepper_tile(
+                ui,
+                gui,
+                ("cpu", i),
+                tile(modal, i),
+                (CpuSeat::label(i), seat.value(i, &pal)),
+                true,
+            );
+            if step != 0 {
+                action = Some(Action::Send(seat.stepped(i, step).message()));
+            }
+        }
+        if widgets::button(ui, "remove cpu", remove_button(modal), "Retirer", true) {
+            action = Some(Action::Send(ClientMessage::RemoveCpu { slot: seat.slot }));
+        }
+        action
+    });
+    if dismissed {
+        Some(Action::Close)
+    } else {
+        action
     }
-    ui.button(draw, fonts, remove_button(modal), "Retirer");
 }
