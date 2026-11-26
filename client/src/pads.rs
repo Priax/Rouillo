@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use gilrs::{Axis, Button, Gilrs};
+use aero::input::{Input, PadAxis, PadButton};
 use serde::{Deserialize, Serialize};
 
 const STICK_DEAD_ZONE: f32 = 0.5;
@@ -59,71 +59,52 @@ impl Pad {
         }
     }
 
-    const fn button(self) -> Button {
+    const fn button(self) -> PadButton {
         match self {
-            Self::South => Button::South,
-            Self::East => Button::East,
-            Self::West => Button::West,
-            Self::North => Button::North,
-            Self::LeftBumper => Button::LeftTrigger,
-            Self::RightBumper => Button::RightTrigger,
-            Self::LeftTrigger => Button::LeftTrigger2,
-            Self::RightTrigger => Button::RightTrigger2,
-            Self::DPadUp => Button::DPadUp,
-            Self::DPadDown => Button::DPadDown,
-            Self::DPadLeft => Button::DPadLeft,
-            Self::DPadRight => Button::DPadRight,
-            Self::Start => Button::Start,
-            Self::Select => Button::Select,
+            Self::South => PadButton::South,
+            Self::East => PadButton::East,
+            Self::West => PadButton::West,
+            Self::North => PadButton::North,
+            Self::LeftBumper => PadButton::LeftBumper,
+            Self::RightBumper => PadButton::RightBumper,
+            Self::LeftTrigger => PadButton::LeftTrigger,
+            Self::RightTrigger => PadButton::RightTrigger,
+            Self::DPadUp => PadButton::DPadUp,
+            Self::DPadDown => PadButton::DPadDown,
+            Self::DPadLeft => PadButton::DPadLeft,
+            Self::DPadRight => PadButton::DPadRight,
+            Self::Start => PadButton::Start,
+            Self::Select => PadButton::Select,
         }
     }
 }
 
-/// Every connected gamepad merged into one: what any of them holds is held.
+/// Every connected gamepad merged into one, as Aero reads them: what any of them holds is held, and the left stick
+/// counts as the D-pad.
 #[derive(Default)]
 pub struct Pads {
-    gilrs: Option<Gilrs>,
     held: HashSet<Pad>,
     pressed: HashSet<Pad>,
 }
 
 impl Pads {
-    pub fn new() -> Self {
-        let gilrs = Gilrs::new().map_err(|e| eprintln!("[pads] manettes indisponibles: {e}")).ok();
-        Self { gilrs, ..Self::default() }
-    }
-
-    pub fn update(&mut self) {
-        let Some(gilrs) = self.gilrs.as_mut() else {
-            return;
-        };
-        while gilrs.next_event().is_some() {}
-        let mut held = HashSet::new();
-        for (_, pad) in gilrs.gamepads() {
-            for p in Pad::BINDABLE.into_iter().chain([Pad::Start, Pad::Select]) {
-                if pad.is_pressed(p.button()) {
-                    held.insert(p);
-                }
-            }
-            let (x, y) = (pad.value(Axis::LeftStickX), pad.value(Axis::LeftStickY));
-            if x <= -STICK_DEAD_ZONE {
-                held.insert(Pad::DPadLeft);
-            } else if x >= STICK_DEAD_ZONE {
-                held.insert(Pad::DPadRight);
-            }
-            if y <= -STICK_DEAD_ZONE {
-                held.insert(Pad::DPadDown);
-            } else if y >= STICK_DEAD_ZONE {
-                held.insert(Pad::DPadUp);
-            }
+    pub fn update(&mut self, input: &Input) {
+        let all = Pad::BINDABLE.into_iter().chain([Pad::Start, Pad::Select]);
+        let mut held: HashSet<Pad> = all.clone().filter(|p| input.pad_held(p.button())).collect();
+        let (x, y) = (input.pad_axis(PadAxis::LeftStickX), input.pad_axis(PadAxis::LeftStickY));
+        if x <= -STICK_DEAD_ZONE {
+            held.insert(Pad::DPadLeft);
+        } else if x >= STICK_DEAD_ZONE {
+            held.insert(Pad::DPadRight);
         }
-        self.pressed = held.difference(&self.held).copied().collect();
+        if y <= -STICK_DEAD_ZONE {
+            held.insert(Pad::DPadDown);
+        } else if y >= STICK_DEAD_ZONE {
+            held.insert(Pad::DPadUp);
+        }
+        let tapped = all.filter(|p| input.pad_pressed(p.button()));
+        self.pressed = held.difference(&self.held).copied().chain(tapped).collect();
         self.held = held;
-    }
-
-    /// Whether a gamepad is plugged in: its buttons are only seen when polled.
-    pub fn connected(&self) -> bool {
-        self.gilrs.as_ref().is_some_and(|g| g.gamepads().next().is_some())
     }
 
     pub fn held(&self, pad: Pad) -> bool {

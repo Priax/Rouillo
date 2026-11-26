@@ -787,7 +787,7 @@ impl State {
             outdated: false,
             input: Input {
                 controls: crate::controls::Controls::load(),
-                pads: crate::pads::Pads::new(),
+                pads: crate::pads::Pads::default(),
                 touch: crate::touch::TouchPad::default(),
                 clicks: crate::draw::GameClicks::default(),
             },

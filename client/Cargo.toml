@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
-aero = { path = "../aero", features = ["serde"] }
+aero = { path = "../aero", features = ["serde", "gamepad"] }
 skrifa = "0.49"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico"] }
 rand = "0.10"
@@ -12,7 +12,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ewebsock = { version = "0.8", features = ["tls"] }
 ehttp = "0.7"
-gilrs = "0.11"
 shared = { path = "../shared" }
 
 [target.'cfg(windows)'.dependencies]

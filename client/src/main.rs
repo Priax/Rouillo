@@ -275,10 +275,7 @@ fn update(cx: &mut Cx, root: &mut Root) {
     let Some(window) = cx.window(aero::WindowId::MAIN) else { return };
     let view = ui::View::of(window);
 
-    state.input.pads.update();
-    if state.input.pads.connected() {
-        gui.ui.keep_moving();
-    }
+    state.input.pads.update(&cx.input);
     let pad_nav = pad_menus(state, nav.current());
     let finger = cx.input.fingers().first().map(|f| f.at);
     gui.ui.note_pointer(finger.or_else(|| cx.input.pointer()));
