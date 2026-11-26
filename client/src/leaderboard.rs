@@ -9,7 +9,7 @@ use crate::nav::Transition;
 use crate::state::{Screen, State};
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{self, Face, Frame, Gui, Label, ListCard, Pager, Pill, Rect, Status, View};
+use crate::ui::{self, widgets, Face, Frame, Gui, Label, ListCard, Pager, Pill, Rect, Status, View};
 
 const SIZE: i64 = 100;
 const ROW_H: f32 = 56.0;
@@ -84,35 +84,17 @@ fn refresh_btn(view: View) -> Rect {
     Frame::of(view).header_tools(0.0).right(190.0).middle(44.0)
 }
 
+/// The answers to come and what the keys do; the clicks are in [`show`].
 pub fn update(tick: &Tick, gui: &mut Gui, state: &mut State, board: &mut Leaderboard) -> Transition {
     let me = state.auth.as_ref().map(|a| a.user_id.clone());
     let list = list(gui.ui.view());
-    let view = gui.ui.view();
-
     poll(board, me.as_deref());
     let pages = ui::page_count(board.top.len(), list.per_page());
     board.pager.clamp(pages);
-    board.pager.update(tick, &gui.ui, &mut gui.fonts, &state.input.keys, list.pager(), pages);
-
-    let clicked = board
-        .pager
-        .shown(&board.top, list.per_page())
-        .find(|&(i, _)| gui.ui.clicked(list.row(i)))
-        .map(|(_, e)| (e.user_id.clone(), e.username.clone()));
-    if let Some((user_id, username)) = clicked {
-        if Some(&user_id) == me.as_ref() {
-            return crate::profile::enter_profile(state);
-        }
-        return crate::profile::enter_other_profile(state, user_id, username, None);
-    }
-
-    let loading = board.slot.is_some();
-    if !loading && gui.ui.clicked(refresh_btn(view)) {
-        refresh(board, state);
-    } else if gui.ui.clicked(back_btn(view)) || tick.back() {
+    board.pager.update_keys(tick, &gui.ui, &mut gui.fonts, &state.input.keys, list.pager(), pages);
+    if tick.back() {
         return Transition::To(Screen::Menu);
     }
-
     Transition::Stay
 }
 
@@ -125,7 +107,8 @@ fn rank_color(rank: i64, fallback: Color) -> Color {
     }
 }
 
-fn draw_row(draw: &mut Draw, gui: &mut Gui, (row, i): (Rect, usize), e: &Entry, mine: bool, picture: Option<&Image>) {
+/// What a player's row holds, over the row itself.
+fn draw_row(draw: &mut Draw, gui: &mut Gui, row: Rect, e: &Entry, mine: bool, picture: Option<&Image>) {
     let pal = gui.ui.palette();
     let fonts = &mut gui.fonts;
     let mid = row.y + row.h / 2.0;
@@ -140,7 +123,6 @@ fn draw_row(draw: &mut Draw, gui: &mut Gui, (row, i): (Rect, usize), e: &Entry, 
     pills.push(Pill::small(&record, pal.text_dim));
     pills.push(Pill::small(&elo, theme::GOLD));
 
-    gui.ui.row(draw, row, i, &format!("rank:{}", e.user_id));
     ui::portrait(draw, &pal, fonts, (row.x + 100.0 + AVATAR_R, mid), AVATAR_R, &who);
     fonts
         .write(draw, Face::Display, &format!("#{}", e.rank))
@@ -152,7 +134,7 @@ fn draw_row(draw: &mut Draw, gui: &mut Gui, (row, i): (Rect, usize), e: &Entry, 
     fonts.write(draw, Face::Display, &name).left(name_x, mid).size(theme::size::EMPHASIS).color(pal.text);
 }
 
-pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State, board: &Leaderboard) {
+pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, board: &mut Leaderboard) -> Transition {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let list = list(view);
@@ -160,7 +142,7 @@ pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State, board: &Leaderboard) 
     let me = state.auth.as_ref().map(|a| a.user_id.as_str());
     let loading = board.slot.is_some();
     let back = back_btn(view);
-    let refresh = Label::busy_or(loading, "Rafraîchir");
+    let refresh_label = Label::busy_or(loading, "Rafraîchir");
     let footer = match (&board.me, me, loading) {
         (_, _, true) => None,
         (Some(e), _, _) if e.rank > SIZE => Some((format!("Votre rang: #{} (ELO {})", e.rank, e.elo), pal.text)),
@@ -176,13 +158,14 @@ pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State, board: &Leaderboard) 
         None
     };
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    gui.ui.page_header(draw, &mut gui.fonts, "Classement");
-    ui::card(draw, &pal, card);
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    let mut chosen = None;
+    gui.ui.page_header(ui.draw, &mut gui.fonts, "Classement");
+    ui::card(ui.draw, &pal, card);
     if let Some(text) = empty {
         gui.fonts
-            .write(draw, Face::Text, text)
+            .write(ui.draw, Face::Text, text)
             .center(card.x + card.w / 2.0, card.y + 60.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text_muted);
@@ -190,21 +173,38 @@ pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State, board: &Leaderboard) 
         for (i, e) in board.pager.shown(&board.top, list.per_page()) {
             let picture = gui.images.get_opt(e.avatar_url.as_deref());
             let mine = Some(e.user_id.as_str()) == me;
-            draw_row(draw, gui, (list.row(i), i), e, mine, picture.as_ref());
+            if widgets::row(ui, gui, ("rank", &e.user_id), list.row(i), i) {
+                chosen = Some((e.user_id.clone(), e.username.clone()));
+            }
+            draw_row(ui.draw, gui, list.row(i), e, mine, picture.as_ref());
         }
         let pages = ui::page_count(board.top.len(), list.per_page());
         if pages > 1 {
-            board.pager.draw(draw, &mut gui.ui, &mut gui.fonts, list.pager(), pages);
+            board.pager.show(ui, gui, "pages", list.pager(), pages);
         }
     }
 
-    gui.ui.button_enabled(draw, &mut gui.fonts, refresh_btn(view), refresh, !loading);
-    gui.ui.button(draw, &mut gui.fonts, back, "Retour");
+    let refreshed = widgets::button(ui, "refresh", refresh_btn(view), refresh_label, !loading);
+    let left = widgets::button(ui, "back", back, "Retour", true);
     if let Some((msg, color)) = footer {
         gui.fonts
-            .write(draw, Face::Text, &msg)
+            .write(ui.draw, Face::Text, &msg)
             .center(view.w / 2.0, back.y + back.h / 2.0)
             .size(theme::size::EMPHASIS)
             .color(color);
     }
+
+    let me = me.map(str::to_owned);
+    if let Some((user_id, username)) = chosen {
+        if Some(&user_id) == me.as_ref() {
+            return crate::profile::enter_profile(state);
+        }
+        return crate::profile::enter_other_profile(state, user_id, username, None);
+    }
+    if refreshed && !loading {
+        refresh(board, state);
+    } else if left {
+        return Transition::To(Screen::Menu);
+    }
+    Transition::Stay
 }

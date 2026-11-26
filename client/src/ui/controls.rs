@@ -6,16 +6,6 @@ use super::{list_row, Fonts, Rect, Ui};
 use crate::theme::Palette;
 
 impl Ui {
-    /// A tab, which takes no click while it is the one shown.
-    pub fn tab(&mut self, draw: &mut Draw, fonts: &mut Fonts, rect: Rect, label: &str, active: bool) {
-        let r = self.interact(label, rect, !active);
-        if r.entered {
-            crate::audio::play_ui_hover();
-        }
-        let look = self.look(fonts);
-        look.tab(&mut Painter { draw, fonts: fonts.library() }, rect.into(), label, active, r.visual(true));
-    }
-
     pub fn link(&mut self, draw: &mut Draw, fonts: &mut Fonts, rect: Rect, text: &str, enabled: bool) {
         let r = self.interact(text, rect, enabled);
         if r.entered {

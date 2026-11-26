@@ -10,7 +10,7 @@ use crate::nav::Transition;
 use crate::state::{ApiUserProfile, Room, Screen, State};
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
-use crate::ui::{self, Face, Fonts, Gui, Persona, Pill, Rect, View, FILL};
+use crate::ui::{self, widgets, Face, Fonts, Gui, Persona, Pill, Rect, View, FILL};
 
 const PORTRAIT_R: f32 = 56.0;
 
@@ -158,44 +158,56 @@ fn poll_stats(ranked: &mut RankedView) {
     }
 }
 
-pub fn update(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
+/// The screen's buttons, as they stand for the search's state.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pressed {
+    /// Search, or accept the match found.
+    Main,
+    /// Back, or refuse the match found.
+    Second,
+    /// Cancel the search or the accepted match.
+    Single,
+}
+
+/// What Enter and Escape stand for; the clicks are in [`show`].
+pub fn update(tick: &Tick, state: &mut State) -> Transition {
     poll_stats(&mut state.ranked);
     if state.room.as_ref().is_some_and(|r| r.info.ranked.is_some()) {
         return Transition::Stay;
     }
-
-    let view = gui.ui.view();
-    let b = buttons(view);
-    let escape = tick.back();
-    let confirm = tick.pressed(KeyCode::Enter);
-
-    match state.ranked.search {
-        Search::Idle => {
-            let can_search = state.ranked.cooldown_left().is_none() && state.ranked.casual_missing().is_none();
-            if can_search && (gui.ui.clicked(b.main) || confirm) {
-                start_search(state);
-            } else if gui.ui.clicked(b.second) || escape {
-                return exit(state);
-            }
-        }
-        Search::Searching { .. } => {
-            if gui.ui.clicked(single_button(view)) || escape {
-                stop_search(&mut state.net.conn, &mut state.ranked);
-            }
-        }
-        Search::Found { accepted, .. } => {
-            let decline = if accepted { single_button(view) } else { b.second };
-            if !accepted && (gui.ui.clicked(b.main) || confirm) {
-                if let Search::Found { accepted, .. } = &mut state.ranked.search {
-                    *accepted = true;
-                }
-                state.net.conn.send(&ClientMessage::AcceptMatch);
-            } else if gui.ui.clicked(decline) || escape {
-                stop_search(&mut state.net.conn, &mut state.ranked);
-            }
-        }
+    let escape = match state.ranked.search {
+        Search::Idle => Pressed::Second,
+        Search::Searching { .. } | Search::Found { accepted: true, .. } => Pressed::Single,
+        Search::Found { accepted: false, .. } => Pressed::Second,
+    };
+    if tick.pressed(KeyCode::Enter) {
+        act(state, Pressed::Main)
+    } else if tick.back() {
+        act(state, escape)
+    } else {
+        Transition::Stay
     }
+}
 
+fn act(state: &mut State, pressed: Pressed) -> Transition {
+    match (&state.ranked.search, pressed) {
+        (Search::Idle, Pressed::Main) => {
+            if state.ranked.cooldown_left().is_none() && state.ranked.casual_missing().is_none() {
+                start_search(state);
+            }
+        }
+        (Search::Idle, Pressed::Second) => return exit(state),
+        (Search::Found { accepted: false, .. }, Pressed::Main) => {
+            if let Search::Found { accepted, .. } = &mut state.ranked.search {
+                *accepted = true;
+            }
+            state.net.conn.send(&ClientMessage::AcceptMatch);
+        }
+        (Search::Searching { .. } | Search::Found { .. }, Pressed::Second | Pressed::Single) => {
+            stop_search(&mut state.net.conn, &mut state.ranked);
+        }
+        _ => {}
+    }
     Transition::Stay
 }
 
@@ -233,11 +245,18 @@ fn clock(secs: u64) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
-pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State) {
+pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
+    match paint(ui, gui, state) {
+        Some(pressed) => act(state, pressed),
+        None => Transition::Stay,
+    }
+}
+
+/// Draws the screen; returns the button clicked.
+fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pressed> {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let (cx, cy) = (view.w / 2.0, view.h / 2.0);
-    let fonts = &mut gui.fonts;
     let picture = gui.images.get_opt(opponent_avatar(state.room.as_ref(), &state.ranked));
     let b = buttons(view);
     let line = |draw: &mut Draw, fonts: &mut Fonts, text: &str, y: f32, size: f32, color: Color| {
@@ -249,69 +268,37 @@ pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State) {
         draw_opponent(draw, &pal, fonts, (cx, cy), opponent, elo, picture.as_ref());
     };
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    gui.ui.page_header(draw, fonts, "Classé");
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    gui.ui.page_header(ui.draw, &mut gui.fonts, "Classé");
+    let mut pressed = None;
 
     if let Some((lobby, ranked)) = state.room.as_ref().and_then(|r| Some((&r.info, r.info.ranked.as_ref()?))) {
-        found(draw, fonts, &ranked.opponent, ranked.opponent_elo);
-        line(draw, fonts, &first_to, cy + 55.0, theme::size::LABEL, pal.text_muted);
+        found(ui.draw, &mut gui.fonts, &ranked.opponent, ranked.opponent_elo);
+        line(ui.draw, &mut gui.fonts, &first_to, cy + 55.0, theme::size::LABEL, pal.text_muted);
         if let Some(n) = lobby.countdown {
-            fonts
-                .write(draw, Face::Display, &n.to_string())
+            gui.fonts
+                .write(ui.draw, Face::Display, &n.to_string())
                 .center(cx, cy + 135.0)
                 .size(theme::size::HERO)
                 .color(pal.title);
         }
-        return;
+        return None;
     }
 
     let ranked = &state.ranked;
     match &ranked.search {
-        Search::Idle => {
-            let elo = state.auth.as_ref().map_or(0, |a| a.elo);
-            let rule = format!(
-                "Quand une partie sera trouvée, vous aurez {} secondes pour l'accepter.",
-                config::MATCH_ACCEPT_SECS
-            );
-
-            line(draw, fonts, "Votre ELO", cy - 170.0, theme::size::LABEL, pal.text_muted);
-            fonts
-                .write(draw, Face::Display, &elo.to_string())
-                .center(cx, cy - 115.0)
-                .size(theme::size::HERO)
-                .color(pal.title);
-            if let Some(stats) = &ranked.stats {
-                let record = format!("Séries: {} gagnées sur {}", stats.ranked_series_won, stats.ranked_series);
-                line(draw, fonts, &record, cy - 50.0, theme::size::EMPHASIS, pal.text);
-            }
-            line(draw, fonts, &first_to, cy, theme::size::LABEL, pal.text_dim);
-            line(draw, fonts, &rule, cy + 35.0, theme::size::BODY, pal.text_muted);
-
-            let (label, enabled) = match (ranked.casual_missing(), ranked.cooldown_left()) {
-                (Some(n), _) => {
-                    let plural = if n > 1 { "s" } else { "" };
-                    let why = format!("Jouez encore {n} partie{plural} amicale{plural} pour débloquer le classé.");
-                    line(draw, fonts, &why, cy + 75.0, theme::size::BODY, theme::WARNING_TEXT);
-                    ("Rechercher une partie".to_string(), false)
-                }
-                (None, Some(left)) => {
-                    gui.ui.next_second();
-                    (format!("Disponible dans {}", clock(left)), false)
-                }
-                (None, None) => ("Rechercher une partie".to_string(), true),
-            };
-            gui.ui.button_enabled(draw, fonts, b.main, label.as_str(), enabled);
-            gui.ui.button(draw, fonts, b.second, "Retour");
-        }
+        Search::Idle => pressed = paint_idle(ui, gui, state),
         Search::Searching { since } => {
             let text = format!("Recherche d'un adversaire{}", gui.ui.waiting_dots());
             gui.ui.next_second();
             let waited = clock((now_secs() - since).max(0.0) as u64);
 
-            line(draw, fonts, &text, cy - 40.0, theme::size::HEADING, pal.text);
-            line(draw, fonts, &waited, cy + 10.0, theme::size::EMPHASIS, pal.text_dim);
-            gui.ui.button(draw, fonts, single_button(view), "Annuler");
+            line(ui.draw, &mut gui.fonts, &text, cy - 40.0, theme::size::HEADING, pal.text);
+            line(ui.draw, &mut gui.fonts, &waited, cy + 10.0, theme::size::EMPHASIS, pal.text_dim);
+            if widgets::button(ui, "single", single_button(view), "Annuler", true) {
+                pressed = Some(Pressed::Single);
+            }
         }
         Search::Found { opponent, opponent_elo, deadline, accepted, .. } => {
             let total = f64::from(config::MATCH_ACCEPT_SECS);
@@ -320,23 +307,91 @@ pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State) {
             let urgency = if left < 3.0 { theme::DANGER } else { pal.accent };
             gui.ui.keep_moving();
 
-            found(draw, fonts, opponent, *opponent_elo);
-            draw.rect(bar).radius(5.0).color(pal.surface);
-            draw.rect(Rect::at(bar.x, bar.y, bar.w * (left / total) as f32, bar.h)).radius(5.0).color(urgency);
-            line(draw, fonts, &format!("{} s", left.ceil() as u64), cy + 80.0, theme::size::EMPHASIS, pal.text_dim);
+            found(ui.draw, &mut gui.fonts, opponent, *opponent_elo);
+            ui.draw.rect(bar).radius(5.0).color(pal.surface);
+            ui.draw.rect(Rect::at(bar.x, bar.y, bar.w * (left / total) as f32, bar.h)).radius(5.0).color(urgency);
+            line(
+                ui.draw,
+                &mut gui.fonts,
+                &format!("{} s", left.ceil() as u64),
+                cy + 80.0,
+                theme::size::EMPHASIS,
+                pal.text_dim,
+            );
             if *accepted {
-                line(draw, fonts, "En attente de l'adversaire...", cy + 104.0, theme::size::LABEL, pal.text_muted);
-                gui.ui.button(draw, fonts, single_button(view), "Annuler");
+                line(
+                    ui.draw,
+                    &mut gui.fonts,
+                    "En attente de l'adversaire...",
+                    cy + 104.0,
+                    theme::size::LABEL,
+                    pal.text_muted,
+                );
+                if widgets::button(ui, "single", single_button(view), "Annuler", true) {
+                    pressed = Some(Pressed::Single);
+                }
             } else {
-                gui.ui.button(draw, fonts, b.main, "Accepter");
-                gui.ui.button(draw, fonts, b.second, "Refuser");
+                gui.ui.button(ui.draw, &mut gui.fonts, b.main, "Accepter");
+                gui.ui.button(ui.draw, &mut gui.fonts, b.second, "Refuser");
             }
         }
     }
 
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        line(draw, fonts, msg, view.h - 60.0, theme::size::EMPHASIS, color);
+        line(ui.draw, &mut gui.fonts, msg, view.h - 60.0, theme::size::EMPHASIS, color);
     }
+    pressed
+}
+
+/// The screen before any search: the player's ELO and record, and the button to search.
+fn paint_idle(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pressed> {
+    let pal = gui.ui.palette();
+    let view = gui.ui.view();
+    let (cx, cy) = (view.w / 2.0, view.h / 2.0);
+    let b = buttons(view);
+    let ranked = &state.ranked;
+    let line = |draw: &mut Draw, fonts: &mut Fonts, text: &str, y: f32, size: f32, color: Color| {
+        fonts.write(draw, Face::Text, text).center(cx, y).size(size).color(color);
+    };
+    let first_to = format!("Premier à {} manches", config::RANKED_WINS);
+    let mut pressed = None;
+    let elo = state.auth.as_ref().map_or(0, |a| a.elo);
+    let rule =
+        format!("Quand une partie sera trouvée, vous aurez {} secondes pour l'accepter.", config::MATCH_ACCEPT_SECS);
+
+    line(ui.draw, &mut gui.fonts, "Votre ELO", cy - 170.0, theme::size::LABEL, pal.text_muted);
+    gui.fonts
+        .write(ui.draw, Face::Display, &elo.to_string())
+        .center(cx, cy - 115.0)
+        .size(theme::size::HERO)
+        .color(pal.title);
+    if let Some(stats) = &ranked.stats {
+        let record = format!("Séries: {} gagnées sur {}", stats.ranked_series_won, stats.ranked_series);
+        line(ui.draw, &mut gui.fonts, &record, cy - 50.0, theme::size::EMPHASIS, pal.text);
+    }
+    line(ui.draw, &mut gui.fonts, &first_to, cy, theme::size::LABEL, pal.text_dim);
+    line(ui.draw, &mut gui.fonts, &rule, cy + 35.0, theme::size::BODY, pal.text_muted);
+
+    let (label, enabled) = match (ranked.casual_missing(), ranked.cooldown_left()) {
+        (Some(n), _) => {
+            let plural = if n > 1 { "s" } else { "" };
+            let why = format!("Jouez encore {n} partie{plural} amicale{plural} pour débloquer le classé.");
+            line(ui.draw, &mut gui.fonts, &why, cy + 75.0, theme::size::BODY, theme::WARNING_TEXT);
+            ("Rechercher une partie".to_string(), false)
+        }
+        (None, Some(left)) => {
+            gui.ui.next_second();
+            (format!("Disponible dans {}", clock(left)), false)
+        }
+        (None, None) => ("Rechercher une partie".to_string(), true),
+    };
+    if widgets::button(ui, "main", b.main, label.as_str(), enabled) {
+        pressed = Some(Pressed::Main);
+    }
+    if widgets::button(ui, "second", b.second, "Retour", true) {
+        pressed = Some(Pressed::Second);
+    }
+    pressed
 }
 
 #[cfg(test)]

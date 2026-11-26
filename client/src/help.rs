@@ -9,7 +9,7 @@ use crate::nav::Transition;
 use crate::pads::Pad;
 use crate::state::{Screen, State};
 use crate::tick::Tick;
-use crate::ui::{self, Face, Fonts, Frame, Gui, Icon, Rect, Size, Ui, View, FILL};
+use crate::ui::{self, widgets, Face, Fonts, Frame, Gui, Icon, Rect, Size, Ui, View, FILL};
 use crate::{draw as game_draw, theme};
 
 const RULES: [(&str, &str); 7] = [
@@ -79,27 +79,17 @@ pub fn enter() -> Transition {
     Transition::To(Screen::Help(Box::new(HelpView { demo: Demo::new(), rules: false })))
 }
 
-pub fn update(tick: &Tick, gui: &mut Gui, help: &mut HelpView) -> Transition {
-    let view = gui.ui.view();
-    let (info, demo_card) = cards(view);
-    let [previous, next] = lesson_arrows(demo_card);
-    let [controls, rules] = tabs(info);
-
+/// The demo's time and what the arrows and Escape do; the clicks are in [`show`].
+pub fn update(tick: &Tick, help: &mut HelpView) -> Transition {
     help.demo.update(tick.dt);
-    if gui.ui.clicked(previous) || tick.pressed(KeyCode::ArrowLeft) {
+    if tick.pressed(KeyCode::ArrowLeft) {
         help.demo.previous();
-    } else if gui.ui.clicked(next) || tick.pressed(KeyCode::ArrowRight) {
+    } else if tick.pressed(KeyCode::ArrowRight) {
         help.demo.next();
     }
-    if gui.ui.clicked(controls) {
-        help.rules = false;
-    } else if gui.ui.clicked(rules) {
-        help.rules = true;
-    }
-    if gui.ui.clicked(back_btn(view)) || tick.back() {
+    if tick.back() {
         return Transition::To(Screen::Menu);
     }
-
     Transition::Stay
 }
 
@@ -192,8 +182,10 @@ fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect) {
 
 /// The demo: its lesson above the board, the key just pressed below it, and
 /// the explanation over the board while the game stands still.
-fn draw_demo(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, card: Rect, demo: &Demo, time: f32) {
-    let pal = ui.palette();
+/// The demo's card; returns the lesson its arrows step to: -1, 1, or 0.
+fn show_demo(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, card: Rect, demo: &Demo, time: f32) -> i32 {
+    let pal = gui.ui.palette();
+    let fonts = &mut gui.fonts;
     let title = demo.title();
     let title = fonts.fit(Face::Display, &title, theme::size::LABEL, card.w - 110.0);
     let board = if demo.rival.is_some() {
@@ -204,18 +196,18 @@ fn draw_demo(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, card: Rect, demo: 
     };
     let [previous, next] = lesson_arrows(card);
 
-    ui::card(draw, &pal, card);
+    ui::card(ui.draw, &pal, card);
     fonts
-        .write(draw, Face::Display, &title)
+        .write(ui.draw, Face::Display, &title)
         .center(card.x + card.w / 2.0, card.y + 22.0)
         .size(theme::size::LABEL)
         .color(pal.text);
-    game_draw::draw_demo(draw, fonts, demo, board, time);
-    ui.button(draw, fonts, previous, Icon::Previous);
-    ui.button(draw, fonts, next, Icon::Next);
+    game_draw::draw_demo(ui.draw, fonts, demo, board, time);
+    let step = i32::from(widgets::button(ui, "next lesson", next, Icon::Next, true))
+        - i32::from(widgets::button(ui, "previous lesson", previous, Icon::Previous, true));
     if let Some((key, left)) = demo.key {
         fonts
-            .write(draw, Face::Display, key)
+            .write(ui.draw, Face::Display, key)
             .center(card.x + card.w / 2.0, board.y + board.h + 24.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text.with_alpha(left.min(1.0)));
@@ -226,36 +218,47 @@ fn draw_demo(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, card: Rect, demo: 
         let (boards, scale) = game_draw::demo_boards(demo, board);
         let bubble = Rect::at(boards.x + 6.0, boards.y + 50.0 * scale, boards.w - 12.0, h);
 
-        draw.rect(bubble).radius(10.0).color(Color::BLACK.with_alpha(0.78));
+        ui.draw.rect(bubble).radius(10.0).color(Color::BLACK.with_alpha(0.78));
         for (i, line) in lines.iter().enumerate() {
             fonts
-                .write(draw, Face::Text, line)
+                .write(ui.draw, Face::Text, line)
                 .center(bubble.x + bubble.w / 2.0, bubble.y + 12.0 + LINE_H * (i as f32 + 0.5))
                 .size(theme::size::BODY)
                 .color(Color::WHITE);
         }
     }
+    step
 }
 
-pub fn draw(draw: &mut Draw, gui: &mut Gui, state: &State, help: &HelpView) {
+pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State, help: &mut HelpView) -> Transition {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let (info, demo_card) = cards(view);
-    let rules = help.rules;
     let [controls_tab, rules_tab] = tabs(info);
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    gui.ui.page_header(draw, &mut gui.fonts, "Comment jouer");
-    ui::card(draw, &pal, info);
-    gui.ui.tab(draw, &mut gui.fonts, controls_tab, "Contrôles", !rules);
-    gui.ui.tab(draw, &mut gui.fonts, rules_tab, "Règles", rules);
-    if rules {
-        draw_rules(draw, &gui.ui, &mut gui.fonts, info);
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    gui.ui.page_header(ui.draw, &mut gui.fonts, "Comment jouer");
+    ui::card(ui.draw, &pal, info);
+    if widgets::tab(ui, controls_tab, "Contrôles", !help.rules) {
+        help.rules = false;
+    }
+    if widgets::tab(ui, rules_tab, "Règles", help.rules) {
+        help.rules = true;
+    }
+    if help.rules {
+        draw_rules(ui.draw, &gui.ui, &mut gui.fonts, info);
     } else {
-        draw_controls(draw, &gui.ui, &mut gui.fonts, info, &state.input.controls.bindings);
+        draw_controls(ui.draw, &gui.ui, &mut gui.fonts, info, &state.input.controls.bindings);
     }
     let time = gui.ui.time() as f32;
-    draw_demo(draw, &mut gui.ui, &mut gui.fonts, demo_card, &help.demo, time);
-    gui.ui.button(draw, &mut gui.fonts, back_btn(view), "Retour");
+    match show_demo(ui, gui, demo_card, &help.demo, time) {
+        -1 => help.demo.previous(),
+        1 => help.demo.next(),
+        _ => {}
+    }
+    if widgets::button(ui, "back", back_btn(view), "Retour", true) {
+        return Transition::To(Screen::Menu);
+    }
+    Transition::Stay
 }

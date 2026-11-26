@@ -418,9 +418,9 @@ fn update(cx: &mut Cx, root: &mut Root) {
         Screen::Friends(f) => friends::update_friends(tick, gui, state, f),
         Screen::OtherProfile(p) => profile::update_other_profile(tick, gui, state, p),
         Screen::SoloSetup => solo::update_setup(tick, state),
-        Screen::Ranked => ranked::update(tick, gui, state),
+        Screen::Ranked => ranked::update(tick, state),
         Screen::Leaderboard(board) => leaderboard::update(tick, gui, state, board),
-        Screen::Help(view) => help::update(tick, gui, view),
+        Screen::Help(view) => help::update(tick, view),
         Screen::Solo(game) => solo::update_game(tick, gui, state, game),
         Screen::Replay(viewer) => replay::update(tick, gui, viewer),
         Screen::Game => update_online_game(tick, gui, state),
@@ -460,8 +460,7 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     draw.push_transform(Affine2::from_scale(Vec2::splat(scale)));
     let ui = &mut aero::ui::Ui::new(cx, draw);
     let mut transition = Transition::Stay;
-    let screen = nav.current();
-    match screen {
+    match nav.current_mut() {
         Screen::Title => title::draw_title(ui.draw, gui),
         Screen::Auth => transition = login::show(ui, gui, state),
         Screen::Menu => transition = menu::show_menu(ui, gui, state, false),
@@ -475,9 +474,9 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
         Screen::Friends(f) => friends::draw_friends(ui.draw, gui, f),
         Screen::OtherProfile(p) => profile::draw_other_profile(ui.draw, gui, p),
         Screen::SoloSetup => transition = solo::show_setup(ui, gui, state),
-        Screen::Ranked => ranked::draw(ui.draw, gui, state),
-        Screen::Leaderboard(board) => leaderboard::draw(ui.draw, gui, state, board),
-        Screen::Help(view) => help::draw(ui.draw, gui, state, view),
+        Screen::Ranked => transition = ranked::show(ui, gui, state),
+        Screen::Leaderboard(board) => transition = leaderboard::show(ui, gui, state, board),
+        Screen::Help(view) => transition = help::show(ui, gui, state, view),
         Screen::Replay(viewer) => replay::draw(ui.draw, gui, viewer),
         Screen::Solo(game) => {
             let hud = game.hud(state.solo.best);
@@ -490,6 +489,7 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
         }
     }
 
+    let screen = nav.current();
     if matches!(screen, Screen::Game | Screen::Solo(_)) {
         if let Some(room) = state.room.as_ref().filter(|_| matches!(screen, Screen::Game)) {
             let hint = can_chat(state).then_some("Entrée pour écrire");
