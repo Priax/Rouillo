@@ -4,6 +4,7 @@ use std::ops::{Deref, DerefMut};
 
 use aero::geom::{Brush, Gradient, Rect};
 use aero::math::{Affine2, Mat3, Vec2};
+use aero::path::{Cap, Join, Stroke};
 use aero::text::Fonts;
 
 use crate::color::{BlendMode, Color};
@@ -66,18 +67,18 @@ enum Kind {
 #[derive(Clone, Copy)]
 enum Ink {
     Fill(Brush),
-    Stroke(Brush, f32),
+    Stroke(Brush, Stroke),
 }
 
 /// Aero's shapes and paths, filled or stroked alike.
 trait Painted: Sized {
     fn color(self, brush: Brush);
-    fn stroke(self, brush: Brush, width: f32);
+    fn stroke(self, brush: Brush, stroke: Stroke);
 
     fn paint(self, paint: Ink) {
         match paint {
             Ink::Fill(brush) => self.color(brush),
-            Ink::Stroke(brush, width) => self.stroke(brush, width),
+            Ink::Stroke(brush, stroke) => self.stroke(brush, stroke),
         }
     }
 }
@@ -87,8 +88,9 @@ impl Painted for aero::draw::Shape<'_> {
         Self::color(self, brush);
     }
 
-    fn stroke(self, brush: Brush, width: f32) {
-        Self::stroke(self, brush, width);
+    /// Rectangles and ellipses have no ends nor corners to shape.
+    fn stroke(self, brush: Brush, stroke: Stroke) {
+        Self::stroke(self, brush, stroke.width);
     }
 }
 
@@ -97,10 +99,14 @@ impl Painted for aero::path::PathShape<'_> {
         Self::color(self, brush);
     }
 
-    fn stroke(self, brush: Brush, width: f32) {
-        Self::stroke(self, brush, width);
+    fn stroke(self, brush: Brush, stroke: Stroke) {
+        self.stroke_with(brush, stroke);
     }
 }
+
+/// lyon's corners, which notan strokes with, are pointed. notan lifts their limit, which lets a near reversal point
+/// far out: past 10 half widths, these are bevelled.
+const MITER: Join = Join::Miter(10.0);
 
 #[derive(Clone, Copy)]
 enum PathCommand {
@@ -308,7 +314,7 @@ struct Paint {
     alpha: f32,
     fill_color: Option<Color>,
     stroke_color: Option<Color>,
-    width: f32,
+    stroke: Stroke,
     modes: [Option<Mode>; 2],
     matrix: Option<Mat3>,
     /// A triangle's corners and their colors, blended across its fill.
@@ -328,7 +334,7 @@ impl Paint {
             alpha: 1.0,
             fill_color: None,
             stroke_color: None,
-            width: 1.0,
+            stroke: Stroke { width: 1.0, cap: Cap::Butt, join: MITER },
             modes: [None; 2],
             matrix: None,
             corners: None,
@@ -356,7 +362,7 @@ impl Paint {
             .into_iter()
             .map(|mode| match mode {
                 Mode::Fill => Ink::Fill(fill),
-                Mode::Stroke => Ink::Stroke(self.stroke_color.unwrap_or(self.color).aero(alpha).into(), self.width),
+                Mode::Stroke => Ink::Stroke(self.stroke_color.unwrap_or(self.color).aero(alpha).into(), self.stroke),
             })
             .collect()
     }
@@ -410,7 +416,7 @@ macro_rules! paint_methods {
             }
 
             pub fn stroke(&mut self, width: f32) -> &mut Self {
-                self.paint.width = width;
+                self.paint.stroke.width = width;
                 self.paint.add_mode(Mode::Stroke);
                 self
             }
@@ -567,12 +573,33 @@ impl Path {
         self
     }
 
-    /// Aero's strokes are round at their ends and joins.
     pub fn round_cap(&mut self) -> &mut Self {
+        self.paint.stroke.cap = Cap::Round;
+        self
+    }
+
+    pub fn butt_cap(&mut self) -> &mut Self {
+        self.paint.stroke.cap = Cap::Butt;
+        self
+    }
+
+    pub fn square_cap(&mut self) -> &mut Self {
+        self.paint.stroke.cap = Cap::Square;
         self
     }
 
     pub fn round_join(&mut self) -> &mut Self {
+        self.paint.stroke.join = Join::Round;
+        self
+    }
+
+    pub fn bevel_join(&mut self) -> &mut Self {
+        self.paint.stroke.join = Join::Bevel;
+        self
+    }
+
+    pub fn miter_join(&mut self) -> &mut Self {
+        self.paint.stroke.join = MITER;
         self
     }
 }
@@ -636,7 +663,8 @@ impl Shape for Line {
     fn record(self, draw: &mut Draw) {
         let color = self.color.aero(self.alpha * draw.alpha);
         let commands = vec![PathCommand::Move(self.from), PathCommand::Line(self.to)];
-        draw.add(self.matrix, Kind::Path { commands, paint: Ink::Stroke(color.into(), self.width) });
+        let stroke = Stroke::new(self.width).cap(Cap::Butt).join(MITER);
+        draw.add(self.matrix, Kind::Path { commands, paint: Ink::Stroke(color.into(), stroke) });
     }
 }
 
@@ -936,7 +964,7 @@ mod tests {
         match inks(&draw)[..] {
             [Ink::Fill(Brush::Solid(a)), Ink::Stroke(Brush::Solid(b), w), Ink::Fill(Brush::Solid(c)), Ink::Fill(Brush::Solid(d))] =>
             {
-                assert_eq!((a, b, w, c, d), (red, green, 2.0, blue, faded));
+                assert_eq!((a, b, w.width, c, d), (red, green, 2.0, blue, faded));
             }
             _ => panic!("fill, then stroke and fill as asked, then the faded fill"),
         }

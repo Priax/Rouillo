@@ -35,9 +35,13 @@ pub use keys::EditKeys;
 pub use keys::Shortcuts;
 pub use layout::{Frame, ListCard, Size, FILL};
 pub use modal::Modal;
-use notan::draw::{CreateDraw, Draw, DrawImages};
+#[cfg(not(feature = "aero"))]
+use notan::draw::DrawImages;
+use notan::draw::{CreateDraw, Draw};
 use notan::math::{vec2, Mat3};
-use notan::prelude::{App, BlendMode, Color, Graphics, RenderTexture, TextureFilter};
+use notan::prelude::{App, Graphics};
+#[cfg(not(feature = "aero"))]
+use notan::prelude::{BlendMode, Color, RenderTexture, TextureFilter};
 pub use pager::{page_count, Pager, PAGER_H};
 pub use panel::{action_row, card_body, card_height, panel_card, SettingsGrid, SettingsPanel, TILE_H};
 pub use rect::Rect;
@@ -56,7 +60,9 @@ pub fn cycle<T: Copy + PartialEq>(options: &[T], at: T, dir: i32) -> T {
 use crate::theme::{hue, Palette};
 
 const MAX_DT: f32 = 0.1;
+#[cfg(not(feature = "aero"))]
 const SUPERSAMPLE: f32 = 2.0;
+#[cfg(not(feature = "aero"))]
 const MAX_TARGET: f32 = 4096.0;
 pub const TRANSITION: f32 = 0.3;
 
@@ -80,6 +86,7 @@ impl Gui {
 }
 
 pub struct Ui {
+    #[cfg(not(feature = "aero"))]
     target: Option<RenderTexture>,
     frame: u64,
     dt: f32,
@@ -108,6 +115,7 @@ pub struct Ui {
 impl Default for Ui {
     fn default() -> Self {
         Self {
+            #[cfg(not(feature = "aero"))]
             target: None,
             dt: 0.0,
             time: 0.0,
@@ -270,10 +278,30 @@ impl Ui {
         self.view
     }
 
+    /// A canvas for this frame, in the view's units: Aero smooths every edge
+    /// itself.
+    #[cfg(feature = "aero")]
+    pub fn canvas(&mut self, gfx: &mut Graphics) -> Draw {
+        let mut draw = gfx.create_draw();
+        let scale = self.view().scale;
+        draw.transform().push(Mat3::from_scale(vec2(scale, scale)));
+        draw
+    }
+
+    #[cfg(feature = "aero")]
+    pub fn render(&mut self, gfx: &mut Graphics, draw: &Draw) {
+        gfx.render(draw);
+    }
+
+    #[cfg(feature = "aero")]
+    #[expect(clippy::unused_self, reason = "notan's backend presents the supersampled frame here")]
+    pub fn present(&mut self, _gfx: &mut Graphics) {}
+
     /// A canvas for this frame. Everything is drawn into a texture
     /// `SUPERSAMPLE` times the window's size and scaled down by `present`,
     /// which smooths every edge: notan draws shapes as bare triangles, and
     /// multisampling cannot be relied on (Wayland's EGL refuses it here).
+    #[cfg(not(feature = "aero"))]
     pub fn canvas(&mut self, gfx: &mut Graphics) -> Draw {
         let view = self.view();
         let mut draw = self.target(gfx).create_draw();
@@ -283,11 +311,13 @@ impl Ui {
         draw
     }
 
+    #[cfg(not(feature = "aero"))]
     pub fn render(&mut self, gfx: &mut Graphics, draw: &Draw) {
         let target = self.target(gfx);
         gfx.render_to(&target, draw);
     }
 
+    #[cfg(not(feature = "aero"))]
     pub fn present(&mut self, gfx: &mut Graphics) {
         let view = self.view();
         let target = self.target(gfx);
@@ -297,6 +327,7 @@ impl Ui {
         gfx.render(&draw);
     }
 
+    #[cfg(not(feature = "aero"))]
     fn target(&mut self, gfx: &mut Graphics) -> RenderTexture {
         let view = self.view();
         let factor = view.scale * supersample(view);
@@ -446,6 +477,7 @@ fn hash_of<T: Hash + ?Sized>(value: &T) -> u64 {
     h.finish()
 }
 
+#[cfg(not(feature = "aero"))]
 fn supersample(view: View) -> f32 {
     let largest = (view.w * view.scale).max(view.h * view.scale).max(1.0);
     SUPERSAMPLE.max(view.dpi).min(MAX_TARGET / largest)
@@ -531,6 +563,7 @@ mod tests {
         assert!(play.contains(click.x, click.y), "and never reached");
     }
 
+    #[cfg(not(feature = "aero"))]
     #[test]
     fn supersampling_stays_within_texture_limits() {
         assert!((supersample(View::fit(1280.0, 800.0)) - 2.0).abs() < f32::EPSILON);
@@ -538,6 +571,7 @@ mod tests {
         assert!(3840.0 * supersample(big) <= MAX_TARGET + 0.5);
     }
 
+    #[cfg(not(feature = "aero"))]
     #[test]
     fn a_dense_screen_is_drawn_at_its_own_resolution() {
         let phone = View { dpi: 3.0, ..View::fit(393.0, 852.0) };
