@@ -53,17 +53,17 @@ struct Layout {
 impl Layout {
     fn new(view: View) -> Self {
         let screen = Rect::at(0.0, 0.0, view.w, view.h);
-        let modal = Modal { card: screen.pad(40.0, 0.0, 40.0, 0.0).max_width(CARD_W) };
-        let plot = modal.body().pad(0.0, 0.0, FOOTER_H, 0.0);
+        let modal = Modal { card: screen.inset([40.0, 0.0, 40.0, 0.0]).max_width(CARD_W) };
+        let plot = modal.body().inset([0.0, 0.0, FOOTER_H, 0.0]);
         let frame = FRAME_PAD / config::CELL_SIZE;
         let (max_columns, max_rows) = (max_of(&BOARD_COLUMNS), max_of(&BOARD_ROWS));
         let (cells_w, cells_h) = (max_columns + 2.0 * frame + OVERHANG, max_rows + 2.0 * frame + OVERHANG);
         let (fixed_w, fixed_h) =
             (BUTTON + GAP + Y_LABEL + AXIS_GAP + ARROW_ROOM, TOP + AXIS_GAP + X_LABEL + GAP + BUTTON);
-        let cell = ((plot.w - fixed_w) / cells_w).min((plot.h - fixed_h) / cells_h);
+        let cell = ((plot.w() - fixed_w) / cells_w).min((plot.h() - fixed_h) / cells_h);
         let (total_w, total_h) = (fixed_w + cells_w * cell, fixed_h + cells_h * cell);
-        let x0 = plot.x + (plot.w - total_w) / 2.0;
-        let y0 = plot.y + (plot.h - total_h) / 2.0;
+        let x0 = plot.x() + (plot.w() - total_w) / 2.0;
+        let y0 = plot.y() + (plot.h() - total_h) / 2.0;
         let corner = (x0 + BUTTON + GAP + Y_LABEL, y0 + total_h - BUTTON - GAP - X_LABEL);
         let origin = (corner.0 + AXIS_GAP + frame * cell, corner.1 - AXIS_GAP - frame * cell);
 
@@ -86,7 +86,7 @@ impl Layout {
                 Rect::at(x0, mid_y + GAP / 2.0, BUTTON, BUTTON),
                 Rect::at(x0, mid_y - GAP / 2.0 - BUTTON, BUTTON, BUTTON),
             ],
-            standard: modal.body().bottom_band(BUTTON).centered(260.0, BUTTON),
+            standard: modal.body().bottom_strip(BUTTON).centered(260.0, BUTTON),
         }
     }
 
@@ -180,7 +180,7 @@ fn paint(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules: &R
         dashed_rect(draw, outline, dim);
         fonts
             .write(draw, Face::Text, "standard")
-            .left(outline.x + 4.0, outline.y - 12.0)
+            .left(outline.x() + 4.0, outline.y() - 12.0)
             .size(theme::size::SMALL)
             .color(dim);
     }
@@ -188,7 +188,7 @@ fn paint(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules: &R
 }
 
 fn footnote(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout) {
-    let (x, y) = layout.standard.center();
+    let (x, y) = layout.standard.center().into();
     fonts
         .write(draw, Face::Text, "Seul l'hôte peut changer la taille.")
         .center(x, y)
@@ -201,14 +201,14 @@ fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules
     let (cx, cy) = layout.corner;
     let (x_end, y_end) = (layout.x_end, layout.y_end);
     let well = layout.well(rules.columns, rules.rows);
-    let (right, top) = (well.x + well.w, well.y);
+    let (right, top) = (well.x() + well.w(), well.y());
     let head = 7.0;
 
     for (from, to, color) in [
         ((cx, cy), (x_end, cy), pal.border),
         ((cx, cy), (cx, y_end), pal.border),
-        ((well.x, cy), (right, cy), pal.accent),
-        ((cx, well.y + well.h), (cx, top), pal.accent),
+        ((well.x(), cy), (right, cy), pal.accent),
+        ((cx, well.y() + well.h()), (cx, top), pal.accent),
     ] {
         draw.line_with(Vec2::from(from), Vec2::from(to), 3.0, Cap::Butt).color(color);
     }
@@ -218,11 +218,11 @@ fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules
         .color(pal.border);
 
     for c in 0..=*BOARD_COLUMNS.end() {
-        let x = well.x + f32::from(c) * layout.cell;
+        let x = well.x() + f32::from(c) * layout.cell;
         draw.line_with(vec2(x, cy - TICK), vec2(x, cy + TICK), 2.0, Cap::Butt).color(pal.border);
     }
     for r in 0..=*BOARD_ROWS.end() {
-        let y = well.y + well.h - f32::from(r) * layout.cell;
+        let y = well.y() + well.h() - f32::from(r) * layout.cell;
         draw.line_with(vec2(cx - TICK, y), vec2(cx + TICK, y), 2.0, Cap::Butt).color(pal.border);
     }
 
@@ -240,7 +240,7 @@ fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules
 }
 
 fn dashed_rect(draw: &mut Draw, r: Rect, color: Color) {
-    let corners = r.corners();
+    let corners = r.corners().map(|c| (c.x, c.y));
 
     for i in 0..4 {
         let (a, b) = (corners[i], corners[(i + 1) % 4]);

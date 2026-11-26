@@ -32,7 +32,7 @@ fn sounds(response: Response) -> Response {
 pub fn button<'a>(ui: &mut Ui<'_>, key: impl Hash, rect: Rect, label: impl Into<Label<'a>>, enabled: bool) -> bool {
     let label = label.into();
     let response = match label {
-        Label::Text(text) => Button::new(text).enabled(enabled).show(ui, key, rect.into()),
+        Label::Text(text) => Button::new(text).enabled(enabled).show(ui, key, rect),
         Label::Icon(icon) => {
             if icon == Icon::Busy {
                 ui.cx.request_redraw();
@@ -42,7 +42,7 @@ pub fn button<'a>(ui: &mut Ui<'_>, key: impl Hash, rect: Rect, label: impl Into<
                 let center = area.center();
                 paint_icon(draw, icon, (center.x, center.y), area.size().min_element(), color, time);
             };
-            Button::painted(&paint, label.id()).enabled(enabled).show(ui, key, rect.into())
+            Button::painted(&paint, label.id()).enabled(enabled).show(ui, key, rect)
         }
     };
     sounds(response).clicked
@@ -50,34 +50,34 @@ pub fn button<'a>(ui: &mut Ui<'_>, key: impl Hash, rect: Rect, label: impl Into<
 
 /// Returns whether it was clicked.
 pub fn tab(ui: &mut Ui<'_>, rect: Rect, text: &str, selected: bool) -> bool {
-    sounds(Tab::new(text, selected).show(ui, text, rect.into())).clicked
+    sounds(Tab::new(text, selected).show(ui, text, rect)).clicked
 }
 
 /// Text that leads somewhere. Returns whether it was clicked.
 pub fn link(ui: &mut Ui<'_>, key: impl Hash, rect: Rect, text: &str, enabled: bool) -> bool {
-    sounds(Link::new(text).enabled(enabled).show(ui, key, rect.into())).clicked
+    sounds(Link::new(text).enabled(enabled).show(ui, key, rect)).clicked
 }
 
 /// A slanted bar across `row`, as the menus stack them. Returns whether it was clicked.
 pub fn menu_bar(ui: &mut Ui<'_>, gui: &mut Gui, row: Rect, (label, color): (&str, Color), enabled: bool) -> bool {
     let hovered = ui.hovered(ui.id(label));
-    let (response, visual) = control(ui, label, bar::reach(row, hovered).into(), enabled, Role::Button, label);
+    let (response, visual) = control(ui, label, bar::reach(row, hovered), enabled, Role::Button, label);
     bar::paint(ui.draw, &mut ui.cx.fonts, (&gui.ui.palette(), gui.ui.time()), row, (label, color), visual);
     sounds(response).clicked
 }
 
 /// A list row that lights up under the pointer; the caller draws what it holds. Returns whether it was clicked.
 pub fn row(ui: &mut Ui<'_>, gui: &Gui, key: impl Hash, rect: Rect, index: usize) -> bool {
-    let (response, visual) = control(ui, key, rect.into(), true, Role::Button, "");
+    let (response, visual) = control(ui, key, rect, true, Role::Button, "");
     paint_row(ui.draw, &gui.ui.palette(), rect, index, visual);
     sounds(response).clicked
 }
 
 /// The player's round portrait, which grows a little under the pointer. Returns whether it was clicked.
 pub fn avatar(ui: &mut Ui<'_>, gui: &mut Gui, rect: Rect, name: &str, picture: Option<&Image>) -> bool {
-    let (response, visual) = control(ui, ("avatar", name), rect.into(), true, Role::Button, name);
-    let center = rect.center();
-    let radius = rect.w.min(rect.h) / 2.0 * (1.0 + 0.05 * visual.hover);
+    let (response, visual) = control(ui, ("avatar", name), rect, true, Role::Button, name);
+    let center = rect.center().into();
+    let radius = rect.w().min(rect.h()) / 2.0 * (1.0 + 0.05 * visual.hover);
     let who = Persona { name, glow: visual.hover, picture };
     portrait(ui.draw, &gui.ui.palette(), &mut ui.cx.fonts, center, radius, &who);
     sounds(response).clicked
@@ -136,7 +136,7 @@ pub fn switch_tile(
     let pal = gui.ui.palette();
     tile_label(ui.draw, &mut ui.cx.fonts, &pal, tile, label);
     let band = Stepper::tile_band(tile);
-    let (response, visual) = control(ui, key, band.into(), editable, Role::Button, label);
+    let (response, visual) = control(ui, key, band, editable, Role::Button, label);
     paint_switch(ui.draw, &mut ui.cx.fonts, &pal, band, on, visual);
     sounds(response).clicked
 }
@@ -152,9 +152,9 @@ pub fn modal<R>(
     ui.modal(|ui| {
         let view = gui.ui.view();
         let screen = Rect::at(0.0, 0.0, view.w, view.h);
-        let beside = ui.interact(ui.id("modal scrim"), screen.into(), Sense::CLICK).clicked;
+        let beside = ui.interact(ui.id("modal scrim"), screen, Sense::CLICK).clicked;
         modal.paint(ui.draw, &mut ui.cx.fonts, &gui.ui.palette(), (view, title));
-        ui.interact(ui.id("modal card"), modal.card.into(), Sense::NONE);
+        ui.interact(ui.id("modal card"), modal.card, Sense::NONE);
         let closed = button(ui, "modal close", modal.close(), Icon::Close, true);
         (inside(ui, gui), beside || closed)
     })
@@ -192,10 +192,10 @@ pub fn text_field(
     let (style, padding) = if field.multiline {
         let style = faces.style(Face::Text, AREA_TEXT);
         let line = AREA_LINE_H / style.size;
-        (style.line_height(line).max_width(rect.w - 2.0 * FIELD_PADDING), vec2(FIELD_PADDING, FIELD_PADDING))
+        (style.line_height(line).max_width(rect.w() - 2.0 * FIELD_PADDING), vec2(FIELD_PADDING, FIELD_PADDING))
     } else {
-        let size = (rect.h * 0.45).clamp(16.0, 24.0);
-        (faces.style(Face::Text, size), vec2(FIELD_PADDING, (rect.h - size) / 2.0))
+        let size = (rect.h() * 0.45).clamp(16.0, 24.0);
+        (faces.style(Face::Text, size), vec2(FIELD_PADDING, (rect.h() - size) / 2.0))
     };
     field
         .style(style.color(pal.text))
@@ -203,7 +203,7 @@ pub fn text_field(
         .caret(pal.text)
         .selection(pal.accent.with_alpha(0.35))
         .placeholder_color(pal.text_muted)
-        .show(ui, key, rect.into(), text)
+        .show(ui, key, rect, text)
 }
 
 /// Gives the field `key` the keyboard, without what was pressed this frame: the Enter that opened it types nothing.

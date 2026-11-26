@@ -54,7 +54,7 @@ impl TouchPad {
         let mut pause = false;
         if self.active && in_game {
             for (button, rect) in layout(view) {
-                let on = |f: &Finger| rect.contains(f.at.x / view.scale, f.at.y / view.scale);
+                let on = |f: &Finger| rect.contains(aero::math::vec2(f.at.x / view.scale, f.at.y / view.scale));
                 match button {
                     Button::Act(action) => held[action as usize] = fingers.iter().filter(|f| !f.lifted).any(on),
                     Button::Pause => pause = fingers.iter().filter(|f| f.new).any(on),
@@ -71,7 +71,7 @@ impl TouchPad {
         }
         for (button, rect) in layout(view) {
             let down = matches!(button, Button::Act(a) if self.held[a as usize]);
-            let (cx, cy) = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+            let (cx, cy) = (rect.x() + rect.w() / 2.0, rect.y() + rect.h() / 2.0);
             let fill = Color::WHITE.with_alpha(if down { 0.32 } else { 0.12 });
             let ink = Color::WHITE.with_alpha(if down { 0.95 } else { 0.7 });
             match button {
@@ -80,8 +80,8 @@ impl TouchPad {
                     fonts.write(draw, Face::Display, "II").center(cx, cy).size(theme::size::TITLE).color(ink);
                 }
                 Button::Act(action) => {
-                    draw.circle(vec2(cx, cy), rect.w / 2.0).color(fill);
-                    icon(draw, action, cx, cy, rect.w * 0.22, ink);
+                    draw.circle(vec2(cx, cy), rect.w() / 2.0).color(fill);
+                    icon(draw, action, cx, cy, rect.w() * 0.22, ink);
                 }
             }
         }
@@ -149,9 +149,12 @@ mod tests {
         for view in [View::fit(1280.0, 800.0), View::fit(844.0, 390.0), View::fit(2400.0, 1080.0)] {
             let rects = layout(view).map(|(_, r)| r);
             for (i, a) in rects.iter().enumerate() {
-                assert!(a.x >= 0.0 && a.y >= 0.0 && a.x + a.w <= view.w && a.y + a.h <= view.h);
+                assert!(a.x() >= 0.0 && a.y() >= 0.0 && a.x() + a.w() <= view.w && a.y() + a.h() <= view.h);
                 for b in &rects[i + 1..] {
-                    let apart = a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
+                    let apart = a.x() + a.w() <= b.x()
+                        || b.x() + b.w() <= a.x()
+                        || a.y() + a.h() <= b.y()
+                        || b.y() + b.h() <= a.y();
                     assert!(apart, "{a:?} overlaps {b:?}");
                 }
             }

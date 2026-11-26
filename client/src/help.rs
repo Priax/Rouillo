@@ -9,7 +9,7 @@ use crate::nav::Transition;
 use crate::pads::Pad;
 use crate::state::{Screen, State};
 use crate::tick::Tick;
-use crate::ui::{self, widgets, Face, Fonts, Frame, Gui, Icon, Rect, Size, Typeset, Ui, View, FILL};
+use crate::ui::{self, px, widgets, Face, Fonts, Frame, Gui, Icon, Rect, Typeset, Ui, View, FILL};
 use crate::{draw as game_draw, theme};
 
 const RULES: [(&str, &str); 7] = [
@@ -48,27 +48,27 @@ const LINE_H: f32 = 25.0;
 
 /// The tabbed card and the demo card: side by side, or the demo below.
 fn cards(view: View) -> (Rect, Rect) {
-    let area = Rect::at(0.0, theme::HEADER_H + 20.0, view.w, view.h).pad(0.0, 20.0, 0.0, 20.0);
+    let area = Rect::at(0.0, theme::HEADER_H + 20.0, view.w, view.h).inset([0.0, 20.0, 0.0, 20.0]);
 
     if view.portrait() {
-        let [info, demo] = area.rows(20.0, [Size::Px(INFO_H_UPRIGHT), Size::Px(DEMO_H)]);
+        let [info, demo] = area.rows(20.0, [px(INFO_H_UPRIGHT), px(DEMO_H)]);
         return (info, demo.max_width(DEMO_W));
     }
 
-    let row = area.top(DEMO_H).max_width(1220.0);
-    let demo_w = DEMO_W.min(row.w * 0.36);
-    let [info, demo] = row.columns(25.0, [FILL, Size::Px(demo_w)]);
+    let row = area.top_strip(DEMO_H).max_width(1220.0);
+    let demo_w = DEMO_W.min(row.w() * 0.36);
+    let [info, demo] = row.columns(25.0, [FILL, px(demo_w)]);
     (info, demo)
 }
 
 fn tabs(info: Rect) -> [Rect; 2] {
-    info.pad(8.0, 0.0, 0.0, 20.0).top(TAB_H - 8.0).left(420.0).columns(20.0, [FILL, FILL])
+    info.inset([8.0, 0.0, 0.0, 20.0]).top_strip(TAB_H - 8.0).left_strip(420.0).columns(20.0, [FILL, FILL])
 }
 
 /// The buttons to the lesson before and after, around its title.
 fn lesson_arrows(demo_card: Rect) -> [Rect; 2] {
-    let row = demo_card.pad(6.0, 8.0, 0.0, 8.0).top(32.0);
-    [row.left(40.0), row.right(40.0)]
+    let row = demo_card.inset([6.0, 8.0, 0.0, 8.0]).top_strip(32.0);
+    [row.left_strip(40.0), row.right_strip(40.0)]
 }
 
 fn back_btn(view: View) -> Rect {
@@ -135,18 +135,18 @@ fn controls_rows(bindings: &Bindings) -> Vec<(&'static str, Vec<String>, Option<
 
 fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect, bindings: &Bindings) {
     let pal = ui.palette();
-    let label_w = 300.0_f32.min(card.w * 0.42);
+    let label_w = 300.0_f32.min(card.w() * 0.42);
     let note = "Les touches se changent dans Paramètres. Sur téléphone, des boutons apparaissent \
                 à l'écran dès que vous le touchez.";
-    let note = fonts.wrap(Face::Text, note, theme::size::BODY, card.w - 48.0);
+    let note = fonts.wrap(Face::Text, note, theme::size::BODY, card.w() - 48.0);
     let rows = controls_rows(bindings);
-    let room = card.h - TAB_H - 36.0 - note.len() as f32 * LINE_H - 16.0;
+    let room = card.h() - TAB_H - 36.0 - note.len() as f32 * LINE_H - 16.0;
     let row_h = ROW_H.min(room / rows.len() as f32);
 
-    let mut y = card.y + TAB_H + 36.0;
+    let mut y = card.y() + TAB_H + 36.0;
     for (label, keys, pad) in rows {
-        fonts.write(draw, Face::Text, label).left(card.x + 24.0, y).size(theme::size::EMPHASIS).color(pal.text);
-        let mut x = card.x + 24.0 + label_w;
+        fonts.write(draw, Face::Text, label).left(card.x() + 24.0, y).size(theme::size::EMPHASIS).color(pal.text);
+        let mut x = card.x() + 24.0 + label_w;
         if keys.is_empty() && pad.is_none() {
             chip(draw, ui, fonts, (x, y), "aucune touche", false);
         }
@@ -161,19 +161,19 @@ fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect, bindin
 
     y += 4.0;
     for line in note {
-        fonts.write(draw, Face::Text, line).left(card.x + 24.0, y).size(theme::size::BODY).color(pal.text_muted);
+        fonts.write(draw, Face::Text, line).left(card.x() + 24.0, y).size(theme::size::BODY).color(pal.text_muted);
         y += LINE_H;
     }
 }
 
 fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect) {
     let pal = ui.palette();
-    let mut y = card.y + TAB_H + 30.0;
+    let mut y = card.y() + TAB_H + 30.0;
     for (title, text) in RULES {
-        fonts.write(draw, Face::Display, title).left(card.x + 24.0, y).size(theme::size::EMPHASIS).color(pal.accent);
+        fonts.write(draw, Face::Display, title).left(card.x() + 24.0, y).size(theme::size::EMPHASIS).color(pal.accent);
         y += LINE_H + 4.0;
-        for line in fonts.wrap(Face::Text, text, theme::size::BODY, card.w - 48.0) {
-            fonts.write(draw, Face::Text, line).left(card.x + 24.0, y).size(theme::size::BODY).color(pal.text);
+        for line in fonts.wrap(Face::Text, text, theme::size::BODY, card.w() - 48.0) {
+            fonts.write(draw, Face::Text, line).left(card.x() + 24.0, y).size(theme::size::BODY).color(pal.text);
             y += LINE_H;
         }
         y += 8.0;
@@ -186,12 +186,12 @@ fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect) {
 fn show_demo(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, card: Rect, demo: &Demo, time: f32) -> i32 {
     let pal = gui.ui.palette();
     let title = demo.title();
-    let title = ui.cx.fonts.fit(Face::Display, &title, theme::size::LABEL, card.w - 110.0);
+    let title = ui.cx.fonts.fit(Face::Display, &title, theme::size::LABEL, card.w() - 110.0);
     let board = if demo.rival.is_some() {
-        Rect::at(card.x + 20.0, card.y + 44.0, card.w - 40.0, game_draw::BOARD_H)
+        Rect::at(card.x() + 20.0, card.y() + 44.0, card.w() - 40.0, game_draw::BOARD_H)
     } else {
-        let x = card.x + (card.w - game_draw::BOARD_W) / 2.0;
-        Rect::at(x, card.y + 44.0, game_draw::BOARD_W, game_draw::BOARD_H)
+        let x = card.x() + (card.w() - game_draw::BOARD_W) / 2.0;
+        Rect::at(x, card.y() + 44.0, game_draw::BOARD_W, game_draw::BOARD_H)
     };
     let [previous, next] = lesson_arrows(card);
 
@@ -199,7 +199,7 @@ fn show_demo(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, card: Rect, demo: &Demo, 
     ui.cx
         .fonts
         .write(ui.draw, Face::Display, &title)
-        .center(card.x + card.w / 2.0, card.y + 22.0)
+        .center(card.x() + card.w() / 2.0, card.y() + 22.0)
         .size(theme::size::LABEL)
         .color(pal.text);
     game_draw::draw_demo(ui.draw, &mut ui.cx.fonts, demo, board, time);
@@ -209,22 +209,22 @@ fn show_demo(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, card: Rect, demo: &Demo, 
         ui.cx
             .fonts
             .write(ui.draw, Face::Display, key)
-            .center(card.x + card.w / 2.0, board.y + board.h + 24.0)
+            .center(card.x() + card.w() / 2.0, board.y() + board.h() + 24.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text.with_alpha(left.min(1.0)));
     }
     if let Some(text) = demo.text() {
-        let lines = ui.cx.fonts.wrap(Face::Text, text, theme::size::BODY, board.w - 28.0);
+        let lines = ui.cx.fonts.wrap(Face::Text, text, theme::size::BODY, board.w() - 28.0);
         let h = lines.len() as f32 * LINE_H + 24.0;
         let (boards, scale) = game_draw::demo_boards(demo, board);
-        let bubble = Rect::at(boards.x + 6.0, boards.y + 50.0 * scale, boards.w - 12.0, h);
+        let bubble = Rect::at(boards.x() + 6.0, boards.y() + 50.0 * scale, boards.w() - 12.0, h);
 
         ui.draw.rect(bubble).radius(10.0).color(Color::BLACK.with_alpha(0.78));
         for (i, line) in lines.iter().enumerate() {
             ui.cx
                 .fonts
                 .write(ui.draw, Face::Text, line)
-                .center(bubble.x + bubble.w / 2.0, bubble.y + 12.0 + LINE_H * (i as f32 + 0.5))
+                .center(bubble.x() + bubble.w() / 2.0, bubble.y() + 12.0 + LINE_H * (i as f32 + 0.5))
                 .size(theme::size::BODY)
                 .color(Color::WHITE);
         }

@@ -47,13 +47,13 @@ impl Ui {
         draw.rect(rect).color(pal.banner);
         let triangles = Triangles {
             seed: 0xba5d,
-            size: rect.h * 0.9,
+            size: rect.h() * 0.9,
             density: 0.6,
             speed: 0.03,
             color: pal.accent.with_alpha(0.08),
         };
-        triangles.draw_clipped(draw, rect, self.time(), Some(&rect.corners()));
-        draw.rect(Rect::at(rect.x, rect.y + rect.h - 2.0, rect.w, 2.0)).color(pal.accent);
+        triangles.draw_clipped(draw, rect, self.time(), Some(&rect.corners().map(Into::into)));
+        draw.rect(Rect::at(rect.x(), rect.y() + rect.h() - 2.0, rect.w(), 2.0)).color(pal.accent);
     }
 }
 

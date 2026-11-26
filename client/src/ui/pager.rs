@@ -31,8 +31,8 @@ struct Layout {
 impl Layout {
     fn new(area: Rect) -> Self {
         let total = 4.0 * BTN_W + FIELD_W + OF_W + 6.0 * GAP;
-        let x0 = area.x + (area.w - total) / 2.0;
-        let y = area.y + (area.h - BTN_H) / 2.0;
+        let x0 = area.x() + (area.w() - total) / 2.0;
+        let y = area.y() + (area.h() - BTN_H) / 2.0;
         let at = |x: f32, w: f32| Rect::at(x, y, w, BTN_H);
         let field_x = x0 + 2.0 * (BTN_W + GAP);
         let next_x = field_x + FIELD_W + GAP + OF_W + GAP;
@@ -127,7 +127,7 @@ impl Pager {
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, &format!("/ {pages}"))
-            .left(l.of_x, l.field.y + l.field.h / 2.0)
+            .left(l.of_x, l.field.y() + l.field.h() / 2.0)
             .size(theme::size::LABEL)
             .color(gui.ui.palette().text_dim);
         wanted.is_some_and(|page| self.go(page, pages))

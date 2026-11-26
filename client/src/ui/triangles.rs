@@ -30,17 +30,17 @@ impl Triangles {
     /// there is one. Clipping is geometric rather than a stencil mask, so it
     /// works on any target, render textures without a stencil buffer included.
     pub fn draw_clipped(self, draw: &mut Draw, area: Rect, time: f64, clip: Option<&[(f32, f32)]>) {
-        let count = ((area.w * area.h / 10_000.0) * self.density).round().max(1.0) as u64;
+        let count = ((area.w() * area.h() / 10_000.0) * self.density).round().max(1.0) as u64;
         for i in 0..count {
             let mut rng = self.seed ^ i.wrapping_mul(0x9E37_79B9_7F4A_7C15);
             let mut next = || unit(splitmix(&mut rng));
             let (u, phase, size, speed, alpha) = (next(), next(), next(), next(), next());
 
             let side = self.size * (0.25 + 0.75 * size);
-            let travel = area.h + 2.0 * side;
+            let travel = area.h() + 2.0 * side;
             let cycles = time * f64::from(self.speed * (0.5 + speed));
             let progress = (f64::from(phase) + cycles).fract() as f32;
-            let (x, y) = (area.x + u * area.w, area.y + area.h + side - progress * travel);
+            let (x, y) = (area.x() + u * area.w(), area.y() + area.h() + side - progress * travel);
             let half = side * 0.577;
             let corners = [(x, y - side / 2.0), (x - half, y + side / 2.0), (x + half, y + side / 2.0)];
             let color = self.color.with_alpha(self.color.a * (0.35 + 0.65 * alpha));

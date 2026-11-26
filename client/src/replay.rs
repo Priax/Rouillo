@@ -98,7 +98,7 @@ pub fn show_keep(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) {
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, msg)
-            .right(rect.x + rect.w, rect.y + rect.h + 16.0)
+            .right(rect.x() + rect.w(), rect.y() + rect.h() + 16.0)
             .size(theme::size::SMALL)
             .color(color);
     }
@@ -321,7 +321,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, viewer: &mut ReplayViewer)
 fn draw_clock(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, clock: &str, play: Rect) {
     fonts
         .write(draw, Face::Display, clock)
-        .right(play.x - 20.0, play.y + play.h / 2.0)
+        .right(play.x() - 20.0, play.y() + play.h() / 2.0)
         .size(theme::size::LABEL)
         .color(ui.palette().text_dim);
 }

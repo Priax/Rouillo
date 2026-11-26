@@ -78,7 +78,7 @@ impl Chat {
         let pal = ui.palette();
         let now = now_secs();
 
-        let mut y = area.y + area.h - INPUT_H - PAD - LINE_H / 2.0;
+        let mut y = area.y() + area.h() - INPUT_H - PAD - LINE_H / 2.0;
         for line in self.lines.iter().rev() {
             let alpha = if fade {
                 let left = FADE_AFTER + FADE_FOR - (now - line.at);
@@ -95,15 +95,15 @@ impl Chat {
                 break;
             }
             let color = if line.spectator { pal.text_dim } else { pal.text };
-            let rows = fonts.wrap(Face::Text, &line.text, theme::size::SMALL, area.w - 2.0 * PAD);
+            let rows = fonts.wrap(Face::Text, &line.text, theme::size::SMALL, area.w() - 2.0 * PAD);
 
             for row in rows.iter().rev() {
-                if y < area.y + PAD {
+                if y < area.y() + PAD {
                     return;
                 }
                 fonts
                     .write(draw, Face::Text, row)
-                    .left(area.x + PAD, y)
+                    .left(area.x() + PAD, y)
                     .size(theme::size::SMALL)
                     .color(color.with_alpha(alpha));
                 y -= LINE_H;
@@ -137,10 +137,10 @@ impl Chat {
                 ui.cx
                     .fonts
                     .write(ui.draw, Face::Text, hint)
-                    .left(area.x + PAD, area.y + area.h - INPUT_H / 2.0 - PAD / 2.0)
+                    .left(area.x() + PAD, area.y() + area.h() - INPUT_H / 2.0 - PAD / 2.0)
                     .size(theme::size::SMALL)
                     .color(pal.text_muted);
-                if ui.interact(ui.id("chat area"), area.into(), Sense::CLICK).clicked {
+                if ui.interact(ui.id("chat area"), area, Sense::CLICK).clicked {
                     self.open = true;
                     self.take_keyboard();
                 }
@@ -159,7 +159,7 @@ impl Chat {
 }
 
 fn input_rect(area: Rect) -> Rect {
-    area.pad(0.0, PAD / 2.0, PAD / 2.0, PAD / 2.0).bottom_band(INPUT_H)
+    area.inset([0.0, PAD / 2.0, PAD / 2.0, PAD / 2.0]).bottom_strip(INPUT_H)
 }
 
 #[cfg(test)]

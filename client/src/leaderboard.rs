@@ -81,7 +81,7 @@ fn back_btn(view: View) -> Rect {
 }
 
 fn refresh_btn(view: View) -> Rect {
-    Frame::of(view).header_tools(0.0).right(190.0).middle(44.0)
+    Frame::of(view).header_tools(0.0).right_strip(190.0).middle(44.0)
 }
 
 /// The answers to come and what the keys do; the clicks are in [`show`].
@@ -117,9 +117,9 @@ fn draw_row(
     picture: Option<&Image>,
 ) {
     let pal = gui.ui.palette();
-    let mid = row.y + row.h / 2.0;
+    let mid = row.y() + row.h() / 2.0;
     let who = ui::Persona { name: &e.username, glow: 0.0, picture };
-    let name_x = row.x + 100.0 + 2.0 * AVATAR_R + 12.0;
+    let name_x = row.x() + 100.0 + 2.0 * AVATAR_R + 12.0;
     let elo = format!("ELO {}", e.elo);
     let record = format!("{} V / {} séries", e.series_won, e.series);
     let mut pills = Vec::new();
@@ -129,13 +129,13 @@ fn draw_row(
     pills.push(Pill::small(&record, pal.text_dim));
     pills.push(Pill::small(&elo, theme::GOLD));
 
-    ui::portrait(draw, &pal, fonts, (row.x + 100.0 + AVATAR_R, mid), AVATAR_R, &who);
+    ui::portrait(draw, &pal, fonts, (row.x() + 100.0 + AVATAR_R, mid), AVATAR_R, &who);
     fonts
         .write(draw, Face::Display, &format!("#{}", e.rank))
-        .left(row.x + 18.0, mid)
+        .left(row.x() + 18.0, mid)
         .size(theme::size::EMPHASIS)
         .color(rank_color(e.rank, pal.text_muted));
-    let pills_start = ui::pills_ending_at(draw, fonts, &pills, row.x + row.w - 16.0, mid);
+    let pills_start = ui::pills_ending_at(draw, fonts, &pills, row.x() + row.w() - 16.0, mid);
     let name = fonts.fit(Face::Display, &e.username, theme::size::EMPHASIS, pills_start - 20.0 - name_x);
     fonts.write(draw, Face::Display, &name).left(name_x, mid).size(theme::size::EMPHASIS).color(pal.text);
 }
@@ -173,7 +173,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, board: 
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, text)
-            .center(card.x + card.w / 2.0, card.y + 60.0)
+            .center(card.x() + card.w() / 2.0, card.y() + 60.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text_muted);
     } else {
@@ -197,7 +197,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, board: 
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, &msg)
-            .center(view.w / 2.0, back.y + back.h / 2.0)
+            .center(view.w / 2.0, back.y() + back.h() / 2.0)
             .size(theme::size::EMPHASIS)
             .color(color);
     }

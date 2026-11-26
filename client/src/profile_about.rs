@@ -52,8 +52,9 @@ fn clamp<'a>(fonts: &mut Fonts, text: &'a str, room: f32, max: usize) -> (Vec<Co
 }
 
 pub fn summary<'a>(fonts: &mut Fonts, info: &'a ApiUserProfile, area: Rect, music_lines: usize) -> Summary<'a> {
-    let (music, music_cut) = clamp(fonts, info.favorite_music.as_deref().unwrap_or_default(), area.w, music_lines);
-    let (bio, bio_cut) = clamp(fonts, info.bio.as_deref().unwrap_or_default(), area.w, bio_room(area.h, music.len()));
+    let (music, music_cut) = clamp(fonts, info.favorite_music.as_deref().unwrap_or_default(), area.w(), music_lines);
+    let (bio, bio_cut) =
+        clamp(fonts, info.bio.as_deref().unwrap_or_default(), area.w(), bio_room(area.h(), music.len()));
     Summary { bio, music, cut: bio_cut || music_cut }
 }
 
@@ -61,16 +62,16 @@ pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, summary: &Summa
     let pal = ui.palette();
     let blocks = [("Bio", &summary.bio, pal.text), ("Musique", &summary.music, pal.accent)];
 
-    let mut y = area.y;
+    let mut y = area.y();
     for (label, lines, color) in blocks {
         if lines.is_empty() {
             continue;
         }
-        fonts.write(draw, Face::Text, label).left(area.x, y).size(theme::size::SMALL).color(pal.text_dim);
+        fonts.write(draw, Face::Text, label).left(area.x(), y).size(theme::size::SMALL).color(pal.text_dim);
         for (i, line) in lines.iter().enumerate() {
             fonts
                 .write(draw, Face::Text, line)
-                .left(area.x, y + LABEL_H + i as f32 * LINE_H)
+                .left(area.x(), y + LABEL_H + i as f32 * LINE_H)
                 .size(theme::size::BODY)
                 .color(color);
         }
@@ -81,13 +82,13 @@ pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, summary: &Summa
 /// Returns whether it was clicked.
 pub fn show_more_link(ui: &mut aero::ui::Ui<'_>, area: Rect) -> bool {
     let w = ui.cx.fonts.width(Face::Text, MORE, theme::size::BODY) + 8.0;
-    widgets::link(ui, "more", Rect::at(area.x + area.w - w, area.y - 13.0, w, 26.0), MORE, true)
+    widgets::link(ui, "more", Rect::at(area.x() + area.w() - w, area.y() - 13.0, w, 26.0), MORE, true)
 }
 
 /// The whole bio and music over the profile. Returns whether it was dismissed.
 pub fn show_overlay(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &ApiUserProfile) -> bool {
     let modal = Modal::new(gui.ui.view(), OVERLAY_W);
-    let title = ui.cx.fonts.fit(Face::Display, &info.username, theme::size::HEADING, modal.card.w - 120.0);
+    let title = ui.cx.fonts.fit(Face::Display, &info.username, theme::size::HEADING, modal.card.w() - 120.0);
     let area = modal.body().below(LABEL_H);
     let ((), dismissed) = widgets::modal(ui, gui, (modal, &title), |ui, gui| {
         let lines = summary(&mut ui.cx.fonts, info, area, OVERLAY_MUSIC_LINES);

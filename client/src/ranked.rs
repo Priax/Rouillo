@@ -310,7 +310,10 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
 
             found(ui.draw, &mut ui.cx.fonts, opponent, *opponent_elo);
             ui.draw.rect(bar).radius(5.0).color(pal.surface);
-            ui.draw.rect(Rect::at(bar.x, bar.y, bar.w * (left / total) as f32, bar.h)).radius(5.0).color(urgency);
+            ui.draw
+                .rect(Rect::at(bar.x(), bar.y(), bar.w() * (left / total) as f32, bar.h()))
+                .radius(5.0)
+                .color(urgency);
             line(
                 ui.draw,
                 &mut ui.cx.fonts,

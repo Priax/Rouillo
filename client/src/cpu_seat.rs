@@ -36,7 +36,7 @@ fn tile(modal: Modal, i: usize) -> Rect {
 }
 
 fn remove_button(modal: Modal) -> Rect {
-    modal.body().bottom_band(REMOVE_H).centered(REMOVE_W, REMOVE_H)
+    modal.body().bottom_strip(REMOVE_H).centered(REMOVE_W, REMOVE_H)
 }
 
 impl CpuSeat {

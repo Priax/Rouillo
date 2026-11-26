@@ -4,7 +4,7 @@ use crate::controls::{Action, Bindings, KeyBinding, ACTIONS, RESERVED};
 use crate::pads::Pads;
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{self, widgets, Face, Frame, Gui, Icon, Label, Rect, Size, Typeset, View};
+use crate::ui::{self, px, widgets, Face, Frame, Gui, Icon, Label, Rect, Typeset, View};
 
 const TOP: f32 = 360.0;
 const TITLE_H: f32 = 48.0;
@@ -37,14 +37,14 @@ fn cell(view: View, row: usize, slot: Slot) -> Rect {
         Slot::Pad => 2,
     };
     let line = card(view).below(TITLE_H + 6.0).nth_row(row, ROW_H, 0.0);
-    let cells = line.pad(0.0, 0.0, 0.0, 300.0).left(3.0 * CELL_W + 20.0);
+    let cells = line.inset([0.0, 0.0, 0.0, 300.0]).left_strip(3.0 * CELL_W + 20.0);
 
-    cells.columns(10.0, [Size::Px(CELL_W); 3])[col].middle(CELL_H)
+    cells.columns(10.0, [px(CELL_W); 3])[col].middle(CELL_H)
 }
 
 pub fn reset_btn(view: View) -> Rect {
     let back = Frame::of(view).back;
-    Rect::at(back.x + back.w + 20.0, back.y, 260.0, back.h)
+    Rect::at(back.x() + back.w() + 20.0, back.y(), 260.0, back.h())
 }
 
 impl BindingsPanel {
@@ -127,18 +127,18 @@ impl BindingsPanel {
         ui::card(ui.draw, &pal, c);
         fonts
             .write(ui.draw, Face::Display, "Touches")
-            .left(c.x + 20.0, c.y + TITLE_H / 2.0)
+            .left(c.x() + 20.0, c.y() + TITLE_H / 2.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text_dim);
         for (slot, heading) in SLOTS.into_iter().zip(["Touche 1", "Touche 2", "Manette"]) {
             let r = cell(view, 0, slot);
             fonts
                 .write(ui.draw, Face::Text, heading)
-                .center(r.x + r.w / 2.0, c.y + TITLE_H / 2.0)
+                .center(r.x() + r.w() / 2.0, c.y() + TITLE_H / 2.0)
                 .size(theme::size::SMALL)
                 .color(pal.text_muted);
         }
-        ui::divider(ui.draw, &pal, c.x + 20.0, c.y + TITLE_H, c.w - 40.0);
+        ui::divider(ui.draw, &pal, c.x() + 20.0, c.y() + TITLE_H, c.w() - 40.0);
 
         let mut clicked = None;
         for (row, action) in Action::ALL.into_iter().enumerate() {
@@ -146,7 +146,7 @@ impl BindingsPanel {
             ui.cx
                 .fonts
                 .write(ui.draw, Face::Text, action.label())
-                .left(c.x + 20.0, r.y + r.h / 2.0)
+                .left(c.x() + 20.0, r.y() + r.h() / 2.0)
                 .size(theme::size::BODY)
                 .color(pal.text);
             for (col, slot) in SLOTS.into_iter().enumerate() {
@@ -167,7 +167,7 @@ impl BindingsPanel {
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, hint)
-            .left(reset.x + reset.w + 20.0, reset.y + reset.h / 2.0)
+            .left(reset.x() + reset.w() + 20.0, reset.y() + reset.h() / 2.0)
             .size(theme::size::SMALL)
             .color(hint_color);
         let reset_all = widgets::button(ui, "reset bindings", reset, "Touches par défaut", true);

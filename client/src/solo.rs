@@ -8,7 +8,7 @@ use crate::draw::Hud;
 use crate::nav::Transition;
 use crate::state::{AuthInfo, GameSession, Input, Player, Rival, Screen, State};
 use crate::tick::Tick;
-use crate::ui::{self, widgets, Face, Frame, Gui, Icon, Pill, Rect, Size, Typeset, View, FILL};
+use crate::ui::{self, px, widgets, Face, Frame, Gui, Icon, Pill, Rect, Size, Typeset, View, FILL};
 use crate::{board_size, http, logic, rooms, theme};
 
 /// The most CPUs a solo game takes on: each one thinks on this device.
@@ -411,12 +411,12 @@ impl Setup {
         let foes_h = ui::card_height(FOES_TOP + (MAX_OPPONENTS + 1) as f32 * (ROW_H + ROW_GAP));
 
         let (game, foes) = if view.portrait() {
-            let game = body.top(game_h).max_width(FOES_W);
+            let game = body.top_strip(game_h).max_width(FOES_W);
             let below = body.below(game_h + CARD_GAP);
-            (game, below.top(foes_h).max_width(FOES_W))
+            (game, below.top_strip(foes_h).max_width(FOES_W))
         } else {
-            let both = body.top(game_h.max(foes_h)).max_width(GAME_W + CARD_GAP + FOES_W);
-            (both.left(GAME_W), both.right(FOES_W))
+            let both = body.top_strip(game_h.max(foes_h)).max_width(GAME_W + CARD_GAP + FOES_W);
+            (both.left_strip(GAME_W), both.right_strip(FOES_W))
         };
         Self { game, foes, view_w: view.w }
     }
@@ -426,12 +426,12 @@ impl Setup {
     }
 
     fn row(&self, i: usize) -> Rect {
-        ui::card_body(self.foes).pad(FOES_TOP, 0.0, 0.0, 0.0).nth_row(i, ROW_H, ROW_GAP)
+        ui::card_body(self.foes).inset([FOES_TOP, 0.0, 0.0, 0.0]).nth_row(i, ROW_H, ROW_GAP)
     }
 
     fn foe(&self, i: usize) -> FoeRow {
         let [number, difficulty, style, remove] =
-            self.row(i).columns(20.0, [Size::Px(24.0), FILL, Size::Fill(1.3), Size::Px(ROW_H)]);
+            self.row(i).columns(20.0, [px(24.0), FILL, Size::fill(1.3), px(ROW_H)]);
         FoeRow { number, difficulty, style, remove }
     }
 
@@ -511,7 +511,7 @@ pub fn show_setup(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
     for i in 0..settings.opponents.len() {
         let (difficulty, style) = settings.opponents[i];
         let row = setup.foe(i);
-        let (x, y) = row.number.center();
+        let (x, y) = row.number.center().into();
         ui.cx
             .fonts
             .write(ui.draw, Face::Display, &(i + 1).to_string())
@@ -690,7 +690,10 @@ mod tests {
             let setup = Setup::new(view);
             let inside = |r: Rect, card: Rect| {
                 let body = ui::card_body(card);
-                r.x >= body.x && r.x + r.w <= body.x + body.w && r.y >= body.y && r.bottom() <= card.bottom()
+                r.x() >= body.x()
+                    && r.x() + r.w() <= body.x() + body.w()
+                    && r.y() >= body.y()
+                    && r.bottom() <= card.bottom()
             };
             for i in 0..GAME_ROWS {
                 assert!(inside(setup.tile(i), setup.game), "tile {i} out of its card in {view:?}");
@@ -699,7 +702,7 @@ mod tests {
                 assert!(inside(setup.row(i), setup.foes), "row {i} out of its card in {view:?}");
             }
             let (first, last) = (setup.action_row(0), setup.action_row(1));
-            assert!(first.y > setup.game.bottom().max(setup.foes.bottom()));
+            assert!(first.y() > setup.game.bottom().max(setup.foes.bottom()));
             assert!(last.bottom() <= view.h, "the actions run off {view:?}");
         }
     }

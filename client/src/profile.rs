@@ -15,7 +15,7 @@ use crate::state::{
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
 use crate::ui::{
-    self, divider, list_row, portrait, widgets, Face, Fonts, Gui, Icon, Pill, Rect, Size, Status, Typeset, View, FILL,
+    self, divider, list_row, portrait, px, widgets, Face, Fonts, Gui, Icon, Pill, Rect, Status, Typeset, View, FILL,
     PAGER_H,
 };
 use crate::{http, profile_about};
@@ -130,8 +130,8 @@ fn friendship_with(
 fn cover(draw: &mut Draw, picture: &Image, r: Rect) {
     let (tw, th) = picture.size();
     let (tw, th) = (tw as f32, th as f32);
-    let scale = (r.w / tw).max(r.h / th);
-    let (sw, sh) = (r.w / scale, r.h / scale);
+    let scale = (r.w() / tw).max(r.h() / th);
+    let (sw, sh) = (r.w() / scale, r.h() / scale);
     draw.image(picture, r).crop(Rect::at((tw - sw) / 2.0, (th - sh) / 2.0, sw, sh));
 }
 
@@ -174,12 +174,12 @@ fn cards(view: View) -> (Rect, Rect) {
     let area = Rect::at(0.0, CARD_TOP, view.w, buttons_top(view) - STATUS_GAP - CARD_TOP);
 
     if view.portrait() {
-        let [stats, list] = area.pad(0.0, 20.0, 0.0, 20.0).rows(20.0, [Size::Px(STATS_CARD_H), FILL]);
+        let [stats, list] = area.inset([0.0, 20.0, 0.0, 20.0]).rows(20.0, [px(STATS_CARD_H), FILL]);
         return (stats, list);
     }
 
     let stats_w = (view.w * 0.36).max(280.0);
-    let [stats, list] = area.pad(0.0, 20.0, 0.0, 40.0).columns(30.0, [Size::Px(stats_w), FILL]);
+    let [stats, list] = area.inset([0.0, 20.0, 0.0, 40.0]).columns(30.0, [px(stats_w), FILL]);
     (stats, list)
 }
 
@@ -199,22 +199,22 @@ fn bottom_buttons<const N: usize>(view: View, widths: [f32; N]) -> [Rect; N] {
 
     let gap = 30.0;
     let total: f32 = widths.iter().sum::<f32>() + gap * (N - 1) as f32;
-    Rect::centered_on(cx, top, total, BUTTON_H).columns(gap, widths.map(Size::Px))
+    Rect::centered_on(cx, top, total, BUTTON_H).columns(gap, widths.map(px))
 }
 
 fn card_title(draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, card: Rect, title: &str) {
     fonts
         .write(draw, Face::Display, title)
-        .left(card.x + CARD_PAD, card.y + CARD_TITLE_H / 2.0)
+        .left(card.x() + CARD_PAD, card.y() + CARD_TITLE_H / 2.0)
         .size(theme::size::EMPHASIS)
         .color(pal.text_dim);
-    divider(draw, pal, card.x + CARD_PAD, card.y + CARD_TITLE_H, card.w - 2.0 * CARD_PAD);
+    divider(draw, pal, card.x() + CARD_PAD, card.y() + CARD_TITLE_H, card.w() - 2.0 * CARD_PAD);
 }
 
 fn card_message(draw: &mut Draw, fonts: &mut Fonts, card: Rect, text: &str, color: Color) {
     fonts
         .write(draw, Face::Text, text)
-        .center(card.x + card.w / 2.0, card.y + CARD_TITLE_H + 40.0)
+        .center(card.x() + card.w() / 2.0, card.y() + CARD_TITLE_H + 40.0)
         .size(theme::size::LABEL)
         .color(color);
 }
@@ -245,8 +245,8 @@ fn show_stats_panel(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, core: &ProfileCore
         ("Meilleure chaîne", info.all_time_max_chain.to_string()),
         ("Nuisances envoyées", info.total_nuisance_sent.to_string()),
     ];
-    let (label_x, value_x) = (card.x + CARD_PAD, card.x + card.w - CARD_PAD);
-    let first = card.y + CARD_TITLE_H + 30.0;
+    let (label_x, value_x) = (card.x() + CARD_PAD, card.x() + card.w() - CARD_PAD);
+    let first = card.y() + CARD_TITLE_H + 30.0;
     let area = about_area(card);
     let summary = profile_about::summary(fonts, &core.info, area, 1);
 
@@ -256,7 +256,7 @@ fn show_stats_panel(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, core: &ProfileCore
         fonts.write(draw, Face::Display, value).right(value_x, y).size(theme::size::EMPHASIS).color(pal.text);
     }
 
-    divider(draw, &pal, label_x, stats_end(card), card.w - 2.0 * CARD_PAD);
+    divider(draw, &pal, label_x, stats_end(card), card.w() - 2.0 * CARD_PAD);
     profile_about::draw_summary(draw, &gui.ui, fonts, &summary, area);
     summary.cut && profile_about::show_more_link(ui, area)
 }
@@ -269,12 +269,12 @@ fn win_rate(wins: i64, played: i64) -> String {
 }
 
 fn stats_end(card: Rect) -> f32 {
-    card.y + CARD_TITLE_H + 30.0 + STAT_ROWS as f32 * STAT_ROW_H - 6.0
+    card.y() + CARD_TITLE_H + 30.0 + STAT_ROWS as f32 * STAT_ROW_H - 6.0
 }
 
 fn about_area(card: Rect) -> Rect {
     let top = stats_end(card) + 24.0;
-    Rect::at(card.x + CARD_PAD, top, card.w - 2.0 * CARD_PAD, card.y + card.h - CARD_PAD - top)
+    Rect::at(card.x() + CARD_PAD, top, card.w() - 2.0 * CARD_PAD, card.y() + card.h() - CARD_PAD - top)
 }
 
 /// Closes the whole bio on Escape. Returns whether it is open, which leaves the rest of the screen alone.
@@ -303,7 +303,7 @@ fn show_history_panel(
     if let Some((msg, color)) = core.replay_status.shown(&pal) {
         fonts
             .write(ui.draw, Face::Text, msg)
-            .right(card.x + card.w - CARD_PAD, card.y + CARD_TITLE_H / 2.0)
+            .right(card.x() + card.w() - CARD_PAD, card.y() + CARD_TITLE_H / 2.0)
             .size(theme::size::SMALL)
             .color(color);
     }
@@ -328,37 +328,37 @@ fn show_history_panel(
 /// How many match rows fit above the pager.
 fn history_rows(view: View) -> usize {
     let (_, card) = cards(view);
-    let room = card.h - CARD_TITLE_H - 12.0 - PAGER_H;
+    let room = card.h() - CARD_TITLE_H - 12.0 - PAGER_H;
 
     (room / HISTORY_ROW_H).max(1.0) as usize
 }
 
 fn pager_area(view: View) -> Rect {
     let (_, card) = cards(view);
-    Rect::at(card.x, card.y + card.h - PAGER_H, card.w, PAGER_H)
+    Rect::at(card.x(), card.y() + card.h() - PAGER_H, card.w(), PAGER_H)
 }
 
 fn history_row(card: Rect, i: usize) -> Rect {
     Rect::at(
-        card.x + CARD_PAD / 2.0,
-        card.y + CARD_TITLE_H + 12.0 + i as f32 * HISTORY_ROW_H,
-        card.w - CARD_PAD,
+        card.x() + CARD_PAD / 2.0,
+        card.y() + CARD_TITLE_H + 12.0 + i as f32 * HISTORY_ROW_H,
+        card.w() - CARD_PAD,
         HISTORY_ROW_H - 4.0,
     )
 }
 
 fn favorite_zone(row: Rect) -> Rect {
-    let margin = if row.w < WIDE_ROW { 4.0 } else { CARD_PAD + 44.0 };
-    Rect::at(row.x + row.w - margin - 38.0, row.y + 5.0, 38.0, row.h - 10.0)
+    let margin = if row.w() < WIDE_ROW { 4.0 } else { CARD_PAD + 44.0 };
+    Rect::at(row.x() + row.w() - margin - 38.0, row.y() + 5.0, 38.0, row.h() - 10.0)
 }
 
 fn replay_zone(row: Rect) -> Rect {
     let star = favorite_zone(row);
-    Rect::at(star.x - 6.0 - 96.0, star.y, 96.0, star.h)
+    Rect::at(star.x() - 6.0 - 96.0, star.y(), 96.0, star.h())
 }
 
 fn opponent_zone(row: Rect) -> Rect {
-    Rect::at(row.x + row.w * 0.33, row.y, row.w * 0.25, row.h)
+    Rect::at(row.x() + row.w() * 0.33, row.y(), row.w() * 0.25, row.h())
 }
 
 fn show_match_row(
@@ -372,7 +372,7 @@ fn show_match_row(
 
     let pal = gui.ui.palette();
     let fonts = &mut ui.cx.fonts;
-    let mid = row.y + row.h / 2.0;
+    let mid = row.y() + row.h() / 2.0;
     let opp = m.opponent(viewed_id);
     let place = format!("{}e", me.place);
     let (text, color) = if me.won {
@@ -390,25 +390,25 @@ fn show_match_row(
         None => format!("{} joueurs", m.players.len()),
     };
     let opponent = opp.and_then(|o| Some((o.user_id.clone()?, o.username.clone()?))).filter(|_| own);
-    let wide = row.w >= WIDE_ROW;
+    let wide = row.w() >= WIDE_ROW;
     let star = if m.favorite { Icon::Star } else { Icon::StarOutline };
     let secs = m.duration_secs as u32;
 
     list_row(ui.draw, &pal, row, index);
-    let left = row.x + row.w * 0.1 - result.width(fonts) / 2.0;
+    let left = row.x() + row.w() * 0.1 - result.width(fonts) / 2.0;
     result.draw(ui.draw, fonts, (left, mid));
     if m.ranked {
-        Pill::small("CLASSÉ", theme::bar::ORANGE).draw(ui.draw, fonts, (row.x + row.w * 0.2, mid));
+        Pill::small("CLASSÉ", theme::bar::ORANGE).draw(ui.draw, fonts, (row.x() + row.w() * 0.2, mid));
     }
     if wide {
         fonts
             .write(ui.draw, Face::Text, &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent))
-            .right(replay_zone(row).x - 14.0, mid)
+            .right(replay_zone(row).x() - 14.0, mid)
             .size(theme::size::SMALL)
             .color(theme::GOLD);
         fonts
             .write(ui.draw, Face::Text, &format!("{}:{:02}", secs / 60, secs % 60))
-            .right(row.x + row.w - CARD_PAD, mid)
+            .right(row.x() + row.w() - CARD_PAD, mid)
             .size(theme::size::SMALL)
             .color(pal.text_muted);
     }

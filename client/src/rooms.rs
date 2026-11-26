@@ -13,7 +13,7 @@ use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, Invite, Network, Room, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
-    self, list_row, widgets, Face, Fonts, Frame, Gui, Icon, ListCard, Modal, Pill, Rect, SettingsGrid, Size, Typeset,
+    self, list_row, px, widgets, Face, Fonts, Frame, Gui, Icon, ListCard, Modal, Pill, Rect, SettingsGrid, Typeset,
     View, FILL, PAGER_H,
 };
 use crate::{board_size, http, theme};
@@ -45,8 +45,8 @@ fn browser_buttons(view: View) -> BrowserButtons {
     let gap = 12.0;
     let tools = frame.header_tools(200.0).middle(44.0);
     // Narrower when upright, so the title keeps its place on the left.
-    let bw = ((tools.w - 2.0 * gap) / 3.0).min(190.0);
-    let [create, join_id, refresh] = tools.right(3.0 * bw + 2.0 * gap).columns(gap, [Size::Px(bw); 3]);
+    let bw = ((tools.w() - 2.0 * gap) / 3.0).min(190.0);
+    let [create, join_id, refresh] = tools.right_strip(3.0 * bw + 2.0 * gap).columns(gap, [px(bw); 3]);
     BrowserButtons { create, join_id, refresh, back: frame.back }
 }
 
@@ -83,7 +83,7 @@ pub fn show_browser(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State)
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, "Aucune room. Créez-en une !")
-            .center(card.x + card.w / 2.0, card.y + 60.0)
+            .center(card.x() + card.w() / 2.0, card.y() + 60.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text_muted);
     }
@@ -107,7 +107,7 @@ pub fn show_browser(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State)
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, msg)
-            .center(view.w / 2.0, b.back.y + b.back.h / 2.0)
+            .center(view.w / 2.0, b.back.y() + b.back.h() / 2.0)
             .size(theme::size::EMPHASIS)
             .color(color);
     }
@@ -140,7 +140,7 @@ fn watch_only(room: &RoomInfo) -> bool {
 /// What a room's row holds, drawn over the row itself.
 fn draw_room_row(draw: &mut Draw, fonts: &mut Fonts, gui: &mut Gui, row: Rect, room: &RoomInfo) {
     let pal = gui.ui.palette();
-    let mid = row.y + row.h / 2.0;
+    let mid = row.y() + row.h() / 2.0;
     let players = format!("{}/{} joueurs", room.players, room.max);
     let watchers = format!("{} spectateur{}", room.spectators, if room.spectators > 1 { "s" } else { "" });
     let mut pills = vec![Pill::small(&players, pal.accent)];
@@ -162,11 +162,11 @@ fn draw_room_row(draw: &mut Draw, fonts: &mut Fonts, gui: &mut Gui, row: Rect, r
 
     fonts
         .write(draw, Face::Text, &format!("#{}", room.id))
-        .left(row.x + 18.0, mid)
+        .left(row.x() + 18.0, mid)
         .size(theme::size::BODY)
         .color(pal.text_muted);
-    let pills_start = ui::pills_ending_at(draw, fonts, &pills, row.x + row.w - 16.0, mid);
-    let name_x = row.x + 90.0;
+    let pills_start = ui::pills_ending_at(draw, fonts, &pills, row.x() + row.w() - 16.0, mid);
+    let name_x = row.x() + 90.0;
     let name = fonts.fit(Face::Display, &room.name, theme::size::EMPHASIS, pills_start - 20.0 - name_x);
     fonts.write(draw, Face::Display, &name).left(name_x, mid).size(theme::size::EMPHASIS).color(pal.text);
 }
@@ -176,11 +176,11 @@ fn entry_card(w: f32, h: f32) -> Rect {
 }
 
 fn entry_box(w: f32, h: f32) -> Rect {
-    entry_card(w, h).pad(110.0, 40.0, 0.0, 40.0).top(50.0)
+    entry_card(w, h).inset([110.0, 40.0, 0.0, 40.0]).top_strip(50.0)
 }
 
 fn entry_buttons(w: f32, h: f32) -> (Rect, Rect) {
-    let band = entry_card(w, h).pad(0.0, 40.0, 40.0, 40.0).bottom_band(56.0);
+    let band = entry_card(w, h).inset([0.0, 40.0, 40.0, 40.0]).bottom_strip(56.0);
     let [confirm, back] = band.columns(20.0, [FILL, FILL]);
     (confirm, back)
 }
@@ -247,7 +247,7 @@ fn show_entry(
     ui.cx
         .fonts
         .write(ui.draw, Face::Display, title)
-        .center(card.x + card.w / 2.0, card.y + 58.0)
+        .center(card.x() + card.w() / 2.0, card.y() + 58.0)
         .size(theme::size::TITLE)
         .color(pal.text);
     if !ui.cx.wants_keyboard() {
@@ -260,7 +260,7 @@ fn show_entry(
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, msg)
-            .center(card.x + card.w / 2.0, card.y + card.h + 40.0)
+            .center(card.x() + card.w() / 2.0, card.y() + card.h() + 40.0)
             .size(theme::size::EMPHASIS)
             .color(color);
     }
@@ -369,8 +369,8 @@ fn lobby_leave(view: View) -> Rect {
 /// The players' card, left of the settings as the chat is right of them.
 fn lobby_players(view: View) -> Rect {
     let card = lobby_panel(view).card;
-    let beside = Rect::at(0.0, card.y, card.x, card.h).pad(0.0, 24.0, 0.0, 24.0);
-    beside.right(beside.w.min(460.0))
+    let beside = Rect::at(0.0, card.y(), card.x(), card.h()).inset([0.0, 24.0, 0.0, 24.0]);
+    beside.right_strip(beside.w().min(460.0))
 }
 
 const PLAYERS_TITLE_H: f32 = 56.0;
@@ -394,9 +394,9 @@ impl PlayerList {
     fn new(view: View, info: &LobbyInfo, first: usize) -> Self {
         let card = lobby_players(view);
         let below = if may_add_cpu(info) { ADD_CPU_H + 24.0 } else { 12.0 };
-        let area = card.below(PLAYERS_TITLE_H).pad(0.0, 12.0, below, 12.0);
+        let area = card.below(PLAYERS_TITLE_H).inset([0.0, 12.0, below, 12.0]);
         let count = info.names.len();
-        let step = (area.h / count.max(1) as f32).clamp(MIN_PLAYER_ROW_H, PLAYER_ROW_H);
+        let step = (area.h() / count.max(1) as f32).clamp(MIN_PLAYER_ROW_H, PLAYER_ROW_H);
         let shown = area.rows_fitting(step - PLAYER_ROW_GAP, PLAYER_ROW_GAP).clamp(1, count.max(1));
 
         Self {
@@ -405,7 +405,7 @@ impl PlayerList {
             first: first.min(count.saturating_sub(shown)),
             shown,
             count,
-            title: card.top(PLAYERS_TITLE_H),
+            title: card.top_strip(PLAYERS_TITLE_H),
         }
     }
 
@@ -422,9 +422,9 @@ impl PlayerList {
 
     /// The buttons that scroll up and down, right of the title.
     fn scroll_buttons(&self) -> [Rect; 2] {
-        let band = self.title.pad(0.0, 12.0, 0.0, 0.0).middle(SCROLL_BUTTON);
-        let down = band.right(SCROLL_BUTTON);
-        [Rect::at(down.x - SCROLL_BUTTON - 6.0, down.y, SCROLL_BUTTON, SCROLL_BUTTON), down]
+        let band = self.title.inset([0.0, 12.0, 0.0, 0.0]).middle(SCROLL_BUTTON);
+        let down = band.right_strip(SCROLL_BUTTON);
+        [Rect::at(down.x() - SCROLL_BUTTON - 6.0, down.y(), SCROLL_BUTTON, SCROLL_BUTTON), down]
     }
 
     /// The first row after scrolling by `dir` rows.
@@ -435,7 +435,7 @@ impl PlayerList {
 }
 
 fn add_cpu_button(view: View) -> Rect {
-    lobby_players(view).pad(0.0, 12.0, 12.0, 12.0).bottom_band(ADD_CPU_H).centered(220.0, ADD_CPU_H)
+    lobby_players(view).inset([0.0, 12.0, 12.0, 12.0]).bottom_strip(ADD_CPU_H).centered(220.0, ADD_CPU_H)
 }
 
 /// Whether the host may seat, change and remove CPUs now.
@@ -487,7 +487,7 @@ fn show_players(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo, firs
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let card = lobby_players(view);
-    if card.w < 160.0 {
+    if card.w() < 160.0 {
         return None;
     }
 
@@ -495,16 +495,16 @@ fn show_players(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo, firs
     let own = usize::from(info.your_slot).checked_sub(1);
     let picker = team_picker(info);
     let mut clicked = None;
-    let wheel = ui.interact(ui.id("players wheel"), card.into(), Sense::SCROLL).wheel;
+    let wheel = ui.interact(ui.id("players wheel"), card, Sense::SCROLL).wheel;
 
     ui::card(ui.draw, &pal, card);
     ui.cx
         .fonts
         .write(ui.draw, Face::Display, "Joueurs")
-        .left(card.x + 16.0, card.y + PLAYERS_TITLE_H / 2.0)
+        .left(card.x() + 16.0, card.y() + PLAYERS_TITLE_H / 2.0)
         .size(theme::size::EMPHASIS)
         .color(pal.text_dim);
-    ui::divider(ui.draw, &pal, card.x + 16.0, card.y + PLAYERS_TITLE_H, card.w - 32.0);
+    ui::divider(ui.draw, &pal, card.x() + 16.0, card.y() + PLAYERS_TITLE_H, card.w() - 32.0);
     if list.scrolls() {
         if let Some((delta, _)) = wheel.filter(|(delta, _)| delta.y != 0.0) {
             clicked = Some(PlayersClick::Scroll(if delta.y > 0.0 { -1 } else { 1 }));
@@ -524,7 +524,7 @@ fn show_players(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo, firs
         let (label, color) = team_look(info.teams.get(i).copied().flatten(), &pal);
         let pill = Pill::small(label, color);
         let pill_w = pill.width(&mut ui.cx.fonts);
-        let name = ui.cx.fonts.fit(Face::Text, name, theme::size::BODY, row.w - pill_w - 36.0);
+        let name = ui.cx.fonts.fit(Face::Text, name, theme::size::BODY, row.w() - pill_w - 36.0);
         let ink = if own == Some(i) { pal.text } else { pal.text_dim };
 
         let clickable = picker == Some(i) || edits_cpus(info) && cpu_seat_at(info, i).is_some();
@@ -538,10 +538,10 @@ fn show_players(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo, firs
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, &name)
-            .left(row.x + 10.0, row.y + row.h / 2.0)
+            .left(row.x() + 10.0, row.y() + row.h() / 2.0)
             .size(theme::size::BODY)
             .color(ink);
-        pill.draw(ui.draw, &mut ui.cx.fonts, (row.x + row.w - 10.0 - pill_w, row.y + row.h / 2.0));
+        pill.draw(ui.draw, &mut ui.cx.fonts, (row.x() + row.w() - 10.0 - pill_w, row.y() + row.h() / 2.0));
     }
 
     if may_add_cpu(info) && widgets::button(ui, "add cpu", add_cpu_button(view), "Ajouter un CPU", true) {
@@ -552,8 +552,8 @@ fn show_players(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo, firs
 
 fn lobby_chat(view: View) -> Rect {
     let card = lobby_panel(view).card;
-    let beside = Rect::at(0.0, card.y, view.w, card.h).pad(0.0, 24.0, 0.0, card.x + card.w + 24.0);
-    beside.left(beside.w.min(460.0))
+    let beside = Rect::at(0.0, card.y(), view.w, card.h()).inset([0.0, 24.0, 0.0, card.x() + card.w() + 24.0]);
+    beside.left_strip(beside.w().min(460.0))
 }
 
 fn invite_modal(view: View) -> Modal {
@@ -561,7 +561,7 @@ fn invite_modal(view: View) -> Modal {
 }
 
 fn invite_list(view: View) -> Rect {
-    invite_modal(view).card.pad(70.0, 16.0, PAGER_H + 22.0, 16.0)
+    invite_modal(view).card.inset([70.0, 16.0, PAGER_H + 22.0, 16.0])
 }
 
 fn visible_invites(view: View) -> usize {
@@ -569,7 +569,7 @@ fn visible_invites(view: View) -> usize {
 }
 
 fn invite_pager_area(view: View) -> Rect {
-    invite_modal(view).card.above(8.0).bottom_band(PAGER_H)
+    invite_modal(view).card.above(8.0).bottom_strip(PAGER_H)
 }
 
 fn invite_row(view: View, i: usize) -> Rect {
@@ -577,7 +577,7 @@ fn invite_row(view: View, i: usize) -> Rect {
 }
 
 fn invite_button(view: View, i: usize) -> Rect {
-    invite_row(view, i).pad(0.0, 8.0, 0.0, 0.0).right(120.0).middle(32.0)
+    invite_row(view, i).inset([0.0, 8.0, 0.0, 0.0]).right_strip(120.0).middle(32.0)
 }
 
 /// What the lobby does with the keys and the server's answers; its clicks are in [`show_lobby`].
@@ -865,7 +865,7 @@ fn show_invite(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, invite: &mut Invite) ->
             ui.cx
                 .fonts
                 .write(ui.draw, Face::Text, message)
-                .center(card.x + card.w / 2.0, card.y + 110.0)
+                .center(card.x() + card.w() / 2.0, card.y() + 110.0)
                 .size(theme::size::EMPHASIS)
                 .color(pal.text_muted);
             return None;
@@ -882,7 +882,7 @@ fn show_invite(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, invite: &mut Invite) ->
             ui.cx
                 .fonts
                 .write(ui.draw, Face::Text, &friend.username)
-                .left(row.x + 16.0, row.y + row.h / 2.0)
+                .left(row.x() + 16.0, row.y() + row.h() / 2.0)
                 .size(theme::size::LABEL)
                 .color(pal.text);
             if widgets::button(ui, ("invite", &friend.user_id), invite_button(view, i), "Inviter", true) {
@@ -941,8 +941,8 @@ mod team_tests {
         while seen.len() < info.names.len() {
             for i in 0..info.names.len() {
                 let Some(row) = list.row(i) else { continue };
-                assert!(row.h >= MIN_PLAYER_ROW_H - PLAYER_ROW_GAP, "row {i} squeezed to {}", row.h);
-                assert!(row.y >= card.y && row.bottom() <= card.bottom(), "row {i} out of the card");
+                assert!(row.h() >= MIN_PLAYER_ROW_H - PLAYER_ROW_GAP, "row {i} squeezed to {}", row.h());
+                assert!(row.y() >= card.y() && row.bottom() <= card.bottom(), "row {i} out of the card");
                 seen.insert(i);
             }
             let next = list.scrolled(1);

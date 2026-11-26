@@ -18,7 +18,7 @@ const MAX_CARD_W: f32 = 640.0;
 
 /// What is under a card's title, for its tiles or rows.
 pub fn card_body(card: Rect) -> Rect {
-    card.pad(TITLE_H + 6.0, CARD_PAD, 8.0, CARD_PAD)
+    card.inset([TITLE_H + 6.0, CARD_PAD, 8.0, CARD_PAD])
 }
 
 /// How high a card is for `content` under its title.
@@ -36,10 +36,10 @@ pub fn panel_card(draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, card_rect: 
     card(draw, pal, card_rect);
     fonts
         .write(draw, Face::Display, title)
-        .left(card_rect.x + CARD_PAD, card_rect.y + TITLE_H / 2.0)
+        .left(card_rect.x() + CARD_PAD, card_rect.y() + TITLE_H / 2.0)
         .size(theme::size::EMPHASIS)
         .color(pal.text_dim);
-    divider(draw, pal, card_rect.x + CARD_PAD, card_rect.y + TITLE_H, card_rect.w - 2.0 * CARD_PAD);
+    divider(draw, pal, card_rect.x() + CARD_PAD, card_rect.y() + TITLE_H, card_rect.w() - 2.0 * CARD_PAD);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,11 +56,11 @@ impl SettingsPanel {
             _ => TIGHTER_ROW_H,
         };
         let h = TITLE_H + rows as f32 * row_h + 16.0;
-        Self { card: Frame::of(view).body.top(h).max_width(MAX_CARD_W), row_h }
+        Self { card: Frame::of(view).body.top_strip(h).max_width(MAX_CARD_W), row_h }
     }
 
     pub fn stepper(self, i: usize) -> Stepper {
-        Stepper::at(self.card.x + self.card.w / 2.0 + 20.0, self.card.y + TITLE_H + 8.0 + i as f32 * self.row_h)
+        Stepper::at(self.card.x() + self.card.w() / 2.0 + 20.0, self.card.y() + TITLE_H + 8.0 + i as f32 * self.row_h)
     }
 
     pub fn draw(self, draw: &mut Draw, pal: &Palette, fonts: &mut Fonts, title: &str) {
@@ -80,17 +80,17 @@ impl SettingsGrid {
     /// A grid whose longer column holds `rows` tiles.
     pub fn new(view: View, rows: usize) -> Self {
         let h = TITLE_H + SECTION_H + rows as f32 * TILE_H + 8.0;
-        Self { card: Frame::of(view).body.top(h).max_width(MAX_CARD_W), view_w: view.w }
+        Self { card: Frame::of(view).body.top_strip(h).max_width(MAX_CARD_W), view_w: view.w }
     }
 
     fn column_x(self, column: usize) -> (f32, f32) {
-        let w = (self.card.w - 2.0 * CARD_PAD - COLUMN_GAP) / 2.0;
-        (self.card.x + CARD_PAD + column as f32 * (w + COLUMN_GAP), w)
+        let w = (self.card.w() - 2.0 * CARD_PAD - COLUMN_GAP) / 2.0;
+        (self.card.x() + CARD_PAD + column as f32 * (w + COLUMN_GAP), w)
     }
 
     pub fn tile(self, column: usize, row: usize) -> Rect {
         let (x, w) = self.column_x(column);
-        Rect::at(x, self.card.y + TITLE_H + SECTION_H + row as f32 * TILE_H, w, TILE_H)
+        Rect::at(x, self.card.y() + TITLE_H + SECTION_H + row as f32 * TILE_H, w, TILE_H)
     }
 
     pub fn action_row(self, k: usize) -> Rect {
@@ -102,7 +102,7 @@ impl SettingsGrid {
         for (column, section) in sections.into_iter().enumerate() {
             fonts
                 .write(draw, Face::Display, section)
-                .left(self.column_x(column).0, self.card.y + TITLE_H + SECTION_H / 2.0 + 2.0)
+                .left(self.column_x(column).0, self.card.y() + TITLE_H + SECTION_H / 2.0 + 2.0)
                 .size(theme::size::LABEL)
                 .color(pal.accent);
         }
@@ -118,10 +118,10 @@ mod tests {
         let view = View::default();
         let panel = SettingsPanel::new(view, 3);
         let last = panel.stepper(2);
-        assert!(last.minus.y + last.minus.h <= panel.card.y + panel.card.h);
+        assert!(last.minus.y() + last.minus.h() <= panel.card.y() + panel.card.h());
         let row = |k| action_row(panel.card, view.w, k);
-        assert!(row(0).y > panel.card.y + panel.card.h);
-        assert_eq!(row(1).y, row(0).y + ACTION_ROW_H);
+        assert!(row(0).y() > panel.card.y() + panel.card.h());
+        assert_eq!(row(1).y(), row(0).y() + ACTION_ROW_H);
     }
 
     #[test]
@@ -129,13 +129,13 @@ mod tests {
         let view = View::default();
         let grid = SettingsGrid::new(view, 4);
         let (left, right) = (grid.tile(0, 3), grid.tile(1, 3));
-        assert!(left.x + left.w < right.x, "the columns overlap");
-        assert!(left.x >= grid.card.x && right.x + right.w <= grid.card.x + grid.card.w);
-        assert!(left.y + left.h <= grid.card.y + grid.card.h);
-        assert_eq!(grid.tile(0, 1).y, grid.tile(0, 0).y + TILE_H);
+        assert!(left.x() + left.w() < right.x(), "the columns overlap");
+        assert!(left.x() >= grid.card.x() && right.x() + right.w() <= grid.card.x() + grid.card.w());
+        assert!(left.y() + left.h() <= grid.card.y() + grid.card.h());
+        assert_eq!(grid.tile(0, 1).y(), grid.tile(0, 0).y() + TILE_H);
         let actions = grid.action_row(2);
-        assert!(actions.y > grid.card.y + grid.card.h);
-        assert!(actions.y + actions.h <= view.h, "{} > {}", actions.y + actions.h, view.h);
+        assert!(actions.y() > grid.card.y() + grid.card.h());
+        assert!(actions.y() + actions.h() <= view.h, "{} > {}", actions.y() + actions.h(), view.h);
     }
 
     #[test]
@@ -143,8 +143,8 @@ mod tests {
         let view = View::default();
         let panel = SettingsPanel::new(view, 7);
         let last = panel.stepper(6);
-        assert!(last.minus.y + last.minus.h <= panel.card.y + panel.card.h);
+        assert!(last.minus.y() + last.minus.h() <= panel.card.y() + panel.card.h());
         let actions = action_row(panel.card, view.w, 2);
-        assert!(actions.y + actions.h <= view.h, "{} > {}", actions.y + actions.h, view.h);
+        assert!(actions.y() + actions.h() <= view.h, "{} > {}", actions.y() + actions.h(), view.h);
     }
 }

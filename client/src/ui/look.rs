@@ -47,8 +47,12 @@ impl Theme for Look {
             let lift = 1.0 + visual.hover - visual.press;
             for i in 1..=SHADOW_LAYERS {
                 let spread = f32::from(i);
-                let shadow =
-                    Rect::at(b.x - spread, b.y - spread + spread * lift, b.w + 2.0 * spread, b.h + 2.0 * spread);
+                let shadow = Rect::at(
+                    b.x() - spread,
+                    b.y() - spread + spread * lift,
+                    b.w() + 2.0 * spread,
+                    b.h() + 2.0 * spread,
+                );
                 p.draw.rect(shadow).radius(theme::RADIUS + spread).color(Color::BLACK.with_alpha(SHADOW_ALPHA));
             }
         }
@@ -61,7 +65,7 @@ impl Theme for Look {
         };
         p.draw.rect(b).radius(theme::RADIUS).color(fill);
         p.draw
-            .rect(Rect::at(b.x, b.y, b.w, b.h / 2.0))
+            .rect(Rect::at(b.x(), b.y(), b.w(), b.h() / 2.0))
             .radii([theme::RADIUS, theme::RADIUS, 0.0, 0.0])
             .color(Color::WHITE.with_alpha(SHEEN_ALPHA + SHEEN_ALPHA * visual.hover));
         if visual.flash > 0.0 {
@@ -72,9 +76,9 @@ impl Theme for Look {
         match content {
             Content::Text(text) => {
                 // As tall as the button allows, narrowed only if it would overflow.
-                let tall = b.h * TEXT_HEIGHT;
+                let tall = b.h() * TEXT_HEIGHT;
                 let width = p.fonts.layout_kept(text, &faces().style(Face::Display, tall)).size().x;
-                let room = b.w - TEXT_PADDING;
+                let room = b.w() - TEXT_PADDING;
                 let size = if width > room { tall * room / width } else { tall }.max(TEXT_MIN);
                 self.write(p, (Face::Display, text, size), center, ink);
             }

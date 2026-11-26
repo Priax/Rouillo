@@ -9,7 +9,7 @@ use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
-    self, divider, list_row, page_count, widgets, Face, Fonts, Frame, Gui, Label, Pager, Pill, Rect, Size, Status,
+    self, divider, list_row, page_count, px, widgets, Face, Fonts, Frame, Gui, Label, Pager, Pill, Rect, Status,
     Typeset, Ui, View,
 };
 use crate::{http, theme};
@@ -34,7 +34,7 @@ const AVATAR_ROOM: f32 = 2.0 * AVATAR_R + 10.0;
 /// bottom buttons, with a row left for the pager. Upright, the three
 /// columns are stacked and share that height.
 pub fn rows_for(view: View) -> usize {
-    let room = back_btn(view).y - 8.0 - COLUMNS_TOP;
+    let room = back_btn(view).y() - 8.0 - COLUMNS_TOP;
     let card_h = if view.portrait() { (room - 2.0 * COL_GAP_UPRIGHT) / 3.0 } else { room };
     let list_h = card_h - CARD_TITLE_H - 6.0 - 10.0;
     ((list_h / ROW_H) as usize).saturating_sub(1).clamp(1, MAX_ROWS)
@@ -45,10 +45,10 @@ fn column_card(view: View, col: usize) -> Rect {
     let h = CARD_TITLE_H + 6.0 + (rows_for(view) + 1) as f32 * ROW_H + 10.0;
     let band = Rect::at(0.0, COLUMNS_TOP, view.w, h);
     if view.portrait() {
-        return band.pad(0.0, 20.0, 0.0, 20.0).nth_row(col, h, COL_GAP_UPRIGHT);
+        return band.inset([0.0, 20.0, 0.0, 20.0]).nth_row(col, h, COL_GAP_UPRIGHT);
     }
     let cards = band.centered(3.0 * COL_W + 2.0 * COL_GAP, h);
-    cards.columns(COL_GAP, [Size::Px(COL_W); 3])[col]
+    cards.columns(COL_GAP, [px(COL_W); 3])[col]
 }
 
 /// The card under its title: the rows, then the pager.
@@ -57,11 +57,11 @@ fn card_list(card: Rect) -> Rect {
 }
 
 fn list_top(card: Rect) -> f32 {
-    card_list(card).y
+    card_list(card).y()
 }
 
 fn list_row_rect(view: View, col: usize, row: usize) -> Rect {
-    let list = card_list(column_card(view, col)).pad(0.0, 8.0, 0.0, 8.0);
+    let list = card_list(column_card(view, col)).inset([0.0, 8.0, 0.0, 8.0]);
     list.nth_row(row, ROW_H - 4.0, 4.0)
 }
 
@@ -74,26 +74,26 @@ fn lists(f: &FriendsData) -> [&[FriendEntry]; 3] {
 }
 
 fn row_button(row: Rect, from_right: f32, w: f32) -> Rect {
-    row.pad(0.0, from_right, 0.0, 0.0).right(w).middle(SMALL_BTN_H)
+    row.inset([0.0, from_right, 0.0, 0.0]).right_strip(w).middle(SMALL_BTN_H)
 }
 
 /// The header under the search label.
 fn search_band(view: View) -> Rect {
-    Frame::of(view).header_tools(200.0).pad(24.0, 0.0, 0.0, 0.0)
+    Frame::of(view).header_tools(200.0).inset([24.0, 0.0, 0.0, 0.0])
 }
 
 fn search_submit_btn(view: View) -> Rect {
-    search_band(view).right(160.0).middle(FIELD_H)
+    search_band(view).right_strip(160.0).middle(FIELD_H)
 }
 
 fn search_box(view: View) -> Rect {
-    let room = search_band(view).pad(0.0, 160.0 + 12.0, 0.0, 0.0).middle(FIELD_H);
-    room.right(room.w.min(430.0))
+    let room = search_band(view).inset([0.0, 160.0 + 12.0, 0.0, 0.0]).middle(FIELD_H);
+    room.right_strip(room.w().min(430.0))
 }
 
 fn results_card(view: View) -> Rect {
     let h = 16.0 + MAX_SEARCH_RESULTS as f32 * RESULT_ROW_H;
-    Rect::at(0.0, RESULTS_TOP, view.w, h).pad(0.0, 20.0, 0.0, 20.0).max_width(840.0)
+    Rect::at(0.0, RESULTS_TOP, view.w, h).inset([0.0, 20.0, 0.0, 20.0]).max_width(840.0)
 }
 
 fn result_row(view: View, row: usize) -> Rect {
@@ -140,7 +140,7 @@ fn name_zone(view: View, col: usize, row: usize, playing: bool) -> Rect {
     let rect = list_row_rect(view, col, row);
     let friend = if playing { watch_btn(view, row) } else { remove_btn(view, 0, row) };
     let first_button = [friend, accept_btn(view, row), remove_btn(view, 2, row)][col];
-    rect.left(first_button.x - rect.x - 8.0)
+    rect.left_strip(first_button.x() - rect.x() - 8.0)
 }
 
 fn accept_btn(view: View, row: usize) -> Rect {
@@ -165,7 +165,7 @@ fn back_btn(view: View) -> Rect {
 
 fn refresh_btn(view: View) -> Rect {
     let back = back_btn(view);
-    Rect::at(back.x + back.w + 14.0, back.y, 160.0, back.h)
+    Rect::at(back.x() + back.w() + 14.0, back.y(), 160.0, back.h())
 }
 
 pub fn enter_friends(state: &State) -> Transition {
@@ -441,7 +441,7 @@ fn show_search(
     ui.cx
         .fonts
         .write(ui.draw, Face::Text, "Rechercher un ami")
-        .left(field.x, field.y - 14.0)
+        .left(field.x(), field.y() - 14.0)
         .size(theme::size::SMALL)
         .color(pal.text_dim);
     let search = widgets::field()
@@ -464,25 +464,25 @@ fn show_search(
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, msg)
-            .center(card.x + card.w / 2.0, card.y + card.h / 2.0)
+            .center(card.x() + card.w() / 2.0, card.y() + card.h() / 2.0)
             .size(theme::size::LABEL)
             .color(color);
     }
     for (i, e) in f.search_results.iter().take(MAX_SEARCH_RESULTS).enumerate() {
         let row = result_row(view, i);
-        let mid = row.y + row.h / 2.0;
+        let mid = row.y() + row.h() / 2.0;
         let elo = format!("ELO {}", e.elo);
         let rating = Pill::small(&elo, theme::GOLD);
 
         list_row(ui.draw, &pal, row, i);
-        avatar(ui.draw, &gui.ui, &mut ui.cx.fonts, (row.x + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
+        avatar(ui.draw, &gui.ui, &mut ui.cx.fonts, (row.x() + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, &e.username)
-            .left(row.x + 10.0 + AVATAR_ROOM, mid)
+            .left(row.x() + 10.0 + AVATAR_ROOM, mid)
             .size(theme::size::LABEL)
             .color(pal.text);
-        rating.draw(ui.draw, &mut ui.cx.fonts, (row.x + 260.0, mid));
+        rating.draw(ui.draw, &mut ui.cx.fonts, (row.x() + 260.0, mid));
         let befriended = f.friends.iter().any(|fr| fr.user_id == e.user_id);
         if !befriended && widgets::button(ui, ("add", &e.user_id), result_add_btn(view, i), "Ajouter", !adding) {
             clicks.add = Some(e.user_id.clone());
@@ -518,16 +518,20 @@ fn show_lists(
     ];
     for (col, ((title, _), list)) in columns.iter().zip(lists(f)).enumerate() {
         let card = column_card(view, col);
-        let mid = card.y + CARD_TITLE_H / 2.0;
+        let mid = card.y() + CARD_TITLE_H / 2.0;
         let count = list.len().to_string();
         let tally = Pill::small(&count, pal.accent);
         let fonts = &mut ui.cx.fonts;
 
         ui::card(ui.draw, &pal, card);
-        fonts.write(ui.draw, Face::Display, title).left(card.x + 16.0, mid).size(theme::size::EMPHASIS).color(pal.text);
-        let left = card.x + card.w - 16.0 - tally.width(fonts);
+        fonts
+            .write(ui.draw, Face::Display, title)
+            .left(card.x() + 16.0, mid)
+            .size(theme::size::EMPHASIS)
+            .color(pal.text);
+        let left = card.x() + card.w() - 16.0 - tally.width(fonts);
         tally.draw(ui.draw, fonts, (left, mid));
-        divider(ui.draw, &pal, card.x + 16.0, card.y + CARD_TITLE_H, card.w - 32.0);
+        divider(ui.draw, &pal, card.x() + 16.0, card.y() + CARD_TITLE_H, card.w() - 32.0);
     }
 
     if f.list_slot.is_some() {
@@ -612,7 +616,7 @@ fn show_col(
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, empty_msg)
-            .center(card.x + card.w / 2.0, list_top(card) + 24.0)
+            .center(card.x() + card.w() / 2.0, list_top(card) + 24.0)
             .size(theme::size::SMALL)
             .color(pal.text_muted);
         return;
@@ -620,16 +624,16 @@ fn show_col(
     for (i, e) in pager.shown(list, rows_for(view)) {
         let row = list_row_rect(view, col, i);
         let zone = name_zone(view, col, i, e.playing);
-        let mid = row.y + row.h / 2.0;
-        let text_x = row.x + 8.0 + AVATAR_ROOM;
+        let mid = row.y() + row.h() / 2.0;
+        let text_x = row.x() + 8.0 + AVATAR_ROOM;
 
         list_row(ui.draw, &pal, row, i);
         if widgets::row(ui, gui, ("friend", col, &e.user_id), zone, i) {
             clicks.profile = Some((e.user_id.clone(), e.username.clone()));
         }
         let fonts = &mut ui.cx.fonts;
-        let name = fonts.fit(Face::Text, &e.username, theme::size::BODY, zone.w - 12.0 - AVATAR_ROOM);
-        avatar(ui.draw, &gui.ui, fonts, (row.x + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
+        let name = fonts.fit(Face::Text, &e.username, theme::size::BODY, zone.w() - 12.0 - AVATAR_ROOM);
+        avatar(ui.draw, &gui.ui, fonts, (row.x() + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
         fonts.write(ui.draw, Face::Text, &name).left(text_x, mid - 8.0).size(theme::size::BODY).color(pal.text);
         fonts
             .write(ui.draw, Face::Text, &format!("ELO {}", e.elo))
@@ -653,8 +657,8 @@ mod tests {
             let view = View::fit(w, h);
             let last = column_card(view, 2);
             assert!(rows_for(view) >= 1);
-            assert!(last.bottom() < back_btn(view).y, "{w}x{h}: the columns reach the buttons");
-            assert!(last.x + last.w <= view.w, "{w}x{h}: a column is cut on the right");
+            assert!(last.bottom() < back_btn(view).y(), "{w}x{h}: the columns reach the buttons");
+            assert!(last.x() + last.w() <= view.w, "{w}x{h}: a column is cut on the right");
         }
     }
 }

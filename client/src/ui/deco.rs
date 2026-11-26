@@ -28,18 +28,23 @@ pub enum Edge {
 pub fn banner(draw: &mut Draw, rect: Rect, fill: Color, line: Color, edge: Edge) {
     draw.rect(rect).color(fill);
     let line_y = match edge {
-        Edge::Top => rect.y,
-        Edge::Bottom => rect.y + rect.h - 2.0,
+        Edge::Top => rect.y(),
+        Edge::Bottom => rect.y() + rect.h() - 2.0,
     };
-    draw.rect(Rect::at(rect.x, line_y, rect.w, 2.0)).color(line);
+    draw.rect(Rect::at(rect.x(), line_y, rect.w(), 2.0)).color(line);
 }
 
 /// A raised panel grouping related content.
 pub fn card(draw: &mut Draw, pal: &Palette, rect: Rect) {
     for spread in [6.0, 3.0] {
-        draw.rect(Rect::at(rect.x - spread, rect.y - spread + 4.0, rect.w + 2.0 * spread, rect.h + 2.0 * spread))
-            .radius(theme::RADIUS + spread)
-            .color(Color::BLACK.with_alpha(0.12));
+        draw.rect(Rect::at(
+            rect.x() - spread,
+            rect.y() - spread + 4.0,
+            rect.w() + 2.0 * spread,
+            rect.h() + 2.0 * spread,
+        ))
+        .radius(theme::RADIUS + spread)
+        .color(Color::BLACK.with_alpha(0.12));
     }
     draw.rect(rect).radius(theme::RADIUS).color(pal.surface);
     draw.rect(rect).radius(theme::RADIUS).stroke(pal.divider, 1.0);

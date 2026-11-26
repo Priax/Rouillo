@@ -86,7 +86,7 @@ fn avatar_rect(ww: f32) -> Rect {
 
 fn outdated_btn(ww: f32) -> Rect {
     let avatar = avatar_rect(ww);
-    Rect::at(0.0, avatar.y, avatar.x - 20.0, avatar.h).right(190.0).middle(50.0)
+    Rect::at(0.0, avatar.y(), avatar.x() - 20.0, avatar.h()).right_strip(190.0).middle(50.0)
 }
 
 /// What a menu does with the keys and the gamepad; its clicks are in [`show_menu`].
@@ -177,16 +177,16 @@ pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, pl
             crate::update::apply();
         }
         if let Some((text, done)) = crate::update::progress() {
-            let bar = Rect::at(btn.x, btn.y + btn.h + 10.0, btn.w, 6.0);
-            let y = btn.y + btn.h + if done.is_some() { 30.0 } else { 18.0 };
+            let bar = Rect::at(btn.x(), btn.y() + btn.h() + 10.0, btn.w(), 6.0);
+            let y = btn.y() + btn.h() + if done.is_some() { 30.0 } else { 18.0 };
             if let Some(done) = done {
                 ui.draw.rect(bar).radius(3.0).color(pal.text_dim.with_alpha(0.3));
-                ui.draw.rect(Rect::at(bar.x, bar.y, bar.w * done, bar.h)).radius(3.0).color(pal.title);
+                ui.draw.rect(Rect::at(bar.x(), bar.y(), bar.w() * done, bar.h())).radius(3.0).color(pal.title);
             }
             ui.cx
                 .fonts
                 .write(ui.draw, Face::Text, &text)
-                .center(btn.x + btn.w / 2.0, y)
+                .center(btn.x() + btn.w() / 2.0, y)
                 .size(theme::size::SMALL)
                 .color(pal.text_dim);
         }
@@ -196,7 +196,7 @@ pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, pl
     if let Some(auth) = &state.auth {
         let avatar = avatar_rect(ww);
         let picture = gui.images.get_opt(auth.avatar_url.as_deref());
-        let (x, y) = (avatar.x + 6.0, avatar.y + avatar.h - 6.0);
+        let (x, y) = (avatar.x() + 6.0, avatar.y() + avatar.h() - 6.0);
 
         profile = widgets::avatar(ui, gui, avatar, &auth.username, picture.as_ref());
         if gui.ui.pad_active() {
@@ -211,7 +211,7 @@ pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, pl
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, &auth.username)
-            .center(avatar.x + avatar.w / 2.0, avatar.y + avatar.h + 16.0)
+            .center(avatar.x() + avatar.w() / 2.0, avatar.y() + avatar.h() + 16.0)
             .size(theme::size::BODY)
             .color(pal.text_dim);
     }

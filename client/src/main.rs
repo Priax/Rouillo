@@ -62,9 +62,9 @@ use nav::{Nav, Root, Transition};
 use pads::{Pad, Pads};
 use state::{Network, Screen, State};
 use tick::Tick;
-use ui::{Rect, Size};
+use ui::Rect;
 
-use crate::ui::{Gui, Typeset};
+use crate::ui::{px, Gui, Typeset};
 
 const BANNER_H: f32 = 80.0;
 const MAINTENANCE_H: f32 = 30.0;
@@ -194,8 +194,8 @@ fn pad_direction(pads: &Pads) -> Option<(f32, f32)> {
 }
 
 fn banner_buttons(ww: f32, wh: f32) -> (Rect, Rect) {
-    let band = Rect::at(0.0, wh - BANNER_H, ww, BANNER_H).pad(15.0, 30.0, 15.0, 0.0);
-    let [accept, decline] = band.right(240.0).columns(10.0, [Size::Px(120.0), Size::Px(110.0)]);
+    let band = Rect::at(0.0, wh - BANNER_H, ww, BANNER_H).inset([15.0, 30.0, 15.0, 0.0]);
+    let [accept, decline] = band.right_strip(240.0).columns(10.0, [px(120.0), px(110.0)]);
 
     (accept, decline)
 }
@@ -373,9 +373,14 @@ fn show_invitation(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) 
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
 
     let (joined, ignored) = ui.layer(aero::draw::Layer::Popup, |ui| {
-        ui.interact(ui.id("invitation"), band.into(), aero::ui::Sense::CLICK);
+        ui.interact(ui.id("invitation"), band, aero::ui::Sense::CLICK);
         ui::banner(ui.draw, band, pal.banner, pal.accent, ui::Edge::Top);
-        ui.cx.fonts.write(ui.draw, Face::Text, &msg).left(20.0, band.y + 40.0).size(theme::size::LABEL).color(pal.text);
+        ui.cx
+            .fonts
+            .write(ui.draw, Face::Text, &msg)
+            .left(20.0, band.y() + 40.0)
+            .size(theme::size::LABEL)
+            .color(pal.text);
         let joined = ui::widgets::button(ui, "join invitation", accept_btn, "Rejoindre", true);
         (joined, ui::widgets::button(ui, "ignore invitation", decline_btn, "Ignorer", true))
     });

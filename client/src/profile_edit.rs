@@ -45,7 +45,7 @@ impl EditField {
 
         match self {
             Self::Bio => bio,
-            Self::Music => Rect::at(bio.x, bio.y + bio.h + 44.0, bio.w, 46.0),
+            Self::Music => Rect::at(bio.x(), bio.y() + bio.h() + 44.0, bio.w(), 46.0),
         }
     }
 }
@@ -121,14 +121,14 @@ impl EditForm {
 
 fn buttons(cx: f32) -> (Rect, Rect) {
     let music = EditField::Music.rect(cx);
-    let y = music.y + music.h + 39.0;
+    let y = music.y() + music.h() + 39.0;
     let [save, back] = Rect::centered_on(cx, y, 440.0, 54.0).columns(40.0, [FILL, FILL]);
 
     (save, back)
 }
 
 fn picture_buttons(cx: f32) -> [(Picture, bool, Rect); 4] {
-    let y = buttons(cx).0.y + 54.0 + 50.0;
+    let y = buttons(cx).0.y() + 54.0 + 50.0;
     let [a, b, c, d] = Rect::centered_on(cx, y, 630.0, 46.0).columns(10.0, [FILL; 4]);
 
     [(Picture::Avatar, true, a), (Picture::Avatar, false, b), (Picture::Banner, true, c), (Picture::Banner, false, d)]
@@ -241,7 +241,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
     let mut submitted = false;
     for which in EditField::ALL {
         let rect = which.rect(cx);
-        let label_y = rect.y - 15.0;
+        let label_y = rect.y() - 15.0;
         let left = form.left(which);
         let left_color = match left {
             0 => theme::DANGER,
@@ -251,13 +251,13 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, which.label())
-            .left(rect.x, label_y)
+            .left(rect.x(), label_y)
             .size(theme::size::LABEL)
             .color(pal.text_dim);
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, &left.to_string())
-            .right(rect.x + rect.w, label_y)
+            .right(rect.x() + rect.w(), label_y)
             .size(theme::size::SMALL)
             .color(left_color);
         let field =
@@ -288,7 +288,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, msg)
-            .center(cx, save_btn.y + save_btn.h + 21.0)
+            .center(cx, save_btn.y() + save_btn.h() + 21.0)
             .size(theme::size::LABEL)
             .color(color);
     }

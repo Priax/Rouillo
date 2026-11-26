@@ -198,7 +198,7 @@ fn field_rect(cx: f32, page: Page, i: usize) -> Rect {
 fn buttons(cx: f32, form: &AccountForm) -> (Rect, Rect) {
     let y = match form.page {
         Page::LogoutAll => TOP + 90.0,
-        _ => field_rect(cx, form.page, form.labels().len()).y,
+        _ => field_rect(cx, form.page, form.labels().len()).y(),
     };
     let [confirm, back] = Rect::centered_on(cx, y, 480.0, 54.0).columns(20.0, [FILL, FILL]);
     (confirm, back)
@@ -244,7 +244,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, form: &mut AccountForm, to
     let busy = form.pending.is_some();
     let confirm = Label::busy_or(busy, confirm_label(form.page));
     let warning_color = if form.page == Page::Delete { theme::DANGER } else { pal.text_dim };
-    let status_y = if choosing { TOP - 40.0 } else { confirm_btn.y + confirm_btn.h + 26.0 };
+    let status_y = if choosing { TOP - 40.0 } else { confirm_btn.y() + confirm_btn.h() + 26.0 };
 
     let mut chosen = None;
     let (mut confirmed, mut cancelled) = (false, false);
@@ -267,7 +267,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, form: &mut AccountForm, to
             ui.cx
                 .fonts
                 .write(ui.draw, Face::Text, label)
-                .left(rect.x, rect.y - 15.0)
+                .left(rect.x(), rect.y() - 15.0)
                 .size(theme::size::LABEL)
                 .color(pal.text_dim);
             let field = form.field(i);

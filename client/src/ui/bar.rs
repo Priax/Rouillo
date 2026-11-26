@@ -25,7 +25,7 @@ pub(super) fn paint(
     let color = if visual.enabled { color } else { pal.disabled };
     draw.rect(row).color(BAND);
 
-    let cx = row.x + row.w / 2.0;
+    let cx = row.x() + row.w() / 2.0;
     let bar = Slanted::of(row, visual.hover);
     let slant = bar.slant;
 
@@ -34,12 +34,12 @@ pub(super) fn paint(
 
     let triangles = Triangles {
         seed: seed_of(label),
-        size: row.h * 1.2,
+        size: row.h() * 1.2,
         density: 2.5,
         speed: 0.15,
         color: Color::WHITE.with_alpha(0.13),
     };
-    let area = Rect::at(bar.left - slant, row.y, bar.right - bar.left + 2.0 * slant, row.h);
+    let area = Rect::at(bar.left - slant, row.y(), bar.right - bar.left + 2.0 * slant, row.h());
     triangles.draw_clipped(draw, area, time, Some(&bar.corners()));
 
     if visual.flash > 0.0 {
@@ -48,8 +48,8 @@ pub(super) fn paint(
     let shrink = 1.0 - 0.03 * visual.press;
     fonts
         .write(draw, Face::Display, label)
-        .center(cx, row.y + row.h / 2.0)
-        .size(row.h * TEXT_HEIGHT * shrink)
+        .center(cx, row.y() + row.h() / 2.0)
+        .size(row.h() * TEXT_HEIGHT * shrink)
         .color(if visual.enabled { Color::WHITE } else { pal.text_disabled });
 }
 
@@ -70,9 +70,9 @@ struct Slanted {
 
 impl Slanted {
     fn of(row: Rect, hover: f32) -> Self {
-        let cx = row.x + row.w / 2.0;
-        let half = row.w * (WIDTH + HOVER_WIDTH * hover) / 2.0;
-        Self { left: cx - half, right: cx + half, top: row.y, bottom: row.y + row.h, slant: row.h * SLANT }
+        let cx = row.x() + row.w() / 2.0;
+        let half = row.w() * (WIDTH + HOVER_WIDTH * hover) / 2.0;
+        Self { left: cx - half, right: cx + half, top: row.y(), bottom: row.y() + row.h(), slant: row.h() * SLANT }
     }
 
     fn corners(self) -> [(f32, f32); 4] {
