@@ -1,6 +1,6 @@
 use aero::draw::Draw;
 
-use super::{card, Face, Fonts, Icon, Rect, Ui, View};
+use super::{card, Face, Fonts, Rect, View};
 use crate::theme::{self, Palette};
 
 const MARGIN: f32 = 110.0;
@@ -24,18 +24,6 @@ impl Modal {
 
     pub fn body(self) -> Rect {
         self.card.pad(TITLE_H, PADDING, PADDING, PADDING)
-    }
-
-    pub fn dismissed(self, ui: &Ui) -> bool {
-        let view = ui.view();
-        let anywhere = Rect::at(0.0, 0.0, view.w, view.h);
-        ui.clicked(self.close()) || (ui.clicked(anywhere) && !ui.clicked(self.card))
-    }
-
-    pub fn draw(self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, title: &str) {
-        ui.set_input(true);
-        self.paint(draw, fonts, &ui.palette(), (ui.view(), title));
-        ui.button(draw, fonts, self.close(), Icon::Close);
     }
 
     /// The scrim over the screen, the card and its title.

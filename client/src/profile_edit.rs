@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use aero::draw::Draw;
 use aero::input::KeyCode;
 
 use crate::http::{self, HttpSlot};
@@ -9,8 +8,8 @@ use crate::state::{ApiUserProfile, Input, ProfileData, State};
 use crate::theme;
 use crate::tick::Tick;
 use crate::ui::{
-    area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Face, Field, Fonts, Gui, Rect, Status,
-    TextInput, Ui, FILL,
+    area_clicked, area_height, area_keys, field_clicked, text_area, text_field, widgets, Face, Field, Gui, Rect,
+    Status, TextInput, FILL,
 };
 
 const BIO_LINES: usize = 6;
@@ -246,10 +245,10 @@ fn save(form: &mut EditForm, token: Option<String>) {
     form.status.clear();
 }
 
+/// The fields and the keys; the buttons are in [`show`].
 pub fn update(tick: &Tick, gui: &mut Gui, state: &mut State, profile: &mut ProfileData) {
     let cx = gui.ui.view().w / 2.0;
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let (save_btn, cancel_btn) = buttons(cx);
     let Gui { ui, fonts, .. } = gui;
     let State { input: Input { keys, .. }, .. } = state;
     let Some(form) = profile.edit.as_mut() else { return };
@@ -268,34 +267,21 @@ pub fn update(tick: &Tick, gui: &mut Gui, state: &mut State, profile: &mut Profi
         form.focused = EditField::Music;
     }
 
-    if form.uploading.is_none() {
-        for (picture, change, rect) in picture_buttons(cx) {
-            if !ui.clicked(rect) {
-                continue;
-            }
-            if change {
-                form.picking = Some(picture);
-                picker::open();
-            } else if picture_url(&profile.core.info, picture).is_some() {
-                let slot = http::new_slot();
-                http::delete_req(http::api_url(picture.path()), token.clone(), Arc::clone(&slot));
-                form.uploading = Some(slot);
-            }
-        }
-    }
-
-    let wants_save = tick.pressed(KeyCode::Enter) && form.enter();
-    if ui.clicked(save_btn) || wants_save {
+    if tick.pressed(KeyCode::Enter) && form.enter() {
         save(form, token);
     }
-    if ui.clicked(cancel_btn) || tick.back() {
+    if tick.back() {
         profile.edit = None;
     }
 }
 
-pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &mut Fonts, form: &EditForm, info: &ApiUserProfile, cx: f32) {
-    let pal = ui.palette();
+pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, profile: &mut ProfileData) {
+    let pal = gui.ui.palette();
+    let cx = gui.ui.view().w / 2.0;
     let (save_btn, cancel_btn) = buttons(cx);
+    let info = &profile.core.info;
+    let Some(form) = profile.edit.as_mut() else { return };
+    let fonts = &mut gui.fonts;
     let saving = form.pending.is_some();
     let busy = form.uploading.is_some();
 
@@ -311,6 +297,7 @@ pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &mut Fonts, form: &EditForm, in
         let field =
             Field { placeholder: which.placeholder(), input: form.value(which), focused: form.focused == which };
 
+        let draw = &mut *ui.draw;
         fonts.write(draw, Face::Text, which.label()).left(rect.x, label_y).size(theme::size::LABEL).color(pal.text_dim);
         fonts
             .write(draw, Face::Text, &left.to_string())
@@ -318,14 +305,15 @@ pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &mut Fonts, form: &EditForm, in
             .size(theme::size::SMALL)
             .color(left_color);
         if which == EditField::Bio {
-            text_area(draw, ui, fonts, rect, &field);
+            text_area(draw, &mut gui.ui, fonts, rect, &field);
         } else {
-            text_field(draw, ui, fonts, rect, &field);
+            text_field(draw, &mut gui.ui, fonts, rect, &field);
         }
     }
 
-    ui.button_enabled(draw, fonts, save_btn, if saving { "Sauvegarde..." } else { "Enregistrer" }, !saving);
-    ui.button(draw, fonts, cancel_btn, "Annuler");
+    let saved = widgets::button(ui, "save", save_btn, if saving { "Sauvegarde..." } else { "Enregistrer" }, !saving);
+    let cancelled = widgets::button(ui, "cancel", cancel_btn, "Annuler", true);
+    let mut asked = None;
     for (picture, change, rect) in picture_buttons(cx) {
         let label = match (picture, change) {
             (Picture::Avatar, true) => "Changer l'avatar",
@@ -334,15 +322,34 @@ pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &mut Fonts, form: &EditForm, in
             (Picture::Banner, false) => "Retirer la bannière",
         };
         let enabled = !busy && (change || picture_url(info, picture).is_some());
-        ui.button_enabled(draw, fonts, rect, label, enabled);
+        if widgets::button(ui, label, rect, label, enabled) {
+            asked = Some((picture, change));
+        }
     }
-
     if let Some((msg, color)) = form.status.shown(&pal) {
         fonts
-            .write(draw, Face::Text, msg)
+            .write(ui.draw, Face::Text, msg)
             .center(cx, save_btn.y + save_btn.h + 21.0)
             .size(theme::size::LABEL)
             .color(color);
+    }
+
+    match asked {
+        Some((picture, true)) => {
+            form.picking = Some(picture);
+            picker::open();
+        }
+        Some((picture, false)) => {
+            let slot = http::new_slot();
+            http::delete_req(http::api_url(picture.path()), token.clone(), Arc::clone(&slot));
+            form.uploading = Some(slot);
+        }
+        None => {}
+    }
+    if saved {
+        save(form, token);
+    } else if cancelled {
+        profile.edit = None;
     }
 }
 

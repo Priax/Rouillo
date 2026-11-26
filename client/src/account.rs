@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
-use aero::draw::Draw;
 use aero::input::KeyCode;
 
 use crate::http::{self, HttpSlot};
 use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{field_clicked, text_field, EditKeys, Face, Field, Fonts, Label, Rect, Status, TextInput, Ui, FILL};
+use crate::ui::{
+    field_clicked, text_field, widgets, EditKeys, Face, Field, Fonts, Gui, Label, Rect, Status, TextInput, Ui, FILL,
+};
 
 const MIN_PASSWORD: usize = 8;
 const FIELD_W: f32 = 460.0;
@@ -234,6 +235,7 @@ const fn warning(page: Page) -> Option<&'static str> {
     }
 }
 
+/// The answer to come, the fields and the keys; the buttons are in [`show`].
 pub fn update(
     tick: &Tick,
     ui: &Ui,
@@ -247,23 +249,8 @@ pub fn update(
     if !matches!(outcome, Outcome::Stay) {
         return outcome;
     }
-
     if form.page == Page::Choose {
-        for choice in Choice::ALL {
-            if ui.clicked(choice.rect(cx)) {
-                match choice {
-                    Choice::Username => form.show(Page::Username),
-                    Choice::Password => form.show(Page::Password),
-                    Choice::LogoutAll => form.show(Page::LogoutAll),
-                    Choice::Delete => form.show(Page::Delete),
-                    Choice::Back => return Outcome::Close,
-                }
-            }
-        }
-        if tick.back() {
-            return Outcome::Close;
-        }
-        return Outcome::Stay;
+        return if tick.back() { Outcome::Close } else { Outcome::Stay };
     }
 
     let fields = form.labels().len();
@@ -280,19 +267,18 @@ pub fn update(
         }
     }
 
-    let (confirm_btn, cancel_btn) = buttons(cx, form);
-    if ui.clicked(confirm_btn) || tick.pressed(KeyCode::Enter) {
+    if tick.pressed(KeyCode::Enter) {
         form.submit(token);
     }
-    if form.pending.is_none() && (ui.clicked(cancel_btn) || tick.back()) {
+    if form.pending.is_none() && tick.back() {
         form.show(Page::Choose);
     }
-
     Outcome::Stay
 }
 
-pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &mut Fonts, form: &AccountForm, cx: f32) {
-    let pal = ui.palette();
+pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, form: &mut AccountForm, token: Option<String>) -> Outcome {
+    let pal = gui.ui.palette();
+    let cx = gui.ui.view().w / 2.0;
     let choosing = form.page == Page::Choose;
     let (confirm_btn, cancel_btn) = buttons(cx, form);
     let busy = form.pending.is_some();
@@ -300,32 +286,52 @@ pub fn draw(ui: &mut Ui, draw: &mut Draw, fonts: &mut Fonts, form: &AccountForm,
     let warning_color = if form.page == Page::Delete { theme::DANGER } else { pal.text_dim };
     let status_y = if choosing { TOP - 40.0 } else { confirm_btn.y + confirm_btn.h + 26.0 };
 
+    let fonts = &mut gui.fonts;
+
+    let mut chosen = None;
+    let (mut confirmed, mut cancelled) = (false, false);
     if choosing {
         for choice in Choice::ALL {
-            ui.button(draw, fonts, choice.rect(cx), choice.label());
+            if widgets::button(ui, choice.label(), choice.rect(cx), choice.label(), true) {
+                chosen = Some(choice);
+            }
         }
     } else {
         if let Some(text) = warning(form.page) {
-            fonts.write(draw, Face::Text, text).center(cx, TOP + 20.0).size(theme::size::LABEL).color(warning_color);
+            fonts.write(ui.draw, Face::Text, text).center(cx, TOP + 20.0).size(theme::size::LABEL).color(warning_color);
         }
         for (i, label) in form.labels().iter().enumerate() {
             let rect = field_rect(cx, form.page, i);
             let field = Field { placeholder: "", input: form.input(i), focused: form.focused == i };
 
             fonts
-                .write(draw, Face::Text, label)
+                .write(ui.draw, Face::Text, label)
                 .left(rect.x, rect.y - 15.0)
                 .size(theme::size::LABEL)
                 .color(pal.text_dim);
-            text_field(draw, ui, fonts, rect, &field);
+            text_field(ui.draw, &mut gui.ui, fonts, rect, &field);
         }
-        ui.button_enabled(draw, fonts, confirm_btn, confirm, !busy);
-        ui.button(draw, fonts, cancel_btn, "Annuler");
+        confirmed = widgets::button(ui, "confirm", confirm_btn, confirm, !busy);
+        cancelled = widgets::button(ui, "cancel", cancel_btn, "Annuler", true);
+    }
+    if let Some((msg, color)) = form.status.shown(&pal) {
+        fonts.write(ui.draw, Face::Text, msg).center(cx, status_y).size(theme::size::LABEL).color(color);
     }
 
-    if let Some((msg, color)) = form.status.shown(&pal) {
-        fonts.write(draw, Face::Text, msg).center(cx, status_y).size(theme::size::LABEL).color(color);
+    match chosen {
+        Some(Choice::Username) => form.show(Page::Username),
+        Some(Choice::Password) => form.show(Page::Password),
+        Some(Choice::LogoutAll) => form.show(Page::LogoutAll),
+        Some(Choice::Delete) => form.show(Page::Delete),
+        Some(Choice::Back) => return Outcome::Close,
+        None => {}
     }
+    if confirmed {
+        form.submit(token);
+    } else if cancelled && form.pending.is_none() {
+        form.show(Page::Choose);
+    }
+    Outcome::Stay
 }
 
 #[cfg(test)]

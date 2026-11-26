@@ -7,7 +7,7 @@ use aero::draw::Draw;
 use aero::geom::{Color, Rect as Area};
 use aero::image::Image;
 use aero::ui::{Response, Role, Sense, Ui};
-use aero::widgets::{control, Button, Tab};
+use aero::widgets::{control, Button, Link, Tab};
 
 use super::button::paint_icon;
 use super::controls::paint_row;
@@ -47,6 +47,11 @@ pub fn button<'a>(ui: &mut Ui<'_>, key: impl Hash, rect: Rect, label: impl Into<
 /// Returns whether it was clicked.
 pub fn tab(ui: &mut Ui<'_>, rect: Rect, text: &str, selected: bool) -> bool {
     sounds(Tab::new(text, selected).show(ui, text, rect.into())).clicked
+}
+
+/// Text that leads somewhere. Returns whether it was clicked.
+pub fn link(ui: &mut Ui<'_>, key: impl Hash, rect: Rect, text: &str, enabled: bool) -> bool {
+    sounds(Link::new(text).enabled(enabled).show(ui, key, rect.into())).clicked
 }
 
 /// A slanted bar across `row`, as the menus stack them. Returns whether it was clicked.

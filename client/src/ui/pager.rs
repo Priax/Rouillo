@@ -137,39 +137,6 @@ impl Pager {
         self.go(page, pages)
     }
 
-    /// The field and the buttons of the screens not on Aero yet. Returns whether the page changed.
-    pub fn update(
-        &mut self,
-        tick: &Tick,
-        ui: &Ui,
-        fonts: &mut Fonts,
-        keys: &EditKeys,
-        area: Rect,
-        pages: usize,
-    ) -> bool {
-        if self.update_keys(tick, ui, fonts, keys, area, pages) {
-            return true;
-        }
-        let l = Layout::new(area);
-        let targets = self.targets(pages);
-        match [l.first, l.prev, l.next, l.last].into_iter().zip(targets).find(|&(rect, _)| ui.clicked(rect)) {
-            Some((_, page)) => self.go(page, pages),
-            None => false,
-        }
-    }
-
-    pub fn draw(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect, pages: usize) {
-        let pages = pages.max(1);
-        let l = Layout::new(area);
-        let back = self.page > 0;
-        let forward = self.page + 1 < pages;
-        ui.button_enabled(draw, fonts, l.first, Icon::First, back);
-        ui.button_enabled(draw, fonts, l.prev, Icon::Previous, back);
-        self.paint_field(draw, ui, fonts, (&l, pages));
-        ui.button_enabled(draw, fonts, l.next, Icon::Next, forward);
-        ui.button_enabled(draw, fonts, l.last, Icon::Last, forward);
-    }
-
     fn paint_field(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, (l, pages): (&Layout, usize)) {
         let field = Field { placeholder: "", input: &self.input, focused: self.focused };
         text_field(draw, ui, fonts, l.field, &field);

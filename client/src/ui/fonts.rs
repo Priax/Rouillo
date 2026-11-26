@@ -76,11 +76,6 @@ impl Fonts {
         self.faces.clone()
     }
 
-    /// The fonts themselves, for a theme to draw with.
-    pub fn library(&mut self) -> &mut aero::text::Fonts {
-        &mut self.library
-    }
-
     /// Draws `text` with its top left corner at `at`.
     pub fn draw(&mut self, draw: &mut Draw, (face, text, size): (Face, &str, f32), at: Vec2, color: Color) {
         let laid = layout(&mut self.kept, &mut self.library, &self.faces, (face, text, size));

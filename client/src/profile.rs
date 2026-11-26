@@ -9,14 +9,14 @@ use crate::history::History;
 use crate::nav::Transition;
 use crate::profile_edit::{self, EditForm};
 use crate::state::{
-    ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendsData, FriendshipStatus, Input,
-    OtherProfileData, ProfileCore, ProfileData, Screen, State,
+    ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendsData, FriendshipStatus, OtherProfileData,
+    ProfileCore, ProfileData, Screen, State,
 };
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
 use crate::ui::{
-    self, divider, list_row, portrait, Face, Fonts, Gui, Icon, Pill, Rect, Size, Status, TextInput, Ui, View, FILL,
-    PAGER_H,
+    self, divider, list_row, portrait, widgets, Face, Fonts, Gui, Icon, Pill, Rect, Size, Status, TextInput, View,
+    FILL, PAGER_H,
 };
 use crate::{http, profile_about};
 
@@ -86,41 +86,43 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
     }
 }
 
-fn update_history(tick: &Tick, gui: &mut Gui, state: &mut State, core: &mut ProfileCore, other: bool) {
+/// The page typed in the match list, and the answer to a favorite; the clicks are in [`show_history_panel`].
+fn update_history(tick: &Tick, gui: &mut Gui, state: &mut State, core: &mut ProfileCore) {
     let view = gui.ui.view();
-    let area = pager_area(view);
-    let (_, card) = cards(view);
     let Gui { ui, fonts, .. } = gui;
-    let State { auth, input: Input { keys, .. }, .. } = state;
+    let keys = &state.input.keys;
 
-    core.history.update(tick, ui, fonts, keys, area, core.info.total_matches, history_rows(view));
+    core.history.update(tick, ui, fonts, keys, pager_area(view), core.info.total_matches, history_rows(view));
     match http::take_done(&mut core.favorite_slot) {
         Some(Ok(())) => core.history.fetch(),
         Some(Err(e)) => core.replay_status = Status::error(e),
         None => {}
     }
+}
 
-    let shown = core.history.entries.iter().take(core.history.per_page).enumerate();
-    let mut hit = None;
-    let mut favorite = None;
-    for (i, m) in shown {
-        let row = history_row(card, i);
-        if m.has_replay && ui.clicked(replay_zone(row)) {
-            hit = Some((m.id.clone(), m.me(&core.user_id).map_or(1, |me| me.slot)));
-        }
-        if !other && (m.has_replay || m.favorite) && ui.clicked(favorite_zone(row)) {
-            favorite = Some((m.id.clone(), !m.favorite));
-        }
-    }
+/// What a click in the match list asks for.
+enum HistoryClick {
+    Replay(String, u8),
+    Favorite(String, bool),
+    Opponent(String, String),
+}
 
-    if let (Some((id, on)), Some(auth), None) = (favorite, auth.as_ref(), &core.favorite_slot) {
-        core.replay_status = Status::Empty;
-        core.favorite_slot = Some(crate::replay::set_favorite(&id, on, auth.token.clone()));
+fn act_on_history(state: &mut State, core: &mut ProfileCore, click: Option<HistoryClick>) -> Transition {
+    match click {
+        Some(HistoryClick::Replay(id, slot)) => {
+            core.replay_status.clear();
+            crate::replay::open(state, &id, slot);
+        }
+        Some(HistoryClick::Favorite(id, on)) => {
+            if let (Some(auth), None) = (state.auth.as_ref(), &core.favorite_slot) {
+                core.replay_status = Status::Empty;
+                core.favorite_slot = Some(crate::replay::set_favorite(&id, on, auth.token.clone()));
+            }
+        }
+        Some(HistoryClick::Opponent(user_id, username)) => return enter_other_profile(state, user_id, username, None),
+        None => {}
     }
-    if let Some((id, slot)) = hit {
-        core.replay_status.clear();
-        crate::replay::open(state, &id, u8::try_from(slot).unwrap_or(1));
-    }
+    Transition::Stay
 }
 
 fn friendship_with(
@@ -233,20 +235,23 @@ fn card_message(draw: &mut Draw, fonts: &mut Fonts, card: Rect, text: &str, colo
         .color(color);
 }
 
-fn draw_stats_panel(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, core: &ProfileCore, load_failed: bool) {
-    let pal = ui.palette();
-    let (card, _) = cards(ui.view());
+/// Returns whether the link to the whole bio was clicked.
+fn show_stats_panel(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, core: &ProfileCore, load_failed: bool) -> bool {
+    let pal = gui.ui.palette();
+    let (card, _) = cards(gui.ui.view());
+    let fonts = &mut gui.fonts;
+    let draw = &mut *ui.draw;
 
     ui::card(draw, &pal, card);
     card_title(draw, &pal, fonts, card, "Statistiques");
 
     if load_failed {
         card_message(draw, fonts, card, "Profil introuvable.", theme::DANGER);
-        return;
+        return false;
     }
     if core.profile_slot.is_some() {
         card_message(draw, fonts, card, "Chargement des stats...", pal.text_muted);
-        return;
+        return false;
     }
 
     let info = &core.info;
@@ -268,10 +273,8 @@ fn draw_stats_panel(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, core: &Prof
     }
 
     divider(draw, &pal, label_x, stats_end(card), card.w - 2.0 * CARD_PAD);
-    profile_about::draw_summary(draw, ui, fonts, &summary, area);
-    if summary.cut {
-        profile_about::draw_more_link(draw, ui, fonts, area);
-    }
+    profile_about::draw_summary(draw, &gui.ui, fonts, &summary, area);
+    summary.cut && profile_about::show_more_link(ui, gui, area)
 }
 
 fn win_rate(wins: i64, played: i64) -> String {
@@ -279,12 +282,6 @@ fn win_rate(wins: i64, played: i64) -> String {
         return "-".to_string();
     }
     format!("{wins} / {played} ({}%)", wins * 100 / played)
-}
-
-fn draw_about_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, core: &ProfileCore) {
-    if core.about_open {
-        profile_about::draw_overlay(draw, ui, fonts, &core.info);
-    }
 }
 
 fn stats_end(card: Rect) -> f32 {
@@ -296,43 +293,54 @@ fn about_area(card: Rect) -> Rect {
     Rect::at(card.x + CARD_PAD, top, card.w - 2.0 * CARD_PAD, card.y + card.h - CARD_PAD - top)
 }
 
-fn update_about(tick: &Tick, ui: &Ui, core: &mut ProfileCore) -> bool {
-    if core.about_open {
-        core.about_open = !profile_about::overlay_closed(tick, ui);
+/// Closes the whole bio on Escape. Returns whether it is open, which leaves the rest of the screen alone.
+fn update_about(tick: &Tick, core: &mut ProfileCore) -> bool {
+    if core.about_open && tick.back() {
+        core.about_open = false;
         return true;
     }
-    core.about_open = ui.pressed(profile_about::MORE);
     core.about_open
 }
 
-fn draw_history_panel(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, core: &ProfileCore, clickable: bool) {
-    let pal = ui.palette();
-    let (_, card) = cards(ui.view());
+/// `own`: the viewed player's own profile, whose favorites and opponents can be clicked.
+fn show_history_panel(
+    ui: &mut aero::ui::Ui<'_>,
+    gui: &mut Gui,
+    core: &mut ProfileCore,
+    own: bool,
+) -> Option<HistoryClick> {
+    let pal = gui.ui.palette();
+    let view = gui.ui.view();
+    let (_, card) = cards(view);
+    let fonts = &mut gui.fonts;
 
-    ui::card(draw, &pal, card);
-    card_title(draw, &pal, fonts, card, "Matchs");
+    ui::card(ui.draw, &pal, card);
+    card_title(ui.draw, &pal, fonts, card, "Matchs");
     if let Some((msg, color)) = core.replay_status.shown(&pal) {
         fonts
-            .write(draw, Face::Text, msg)
+            .write(ui.draw, Face::Text, msg)
             .right(card.x + card.w - CARD_PAD, card.y + CARD_TITLE_H / 2.0)
             .size(theme::size::SMALL)
             .color(color);
     }
 
+    let mut click = None;
     if core.history.slot.is_some() && core.history.entries.is_empty() {
-        card_message(draw, fonts, card, "Chargement...", pal.text_muted);
+        card_message(ui.draw, fonts, card, "Chargement...", pal.text_muted);
     } else if core.history.entries.is_empty() {
-        card_message(draw, fonts, card, "Aucun match pour l'instant.", pal.text_muted);
+        card_message(ui.draw, fonts, card, "Aucun match pour l'instant.", pal.text_muted);
     } else {
         for (i, m) in core.history.entries.iter().enumerate().take(core.history.per_page) {
-            draw_match_row(draw, ui, fonts, (history_row(card, i), i), m, &core.user_id, clickable);
+            if let Some(c) = show_match_row(ui, gui, (history_row(card, i), i), m, (&core.user_id, own)) {
+                click = Some(c);
+            }
         }
     }
     if core.info.total_matches > core.history.per_page as i64 {
-        core.history.draw_pager(draw, ui, fonts, pager_area(ui.view()), core.info.total_matches);
+        core.history.show_pager(ui, gui, pager_area(view), core.info.total_matches);
     }
+    click
 }
-
 /// How many match rows fit above the pager.
 fn history_rows(view: View) -> usize {
     let (_, card) = cards(view);
@@ -369,23 +377,17 @@ fn opponent_zone(row: Rect) -> Rect {
     Rect::at(row.x + row.w * 0.33, row.y, row.w * 0.25, row.h)
 }
 
-fn history_row_zone(view: View, i: usize) -> Rect {
-    let (_, card) = cards(view);
-    opponent_zone(history_row(card, i))
-}
-
-fn draw_match_row(
-    draw: &mut Draw,
-    ui: &mut Ui,
-    fonts: &mut Fonts,
+fn show_match_row(
+    ui: &mut aero::ui::Ui<'_>,
+    gui: &mut Gui,
     (row, index): (Rect, usize),
     m: &ApiMatchEntry,
-    viewed_id: &str,
-    clickable: bool,
-) {
-    let Some(me) = m.me(viewed_id) else { return };
+    (viewed_id, own): (&str, bool),
+) -> Option<HistoryClick> {
+    let me = m.me(viewed_id)?;
 
-    let pal = ui.palette();
+    let pal = gui.ui.palette();
+    let fonts = &mut gui.fonts;
     let mid = row.y + row.h / 2.0;
     let opp = m.opponent(viewed_id);
     let place = format!("{}e", me.place);
@@ -403,38 +405,41 @@ fn draw_match_row(
         Some(opp) => format!("vs {}", opp.username.as_deref().unwrap_or("Invité")),
         None => format!("{} joueurs", m.players.len()),
     };
-    let linked = clickable && opp.is_some_and(|o| o.user_id.is_some());
+    let opponent = opp.and_then(|o| Some((o.user_id.clone()?, o.username.clone()?))).filter(|_| own);
     let wide = row.w >= WIDE_ROW;
     let star = if m.favorite { Icon::Star } else { Icon::StarOutline };
     let secs = m.duration_secs as u32;
 
-    list_row(draw, &pal, row, index);
+    list_row(ui.draw, &pal, row, index);
     let left = row.x + row.w * 0.1 - result.width(fonts) / 2.0;
-    result.draw(draw, fonts, (left, mid));
+    result.draw(ui.draw, fonts, (left, mid));
     if m.ranked {
-        Pill::small("CLASSÉ", theme::bar::ORANGE).draw(draw, fonts, (row.x + row.w * 0.2, mid));
+        Pill::small("CLASSÉ", theme::bar::ORANGE).draw(ui.draw, fonts, (row.x + row.w * 0.2, mid));
     }
-    ui.link(draw, fonts, opponent_zone(row), &label, linked);
     if wide {
         fonts
-            .write(draw, Face::Text, &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent))
+            .write(ui.draw, Face::Text, &format!("Chaîne x{}  Nuis. {}", me.max_chain, me.nuisance_sent))
             .right(replay_zone(row).x - 14.0, mid)
             .size(theme::size::SMALL)
             .color(theme::GOLD);
-    }
-    if m.has_replay {
-        ui.button(draw, fonts, replay_zone(row), "Revoir");
-    }
-    if clickable && (m.has_replay || m.favorite) {
-        ui.button(draw, fonts, favorite_zone(row), star);
-    }
-    if wide {
         fonts
-            .write(draw, Face::Text, &format!("{}:{:02}", secs / 60, secs % 60))
+            .write(ui.draw, Face::Text, &format!("{}:{:02}", secs / 60, secs % 60))
             .right(row.x + row.w - CARD_PAD, mid)
             .size(theme::size::SMALL)
             .color(pal.text_muted);
     }
+
+    let mut click = None;
+    if widgets::link(ui, ("opponent", &m.id), opponent_zone(row), &label, opponent.is_some()) {
+        click = opponent.map(|(user_id, username)| HistoryClick::Opponent(user_id, username));
+    }
+    if m.has_replay && widgets::button(ui, ("replay", &m.id), replay_zone(row), "Revoir", true) {
+        click = Some(HistoryClick::Replay(m.id.clone(), u8::try_from(me.slot).unwrap_or(1)));
+    }
+    if own && (m.has_replay || m.favorite) && widgets::button(ui, ("favorite", &m.id), favorite_zone(row), star, true) {
+        click = Some(HistoryClick::Favorite(m.id.clone(), !m.favorite));
+    }
+    click
 }
 
 pub fn enter_profile(state: &State) -> Transition {
@@ -450,6 +455,7 @@ fn own_buttons(view: View) -> [Rect; 4] {
     bottom_buttons(view, [200.0; 4])
 }
 
+/// What comes back and the keys; the clicks are in [`show_profile`].
 pub fn update_profile(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut ProfileData) -> Transition {
     poll_core_profile(&mut p.core);
     p.core.history.poll();
@@ -462,46 +468,27 @@ pub fn update_profile(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut Pro
     if p.account.is_some() {
         return update_account(tick, gui, state, p);
     }
-    if update_about(tick, &gui.ui, &mut p.core) {
+    if update_about(tick, &mut p.core) {
         return Transition::Stay;
     }
-
-    let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(gui.ui.view());
-    update_history(tick, gui, state, &mut p.core, false);
-    if gui.ui.clicked(back_btn) || tick.back() {
+    update_history(tick, gui, state, &mut p.core);
+    if tick.back() {
         return Transition::Pop;
     }
-    if gui.ui.clicked(edit_btn) {
-        p.edit = Some(EditForm::open(&p.core.info));
-    }
-    if gui.ui.clicked(account_btn) {
-        p.account = Some(AccountForm::open());
-    }
-    if gui.ui.clicked(logout_btn) {
-        return crate::menu::do_logout(state);
-    }
-
-    let my_id = p.core.user_id.as_str();
-    let shown = p.core.history.entries.iter().enumerate().take(p.core.history.per_page);
-    let opponent = shown.filter(|&(i, _)| gui.ui.clicked(history_row_zone(gui.ui.view(), i))).find_map(|(_, m)| {
-        let opp = m.opponent(my_id)?;
-        Some((opp.user_id.clone()?, opp.username.clone()?))
-    });
-
-    match opponent {
-        Some((uid, uname)) => enter_other_profile(state, uid, uname, None),
-        None => Transition::Stay,
-    }
+    Transition::Stay
 }
 
 fn update_account(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut ProfileData) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let Gui { ui, fonts, .. } = gui;
-    let State { input: Input { keys, .. }, .. } = state;
     let Some(form) = p.account.as_mut() else {
         return Transition::Stay;
     };
-    match account::update(tick, ui, fonts, keys, form, token) {
+    let outcome = account::update(tick, &gui.ui, &mut gui.fonts, &state.input.keys, form, token);
+    account_outcome(state, p, outcome)
+}
+
+fn account_outcome(state: &mut State, p: &mut ProfileData, outcome: Outcome) -> Transition {
+    match outcome {
         Outcome::Stay => {}
         Outcome::Close => p.account = None,
         Outcome::LoggedOut(msg) => {
@@ -516,33 +503,48 @@ fn update_account(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut Profile
             }
         }
     }
-
     Transition::Stay
 }
 
-pub fn draw_profile(draw: &mut Draw, gui: &mut Gui, profile: &ProfileData) {
-    let cx = gui.ui.view().w / 2.0;
+pub fn show_profile(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, p: &mut ProfileData) -> Transition {
     let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(gui.ui.view());
+    let token = state.auth.as_ref().map(|a| a.token.clone());
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    draw_header(draw, gui, &profile.core);
-    if let Some(form) = &profile.edit {
-        profile_edit::draw(&mut gui.ui, draw, &mut gui.fonts, form, &profile.core.info, cx);
-    } else if let Some(form) = &profile.account {
-        account::draw(&mut gui.ui, draw, &mut gui.fonts, form, cx);
-    } else {
-        gui.ui.set_input(!profile.core.about_open);
-        draw_stats_panel(draw, &mut gui.ui, &mut gui.fonts, &profile.core, false);
-        draw_history_panel(draw, &mut gui.ui, &mut gui.fonts, &profile.core, true);
-        gui.ui.button(draw, &mut gui.fonts, back_btn, "Retour");
-        gui.ui.button(draw, &mut gui.fonts, edit_btn, "Modifier");
-        gui.ui.button(draw, &mut gui.fonts, account_btn, "Compte");
-        gui.ui.button(draw, &mut gui.fonts, logout_btn, "Déconnexion");
-        draw_about_overlay(draw, &mut gui.ui, &mut gui.fonts, &profile.core);
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    draw_header(ui.draw, gui, &p.core);
+    if p.edit.is_some() {
+        profile_edit::show(ui, gui, token, p);
+        return Transition::Stay;
     }
-}
+    if let Some(form) = p.account.as_mut() {
+        let outcome = account::show(ui, gui, form, token);
+        return account_outcome(state, p, outcome);
+    }
 
+    let more = show_stats_panel(ui, gui, &p.core, false);
+    let click = show_history_panel(ui, gui, &mut p.core, true);
+    let back = widgets::button(ui, "back", back_btn, "Retour", true);
+    let edit = widgets::button(ui, "edit", edit_btn, "Modifier", true);
+    let account = widgets::button(ui, "account", account_btn, "Compte", true);
+    let logout = widgets::button(ui, "logout", logout_btn, "Déconnexion", true);
+    if p.core.about_open && profile_about::show_overlay(ui, gui, &p.core.info) {
+        p.core.about_open = false;
+    }
+
+    if more {
+        p.core.about_open = true;
+    } else if back {
+        return Transition::Pop;
+    } else if edit {
+        p.edit = Some(EditForm::open(&p.core.info));
+    } else if account {
+        p.account = Some(AccountForm::open());
+    } else if logout {
+        return crate::menu::do_logout(state);
+    }
+    act_on_history(state, &mut p.core, click)
+}
 /// Opens a player's profile. `friends`, when at hand, spares asking whether
 /// they are one.
 pub fn enter_other_profile(
@@ -611,6 +613,7 @@ fn other_buttons(view: View) -> (Rect, Rect) {
     (add, back)
 }
 
+/// What comes back and the keys; the clicks are in [`show_other_profile`].
 pub fn update_other_profile(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut OtherProfileData) -> Transition {
     poll_friendship_check(p);
     match poll_core_profile(&mut p.core) {
@@ -626,25 +629,22 @@ pub fn update_other_profile(tick: &Tick, gui: &mut Gui, state: &mut State, p: &m
     }
     p.core.history.poll();
     poll_friend(p);
-    if update_about(tick, &gui.ui, &mut p.core) {
+    if update_about(tick, &mut p.core) {
         return Transition::Stay;
     }
-
-    let (add_btn, back_btn) = other_buttons(gui.ui.view());
-    let can_add = !p.load_failed && matches!(p.friendship, FriendshipStatus::Unknown | FriendshipStatus::NotFriends);
-
-    update_history(tick, gui, state, &mut p.core, true);
-    if gui.ui.clicked(add_btn) && can_add {
-        add_friend(state, p);
-    }
-    if gui.ui.clicked(back_btn) || tick.back() {
+    update_history(tick, gui, state, &mut p.core);
+    if tick.back() {
         return Transition::Pop;
     }
-
     Transition::Stay
 }
 
-pub fn draw_other_profile(draw: &mut Draw, gui: &mut Gui, p: &OtherProfileData) {
+pub fn show_other_profile(
+    ui: &mut aero::ui::Ui<'_>,
+    gui: &mut Gui,
+    state: &mut State,
+    p: &mut OtherProfileData,
+) -> Transition {
     let pal = gui.ui.palette();
     let cx = gui.ui.view().w / 2.0;
     let btn_y = buttons_top(gui.ui.view());
@@ -653,26 +653,32 @@ pub fn draw_other_profile(draw: &mut Draw, gui: &mut Gui, p: &OtherProfileData) 
     let can_add = !p.load_failed && p.friendship == FriendshipStatus::NotFriends;
     let label = if sending { "Envoi..." } else { "Ajouter en ami" };
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    draw_header(draw, gui, &p.core);
-    gui.ui.set_input(!p.core.about_open);
-    draw_stats_panel(draw, &mut gui.ui, &mut gui.fonts, &p.core, p.load_failed);
-    draw_history_panel(draw, &mut gui.ui, &mut gui.fonts, &p.core, false);
-
-    if can_add {
-        gui.ui.button_enabled(draw, &mut gui.fonts, add_btn, label, !sending);
-    }
-    gui.ui.button(draw, &mut gui.fonts, back_btn, "Retour");
-
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    draw_header(ui.draw, gui, &p.core);
+    let more = show_stats_panel(ui, gui, &p.core, p.load_failed);
+    let click = show_history_panel(ui, gui, &mut p.core, false);
+    let add = can_add && widgets::button(ui, "add", add_btn, label, !sending);
+    let back = widgets::button(ui, "back", back_btn, "Retour", true);
     if let Some((msg, color)) = p.friend_status.shown(&pal) {
         gui.fonts
-            .write(draw, Face::Text, msg)
+            .write(ui.draw, Face::Text, msg)
             .center(cx, btn_y - STATUS_GAP / 2.0)
             .size(theme::size::BODY)
             .color(color);
     }
-    draw_about_overlay(draw, &mut gui.ui, &mut gui.fonts, &p.core);
+    if p.core.about_open && profile_about::show_overlay(ui, gui, &p.core.info) {
+        p.core.about_open = false;
+    }
+
+    if more {
+        p.core.about_open = true;
+    } else if add {
+        add_friend(state, p);
+    } else if back {
+        return Transition::Pop;
+    }
+    act_on_history(state, &mut p.core, click)
 }
 
 #[cfg(test)]

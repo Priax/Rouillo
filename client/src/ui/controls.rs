@@ -1,30 +1,9 @@
 use aero::draw::Draw;
 use aero::geom::Color;
-use aero::theme::{Painter, Theme, Visual};
+use aero::theme::Visual;
 
-use super::{list_row, Fonts, Rect, Ui};
+use super::{list_row, Rect};
 use crate::theme::Palette;
-
-impl Ui {
-    pub fn link(&mut self, draw: &mut Draw, fonts: &mut Fonts, rect: Rect, text: &str, enabled: bool) {
-        let r = self.interact(text, rect, enabled);
-        if r.entered {
-            crate::audio::play_ui_hover();
-        }
-        let look = self.look(fonts);
-        look.link(&mut Painter { draw, fonts: fonts.library() }, rect.into(), text, r.visual(enabled));
-    }
-
-    /// A list row that reacts to the pointer: it lights up and grows an
-    /// accent bar on its left edge. The caller draws what the row holds.
-    pub fn row(&mut self, draw: &mut Draw, rect: Rect, index: usize, id: &str) {
-        let r = self.interact(id, rect, true);
-        if r.entered {
-            crate::audio::play_ui_hover();
-        }
-        paint_row(draw, &self.palette(), rect, index, r.visual(true));
-    }
-}
 
 pub(super) fn paint_row(draw: &mut Draw, pal: &Palette, rect: Rect, index: usize, visual: Visual) {
     list_row(draw, pal, rect, index);

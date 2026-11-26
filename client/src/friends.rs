@@ -10,8 +10,8 @@ use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
-    self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Gui, Label, Pager, Pill,
-    Rect, Size, Status, TextInput, Ui, View,
+    self, divider, field_clicked, list_row, page_count, text_field, widgets, Face, Field, Fonts, Frame, Gui, Label,
+    Pager, Pill, Rect, Size, Status, TextInput, Ui, View,
 };
 use crate::{http, theme};
 
@@ -317,6 +317,7 @@ enum FriendAction {
     Cancel(String),
 }
 
+/// What comes back, the search field and the keys; the clicks are in [`show_friends`].
 pub fn update_friends(tick: &Tick, gui: &mut Gui, state: &mut State, f: &mut FriendsData) -> Transition {
     poll_list(f);
     poll_search(f);
@@ -339,121 +340,30 @@ pub fn update_friends(tick: &Tick, gui: &mut Gui, state: &mut State, f: &mut Fri
     for col in 0..3 {
         let pages = page_count(lists(f)[col].len(), rows_for(view));
         f.pages[col].clamp(pages);
-        f.pages[col].update(tick, &gui.ui, &mut gui.fonts, &state.input.keys, pager_area(view, col), pages);
+        f.pages[col].update_keys(tick, &gui.ui, &mut gui.fonts, &state.input.keys, pager_area(view, col), pages);
     }
 
-    if gui.ui.clicked(search_submit_btn(view)) || (searching && tick.pressed(KeyCode::Enter)) {
-        let q = search_query(f);
-        if looks_like_uuid(&q) {
-            return crate::profile::enter_other_profile(state, q, "...".to_owned(), Some(f));
-        }
-        try_search(state, f);
+    if searching && tick.pressed(KeyCode::Enter) {
+        return search(state, f);
     }
-
-    if gui.ui.clicked(back_btn(view)) || tick.back() {
+    if tick.back() {
         return Transition::To(Screen::Menu);
     }
+    Transition::Stay
+}
 
-    if can_refresh(f) && gui.ui.clicked(refresh_btn(view)) {
-        refresh_list(state, f);
+/// Opens the profile of the id typed, or searches for the name.
+fn search(state: &State, f: &mut FriendsData) -> Transition {
+    let q = search_query(f);
+    if looks_like_uuid(&q) {
+        return crate::profile::enter_other_profile(state, q, "...".to_owned(), Some(f));
     }
-
-    if let Some((uid, uname)) = clicked_profile(f, &gui.ui, view).or_else(|| clicked_listed(f, &gui.ui, view)) {
-        return crate::profile::enter_other_profile(state, uid, uname, Some(f));
-    }
-
-    let add = clicked_add(f, &gui.ui, view);
-    let action = clicked_action(f, &gui.ui, view);
-    if let Some(uid) = add {
-        send_add_request(state, f, &uid);
-    }
-    match action {
-        Some(FriendAction::Watch(user_id)) => return watch(state, user_id),
-        Some(action) => apply_action(state, f, action),
-        None => {}
-    }
-
+    try_search(state, f);
     Transition::Stay
 }
 
 fn can_refresh(f: &FriendsData) -> bool {
     f.list_slot.is_none() && f.action_pending.is_none()
-}
-
-fn clicked_profile(f: &FriendsData, ui: &Ui, view: View) -> Option<(String, String)> {
-    let (_, e) = f
-        .search_results
-        .iter()
-        .take(MAX_SEARCH_RESULTS)
-        .enumerate()
-        .find(|&(i, _)| ui.clicked(result_view_btn(view, i)))?;
-    Some((e.user_id.clone(), e.username.clone()))
-}
-
-fn clicked_listed(f: &FriendsData, ui: &Ui, view: View) -> Option<(String, String)> {
-    if f.list_slot.is_some() {
-        return None;
-    }
-    lists(f).into_iter().enumerate().find_map(|(col, list)| {
-        f.pages[col]
-            .shown(list, rows_for(view))
-            .find(|&(i, e)| ui.clicked(name_zone(view, col, i, e.playing)))
-            .map(|(_, e)| (e.user_id.clone(), e.username.clone()))
-    })
-}
-
-fn clicked_add(f: &FriendsData, ui: &Ui, view: View) -> Option<String> {
-    if f.add_pending.is_some() {
-        return None;
-    }
-    f.search_results
-        .iter()
-        .take(MAX_SEARCH_RESULTS)
-        .enumerate()
-        .find(|&(i, e)| ui.clicked(result_add_btn(view, i)) && !f.friends.iter().any(|fr| fr.user_id == e.user_id))
-        .map(|(_, e)| e.user_id.clone())
-}
-
-fn clicked_action(f: &FriendsData, ui: &Ui, view: View) -> Option<FriendAction> {
-    // While the lists reload they are not drawn, so neither are their buttons.
-    if f.action_pending.is_some() || f.list_slot.is_some() {
-        return None;
-    }
-
-    if let Some(confirm_id) = &f.confirm_remove {
-        let (row, _) = f.pages[0].shown(&f.friends, rows_for(view)).find(|(_, e)| &e.user_id == confirm_id)?;
-        if ui.clicked(confirm_yes_btn(view, row)) {
-            return Some(FriendAction::ConfirmRemove(confirm_id.clone()));
-        }
-        if ui.clicked(confirm_no_btn(view, row)) {
-            return Some(FriendAction::CancelRemove);
-        }
-        return None;
-    }
-
-    for (i, e) in f.pages[0].shown(&f.friends, rows_for(view)) {
-        if ui.clicked(remove_btn(view, 0, i)) {
-            return Some(FriendAction::StartRemove(e.user_id.clone()));
-        }
-        if e.playing && ui.clicked(watch_btn(view, i)) {
-            return Some(FriendAction::Watch(e.user_id.clone()));
-        }
-    }
-    for (i, e) in f.pages[1].shown(&f.received, rows_for(view)) {
-        if ui.clicked(accept_btn(view, i)) {
-            return Some(FriendAction::Accept(e.user_id.clone()));
-        }
-        if ui.clicked(reject_btn(view, i)) {
-            return Some(FriendAction::Reject(e.user_id.clone()));
-        }
-    }
-    for (i, e) in f.pages[2].shown(&f.sent, rows_for(view)) {
-        if ui.clicked(remove_btn(view, 2, i)) {
-            return Some(FriendAction::Cancel(e.user_id.clone()));
-        }
-    }
-
-    None
 }
 
 /// Watches a friend's game: the server says where it is, or that there is none.
@@ -494,49 +404,89 @@ fn apply_action(state: &State, f: &mut FriendsData, action: FriendAction) {
     }
 }
 
-pub fn draw_friends(draw: &mut Draw, gui: &mut Gui, f: &FriendsData) {
+/// What a click on the friends screen asks for, kept until it is all drawn.
+#[derive(Default)]
+struct Clicks {
+    action: Option<FriendAction>,
+    profile: Option<(String, String)>,
+    add: Option<String>,
+}
+
+pub fn show_friends(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, f: &mut FriendsData) -> Transition {
     let view = gui.ui.view();
     let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
     let pics = pictures(&mut gui.images, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
     let label = Label::busy_or(f.list_slot.is_some(), "Rafraîchir");
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    gui.ui.page_header(draw, &mut gui.fonts, "Amis");
-    draw_search(draw, &mut gui.ui, &mut gui.fonts, f, (view, &pics));
-    draw_lists(draw, &mut gui.ui, &mut gui.fonts, f, (view, &pics));
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    gui.ui.page_header(ui.draw, &mut gui.fonts, "Amis");
+    let mut clicks = Clicks::default();
+    let searched = show_search(ui, gui, f, (view, &pics), &mut clicks);
+    show_lists(ui, gui, f, (view, &pics), &mut clicks);
+    let back = widgets::button(ui, "back", back_btn(view), "Retour", true);
+    let refreshed = widgets::button(ui, "refresh", refresh_btn(view), label, can_refresh(f));
 
-    gui.ui.button(draw, &mut gui.fonts, back_btn(view), "Retour");
-    gui.ui.button_enabled(draw, &mut gui.fonts, refresh_btn(view), label, can_refresh(f));
+    if searched {
+        return search(state, f);
+    }
+    if back {
+        return Transition::To(Screen::Menu);
+    }
+    if refreshed && can_refresh(f) {
+        refresh_list(state, f);
+    }
+    if let Some((user_id, username)) = clicks.profile {
+        return crate::profile::enter_other_profile(state, user_id, username, Some(f));
+    }
+    if let Some(user_id) = clicks.add {
+        send_add_request(state, f, &user_id);
+    }
+    match clicks.action {
+        Some(FriendAction::Watch(user_id)) => watch(state, user_id),
+        Some(action) => {
+            apply_action(state, f, action);
+            Transition::Stay
+        }
+        None => Transition::Stay,
+    }
 }
 
-fn draw_search(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
-    let pal = ui.palette();
+/// Returns whether a search was asked.
+fn show_search(
+    ui: &mut aero::ui::Ui<'_>,
+    gui: &mut Gui,
+    f: &FriendsData,
+    (view, pics): (View, &Pictures),
+    clicks: &mut Clicks,
+) -> bool {
+    let pal = gui.ui.palette();
     let field = search_box(view);
     let searching = f.search_slot.is_some();
     let search = Field { placeholder: "Pseudo ou UUID", input: &f.search_input, focused: f.search_focused };
     let submit = Label::busy_or(searching, "Rechercher");
+    let fonts = &mut gui.fonts;
 
     fonts
-        .write(draw, Face::Text, "Rechercher un ami")
+        .write(ui.draw, Face::Text, "Rechercher un ami")
         .left(field.x, field.y - 14.0)
         .size(theme::size::SMALL)
         .color(pal.text_dim);
-    text_field(draw, ui, fonts, field, &search);
-    ui.button_enabled(draw, fonts, search_submit_btn(view), submit, !searching);
+    text_field(ui.draw, &mut gui.ui, fonts, field, &search);
+    let searched = widgets::button(ui, "search", search_submit_btn(view), submit, !searching);
 
     let status = f.search_status.shown(&pal);
     if f.search_results.is_empty() && status.is_none() {
-        return;
+        return searched;
     }
 
     let card = results_card(view);
     let adding = f.add_pending.is_some();
 
-    ui::card(draw, &pal, card);
+    ui::card(ui.draw, &pal, card);
     if let (true, Some((msg, color))) = (f.search_results.is_empty(), status) {
         fonts
-            .write(draw, Face::Text, msg)
+            .write(ui.draw, Face::Text, msg)
             .center(card.x + card.w / 2.0, card.y + card.h / 2.0)
             .size(theme::size::LABEL)
             .color(color);
@@ -547,131 +497,135 @@ fn draw_search(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, f: &FriendsData,
         let elo = format!("ELO {}", e.elo);
         let rating = Pill::small(&elo, theme::GOLD);
 
-        list_row(draw, &pal, row, i);
-        avatar(draw, ui, fonts, (row.x + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
+        list_row(ui.draw, &pal, row, i);
+        avatar(ui.draw, &gui.ui, fonts, (row.x + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
         fonts
-            .write(draw, Face::Text, &e.username)
+            .write(ui.draw, Face::Text, &e.username)
             .left(row.x + 10.0 + AVATAR_ROOM, mid)
             .size(theme::size::LABEL)
             .color(pal.text);
-        rating.draw(draw, fonts, (row.x + 260.0, mid));
-        if !f.friends.iter().any(|fr| fr.user_id == e.user_id) {
-            ui.button_enabled(draw, fonts, result_add_btn(view, i), "Ajouter", !adding);
+        rating.draw(ui.draw, fonts, (row.x + 260.0, mid));
+        let befriended = f.friends.iter().any(|fr| fr.user_id == e.user_id);
+        if !befriended && widgets::button(ui, ("add", &e.user_id), result_add_btn(view, i), "Ajouter", !adding) {
+            clicks.add = Some(e.user_id.clone());
         }
-        ui.button(draw, fonts, result_view_btn(view, i), "Profil");
+        if widgets::button(ui, ("profile", &e.user_id), result_view_btn(view, i), "Profil", true) {
+            clicks.profile = Some((e.user_id.clone(), e.username.clone()));
+        }
     }
 
     if let Some((msg, color)) = f.add_status.shown(&pal) {
-        fonts.write(draw, Face::Text, msg).center(view.w / 2.0, ADD_STATUS_Y).size(theme::size::BODY).color(color);
+        fonts.write(ui.draw, Face::Text, msg).center(view.w / 2.0, ADD_STATUS_Y).size(theme::size::BODY).color(color);
     }
+    searched
 }
 
-fn draw_lists(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, f: &FriendsData, (view, pics): (View, &Pictures)) {
-    let pal = ui.palette();
+fn show_lists(
+    ui: &mut aero::ui::Ui<'_>,
+    gui: &mut Gui,
+    f: &mut FriendsData,
+    (view, pics): (View, &Pictures),
+    clicks: &mut Clicks,
+) {
+    let pal = gui.ui.palette();
     let columns = [
-        ("Amis", &f.friends, "Aucun ami pour l'instant"),
-        ("Demandes reçues", &f.received, "Aucune demande reçue"),
-        ("Envoyées", &f.sent, "Aucune demande envoyée"),
+        ("Amis", "Aucun ami pour l'instant"),
+        ("Demandes reçues", "Aucune demande reçue"),
+        ("Envoyées", "Aucune demande envoyée"),
     ];
-    for (col, (title, list, _)) in columns.iter().enumerate() {
+    for (col, ((title, _), list)) in columns.iter().zip(lists(f)).enumerate() {
         let card = column_card(view, col);
         let mid = card.y + CARD_TITLE_H / 2.0;
         let count = list.len().to_string();
         let tally = Pill::small(&count, pal.accent);
+        let fonts = &mut gui.fonts;
 
-        ui::card(draw, &pal, card);
-        fonts.write(draw, Face::Display, title).left(card.x + 16.0, mid).size(theme::size::EMPHASIS).color(pal.text);
+        ui::card(ui.draw, &pal, card);
+        fonts.write(ui.draw, Face::Display, title).left(card.x + 16.0, mid).size(theme::size::EMPHASIS).color(pal.text);
         let left = card.x + card.w - 16.0 - tally.width(fonts);
-        tally.draw(draw, fonts, (left, mid));
-        divider(draw, &pal, card.x + 16.0, card.y + CARD_TITLE_H, card.w - 32.0);
+        tally.draw(ui.draw, fonts, (left, mid));
+        divider(ui.draw, &pal, card.x + 16.0, card.y + CARD_TITLE_H, card.w - 32.0);
     }
 
     if f.list_slot.is_some() {
-        fonts
-            .write(draw, Face::Text, "Chargement...")
+        gui.fonts
+            .write(ui.draw, Face::Text, "Chargement...")
             .center(view.w / 2.0, list_top(column_card(view, 0)) + 24.0)
             .size(theme::size::LABEL)
             .color(pal.text_muted);
     } else {
         let busy = f.action_pending.is_some();
         let confirm = f.confirm_remove.as_deref();
-        draw_col(
-            draw,
-            ui,
-            fonts,
-            (view, 0),
-            (columns[0].1, &f.pages[0], pics),
-            columns[0].2,
-            |draw, ui, fonts, entry, i| {
-                if confirm == Some(entry.user_id.as_str()) {
-                    ui.button_enabled(draw, fonts, confirm_yes_btn(view, i), "Oui", !busy);
-                    ui.button(draw, fonts, confirm_no_btn(view, i), "Non");
-                } else {
-                    let active = !busy && confirm.is_none();
-                    if entry.playing {
-                        ui.button_enabled(draw, fonts, watch_btn(view, i), "Regarder", confirm.is_none());
-                    }
-                    ui.button_enabled(draw, fonts, remove_btn(view, 0, i), "Retirer", active);
+        let friends = (&f.friends[..], &f.pages[0], pics);
+        show_col(ui, gui, (view, 0), friends, (columns[0].1, clicks), |ui, entry, i| {
+            let id = &entry.user_id;
+            if confirm == Some(id.as_str()) {
+                if widgets::button(ui, ("yes", id), confirm_yes_btn(view, i), "Oui", !busy) {
+                    return Some(FriendAction::ConfirmRemove(id.clone()));
                 }
-            },
-        );
-        draw_col(
-            draw,
-            ui,
-            fonts,
-            (view, 1),
-            (columns[1].1, &f.pages[1], pics),
-            columns[1].2,
-            |draw, ui, fonts, _, i| {
-                ui.button_enabled(draw, fonts, accept_btn(view, i), "Accepter", !busy);
-                ui.button_enabled(draw, fonts, reject_btn(view, i), "Refuser", !busy);
-            },
-        );
-        draw_col(
-            draw,
-            ui,
-            fonts,
-            (view, 2),
-            (columns[2].1, &f.pages[2], pics),
-            columns[2].2,
-            |draw, ui, fonts, _, i| {
-                ui.button_enabled(draw, fonts, remove_btn(view, 2, i), "Annuler", !busy);
-            },
-        );
-    }
-
-    for (col, list) in lists(f).into_iter().enumerate() {
-        let pages = page_count(list.len(), rows_for(view));
-        if pages > 1 && f.list_slot.is_none() {
-            f.pages[col].draw(draw, ui, fonts, pager_area(view, col), pages);
+                if widgets::button(ui, ("no", id), confirm_no_btn(view, i), "Non", true) {
+                    return Some(FriendAction::CancelRemove);
+                }
+                return None;
+            }
+            let active = !busy && confirm.is_none();
+            if entry.playing && widgets::button(ui, ("watch", id), watch_btn(view, i), "Regarder", confirm.is_none()) {
+                return Some(FriendAction::Watch(id.clone()));
+            }
+            if widgets::button(ui, ("remove", id), remove_btn(view, 0, i), "Retirer", active) {
+                return Some(FriendAction::StartRemove(id.clone()));
+            }
+            None
+        });
+        let received = (&f.received[..], &f.pages[1], pics);
+        show_col(ui, gui, (view, 1), received, (columns[1].1, clicks), |ui, entry, i| {
+            let id = &entry.user_id;
+            if widgets::button(ui, ("accept", id), accept_btn(view, i), "Accepter", !busy) {
+                return Some(FriendAction::Accept(id.clone()));
+            }
+            if widgets::button(ui, ("reject", id), reject_btn(view, i), "Refuser", !busy) {
+                return Some(FriendAction::Reject(id.clone()));
+            }
+            None
+        });
+        let sent = (&f.sent[..], &f.pages[2], pics);
+        show_col(ui, gui, (view, 2), sent, (columns[2].1, clicks), |ui, entry, i| {
+            let id = &entry.user_id;
+            widgets::button(ui, ("cancel", id), remove_btn(view, 2, i), "Annuler", !busy)
+                .then(|| FriendAction::Cancel(id.clone()))
+        });
+        let FriendsData { friends, received, sent, pages, .. } = f;
+        for (col, (list, pager)) in [&friends[..], received, sent].into_iter().zip(pages.iter_mut()).enumerate() {
+            let pages = page_count(list.len(), rows_for(view));
+            if pages > 1 {
+                pager.show(ui, gui, ("pages", col), pager_area(view, col), pages);
+            }
         }
     }
 
     if let Some((msg, color)) = f.action_status.shown(&pal) {
-        fonts
-            .write(draw, Face::Text, msg)
+        gui.fonts
+            .write(ui.draw, Face::Text, msg)
             .center(view.w / 2.0, column_card(view, 2).bottom() + 10.0)
             .size(theme::size::SMALL)
             .color(color);
     }
 }
 
-fn draw_col<F>(
-    draw: &mut Draw,
-    ui: &mut Ui,
-    fonts: &mut Fonts,
+/// One column's rows: a click on a name opens the profile, `buttons` shows a row's buttons and says what they ask.
+fn show_col(
+    ui: &mut aero::ui::Ui<'_>,
+    gui: &mut Gui,
     (view, col): (View, usize),
     (list, pager, pics): (&[FriendEntry], &Pager, &Pictures),
-    empty_msg: &str,
-    draw_buttons: F,
-) where
-    F: Fn(&mut Draw, &mut Ui, &mut Fonts, &FriendEntry, usize),
-{
-    let pal = &ui.palette();
+    (empty_msg, clicks): (&str, &mut Clicks),
+    mut buttons: impl FnMut(&mut aero::ui::Ui<'_>, &FriendEntry, usize) -> Option<FriendAction>,
+) {
+    let pal = gui.ui.palette();
     if list.is_empty() {
         let card = column_card(view, col);
-        fonts
-            .write(draw, Face::Text, empty_msg)
+        gui.fonts
+            .write(ui.draw, Face::Text, empty_msg)
             .center(card.x + card.w / 2.0, list_top(card) + 24.0)
             .size(theme::size::SMALL)
             .color(pal.text_muted);
@@ -682,18 +636,23 @@ fn draw_col<F>(
         let zone = name_zone(view, col, i, e.playing);
         let mid = row.y + row.h / 2.0;
         let text_x = row.x + 8.0 + AVATAR_ROOM;
-        let name = fonts.fit(Face::Text, &e.username, theme::size::BODY, zone.w - 12.0 - AVATAR_ROOM);
 
-        list_row(draw, pal, row, i);
-        ui.row(draw, zone, i, &format!("friend:{col}:{}", e.user_id));
-        avatar(draw, ui, fonts, (row.x + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
-        fonts.write(draw, Face::Text, &name).left(text_x, mid - 8.0).size(theme::size::BODY).color(pal.text);
+        list_row(ui.draw, &pal, row, i);
+        if widgets::row(ui, gui, ("friend", col, &e.user_id), zone, i) {
+            clicks.profile = Some((e.user_id.clone(), e.username.clone()));
+        }
+        let fonts = &mut gui.fonts;
+        let name = fonts.fit(Face::Text, &e.username, theme::size::BODY, zone.w - 12.0 - AVATAR_ROOM);
+        avatar(ui.draw, &gui.ui, fonts, (row.x + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
+        fonts.write(ui.draw, Face::Text, &name).left(text_x, mid - 8.0).size(theme::size::BODY).color(pal.text);
         fonts
-            .write(draw, Face::Text, &format!("ELO {}", e.elo))
+            .write(ui.draw, Face::Text, &format!("ELO {}", e.elo))
             .left(text_x, mid + 10.0)
             .size(theme::size::SMALL)
             .color(theme::GOLD);
-        draw_buttons(draw, ui, fonts, e, i);
+        if let Some(action) = buttons(ui, e, i) {
+            clicks.action = Some(action);
+        }
     }
 }
 

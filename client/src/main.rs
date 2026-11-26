@@ -246,33 +246,27 @@ fn banner_buttons(ww: f32, wh: f32) -> (Rect, Rect) {
     (accept, decline)
 }
 
-fn update_invitation(gui: &mut Gui, state: &mut State, nav: &mut Nav) {
-    if state.pending_invitation.is_none() {
-        return;
-    }
-
+/// Keeps a click on the banner from the text fields under it, which still read the pointer in the update.
+fn update_invitation(gui: &mut Gui, state: &State) {
     let (ww, wh) = gui.ui.view().size();
-    let (accept_btn, decline_btn) = banner_buttons(ww, wh);
-    let on_banner = gui.ui.clicked(Rect::at(0.0, wh - BANNER_H, ww, BANNER_H));
-
-    if gui.ui.clicked(accept_btn) {
-        if let Some((_, room_id, _)) = state.pending_invitation.take() {
-            if state.net.conn.is_live() {
-                state.net.conn.send(&ClientMessage::JoinRoom { id: room_id });
-            } else {
-                state.net.conn.connect(connection::now_secs());
-                state.rooms.clear();
-                state.net.pending_join = Some(room_id);
-            }
-            state.ranked.stop();
-            nav.apply(Transition::To(Screen::RoomBrowser));
-        }
-    } else if gui.ui.clicked(decline_btn) {
-        state.pending_invitation = None;
-    }
-    if on_banner {
+    if state.pending_invitation.is_some() && gui.ui.clicked(Rect::at(0.0, wh - BANNER_H, ww, BANNER_H)) {
         gui.ui.swallow_click();
     }
+}
+
+fn accept_invitation(state: &mut State) -> Transition {
+    let Some((_, room_id, _)) = state.pending_invitation.take() else {
+        return Transition::Stay;
+    };
+    if state.net.conn.is_live() {
+        state.net.conn.send(&ClientMessage::JoinRoom { id: room_id });
+    } else {
+        state.net.conn.connect(connection::now_secs());
+        state.rooms.clear();
+        state.net.pending_join = Some(room_id);
+    }
+    state.ranked.stop();
+    Transition::To(Screen::RoomBrowser)
 }
 
 /// The fastest connected screen's frame time: Wayland does not say which
@@ -342,16 +336,14 @@ fn update(cx: &mut Cx, root: &mut Root) {
     }
     let pad_nav = pad_menus(state, nav.current());
     gui.ui.note_pointer(real);
-    let pad_press = pad_nav && state.input.pads.pressed(Pad::South);
-    let mouse = if pad_press { gui.ui.pad_click().unwrap_or(real) } else { real };
-    if pad_press {
+    if pad_nav && state.input.pads.pressed(Pad::South) {
         cx.press_focus(aero::WindowId::MAIN);
     }
     gui.ui.set_clock(connection::now_secs());
-    gui.ui.begin_frame(dt, view, mouse);
+    gui.ui.begin_frame(dt, view, real);
     if pad_nav {
         if let Some(dir) = pad_direction(&state.input.pads) {
-            gui.ui.move_focus(dir);
+            gui.ui.use_pad();
             cx.move_focus(aero::WindowId::MAIN, Vec2::from(dir));
         }
     }
@@ -398,7 +390,7 @@ fn update(cx: &mut Cx, root: &mut Root) {
     replay::poll(state, nav);
 
     network::keep_linked(&mut state.net, state.auth.is_some(), nav.current());
-    update_invitation(gui, state, nav);
+    update_invitation(gui, state);
     network::handle_server_messages(state, nav);
 
     let transition = match nav.current_mut() {
@@ -436,21 +428,32 @@ fn update(cx: &mut Cx, root: &mut Root) {
     gui.ui.set_screen(nav.current().id(), nav.current().hue(), fade);
 }
 
-fn draw_invitation_banner(draw: &mut Draw, gui: &mut Gui, state: &State) {
+/// The invitation along the bottom, over the screen.
+fn show_invitation(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
     let Some((ref from, _, ref room_name)) = state.pending_invitation else {
-        return;
+        return Transition::Stay;
     };
 
     let pal = gui.ui.palette();
     let (ww, wh) = gui.ui.view().size();
-    let banner_y = wh - BANNER_H;
+    let band = Rect::at(0.0, wh - BANNER_H, ww, BANNER_H);
     let msg = format!("{from} vous invite dans \"{room_name}\"");
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
 
-    ui::banner(draw, Rect::at(0.0, banner_y, ww, BANNER_H), pal.banner, pal.accent, ui::Edge::Top);
-    gui.fonts.write(draw, Face::Text, &msg).left(20.0, banner_y + 40.0).size(theme::size::LABEL).color(pal.text);
-    gui.ui.button(draw, &mut gui.fonts, accept_btn, "Rejoindre");
-    gui.ui.button(draw, &mut gui.fonts, decline_btn, "Ignorer");
+    let (joined, ignored) = ui.layer(aero::draw::Layer::Popup, |ui| {
+        ui.interact(ui.id("invitation"), band.into(), aero::ui::Sense::CLICK);
+        ui::banner(ui.draw, band, pal.banner, pal.accent, ui::Edge::Top);
+        gui.fonts.write(ui.draw, Face::Text, &msg).left(20.0, band.y + 40.0).size(theme::size::LABEL).color(pal.text);
+        let joined = ui::widgets::button(ui, "join invitation", accept_btn, "Rejoindre", true);
+        (joined, ui::widgets::button(ui, "ignore invitation", decline_btn, "Ignorer", true))
+    });
+    if joined {
+        return accept_invitation(state);
+    }
+    if ignored {
+        state.pending_invitation = None;
+    }
+    Transition::Stay
 }
 
 fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
@@ -472,9 +475,9 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
         Screen::CreateRoom => transition = rooms::show_create_room(ui, gui, state),
         Screen::JoinById => transition = rooms::show_join_by_id(ui, gui, state),
         Screen::RoomLobby => transition = rooms::show_lobby(ui, gui, state),
-        Screen::Profile(p) => profile::draw_profile(ui.draw, gui, p),
-        Screen::Friends(f) => friends::draw_friends(ui.draw, gui, f),
-        Screen::OtherProfile(p) => profile::draw_other_profile(ui.draw, gui, p),
+        Screen::Profile(p) => transition = profile::show_profile(ui, gui, state, p),
+        Screen::Friends(f) => transition = friends::show_friends(ui, gui, state, f),
+        Screen::OtherProfile(p) => transition = profile::show_other_profile(ui, gui, state, p),
         Screen::SoloSetup => transition = solo::show_setup(ui, gui, state),
         Screen::Ranked => transition = ranked::show(ui, gui, state),
         Screen::Leaderboard(board) => transition = leaderboard::show(ui, gui, state, board),
@@ -504,7 +507,10 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
         state.input.touch.draw(ui.draw, &mut gui.fonts, gui.ui.view());
     }
 
-    draw_invitation_banner(ui.draw, gui, state);
+    let invited = show_invitation(ui, gui, state);
+    if !matches!(invited, Transition::Stay) {
+        transition = invited;
+    }
     draw_maintenance_banner(ui.draw, gui, state, screen);
     draw_too_old_banner(ui.draw, gui, state, screen);
     draw_reconnect_banner(ui.draw, gui, state, screen);

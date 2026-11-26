@@ -21,9 +21,7 @@ mod triangles;
 mod view;
 pub mod widgets;
 
-use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use aero::path::{Cap, Join, Stroke};
@@ -64,13 +62,8 @@ use crate::theme::{hue, Palette};
 const MAX_DT: f32 = 0.1;
 pub const TRANSITION: f32 = 0.3;
 
-const HOVER_SPEED: f32 = 18.0;
-const PRESS_SPEED: f32 = 30.0;
-const FLASH_SPEED: f32 = 8.0;
 const CARET_BLINK: f64 = 0.5;
 const DOT_STEP: f64 = 0.5;
-/// Closer than this to where it heads, a fade no longer shows.
-const SETTLED: f32 = 0.002;
 
 /// What screens draw with: the widgets, the fonts, and the pictures
 /// fetched from the server.
@@ -87,7 +80,6 @@ impl Gui {
 }
 
 pub struct Ui {
-    frame: u64,
     dt: f32,
     time: f64,
     view: View,
@@ -99,14 +91,9 @@ pub struct Ui {
     fade: f32,
     palette: Palette,
     mouse: Mouse,
-    input_off: bool,
-    widgets: HashMap<(u64, u32), Widget>,
-    drawn: HashMap<u64, u32>,
     caret_text: Option<u64>,
     caret_since: f64,
-    /// The widget a gamepad points at, and whether the pad is in use: the
-    /// mouse moving hands control back to it.
-    focus: Option<(u64, u32)>,
+    /// Whether the gamepad steers: the mouse moving hands control back to it.
     pad: bool,
     pointer: (f32, f32),
     /// Something shown moves on its own: the next frame is wanted.
@@ -131,45 +118,13 @@ impl Default for Ui {
             fade: TRANSITION,
             palette: Palette::new(hue::PURPLE),
             mouse: Mouse::default(),
-            input_off: false,
-            widgets: HashMap::new(),
-            drawn: HashMap::new(),
             caret_text: None,
             caret_since: 0.0,
-            focus: None,
             pad: false,
             pointer: (0.0, 0.0),
             moving: false,
             clock: 0.0,
             change_in: None,
-            frame: 0,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Area {
-    Whole,
-    /// A whole rect the gamepad skips: it has its own button.
-    Pointer,
-}
-
-struct Widget {
-    rect: Rect,
-    area: Area,
-    live: bool,
-    hover: f32,
-    press: f32,
-    flash: f32,
-    hovered: bool,
-    /// The frame it was last drawn in.
-    seen: u64,
-}
-
-impl Widget {
-    fn contains(&self, x: f32, y: f32) -> bool {
-        match self.area {
-            Area::Whole | Area::Pointer => self.rect.contains(x, y),
         }
     }
 }
@@ -196,26 +151,9 @@ impl Mouse {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Response {
-    hover: f32,
-    press: f32,
-    flash: f32,
-    entered: bool,
-}
-
-impl Response {
-    const fn visual(self, enabled: bool) -> aero::theme::Visual {
-        aero::theme::Visual { hover: self.hover, press: self.press, flash: self.flash, focused: false, enabled }
-    }
-}
-
 impl Ui {
-    /// Called at the start of each frame, before the screen reacts to input:
-    /// a click lands on the buttons drawn last frame, the ones the player saw,
-    /// even when the screen it triggers is a different one. Returns whether a
-    /// button was clicked.
-    pub fn begin_frame(&mut self, dt: f32, view: View, mouse: Mouse) -> bool {
+    /// Called at the start of each frame, before the screen reacts to input.
+    pub fn begin_frame(&mut self, dt: f32, view: View, mouse: Mouse) {
         self.dt = dt.clamp(0.0, MAX_DT);
         self.time += f64::from(self.dt);
         self.view = view;
@@ -225,25 +163,6 @@ impl Ui {
         self.hue = (self.from_hue + turn * progress).rem_euclid(360.0);
         self.palette = Palette::new(self.hue);
         self.mouse = mouse;
-        self.input_off = false;
-        let last = self.frame;
-        self.frame += 1;
-        self.widgets.retain(|_, w| w.seen == last);
-        self.drawn.clear();
-
-        let mut clicked = false;
-        if mouse.pressed {
-            for w in self.widgets.values_mut() {
-                if w.live && w.contains(mouse.x, mouse.y) {
-                    w.flash = 1.0;
-                    clicked = true;
-                }
-            }
-        }
-        if clicked {
-            crate::audio::play_ui_click();
-        }
-        clicked
     }
 
     /// Tells which screen is shown, and its section's hue. A change of
@@ -255,7 +174,6 @@ impl Ui {
             Some(current) if current == screen => {}
             Some(_) => {
                 self.screen = Some(screen);
-                self.focus = None;
                 self.from_hue = self.hue;
                 self.target_hue = hue;
                 self.entered_at = self.time;
@@ -321,14 +239,6 @@ impl Ui {
         (m.pressed && r.contains(m.x, m.y)).then_some((m.x, m.y))
     }
 
-    pub fn pressed(&self, label: &str) -> bool {
-        let (m, label) = (self.mouse, hash_of(label));
-        m.pressed && self.widgets.iter().any(|(&(l, _), w)| l == label && w.live && w.contains(m.x, m.y))
-    }
-
-    /// Whether the caret of the focused field, standing at `at` in `text`,
-    /// is lit this frame. It blinks, and starts over lit whenever the text
-    /// changes or the caret moves, so that it never vanishes under the typing.
     /// Leaves gamepad control as soon as the mouse moves.
     pub fn note_pointer(&mut self, real: Mouse) {
         if (real.x, real.y) != self.pointer {
@@ -337,42 +247,9 @@ impl Ui {
         }
     }
 
-    /// A click on the widget the gamepad points at, to stand for the mouse.
-    pub fn pad_click(&self) -> Option<Mouse> {
-        let w = self.widgets.get(&self.focus?).filter(|w| self.pad && w.live)?;
-        let (x, y) = w.rect.center();
-        Some(Mouse { x, y, down: true, pressed: true })
-    }
-
-    /// Moves the gamepad's pointer to the nearest live widget in `dir`, or
-    /// onto the screen's first widget if it pointed at none.
-    pub fn move_focus(&mut self, (dx, dy): (f32, f32)) {
-        let live: Vec<((u64, u32), (f32, f32))> = self
-            .widgets
-            .iter()
-            .filter(|(_, w)| w.live && w.area != Area::Pointer)
-            .map(|(k, w)| (*k, w.rect.center()))
-            .collect();
-        let current = self.focus.and_then(|f| live.iter().find(|(k, _)| *k == f).copied());
-        let next = match current.filter(|_| self.pad) {
-            None => live
-                .iter()
-                .min_by(|a, b| (a.1 .1, a.1 .0).partial_cmp(&(b.1 .1, b.1 .0)).unwrap_or(Ordering::Equal))
-                .map(|(k, _)| *k),
-            Some((_, (cx, cy))) => live
-                .iter()
-                .filter_map(|(k, (x, y))| {
-                    let (ox, oy) = (x - cx, y - cy);
-                    let along = ox * dx + oy * dy;
-                    let across = (ox * dy - oy * dx).abs();
-                    (along > 1.0).then_some((*k, along + 2.0 * across))
-                })
-                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
-                .map(|(k, _)| k)
-                .or(self.focus),
-        };
-        self.focus = next;
-        self.pad = next.is_some();
+    /// The gamepad steers until the mouse moves.
+    pub fn use_pad(&mut self) {
+        self.pad = true;
     }
 
     pub fn pad_active(&self) -> bool {
@@ -383,6 +260,9 @@ impl Ui {
         self.mouse
     }
 
+    /// Whether the caret of the focused field, standing at `at` in `text`,
+    /// is lit this frame. It blinks, and starts over lit whenever the text
+    /// changes or the caret moves, so that it never vanishes under the typing.
     pub fn caret_on(&mut self, text: &str, at: usize) -> bool {
         let text = Some(hash_of(&(text, at)));
         if self.caret_text != text {
@@ -413,45 +293,6 @@ impl Ui {
     pub fn take_change_in(&mut self) -> Option<f64> {
         self.change_in.take()
     }
-
-    pub fn set_input(&mut self, on: bool) {
-        self.input_off = !on;
-    }
-
-    fn interact(&mut self, label: &str, rect: Rect, enabled: bool) -> Response {
-        self.interact_in(label, rect, Area::Whole, enabled)
-    }
-
-    fn interact_in(&mut self, label: &str, rect: Rect, area: Area, enabled: bool) -> Response {
-        let Self { dt, mouse, input_off, widgets, drawn, focus, pad, frame, moving, .. } = self;
-        let live = enabled && !*input_off;
-
-        let label = hash_of(label);
-        let nth = drawn.entry(label).or_insert(0);
-        let key = (label, *nth);
-        *nth += 1;
-
-        let mut fresh = false;
-        let w = widgets.entry(key).or_insert_with(|| {
-            fresh = true;
-            Widget { rect, area, live, hover: 0.0, press: 0.0, flash: 0.0, hovered: false, seen: 0 }
-        });
-        w.rect = rect;
-        w.area = area;
-        let over = live && if *pad { *focus == Some(key) } else { w.contains(mouse.x, mouse.y) };
-        let entered = over && !w.hovered && !fresh;
-        w.live = live;
-        w.hovered = over;
-        w.seen = *frame;
-        let (hover, press) = (f32::from(u8::from(over)), f32::from(u8::from(over && mouse.down)));
-        w.hover = approach(w.hover, hover, HOVER_SPEED, *dt);
-        w.press = approach(w.press, press, PRESS_SPEED, *dt);
-        w.flash = approach(w.flash, 0.0, FLASH_SPEED, *dt);
-        let settled = |value: f32, target: f32| (value - target).abs() < SETTLED;
-        *moving |= !(settled(w.hover, hover) && settled(w.press, press) && settled(w.flash, 0.0));
-
-        Response { hover: w.hover, press: w.press, flash: w.flash, entered }
-    }
 }
 
 fn hash_of<T: Hash + ?Sized>(value: &T) -> u64 {
@@ -468,96 +309,28 @@ fn ease_out(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(3)
 }
 
-fn approach(current: f32, target: f32, speed: f32, dt: f32) -> f32 {
-    current + (target - current) * (1.0 - (-speed * dt).exp())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const A: Rect = Rect::at(0.0, 0.0, 100.0, 40.0);
-    const B: Rect = Rect::at(0.0, 100.0, 100.0, 40.0);
-    const ON_A: Mouse = Mouse { x: 50.0, y: 20.0, down: false, pressed: false };
     const AWAY: Mouse = Mouse { x: 500.0, y: 500.0, down: false, pressed: false };
-    const CLICK_A: Mouse = Mouse { down: true, pressed: true, ..ON_A };
-
-    fn frame(ui: &mut Ui, mouse: Mouse, draws: &[(&str, Rect)]) -> Vec<Response> {
-        ui.begin_frame(1.0 / 60.0, View::default(), mouse);
-        draws.iter().map(|(label, r)| ui.interact(label, *r, true)).collect()
-    }
-
-    #[test]
-    fn a_gamepad_walks_to_the_nearest_button_and_clicks_it() {
-        let mut ui = Ui::default();
-        let grid = [
-            ("a", Rect::at(100.0, 100.0, 100.0, 40.0)),
-            ("b", Rect::at(300.0, 100.0, 100.0, 40.0)),
-            ("c", Rect::at(100.0, 200.0, 100.0, 40.0)),
-            ("far", Rect::at(900.0, 600.0, 100.0, 40.0)),
-        ];
-        frame(&mut ui, AWAY, &grid);
-        ui.note_pointer(AWAY);
-        frame(&mut ui, AWAY, &grid);
-        ui.move_focus((1.0, 0.0));
-        let click = ui.pad_click().expect("the first button gets the focus");
-        assert!(grid[0].1.contains(click.x, click.y), "starts at the top left");
-        ui.move_focus((1.0, 0.0));
-        let click = ui.pad_click().unwrap();
-        assert!(grid[1].1.contains(click.x, click.y), "right goes to b");
-        ui.move_focus((0.0, 1.0));
-        let click = ui.pad_click().unwrap();
-        assert!(grid[2].1.contains(click.x, click.y), "down from b lands on c, the nearest below");
-        ui.move_focus((0.0, -1.0));
-        ui.move_focus((0.0, -1.0));
-        let click = ui.pad_click().unwrap();
-        assert!(grid[0].1.contains(click.x, click.y), "nothing above a: the focus stays");
-
-        let hovered = frame(&mut ui, AWAY, &grid);
-        assert!(hovered[0].hover > 0.0 && hovered[1].hover == 0.0, "the focus shows as a hover");
-        ui.note_pointer(ON_A);
-        assert!(ui.pad_click().is_none(), "moving the mouse hands control back");
-    }
-
-    #[test]
-    fn the_gamepad_skips_widgets_that_have_their_own_button() {
-        let mut ui = Ui::default();
-        let avatar = Rect::at(10.0, 10.0, 60.0, 60.0);
-        let play = Rect::at(300.0, 300.0, 200.0, 50.0);
-        let draw = |ui: &mut Ui| {
-            ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
-            ui.interact_in("avatar", avatar, Area::Pointer, true);
-            ui.interact("play", play, true);
-        };
-        draw(&mut ui);
-        ui.note_pointer(AWAY);
-        draw(&mut ui);
-        ui.move_focus((0.0, -1.0));
-        let click = ui.pad_click().expect("a button gets the focus");
-        assert!(play.contains(click.x, click.y), "the avatar, top left, is skipped");
-        ui.move_focus((-1.0, -1.0));
-        let click = ui.pad_click().unwrap();
-        assert!(play.contains(click.x, click.y), "and never reached");
-    }
 
     #[test]
     fn frames_are_wanted_only_while_something_moves() {
         let mut ui = Ui::default();
-        let button = [("a", Rect::at(0.0, 0.0, 100.0, 40.0))];
+        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default(), AWAY);
         ui.set_screen(0, hue::GREEN, TRANSITION);
-        frame(&mut ui, AWAY, &button);
+        frame(&mut ui);
         assert!(!ui.take_moving(), "a still screen wants no frame");
-        frame(&mut ui, ON_A, &button);
-        assert!(ui.take_moving(), "the hover fades in");
-        for _ in 0..120 {
-            frame(&mut ui, ON_A, &button);
+        ui.set_screen(1, hue::PURPLE, TRANSITION);
+        frame(&mut ui);
+        assert!(ui.take_moving(), "a new screen slides in");
+        for _ in 0..60 {
+            frame(&mut ui);
             ui.take_moving();
         }
-        frame(&mut ui, ON_A, &button);
+        frame(&mut ui);
         assert!(!ui.take_moving(), "and settles");
-        ui.set_screen(1, hue::PURPLE, TRANSITION);
-        frame(&mut ui, ON_A, &button);
-        assert!(ui.take_moving(), "a new screen slides in");
     }
 
     #[test]
@@ -611,83 +384,6 @@ mod tests {
     }
 
     #[test]
-    fn approach_does_not_depend_on_the_frame_rate() {
-        let at_60 = (0..60).fold(0.0, |v, _| approach(v, 1.0, HOVER_SPEED, 1.0 / 60.0));
-        let at_144 = (0..144).fold(0.0, |v, _| approach(v, 1.0, HOVER_SPEED, 1.0 / 144.0));
-        assert!((at_60 - at_144).abs() < 1e-4);
-        assert!(at_60 > 0.999, "one second must be plenty");
-    }
-
-    #[test]
-    fn hover_eases_in_and_out() {
-        let mut ui = Ui::default();
-        let first = frame(&mut ui, ON_A, &[("Jouer", A)])[0].hover;
-        assert!(first > 0.0 && first < 0.5, "a hover must ease in, got {first}");
-        for _ in 0..60 {
-            frame(&mut ui, ON_A, &[("Jouer", A)]);
-        }
-        let out = frame(&mut ui, AWAY, &[("Jouer", A)])[0].hover;
-        assert!(out > 0.5 && out < 1.0, "and ease out, got {out}");
-    }
-
-    #[test]
-    fn same_labels_animate_separately() {
-        let mut ui = Ui::default();
-        for _ in 0..10 {
-            frame(&mut ui, ON_A, &[("+", A), ("+", B)]);
-        }
-        let r = frame(&mut ui, ON_A, &[("+", A), ("+", B)]);
-        assert!(r[0].hover > 0.9);
-        assert!(r[1].hover.abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn a_widget_left_undrawn_is_forgotten() {
-        let mut ui = Ui::default();
-        for _ in 0..30 {
-            frame(&mut ui, ON_A, &[("Back", A)]);
-        }
-        frame(&mut ui, ON_A, &[]);
-        let back = frame(&mut ui, ON_A, &[("Back", A)])[0].hover;
-        assert!(back < 0.5, "it came back half hovered: {back}");
-    }
-
-    #[test]
-    fn entering_is_reported_once_and_not_on_appearance() {
-        let mut ui = Ui::default();
-        assert!(!frame(&mut ui, ON_A, &[("Amis", A)])[0].entered, "appeared under the pointer");
-        frame(&mut ui, AWAY, &[("Amis", A)]);
-        assert!(frame(&mut ui, ON_A, &[("Amis", A)])[0].entered);
-        assert!(!frame(&mut ui, ON_A, &[("Amis", A)])[0].entered);
-    }
-
-    #[test]
-    fn a_click_lands_on_what_was_drawn_before_it() {
-        let mut ui = Ui::default();
-        frame(&mut ui, ON_A, &[("Jouer", A)]);
-        assert!(ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A), "the button under the click");
-        let flash = ui.interact("Jouer", A, true).flash;
-        assert!(flash > 0.8, "flashes, got {flash}");
-    }
-
-    #[test]
-    fn a_button_appearing_under_a_click_is_not_clicked() {
-        let mut ui = Ui::default();
-        frame(&mut ui, ON_A, &[("Amis", B)]);
-        assert!(!ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A));
-        assert!(ui.interact("Retour", A, true).flash.abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn a_click_flash_fades() {
-        let mut ui = Ui::default();
-        frame(&mut ui, ON_A, &[("Jouer", A)]);
-        frame(&mut ui, CLICK_A, &[("Jouer", A)]);
-        let later = (0..60).map(|_| frame(&mut ui, ON_A, &[("Jouer", A)])[0]).last();
-        assert!(later.is_some_and(|r| r.flash < 0.01));
-    }
-
-    #[test]
     fn the_caret_blinks_and_typing_lights_it_again() {
         let mut ui = Ui::default();
         let at = |ui: &mut Ui, frames: u32, text: &str, at: usize| {
@@ -703,37 +399,5 @@ mod tests {
         assert!(after(&mut ui, 30, "ab"), "and back on");
         assert!(!after(&mut ui, 36, "ab"));
         assert!(at(&mut ui, 1, "ab", 1), "nor may it move unseen");
-    }
-
-    #[test]
-    fn a_press_finds_the_widget_by_its_label() {
-        let mut ui = Ui::default();
-        frame(&mut ui, ON_A, &[("Voir plus", A), ("Retour", B)]);
-        ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A);
-        assert!(ui.pressed("Voir plus"));
-        assert!(!ui.pressed("Retour"), "drawn, but not under the click");
-        assert!(!ui.pressed("Jamais dessiné"));
-
-        ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A);
-        assert!(!ui.pressed("Voir plus"), "no longer drawn, no longer there");
-
-        ui.set_input(false);
-        ui.interact("Voir plus", A, true);
-        ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A);
-        assert!(!ui.pressed("Voir plus"), "covered by a window");
-    }
-
-    #[test]
-    fn disabled_and_covered_buttons_ignore_the_pointer() {
-        let mut ui = Ui::default();
-        ui.begin_frame(1.0 / 60.0, View::default(), ON_A);
-        ui.set_input(false);
-        let under = ui.interact("Leave", A, true);
-        ui.set_input(true);
-        ui.interact("Off", A, false);
-        assert!(under.hover.abs() < f32::EPSILON);
-        assert!(!ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A), "neither was clickable");
-        ui.interact("Leave", A, true);
-        assert!(ui.begin_frame(1.0 / 60.0, View::default(), CLICK_A), "input comes back the next frame");
     }
 }

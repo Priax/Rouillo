@@ -331,8 +331,12 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
                     pressed = Some(Pressed::Single);
                 }
             } else {
-                gui.ui.button(ui.draw, &mut gui.fonts, b.main, "Accepter");
-                gui.ui.button(ui.draw, &mut gui.fonts, b.second, "Refuser");
+                if widgets::button(ui, "main", b.main, "Accepter", true) {
+                    pressed = Some(Pressed::Main);
+                }
+                if widgets::button(ui, "second", b.second, "Refuser", true) {
+                    pressed = Some(Pressed::Second);
+                }
             }
         }
     }

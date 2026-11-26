@@ -1,10 +1,9 @@
 use aero::draw::Draw;
-use aero::geom::{Color, Rect as Area};
+use aero::geom::Color;
 use aero::math::vec2;
 use aero::path::Cap;
-use aero::theme::{Content, Painter, Theme};
 
-use super::{Fonts, Rect, Ui};
+use super::Rect;
 
 const ICON_LENGTH: f32 = 0.36;
 const ICON_THICKNESS: f32 = 0.09;
@@ -73,44 +72,6 @@ impl<'a> Label<'a> {
             Self::Icon(Icon::Star) => "icon:star",
             Self::Icon(Icon::StarOutline) => "icon:star-outline",
             Self::Icon(Icon::Busy) => "icon:busy",
-        }
-    }
-}
-
-impl Ui {
-    pub fn button<'a>(&mut self, draw: &mut Draw, fonts: &mut Fonts, rect: Rect, label: impl Into<Label<'a>>) {
-        self.button_enabled(draw, fonts, rect, label, true);
-    }
-
-    pub fn button_enabled<'a>(
-        &mut self,
-        draw: &mut Draw,
-        fonts: &mut Fonts,
-        rect: Rect,
-        label: impl Into<Label<'a>>,
-        enabled: bool,
-    ) {
-        let label = label.into();
-        if label == Label::Icon(Icon::Busy) {
-            self.keep_moving();
-        }
-        let r = self.interact(label.id(), rect, enabled);
-        if r.entered {
-            crate::audio::play_ui_hover();
-        }
-        let time = self.time() as f32;
-        let look = self.look(fonts);
-        let visual = r.visual(enabled);
-        let painter = &mut Painter { draw, fonts: fonts.library() };
-        match label {
-            Label::Text(text) => look.button(painter, rect.into(), Content::Text(text), visual),
-            Label::Icon(icon) => {
-                let paint = |draw: &mut Draw, area: Area, color: Color| {
-                    let center = area.center();
-                    paint_icon(draw, icon, (center.x, center.y), area.size().min_element(), color, time);
-                };
-                look.button(painter, rect.into(), Content::Paint(&paint), visual);
-            }
         }
     }
 }

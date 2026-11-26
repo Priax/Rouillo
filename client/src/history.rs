@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
-use aero::draw::Draw;
-
 use crate::http::{self, HttpSlot};
 use crate::state::ApiMatchEntry;
 use crate::tick::Tick;
-use crate::ui::{page_count, EditKeys, Fonts, Pager, Rect, TextInput, Ui};
+use crate::ui::{page_count, EditKeys, Fonts, Gui, Pager, Rect, TextInput, Ui};
 
 pub const PAGE_SIZE: usize = 7;
 
@@ -51,6 +49,7 @@ impl History {
         self.pager.typing()
     }
 
+    /// Fits the page to `rows` and takes the page typed; the pager's buttons are in [`Self::show_pager`].
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -67,13 +66,15 @@ impl History {
             self.per_page = rows;
             self.pager = Pager::default();
             self.fetch();
-        } else if self.pager.update(tick, ui, fonts, keys, area, self.pages(total)) {
+        } else if self.pager.update_keys(tick, ui, fonts, keys, area, self.pages(total)) {
             self.fetch();
         }
     }
 
-    pub fn draw_pager(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect, total: i64) {
-        self.pager.draw(draw, ui, fonts, area, self.pages(total));
+    pub fn show_pager(&mut self, ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, area: Rect, total: i64) {
+        if self.pager.show(ui, gui, "matches", area, self.pages(total)) {
+            self.fetch();
+        }
     }
 }
 
