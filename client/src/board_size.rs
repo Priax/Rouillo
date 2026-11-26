@@ -7,7 +7,7 @@ use shared::{RoomSetting, Rules, BOARD_COLUMNS, BOARD_ROWS};
 
 use crate::draw::{draw_empty_well, FRAME_PAD};
 use crate::tick::Tick;
-use crate::ui::{Face, Fonts, Icon, Modal, Rect, Ui, View};
+use crate::ui::{widgets, Face, Fonts, Gui, Icon, Modal, Rect, Ui, View};
 use crate::{config, theme};
 
 const CARD_W: f32 = 600.0;
@@ -90,6 +90,11 @@ impl Layout {
         }
     }
 
+    /// The axes' buttons, as [`STEPS`] orders them.
+    const fn buttons(&self) -> [Rect; 4] {
+        [self.columns[0], self.columns[1], self.rows[0], self.rows[1]]
+    }
+
     /// The well's area on screen for `columns` by `rows` cells.
     fn well(&self, columns: u8, rows: u8) -> Rect {
         let (w, h) = (f32::from(columns) * self.cell, f32::from(rows) * self.cell);
@@ -112,49 +117,96 @@ fn steps_to(setting: RoomSetting, from: u8, to: u8) -> impl Iterator<Item = (Roo
     std::iter::repeat_n((setting, dir), usize::from(from.abs_diff(to)))
 }
 
+/// Each axis's buttons, minus then plus, with their key: the same order as [`Layout::buttons`].
+const STEPS: [(RoomSetting, i32, KeyCode); 4] = [
+    (RoomSetting::Columns, -1, KeyCode::ArrowLeft),
+    (RoomSetting::Columns, 1, KeyCode::ArrowRight),
+    (RoomSetting::Rows, -1, KeyCode::ArrowDown),
+    (RoomSetting::Rows, 1, KeyCode::ArrowUp),
+];
+
+fn to_standard(rules: &Rules) -> Action {
+    let standard = Rules::default();
+    let steps = steps_to(RoomSetting::Columns, rules.columns, standard.columns)
+        .chain(steps_to(RoomSetting::Rows, rules.rows, standard.rows))
+        .collect();
+    Action::Adjust(steps)
+}
+
+/// What the keys do to the dialog: Escape closes it, the arrows step its size.
+pub fn update_keys(tick: &Tick, editable: bool) -> Option<Action> {
+    if tick.back() {
+        return Some(Action::Close);
+    }
+    let (setting, dir, _) = STEPS.into_iter().filter(|_| editable).find(|&(_, _, key)| tick.pressed(key))?;
+    Some(Action::Adjust(vec![(setting, dir)]))
+}
+
 pub fn update(tick: &Tick, ui: &Ui, rules: &Rules, editable: bool) -> Option<Action> {
     let layout = Layout::new(ui.view());
-
-    if layout.modal.dismissed(ui) || tick.back() {
+    if layout.modal.dismissed(ui) {
         return Some(Action::Close);
+    }
+    if let Some(action) = update_keys(tick, editable) {
+        return Some(action);
     }
     if !editable {
         return None;
     }
-
-    let pressed = |rect: Rect, key: KeyCode| ui.clicked(rect) || tick.pressed(key);
-    let step = [
-        (RoomSetting::Columns, -1, pressed(layout.columns[0], KeyCode::ArrowLeft)),
-        (RoomSetting::Columns, 1, pressed(layout.columns[1], KeyCode::ArrowRight)),
-        (RoomSetting::Rows, -1, pressed(layout.rows[0], KeyCode::ArrowDown)),
-        (RoomSetting::Rows, 1, pressed(layout.rows[1], KeyCode::ArrowUp)),
-    ]
-    .into_iter()
-    .find(|&(_, _, pressed)| pressed);
-    if let Some((setting, dir, _)) = step {
+    let clicked = STEPS.into_iter().zip(layout.buttons()).find(|&(_, rect)| ui.clicked(rect));
+    if let Some(((setting, dir, _), _)) = clicked {
         return Some(Action::Adjust(vec![(setting, dir)]));
     }
+    (!is_standard(rules) && ui.clicked(layout.standard)).then(|| to_standard(rules))
+}
 
-    let standard = Rules::default();
-    if !is_standard(rules) && ui.clicked(layout.standard) {
-        let steps = steps_to(RoomSetting::Columns, rules.columns, standard.columns)
-            .chain(steps_to(RoomSetting::Rows, rules.rows, standard.rows))
-            .collect();
-        return Some(Action::Adjust(steps));
+/// The dialog, on Aero's interface, and what its buttons ask.
+pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, rules: &Rules, editable: bool) -> Option<Action> {
+    let layout = Layout::new(gui.ui.view());
+    let (action, dismissed) = widgets::modal(ui, gui, (layout.modal, "Taille du plateau"), |ui, gui| {
+        paint(ui.draw, &gui.ui, &mut gui.fonts, &layout, rules);
+        if !editable {
+            footnote(ui.draw, &gui.ui, &mut gui.fonts, &layout);
+            return None;
+        }
+        let mut step = None;
+        for (i, ((setting, dir, _), rect)) in STEPS.into_iter().zip(layout.buttons()).enumerate() {
+            let icon = if dir < 0 { Icon::Minus } else { Icon::Plus };
+            if widgets::button(ui, ("size", i), rect, icon, true) {
+                step = Some(Action::Adjust(vec![(setting, dir)]));
+            }
+        }
+        let standard = widgets::button(ui, "standard", layout.standard, "Taille standard", !is_standard(rules));
+        step.or_else(|| standard.then(|| to_standard(rules)))
+    });
+    if dismissed {
+        Some(Action::Close)
+    } else {
+        action
     }
-
-    None
 }
 
 pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, rules: &Rules, editable: bool) {
-    let pal = ui.palette();
     let layout = Layout::new(ui.view());
+    layout.modal.draw(draw, ui, fonts, "Taille du plateau");
+    paint(draw, ui, fonts, &layout, rules);
+    if editable {
+        for (rect, icon) in layout.buttons().into_iter().zip([Icon::Minus, Icon::Plus].repeat(2)) {
+            ui.button(draw, fonts, rect, icon);
+        }
+        ui.button_enabled(draw, fonts, layout.standard, "Taille standard", !is_standard(rules));
+    } else {
+        footnote(draw, ui, fonts, &layout);
+    }
+}
+
+/// The well at its size, the standard one dashed behind it, and the axes.
+fn paint(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules: &Rules) {
+    let pal = ui.palette();
     let well = layout.well(rules.columns, rules.rows);
     let standard = Rules::default();
     let outline = layout.well(standard.columns, standard.rows);
     let dim = pal.text_dim.with_alpha(0.6);
-
-    layout.modal.draw(draw, ui, fonts, "Taille du plateau");
     draw_empty_well(draw, rules, well, ui.time() as f32);
     if !is_standard(rules) {
         dashed_rect(draw, outline, dim);
@@ -164,21 +216,16 @@ pub fn draw(draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, rules: &Rules, edit
             .size(theme::size::SMALL)
             .color(dim);
     }
-    draw_axes(draw, ui, fonts, &layout, rules);
+    draw_axes(draw, ui, fonts, layout, rules);
+}
 
-    if editable {
-        for (rect, icon) in layout.columns.into_iter().chain(layout.rows).zip([Icon::Minus, Icon::Plus].repeat(2)) {
-            ui.button(draw, fonts, rect, icon);
-        }
-        ui.button_enabled(draw, fonts, layout.standard, "Taille standard", !is_standard(rules));
-    } else {
-        let (x, y) = layout.standard.center();
-        fonts
-            .write(draw, Face::Text, "Seul l'hôte peut changer la taille.")
-            .center(x, y)
-            .size(theme::size::BODY)
-            .color(pal.text_dim);
-    }
+fn footnote(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout) {
+    let (x, y) = layout.standard.center();
+    fonts
+        .write(draw, Face::Text, "Seul l'hôte peut changer la taille.")
+        .center(x, y)
+        .size(theme::size::BODY)
+        .color(ui.palette().text_dim);
 }
 
 fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules: &Rules) {

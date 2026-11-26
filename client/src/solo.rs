@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use aero::draw::Draw;
 use aero::input::KeyCode;
 use shared::cpu::{Cpu, Difficulty, Style};
 use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings, Targeting};
@@ -9,7 +8,7 @@ use crate::draw::Hud;
 use crate::nav::Transition;
 use crate::state::{AuthInfo, GameSession, Input, Player, Rival, Screen, State};
 use crate::tick::Tick;
-use crate::ui::{self, Face, Frame, Gui, Icon, Pill, Rect, Size, Stepper, View, FILL};
+use crate::ui::{self, widgets, Face, Frame, Gui, Icon, Pill, Rect, Size, View, FILL};
 use crate::{board_size, http, logic, rooms, theme};
 
 /// The most CPUs a solo game takes on: each one thinks on this device.
@@ -448,120 +447,116 @@ impl Setup {
     }
 }
 
-pub fn update_setup(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
-    let setup = Setup::new(gui.ui.view());
-    let settings = &mut state.solo.settings;
-
+/// What the setup does with the keys; its clicks are in [`show_setup`].
+pub fn update_setup(tick: &Tick, state: &mut State) -> Transition {
     if state.solo.sizing {
-        match board_size::update(tick, &gui.ui, &settings.room.rules, true) {
-            Some(board_size::Action::Close) => state.solo.sizing = false,
-            Some(board_size::Action::Adjust(steps)) => {
-                for (setting, dir) in steps {
-                    settings.room.adjust(setting, dir);
-                }
-            }
-            None => {}
-        }
+        let action = board_size::update_keys(tick, true);
+        apply_size(state, action);
         return Transition::Stay;
     }
-
-    let ui = &gui.ui;
-    for i in 0..GAME_ROWS {
-        let tile = setup.tile(i);
-        if i == SIZE_ROW {
-            if ui.clicked(Stepper::tile_band(tile)) {
-                state.solo.sizing = true;
-                return Transition::Stay;
-            }
-            continue;
-        }
-        let stepper = Stepper::in_tile(tile);
-        if ui.clicked(stepper.minus) {
-            settings.adjust(i, -1);
-        } else if ui.clicked(stepper.plus) {
-            settings.adjust(i, 1);
-        }
+    if tick.pressed(KeyCode::Enter) {
+        return start(state);
     }
-
-    for i in 0..settings.opponents.len() {
-        let row = setup.foe(i);
-        if ui.clicked(row.remove) {
-            settings.opponents.remove(i);
-            return Transition::Stay;
-        }
-        for (part, band) in [row.difficulty, row.style].into_iter().enumerate() {
-            let stepper = Stepper::across(band);
-            if ui.clicked(stepper.minus) {
-                settings.adjust_opponent(i, part, -1);
-            } else if ui.clicked(stepper.plus) {
-                settings.adjust_opponent(i, part, 1);
-            }
-        }
-    }
-    if settings.opponents.len() < MAX_OPPONENTS && ui.clicked(setup.add(settings.opponents.len())) {
-        settings.add_opponent();
-    }
-
-    if ui.bar_clicked(setup.action_row(0)) || tick.pressed(KeyCode::Enter) {
-        return Transition::To(Screen::Solo(Box::new(SoloGame::new(state.solo.settings.clone()))));
-    } else if ui.bar_clicked(setup.action_row(1)) || tick.back() {
+    if tick.back() {
         return Transition::To(Screen::PlayMenu);
     }
-
     Transition::Stay
 }
 
-pub fn draw_setup(draw: &mut Draw, gui: &mut Gui, state: &State) {
+fn start(state: &State) -> Transition {
+    Transition::To(Screen::Solo(Box::new(SoloGame::new(state.solo.settings.clone()))))
+}
+
+fn apply_size(state: &mut State, action: Option<board_size::Action>) {
+    match action {
+        Some(board_size::Action::Close) => state.solo.sizing = false,
+        Some(board_size::Action::Adjust(steps)) => {
+            for (setting, dir) in steps {
+                state.solo.settings.room.adjust(setting, dir);
+            }
+        }
+        None => {}
+    }
+}
+
+pub fn show_setup(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
-    let fonts = &mut gui.fonts;
-    let settings = &state.solo.settings;
     let setup = Setup::new(view);
-    let count = settings.opponents.len();
     let best = format!("Meilleur score: {}", state.solo.best);
+    let settings = &mut state.solo.settings;
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    gui.ui.set_input(!state.solo.sizing);
-    gui.ui.page_header(draw, fonts, "Solo");
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    gui.ui.page_header(ui.draw, &mut gui.fonts, "Solo");
     if state.solo.best > 0 {
-        ui::pills_ending_at(draw, fonts, &[Pill::small(&best, theme::GOLD)], view.w - 60.0, theme::HEADER_H / 2.0);
+        let pill = [Pill::small(&best, theme::GOLD)];
+        ui::pills_ending_at(ui.draw, &mut gui.fonts, &pill, view.w - 60.0, theme::HEADER_H / 2.0);
     }
 
-    ui::panel_card(draw, &pal, fonts, setup.game, "Partie");
+    ui::panel_card(ui.draw, &pal, &mut gui.fonts, setup.game, "Partie");
+    let mut sizing = false;
     for i in 0..GAME_ROWS {
         let (tile, label, value) = (setup.tile(i), SoloSettings::label(i), settings.value(i));
         if i == SIZE_ROW {
-            gui.ui.button_tile(draw, fonts, tile, label, &value);
+            sizing = widgets::button_tile(ui, gui, ("game", i), tile, (label, &value));
         } else {
-            gui.ui.stepper_tile(draw, fonts, tile, label, &value, settings.editable(i));
+            let step = widgets::stepper_tile(ui, gui, ("game", i), tile, (label, &value), settings.editable(i));
+            if step != 0 {
+                settings.adjust(i, step);
+            }
         }
     }
 
-    ui::panel_card(draw, &pal, fonts, setup.foes, "Adversaires");
-    for (i, &(difficulty, style)) in settings.opponents.iter().enumerate() {
+    ui::panel_card(ui.draw, &pal, &mut gui.fonts, setup.foes, "Adversaires");
+    let mut removed = None;
+    for i in 0..settings.opponents.len() {
+        let (difficulty, style) = settings.opponents[i];
         let row = setup.foe(i);
         let (x, y) = row.number.center();
-
-        fonts
-            .write(draw, Face::Display, &(i + 1).to_string())
+        gui.fonts
+            .write(ui.draw, Face::Display, &(i + 1).to_string())
             .center(x, y)
             .size(theme::size::EMPHASIS)
             .color(pal.text_dim);
-        gui.ui.stepper_band(draw, fonts, row.difficulty, difficulty.label(), true);
-        gui.ui.stepper_band(draw, fonts, row.style, style.character(), true);
-        gui.ui.button(draw, fonts, row.remove, Icon::Close);
+        for (part, (band, value)) in
+            [(row.difficulty, difficulty.label()), (row.style, style.character())].into_iter().enumerate()
+        {
+            let step = widgets::stepper_band(ui, gui, ("foe", i, part), band, value, true);
+            if step != 0 {
+                settings.adjust_opponent(i, part, step);
+            }
+        }
+        if widgets::button(ui, ("remove", i), row.remove, Icon::Close, true) {
+            removed = Some(i);
+        }
     }
-    if count < MAX_OPPONENTS {
-        gui.ui.button(draw, fonts, setup.add(count), "Ajouter un CPU");
+    let count = settings.opponents.len();
+    if count < MAX_OPPONENTS && widgets::button(ui, "add", setup.add(count), "Ajouter un CPU", true) {
+        settings.add_opponent();
+    }
+    if let Some(i) = removed {
+        settings.opponents.remove(i);
     }
 
-    gui.ui.menu_bar(draw, fonts, setup.action_row(0), "Lancer la partie", theme::bar::GREEN);
-    gui.ui.menu_bar(draw, fonts, setup.action_row(1), "Retour", theme::bar::RED);
+    let launch = widgets::menu_bar(ui, gui, setup.action_row(0), ("Lancer la partie", theme::bar::GREEN), true);
+    let back = widgets::menu_bar(ui, gui, setup.action_row(1), ("Retour", theme::bar::RED), true);
 
+    if sizing {
+        state.solo.sizing = true;
+    }
     if state.solo.sizing {
-        board_size::draw(draw, &mut gui.ui, fonts, &settings.room.rules, true);
+        let action = board_size::show(ui, gui, &state.solo.settings.room.rules, true);
+        apply_size(state, action);
+        return Transition::Stay;
     }
+    if launch {
+        return start(state);
+    }
+    if back {
+        return Transition::To(Screen::PlayMenu);
+    }
+    Transition::Stay
 }
 
 #[cfg(test)]

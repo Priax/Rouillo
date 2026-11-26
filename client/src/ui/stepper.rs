@@ -2,7 +2,7 @@ use aero::draw::Draw;
 use aero::math::vec2;
 
 use super::{Face, Fonts, Icon, Rect, Ui};
-use crate::theme;
+use crate::theme::{self, Palette};
 
 const BUTTON: f32 = 50.0;
 const LABEL_GAP: f32 = 40.0;
@@ -87,11 +87,7 @@ impl Ui {
     }
 
     fn tile_label(&self, draw: &mut Draw, fonts: &mut Fonts, tile: Rect, label: &str) {
-        fonts
-            .write(draw, Face::Text, label)
-            .left(tile.x, tile.y + TILE_LABEL_H / 2.0 - 2.0)
-            .size(theme::size::BODY)
-            .color(self.palette().text_dim);
+        tile_label(draw, fonts, &self.palette(), tile, label);
     }
 
     /// A settings tile: its name, then its value between the buttons that
@@ -112,10 +108,7 @@ impl Ui {
     /// A value between the buttons that step it, across `band`.
     pub fn stepper_band(&mut self, draw: &mut Draw, fonts: &mut Fonts, band: Rect, value: &str, editable: bool) {
         let s = Stepper::across(band);
-        let room = s.plus.x - (s.minus.x + s.minus.w) - 12.0;
-        let full = theme::size::EMPHASIS;
-        let size = full.min(full * room / fonts.width(Face::Display, value, full));
-        fonts.write(draw, Face::Display, value).center(s.value_x(), s.mid_y()).size(size).color(theme::GOLD);
+        paint_value(draw, fonts, s, value);
         if editable {
             self.button(draw, fonts, s.minus, Icon::Minus);
             self.button(draw, fonts, s.plus, Icon::Plus);
@@ -168,6 +161,23 @@ impl Ui {
             .size(theme::size::EMPHASIS)
             .color(theme::GOLD);
     }
+}
+
+/// A settings tile's name, above its controls.
+pub(super) fn tile_label(draw: &mut Draw, fonts: &mut Fonts, pal: &Palette, tile: Rect, label: &str) {
+    fonts
+        .write(draw, Face::Text, label)
+        .left(tile.x, tile.y + TILE_LABEL_H / 2.0 - 2.0)
+        .size(theme::size::BODY)
+        .color(pal.text_dim);
+}
+
+/// The value between a stepper's buttons, narrowed to fit between them.
+pub(super) fn paint_value(draw: &mut Draw, fonts: &mut Fonts, s: Stepper, value: &str) {
+    let room = s.plus.x - (s.minus.x + s.minus.w) - 12.0;
+    let full = theme::size::EMPHASIS;
+    let size = full.min(full * room / fonts.width(Face::Display, value, full));
+    fonts.write(draw, Face::Display, value).center(s.value_x(), s.mid_y()).size(size).color(theme::GOLD);
 }
 
 #[cfg(test)]

@@ -6,11 +6,12 @@ use std::hash::Hash;
 use aero::draw::Draw;
 use aero::geom::{Color, Rect as Area};
 use aero::image::Image;
-use aero::ui::{Response, Role, Ui};
+use aero::ui::{Response, Role, Sense, Ui};
 use aero::widgets::{control, Button, Tab};
 
 use super::button::paint_icon;
-use super::{bar, portrait, Gui, Icon, Label, Persona, Rect};
+use super::stepper::{paint_value, tile_label};
+use super::{bar, portrait, Gui, Icon, Label, Modal, Persona, Rect, Stepper};
 
 fn sounds(response: Response) -> Response {
     if response.entered {
@@ -63,4 +64,62 @@ pub fn avatar(ui: &mut Ui<'_>, gui: &mut Gui, rect: Rect, name: &str, picture: O
     let who = Persona { name, glow: visual.hover, picture };
     portrait(ui.draw, &gui.ui.palette(), &mut gui.fonts, center, radius, &who);
     sounds(response).clicked
+}
+
+/// A value between a minus and a plus button across `band`, the buttons only when `editable`. Returns the step
+/// asked: -1, 1, or 0.
+pub fn stepper_band(
+    ui: &mut Ui<'_>,
+    gui: &mut Gui,
+    key: impl Hash + Copy,
+    band: Rect,
+    value: &str,
+    editable: bool,
+) -> i32 {
+    let s = Stepper::across(band);
+    paint_value(ui.draw, &mut gui.fonts, s, value);
+    if !editable {
+        return 0;
+    }
+    let less = button(ui, (key, "minus"), s.minus, Icon::Minus, true);
+    let more = button(ui, (key, "plus"), s.plus, Icon::Plus, true);
+    i32::from(more) - i32::from(less)
+}
+
+/// A settings tile: its name, then its value between the buttons that step it. Returns the step asked.
+pub fn stepper_tile(
+    ui: &mut Ui<'_>,
+    gui: &mut Gui,
+    key: impl Hash + Copy,
+    tile: Rect,
+    (label, value): (&str, &str),
+    editable: bool,
+) -> i32 {
+    tile_label(ui.draw, &mut gui.fonts, &gui.ui.palette(), tile, label);
+    stepper_band(ui, gui, key, Stepper::tile_band(tile), value, editable)
+}
+
+/// A settings tile whose value is a button, for a setting changed somewhere else. Returns whether it was clicked.
+pub fn button_tile(ui: &mut Ui<'_>, gui: &mut Gui, key: impl Hash, tile: Rect, (label, value): (&str, &str)) -> bool {
+    tile_label(ui.draw, &mut gui.fonts, &gui.ui.palette(), tile, label);
+    button(ui, key, Stepper::tile_band(tile), value, true)
+}
+
+/// A dialog over the screen, `inside` drawing its body: nothing under it takes a click, and a click beside its card or
+/// on its cross dismisses it. Returns what `inside` did, and whether it was dismissed.
+pub fn modal<R>(
+    ui: &mut Ui<'_>,
+    gui: &mut Gui,
+    (modal, title): (Modal, &str),
+    inside: impl FnOnce(&mut Ui<'_>, &mut Gui) -> R,
+) -> (R, bool) {
+    ui.modal(|ui| {
+        let view = gui.ui.view();
+        let screen = Rect::at(0.0, 0.0, view.w, view.h);
+        let beside = ui.interact(ui.id("modal scrim"), screen.into(), Sense::CLICK).clicked;
+        modal.paint(ui.draw, &mut gui.fonts, &gui.ui.palette(), (view, title));
+        ui.interact(ui.id("modal card"), modal.card.into(), Sense::NONE);
+        let closed = button(ui, "modal close", modal.close(), Icon::Close, true);
+        (inside(ui, gui), beside || closed)
+    })
 }

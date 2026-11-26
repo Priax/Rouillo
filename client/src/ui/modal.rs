@@ -1,7 +1,7 @@
 use aero::draw::Draw;
 
 use super::{card, Face, Fonts, Icon, Rect, Ui, View};
-use crate::theme;
+use crate::theme::{self, Palette};
 
 const MARGIN: f32 = 110.0;
 const PADDING: f32 = 24.0;
@@ -17,7 +17,7 @@ impl Modal {
         Self { card: Rect::at(0.0, 0.0, view.w, view.h).pad(MARGIN, 0.0, MARGIN, 0.0).max_width(width) }
     }
 
-    fn close(self) -> Rect {
+    pub(super) fn close(self) -> Rect {
         let size = 36.0;
         self.card.pad((TITLE_H - size) / 2.0, PADDING, 0.0, 0.0).right(size).top(size)
     }
@@ -33,17 +33,20 @@ impl Modal {
     }
 
     pub fn draw(self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, title: &str) {
-        let pal = ui.palette();
-        let view = ui.view();
         ui.set_input(true);
+        self.paint(draw, fonts, &ui.palette(), (ui.view(), title));
+        ui.button(draw, fonts, self.close(), Icon::Close);
+    }
+
+    /// The scrim over the screen, the card and its title.
+    pub(super) fn paint(self, draw: &mut Draw, fonts: &mut Fonts, pal: &Palette, (view, title): (View, &str)) {
         draw.rect(Rect::at(0.0, 0.0, view.w, view.h)).color(pal.scrim_strong);
-        card(draw, &pal, self.card);
+        card(draw, pal, self.card);
         fonts
             .write(draw, Face::Display, title)
             .left(self.card.x + PADDING, self.card.y + TITLE_H / 2.0 - 1.0)
             .size(theme::size::HEADING)
             .color(pal.text);
-        ui.button(draw, fonts, self.close(), Icon::Close);
     }
 }
 
