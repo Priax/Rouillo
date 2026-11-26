@@ -1,12 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-#[cfg(all(feature = "aero", feature = "notan"))]
-compile_error!("one backend: build with --no-default-features --features notan to draw with notan");
-#[cfg(feature = "aero")]
 extern crate aero_notan as notan;
 
-use notan::app::Event;
-use notan::draw::DrawConfig;
+use aero::input::{Event, KeyCode};
+use aero::Cx;
 use notan::prelude::*;
 use shared::{config, ClientMessage};
 
@@ -46,6 +43,7 @@ mod sprites;
 mod state;
 mod storage;
 mod theme;
+mod tick;
 mod title;
 mod touch;
 mod ui;
@@ -61,6 +59,7 @@ mod wt;
 use nav::{Nav, Root, Transition};
 use pads::{Pad, Pads};
 use state::{Input, Network, Screen, State};
+use tick::Tick;
 use ui::{Rect, SharpText, Size};
 
 use crate::ui::Gui;
@@ -110,17 +109,20 @@ fn setup(gfx: &mut Graphics) -> Root {
     Root { nav: Nav::new(current), state, gui }
 }
 
-#[allow(clippy::needless_pass_by_value)]
-fn event(root: &mut Root, evt: Event) {
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Event::ReceivedCharacter(c) = evt {
+/// Types what the keyboard typed: browsers type through the page's own text input.
+#[cfg(not(target_arch = "wasm32"))]
+fn event_typed(root: &mut Root, event: &Event) {
+    let typed = match event {
+        Event::Key { pressed: true, text: Some(text), .. } => text,
+        Event::Ime { commit: Some(text), .. } => text,
+        _ => return,
+    };
+    for c in typed.chars() {
         // Enter is read by its key on each screen, Shift held or not.
         if let Some(c) = root.state.input.keys.key_char(c).filter(|c| !matches!(c, '\n' | '\r')) {
             type_char(&mut root.state, &mut root.nav, c);
         }
     }
-    #[cfg(target_arch = "wasm32")]
-    let _ = (root, evt);
 }
 
 fn type_char(state: &mut State, nav: &mut Nav, c: char) {
@@ -177,7 +179,7 @@ fn can_chat(state: &State) -> bool {
 
 /// Runs the in-game chat and returns the game's input for this frame, without
 /// the keys the chat took.
-fn game_chat(app: &App, gui: &Gui, state: &mut State) -> controls::Frame {
+fn game_chat(tick: &Tick, gui: &Gui, state: &mut State) -> controls::Frame {
     let mut input = state.input.controls.frame;
     let allowed = can_chat(state);
     let area = game_chat_area(gui.ui.view(), state.input.touch.active);
@@ -193,13 +195,13 @@ fn game_chat(app: &App, gui: &Gui, state: &mut State) -> controls::Frame {
     if chat.open {
         input.pause = false;
         input.restart = false;
-        if app.keyboard.was_pressed(KeyCode::Escape) {
+        if tick.back() {
             chat.open = false;
-        } else if let Some(text) = chat.edit(&app.keyboard, keys) {
+        } else if let Some(text) = chat.edit(tick, keys) {
             conn.send(&ClientMessage::Chat { text });
             chat.open = false;
         }
-    } else if app.keyboard.was_pressed(KeyCode::Enter) || chat.click(ui, fonts, area) {
+    } else if tick.pressed(KeyCode::Enter) || chat.click(ui, fonts, area) {
         chat.open = true;
     }
     input
@@ -301,19 +303,19 @@ fn pace_frame() {
     });
 }
 
-fn update_online_game(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
+fn update_online_game(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
     let online = state.room.as_ref().map_or_else(logic::Online::default, |r| logic::Online {
         is_host: r.info.is_host,
         ranked: r.info.ranked.is_some(),
         ended: r.series_over.is_some(),
     });
-    let input = game_chat(app, gui, state);
+    let input = game_chat(tick, gui, state);
     let Gui { ui, .. } = gui;
     let State { room, settings, net: Network { conn, .. }, .. } = &mut *state;
     let left = room
         .as_mut()
         .and_then(|r| r.session.as_mut())
-        .is_some_and(|s| logic::update_game(app, &input, ui, s, *settings, conn, online));
+        .is_some_and(|s| logic::update_game(tick, &input, ui, s, *settings, conn, online));
 
     let transition = if left && online.ranked { ranked::enter(state) } else { Transition::Stay };
     replay::update_keep(gui, state);
@@ -321,13 +323,14 @@ fn update_online_game(app: &mut App, gui: &Gui, state: &mut State) -> Transition
     transition
 }
 
-fn update(app: &mut App, root: &mut Root) {
+fn update(cx: &Cx, root: &mut Root) {
     #[cfg(not(target_arch = "wasm32"))]
     pace_frame();
     let Root { nav, state, gui } = root;
-    let dt = app.timer.delta_f32();
-    let view = ui::View::of(app);
-    let real = ui::Mouse::of(app, view);
+    let dt = cx.dt();
+    let Some(window) = cx.window(aero::WindowId::MAIN) else { return };
+    let view = ui::View::of(window);
+    let real = ui::Mouse::of(&cx.input, view);
 
     state.input.pads.update();
     let pad_nav = pad_menus(state, nav.current());
@@ -338,19 +341,15 @@ fn update(app: &mut App, root: &mut Root) {
         if let Some(dir) = pad_direction(&state.input.pads) {
             gui.ui.move_focus(dir);
         }
-        if state.input.pads.pressed(Pad::East) {
-            app.keyboard.pressed.insert(KeyCode::Escape);
-        }
     }
+    let back = pad_nav && state.input.pads.pressed(Pad::East);
 
     #[cfg(target_arch = "wasm32")]
-    {
-        web::set_at_root(matches!(nav.current(), Screen::Title | Screen::Auth | Screen::Menu));
-        if web::take_back() {
-            app.keyboard.pressed.insert(KeyCode::Escape);
-        }
-    }
-    state.input.keys.update(&app.keyboard, dt);
+    web::set_at_root(matches!(nav.current(), Screen::Title | Screen::Auth | Screen::Menu));
+    #[cfg(target_arch = "wasm32")]
+    let back = web::take_back() || back;
+    let tick = &Tick::new(&cx.input, dt, back);
+    state.input.keys.update(tick.input, dt);
     if state.input.keys.paste {
         for c in ui::clipboard_text().unwrap_or_default().chars() {
             type_char(state, nav, c);
@@ -364,8 +363,8 @@ fn update(app: &mut App, root: &mut Root) {
     }
 
     let in_game = matches!(nav.current(), Screen::Game | Screen::Solo(_));
-    let (touch_held, touch_pause) = state.input.touch.read(app, view, in_game);
-    state.input.controls.update(&app.keyboard, &state.input.pads, touch_held, touch_pause);
+    let (touch_held, touch_pause) = state.input.touch.read(tick.input, view, in_game);
+    state.input.controls.update(tick, &state.input.pads, touch_held, touch_pause);
     #[cfg(target_arch = "wasm32")]
     web::want_text(typing(state, nav).is_some());
     #[cfg(target_arch = "wasm32")]
@@ -390,28 +389,28 @@ fn update(app: &mut App, root: &mut Root) {
     network::handle_server_messages(state, nav);
 
     let transition = match nav.current_mut() {
-        Screen::Title => title::update_title(app, state),
-        Screen::Auth => login::update_auth(app, gui, state),
-        Screen::Menu => menu::update_menu(app, gui, state, false),
-        Screen::PlayMenu => menu::update_menu(app, gui, state, true),
-        Screen::Settings => menu::update_settings(app, gui, state),
-        Screen::RoomBrowser => rooms::update_browser(app, gui, state),
-        Screen::CreateRoom => rooms::update_create_room(app, gui, state),
-        Screen::JoinById => rooms::update_join_by_id(app, gui, state),
+        Screen::Title => title::update_title(tick, state),
+        Screen::Auth => login::update_auth(tick, gui, state),
+        Screen::Menu => menu::update_menu(tick, gui, state, false),
+        Screen::PlayMenu => menu::update_menu(tick, gui, state, true),
+        Screen::Settings => menu::update_settings(tick, gui, state),
+        Screen::RoomBrowser => rooms::update_browser(tick, gui, state),
+        Screen::CreateRoom => rooms::update_create_room(tick, gui, state),
+        Screen::JoinById => rooms::update_join_by_id(tick, gui, state),
         Screen::RoomLobby => {
-            rooms::update_lobby(app, gui, state);
+            rooms::update_lobby(tick, gui, state);
             Transition::Stay
         }
-        Screen::Profile(p) => profile::update_profile(app, gui, state, p),
-        Screen::Friends(f) => friends::update_friends(app, gui, state, f),
-        Screen::OtherProfile(p) => profile::update_other_profile(app, gui, state, p),
-        Screen::SoloSetup => solo::update_setup(app, gui, state),
-        Screen::Ranked => ranked::update(app, gui, state),
-        Screen::Leaderboard(board) => leaderboard::update(app, gui, state, board),
-        Screen::Help(view) => help::update(app, gui, view),
-        Screen::Solo(game) => solo::update_game(app, gui, state, game),
-        Screen::Replay(viewer) => replay::update(app, gui, viewer),
-        Screen::Game => update_online_game(app, gui, state),
+        Screen::Profile(p) => profile::update_profile(tick, gui, state, p),
+        Screen::Friends(f) => friends::update_friends(tick, gui, state, f),
+        Screen::OtherProfile(p) => profile::update_other_profile(tick, gui, state, p),
+        Screen::SoloSetup => solo::update_setup(tick, gui, state),
+        Screen::Ranked => ranked::update(tick, gui, state),
+        Screen::Leaderboard(board) => leaderboard::update(tick, gui, state, board),
+        Screen::Help(view) => help::update(tick, gui, view),
+        Screen::Solo(game) => solo::update_game(tick, gui, state, game),
+        Screen::Replay(viewer) => replay::update(tick, gui, viewer),
+        Screen::Game => update_online_game(tick, gui, state),
     };
 
     nav.apply(transition);
@@ -442,7 +441,7 @@ fn draw_invitation_banner(gfx: &mut Graphics, gui: &mut Gui, state: &State) {
     gui.ui.render(gfx, &d);
 }
 
-fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
+fn draw(gfx: &mut Graphics, root: &mut Root) {
     let Root { nav, state, gui } = root;
     let screen = nav.current();
     match screen {
@@ -462,14 +461,14 @@ fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
         Screen::Ranked => ranked::draw(gfx, gui, state),
         Screen::Leaderboard(board) => leaderboard::draw(gfx, gui, state, board),
         Screen::Help(view) => help::draw(gfx, gui, state, view),
-        Screen::Replay(viewer) => replay::draw(app, gfx, gui, viewer),
+        Screen::Replay(viewer) => replay::draw(gfx, gui, viewer),
         Screen::Solo(game) => {
             let hud = game.hud(state.solo.best);
-            draw::draw_game(app, gfx, &game.session, &mut gui.ui, &gui.fonts, hud);
+            draw::draw_game(gfx, &game.session, &mut gui.ui, &gui.fonts, hud);
         }
         Screen::Game => {
             if let Some((room, session)) = state.room.as_ref().and_then(|r| Some((r, r.session.as_ref()?))) {
-                draw::draw_game(app, gfx, session, &mut gui.ui, &gui.fonts, draw::Hud::Online(online_role(room)));
+                draw::draw_game(gfx, session, &mut gui.ui, &gui.fonts, draw::Hud::Online(online_role(room)));
             }
         }
     }
@@ -500,8 +499,6 @@ fn draw(app: &mut App, gfx: &mut Graphics, root: &mut Root) {
         touch::draw_turn_hint(&mut d, &gui.fonts, view);
         gui.ui.render(gfx, &d);
     }
-
-    gui.ui.present(gfx);
 }
 
 /// The player's place in an online game, as its screen shows it.
@@ -570,21 +567,47 @@ fn draw_reconnect_banner(gfx: &mut Graphics, gui: &mut Gui, state: &State, scree
     gui.ui.render(gfx, &d);
 }
 
-#[cfg_attr(feature = "notan", notan_main)]
-fn main() -> Result<(), String> {
+struct Rouillo {
+    root: Root,
+    painter: notan::Painter,
+}
+
+impl aero::App for Rouillo {
+    fn event(&mut self, _cx: &mut Cx, event: &Event) {
+        #[cfg(not(target_arch = "wasm32"))]
+        event_typed(&mut self.root, event);
+        #[cfg(target_arch = "wasm32")]
+        let _ = event;
+    }
+
+    /// Every frame asks for the next: games, the network and the animations go on without input.
+    fn update(&mut self, cx: &mut Cx) {
+        update(cx, &mut self.root);
+        cx.request_redraw();
+    }
+
+    fn draw(&mut self, cx: &mut Cx, frame: &mut aero::draw::Draw) {
+        draw(&mut self.painter.graphics(cx, Some(frame)), &mut self.root);
+        self.painter.end_frame();
+    }
+}
+
+fn main() -> Result<(), aero::Error> {
     #[cfg(windows)]
     windows::log_to_file();
     let icon = Some(include_bytes!("../../assets/puyo_puyo_icon.ico").as_ref());
-    let win_config = WindowConfig::new()
+    let window = notan::WindowConfig::new()
         .set_title("Rouillo")
         .set_size(1280, 800)
         .set_resizable(true)
-        .set_high_dpi(true)
         .set_app_id("org.priax.Rouillo")
-        .set_window_icon_data(icon)
-        .set_taskbar_icon_data(icon);
+        .set_window_icon_data(icon);
     #[cfg(target_arch = "wasm32")]
-    let win_config = win_config.set_maximized(true);
+    let window = window.set_maximized(true);
 
-    notan::init_with(setup).add_config(DrawConfig).add_config(win_config).event(event).update(update).draw(draw).build()
+    aero::run(aero::Config::new().window(window.into()), |cx| {
+        let mut painter = notan::Painter::default();
+        let root = setup(&mut painter.graphics(cx, None));
+        Rouillo { root, painter }
+    })
 }

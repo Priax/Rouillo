@@ -1,10 +1,10 @@
 use notan::draw::Draw;
-use notan::prelude::*;
 use shared::cpu::{Difficulty, Style};
 use shared::ClientMessage;
 
 use crate::rooms::{step_team, team_look};
 use crate::theme;
+use crate::tick::Tick;
 use crate::ui::{self, Fonts, Modal, Rect, Stepper, Ui, View};
 
 const CARD_W: f32 = 520.0;
@@ -66,10 +66,10 @@ impl CpuSeat {
     }
 }
 
-pub fn update(app: &App, ui: &Ui, seat: CpuSeat) -> Option<Action> {
+pub fn update(tick: &Tick, ui: &Ui, seat: CpuSeat) -> Option<Action> {
     let modal = modal(ui.view());
 
-    if modal.dismissed(ui) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if modal.dismissed(ui) || tick.back() {
         return Some(Action::Close);
     }
     for i in 0..TILES {

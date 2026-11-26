@@ -1,8 +1,9 @@
-use notan::prelude::*;
+use aero::input::KeyCode;
 use serde::{Deserialize, Serialize};
 
 use crate::pads::{Pad, Pads};
 use crate::storage;
+use crate::tick::Tick;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -252,10 +253,10 @@ impl Controls {
         Self { bindings: Bindings::load(), ..Self::default() }
     }
 
-    pub fn update(&mut self, keyboard: &Keyboard, pads: &Pads, touch: [bool; ACTIONS], touch_pause: bool) {
+    pub fn update(&mut self, tick: &Tick, pads: &Pads, touch: [bool; ACTIONS], touch_pause: bool) {
         let mut frame = Frame {
-            pause: keyboard.was_pressed(KeyCode::Escape) || pads.pressed(Pad::Start) || touch_pause,
-            restart: keyboard.was_pressed(KeyCode::KeyR) || pads.pressed(Pad::Select),
+            pause: tick.back() || pads.pressed(Pad::Start) || touch_pause,
+            restart: tick.pressed(KeyCode::KeyR) || pads.pressed(Pad::Select),
             ..Frame::default()
         };
         for action in Action::ALL {
@@ -264,8 +265,8 @@ impl Controls {
             let mut typed = false;
             let mut down = touch[i];
             for b in keys {
-                typed |= keyboard.was_pressed(b.code);
-                down |= keyboard.is_down(b.code);
+                typed |= tick.pressed(b.code);
+                down |= tick.input.is_down(b.code);
             }
             if let Some(pad) = self.bindings.pads[i] {
                 down |= pads.held(pad);

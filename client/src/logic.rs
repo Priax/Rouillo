@@ -1,9 +1,9 @@
-use notan::prelude::*;
 use shared::{config, ClientMessage, GameState, InputKind, SentInput, StampedInput, Targeting};
 
 use crate::connection::Connection;
 use crate::controls::{Action, Frame};
 use crate::state::{GameSession, PendingInput, Settings};
+use crate::tick::Tick;
 use crate::ui::Ui;
 
 #[derive(Clone, Copy, Default)]
@@ -14,7 +14,7 @@ pub struct Online {
 }
 
 pub fn update_game(
-    app: &mut App,
+    tick: &Tick,
     input: &Frame,
     ui: &Ui,
     session: &mut GameSession,
@@ -44,7 +44,7 @@ pub fn update_game(
         }
     }
 
-    let dt = app.timer.delta_f32();
+    let dt = tick.dt;
     let click = crate::draw::game_click(ui, session);
     if session.spectating() {
         if let Some(crate::draw::GameClick::Board(slot)) = click {

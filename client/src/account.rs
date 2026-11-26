@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
+use aero::input::KeyCode;
 use notan::draw::Draw;
-use notan::prelude::*;
 
 use crate::http::{self, HttpSlot};
 use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
+use crate::tick::Tick;
 use crate::ui::{
     field_clicked, text_field, EditKeys, Field, Fonts, Label, Rect, SharpText, Status, TextInput, Ui, FILL,
 };
@@ -236,7 +237,7 @@ const fn warning(page: Page) -> Option<&'static str> {
 }
 
 pub fn update(
-    app: &App,
+    tick: &Tick,
     ui: &Ui,
     fonts: &Fonts,
     keys: &EditKeys,
@@ -261,7 +262,7 @@ pub fn update(
                 }
             }
         }
-        if app.keyboard.was_pressed(KeyCode::Escape) {
+        if tick.back() {
             return Outcome::Close;
         }
         return Outcome::Stay;
@@ -271,7 +272,7 @@ pub fn update(
     if fields > 0 {
         let i = form.focused;
         form.input_mut(i).edit(keys);
-        if app.keyboard.was_pressed(KeyCode::Tab) {
+        if tick.pressed(KeyCode::Tab) {
             form.focused = (form.focused + 1) % fields;
         }
         for i in 0..fields {
@@ -282,10 +283,10 @@ pub fn update(
     }
 
     let (confirm_btn, cancel_btn) = buttons(cx, form);
-    if ui.clicked(confirm_btn) || app.keyboard.was_pressed(KeyCode::Enter) {
+    if ui.clicked(confirm_btn) || tick.pressed(KeyCode::Enter) {
         form.submit(token);
     }
-    if form.pending.is_none() && (ui.clicked(cancel_btn) || app.keyboard.was_pressed(KeyCode::Escape)) {
+    if form.pending.is_none() && (ui.clicked(cancel_btn) || tick.back()) {
         form.show(Page::Choose);
     }
 

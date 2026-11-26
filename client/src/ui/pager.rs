@@ -1,8 +1,9 @@
+use aero::input::KeyCode;
 use notan::draw::Draw;
-use notan::prelude::*;
 
 use super::{field_clicked, text_field, EditKeys, Field, Fonts, Icon, Rect, SharpText, TextInput, Ui};
 use crate::theme;
+use crate::tick::Tick;
 
 const PAGE_DIGITS: usize = 4;
 const BTN_W: f32 = 44.0;
@@ -94,7 +95,7 @@ impl Pager {
     }
 
     /// Returns whether the page changed.
-    pub fn update(&mut self, app: &App, ui: &Ui, fonts: &Fonts, keys: &EditKeys, area: Rect, pages: usize) -> bool {
+    pub fn update(&mut self, tick: &Tick, ui: &Ui, fonts: &Fonts, keys: &EditKeys, area: Rect, pages: usize) -> bool {
         let pages = pages.max(1);
         let l = Layout::new(area);
         if field_clicked(ui, fonts, l.field, &mut self.input) {
@@ -104,7 +105,7 @@ impl Pager {
         }
         let wanted = if self.focused {
             self.input.edit(keys);
-            app.keyboard.was_pressed(KeyCode::Enter).then(|| {
+            tick.pressed(KeyCode::Enter).then(|| {
                 self.focused = false;
                 self.input.parse::<usize>().unwrap_or(1).max(1) - 1
             })

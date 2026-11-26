@@ -12,6 +12,7 @@ use crate::state::{
     OtherProfileData, ProfileCore, ProfileData, Screen, State,
 };
 use crate::theme::{self, Palette};
+use crate::tick::Tick;
 use crate::ui::{
     self, divider, list_row, portrait, Face, Fonts, Gui, Icon, Pill, Rect, SharpText, Size, Status, TextInput, Ui,
     View, FILL, PAGER_H,
@@ -84,14 +85,14 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
     }
 }
 
-fn update_history(app: &App, gui: &Gui, state: &mut State, core: &mut ProfileCore, other: bool) {
+fn update_history(tick: &Tick, gui: &Gui, state: &mut State, core: &mut ProfileCore, other: bool) {
     let view = gui.ui.view();
     let area = pager_area(view);
     let (_, card) = cards(view);
     let Gui { ui, fonts, .. } = gui;
     let State { auth, input: Input { keys, .. }, .. } = state;
 
-    core.history.update(app, ui, fonts, keys, area, core.info.total_matches, history_rows(view));
+    core.history.update(tick, ui, fonts, keys, area, core.info.total_matches, history_rows(view));
     match http::take_done(&mut core.favorite_slot) {
         Some(Ok(())) => core.history.fetch(),
         Some(Err(e)) => core.replay_status = Status::error(e),
@@ -291,9 +292,9 @@ fn about_area(card: Rect) -> Rect {
     Rect::at(card.x + CARD_PAD, top, card.w - 2.0 * CARD_PAD, card.y + card.h - CARD_PAD - top)
 }
 
-fn update_about(app: &App, ui: &Ui, core: &mut ProfileCore) -> bool {
+fn update_about(tick: &Tick, ui: &Ui, core: &mut ProfileCore) -> bool {
     if core.about_open {
-        core.about_open = !profile_about::overlay_closed(app, ui);
+        core.about_open = !profile_about::overlay_closed(tick, ui);
         return true;
     }
     core.about_open = ui.pressed(profile_about::MORE);
@@ -441,25 +442,25 @@ fn own_buttons(view: View) -> [Rect; 4] {
     bottom_buttons(view, [200.0; 4])
 }
 
-pub fn update_profile(app: &mut App, gui: &Gui, state: &mut State, p: &mut ProfileData) -> Transition {
+pub fn update_profile(tick: &Tick, gui: &Gui, state: &mut State, p: &mut ProfileData) -> Transition {
     poll_core_profile(&mut p.core);
     p.core.history.poll();
     profile_edit::poll(state, p);
 
     if p.edit.is_some() {
-        profile_edit::update(app, gui, state, p);
+        profile_edit::update(tick, gui, state, p);
         return Transition::Stay;
     }
     if p.account.is_some() {
-        return update_account(app, gui, state, p);
+        return update_account(tick, gui, state, p);
     }
-    if update_about(app, &gui.ui, &mut p.core) {
+    if update_about(tick, &gui.ui, &mut p.core) {
         return Transition::Stay;
     }
 
     let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(gui.ui.view());
-    update_history(app, gui, state, &mut p.core, false);
-    if gui.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
+    update_history(tick, gui, state, &mut p.core, false);
+    if gui.ui.clicked(back_btn) || tick.back() {
         return Transition::Pop;
     }
     if gui.ui.clicked(edit_btn) {
@@ -485,14 +486,14 @@ pub fn update_profile(app: &mut App, gui: &Gui, state: &mut State, p: &mut Profi
     }
 }
 
-fn update_account(app: &App, gui: &Gui, state: &mut State, p: &mut ProfileData) -> Transition {
+fn update_account(tick: &Tick, gui: &Gui, state: &mut State, p: &mut ProfileData) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let Gui { ui, fonts, .. } = gui;
     let State { input: Input { keys, .. }, .. } = state;
     let Some(form) = p.account.as_mut() else {
         return Transition::Stay;
     };
-    match account::update(app, ui, fonts, keys, form, token) {
+    match account::update(tick, ui, fonts, keys, form, token) {
         Outcome::Stay => {}
         Outcome::Close => p.account = None,
         Outcome::LoggedOut(msg) => {
@@ -603,7 +604,7 @@ fn other_buttons(view: View) -> (Rect, Rect) {
     (add, back)
 }
 
-pub fn update_other_profile(app: &mut App, gui: &Gui, state: &mut State, p: &mut OtherProfileData) -> Transition {
+pub fn update_other_profile(tick: &Tick, gui: &Gui, state: &mut State, p: &mut OtherProfileData) -> Transition {
     poll_friendship_check(p);
     match poll_core_profile(&mut p.core) {
         Some(ProfileLoad::HttpError) => {
@@ -618,18 +619,18 @@ pub fn update_other_profile(app: &mut App, gui: &Gui, state: &mut State, p: &mut
     }
     p.core.history.poll();
     poll_friend(p);
-    if update_about(app, &gui.ui, &mut p.core) {
+    if update_about(tick, &gui.ui, &mut p.core) {
         return Transition::Stay;
     }
 
     let (add_btn, back_btn) = other_buttons(gui.ui.view());
     let can_add = !p.load_failed && matches!(p.friendship, FriendshipStatus::Unknown | FriendshipStatus::NotFriends);
 
-    update_history(app, gui, state, &mut p.core, true);
+    update_history(tick, gui, state, &mut p.core, true);
     if gui.ui.clicked(add_btn) && can_add {
         add_friend(state, p);
     }
-    if gui.ui.clicked(back_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if gui.ui.clicked(back_btn) || tick.back() {
         return Transition::Pop;
     }
 

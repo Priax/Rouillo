@@ -1,9 +1,11 @@
+use aero::input::{KeyCode, MouseButton};
 use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::nav::Transition;
 use crate::state::{Screen, State};
 use crate::theme;
+use crate::tick::Tick;
 use crate::ui::{Fonts, Gui, SharpText, Ui};
 
 const PROMPT: &str = "Appuyez sur une touche !!";
@@ -25,9 +27,9 @@ const NOT_A_GESTURE: [KeyCode; 12] = [
     KeyCode::FnLock,
 ];
 
-pub fn update_title(app: &App, state: &mut State) -> Transition {
-    let key = app.keyboard.pressed.iter().any(|k| !NOT_A_GESTURE.contains(k));
-    if !key && !app.mouse.left_was_pressed() {
+pub fn update_title(tick: &Tick, state: &mut State) -> Transition {
+    let key = tick.input.pressed_keys().any(|k| !NOT_A_GESTURE.contains(&k));
+    if !key && !tick.input.was_clicked(MouseButton::Left) {
         return Transition::Stay;
     }
 

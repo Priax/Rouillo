@@ -1,8 +1,10 @@
+use aero::input::KeyCode;
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 use shared::{RoomSetting, Rules, BOARD_COLUMNS, BOARD_ROWS};
 
 use crate::draw::{draw_empty_well, FRAME_PAD};
+use crate::tick::Tick;
 use crate::ui::{Fonts, Icon, Modal, Rect, SharpText, Ui, View};
 use crate::{config, theme};
 
@@ -108,18 +110,17 @@ fn steps_to(setting: RoomSetting, from: u8, to: u8) -> impl Iterator<Item = (Roo
     std::iter::repeat_n((setting, dir), usize::from(from.abs_diff(to)))
 }
 
-pub fn update(app: &App, ui: &Ui, rules: &Rules, editable: bool) -> Option<Action> {
+pub fn update(tick: &Tick, ui: &Ui, rules: &Rules, editable: bool) -> Option<Action> {
     let layout = Layout::new(ui.view());
-    let keys = &app.keyboard;
 
-    if layout.modal.dismissed(ui) || keys.was_pressed(KeyCode::Escape) {
+    if layout.modal.dismissed(ui) || tick.back() {
         return Some(Action::Close);
     }
     if !editable {
         return None;
     }
 
-    let pressed = |rect: Rect, key: KeyCode| ui.clicked(rect) || keys.was_pressed(key);
+    let pressed = |rect: Rect, key: KeyCode| ui.clicked(rect) || tick.pressed(key);
     let step = [
         (RoomSetting::Columns, -1, pressed(layout.columns[0], KeyCode::ArrowLeft)),
         (RoomSetting::Columns, 1, pressed(layout.columns[1], KeyCode::ArrowRight)),

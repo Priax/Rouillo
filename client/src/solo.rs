@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use aero::input::KeyCode;
 use notan::prelude::*;
 use shared::cpu::{Cpu, Difficulty, Style};
 use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings, Targeting};
@@ -7,6 +8,7 @@ use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSetting
 use crate::draw::Hud;
 use crate::nav::Transition;
 use crate::state::{AuthInfo, GameSession, Input, Player, Rival, Screen, State};
+use crate::tick::Tick;
 use crate::ui::{self, Frame, Gui, Icon, Pill, Rect, SharpText, Size, Stepper, View, FILL};
 use crate::{board_size, http, logic, rooms, theme};
 
@@ -332,7 +334,7 @@ pub fn poll_best(solo: &mut Solo, signed_in: bool) {
     }
 }
 
-pub fn update_game(app: &mut App, gui: &Gui, state: &mut State, game: &mut SoloGame) -> Transition {
+pub fn update_game(tick: &Tick, gui: &Gui, state: &mut State, game: &mut SoloGame) -> Transition {
     let signed_in = state.auth.is_some();
     let mut record = None;
     let Gui { ui, .. } = gui;
@@ -347,7 +349,7 @@ pub fn update_game(app: &mut App, gui: &Gui, state: &mut State, game: &mut SoloG
         game.set_paused(!game.paused());
     }
     let (over, paused) = (game.over(), game.paused());
-    let dt = app.timer.delta_f32();
+    let dt = tick.dt;
 
     if over || paused {
         let (quit, again) = crate::draw::exit_rows(ui.view(), true);
@@ -446,12 +448,12 @@ impl Setup {
     }
 }
 
-pub fn update_setup(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
+pub fn update_setup(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
     let setup = Setup::new(gui.ui.view());
     let settings = &mut state.solo.settings;
 
     if state.solo.sizing {
-        match board_size::update(app, &gui.ui, &settings.room.rules, true) {
+        match board_size::update(tick, &gui.ui, &settings.room.rules, true) {
             Some(board_size::Action::Close) => state.solo.sizing = false,
             Some(board_size::Action::Adjust(steps)) => {
                 for (setting, dir) in steps {
@@ -500,9 +502,9 @@ pub fn update_setup(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
         settings.add_opponent();
     }
 
-    if ui.bar_clicked(setup.action_row(0)) || app.keyboard.was_pressed(KeyCode::Enter) {
+    if ui.bar_clicked(setup.action_row(0)) || tick.pressed(KeyCode::Enter) {
         return Transition::To(Screen::Solo(Box::new(SoloGame::new(state.solo.settings.clone()))));
-    } else if ui.bar_clicked(setup.action_row(1)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    } else if ui.bar_clicked(setup.action_row(1)) || tick.back() {
         return Transition::To(Screen::PlayMenu);
     }
 

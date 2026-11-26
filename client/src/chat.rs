@@ -1,11 +1,13 @@
 use std::collections::VecDeque;
 
+use aero::input::KeyCode;
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 use shared::MAX_CHAT_CHARS;
 
 use crate::connection::now_secs;
 use crate::theme;
+use crate::tick::Tick;
 use crate::ui::{field_clicked, text_field, EditKeys, Face, Field, Fonts, Rect, SharpText, TextInput, Ui};
 
 const KEPT: usize = 50;
@@ -55,9 +57,9 @@ impl Chat {
     }
 
     /// Applies editing keys; returns the message to send when Enter was pressed.
-    pub fn edit(&mut self, keyboard: &Keyboard, keys: &EditKeys) -> Option<String> {
+    pub fn edit(&mut self, tick: &Tick, keys: &EditKeys) -> Option<String> {
         self.input.edit(keys);
-        if !keyboard.was_pressed(KeyCode::Enter) && !keyboard.was_pressed(KeyCode::NumpadEnter) {
+        if !tick.pressed(KeyCode::Enter) && !tick.pressed(KeyCode::NumpadEnter) {
             return None;
         }
         let text = self.input.trim().to_owned();
@@ -81,17 +83,17 @@ impl Chat {
 
     /// The lobby's chat: typing goes to it once its field was clicked, or
     /// after Enter; Escape lets go of it.
-    pub fn update_lobby(&mut self, keyboard: &Keyboard, keys: &EditKeys) -> Option<String> {
+    pub fn update_lobby(&mut self, tick: &Tick, keys: &EditKeys) -> Option<String> {
         if !self.focused {
-            self.focused = keyboard.was_pressed(KeyCode::Enter) || keyboard.was_pressed(KeyCode::NumpadEnter);
+            self.focused = tick.pressed(KeyCode::Enter) || tick.pressed(KeyCode::NumpadEnter);
             return None;
         }
-        if keyboard.was_pressed(KeyCode::Escape) {
+        if tick.back() {
             self.focused = false;
             return None;
         }
 
-        self.edit(keyboard, keys)
+        self.edit(tick, keys)
     }
 
     fn draw_lines(&self, draw: &mut Draw, ui: &Ui, fonts: &Fonts, area: Rect, fade: bool) {

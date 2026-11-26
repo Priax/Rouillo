@@ -7,6 +7,7 @@ use crate::http::{self, HttpSlot};
 use crate::nav::Transition;
 use crate::state::{Screen, State};
 use crate::theme;
+use crate::tick::Tick;
 use crate::ui::{self, Face, Frame, Gui, Label, ListCard, Pager, Pill, Rect, SharpText, Status, View};
 
 const SIZE: i64 = 100;
@@ -82,7 +83,7 @@ fn refresh_btn(view: View) -> Rect {
     Frame::of(view).header_tools(0.0).right(190.0).middle(44.0)
 }
 
-pub fn update(app: &App, gui: &Gui, state: &mut State, board: &mut Leaderboard) -> Transition {
+pub fn update(tick: &Tick, gui: &Gui, state: &mut State, board: &mut Leaderboard) -> Transition {
     let me = state.auth.as_ref().map(|a| a.user_id.clone());
     let list = list(gui.ui.view());
     let view = gui.ui.view();
@@ -90,7 +91,7 @@ pub fn update(app: &App, gui: &Gui, state: &mut State, board: &mut Leaderboard) 
     poll(board, me.as_deref());
     let pages = ui::page_count(board.top.len(), list.per_page());
     board.pager.clamp(pages);
-    board.pager.update(app, &gui.ui, &gui.fonts, &state.input.keys, list.pager(), pages);
+    board.pager.update(tick, &gui.ui, &gui.fonts, &state.input.keys, list.pager(), pages);
 
     let clicked = board
         .pager
@@ -107,7 +108,7 @@ pub fn update(app: &App, gui: &Gui, state: &mut State, board: &mut Leaderboard) 
     let loading = board.slot.is_some();
     if !loading && gui.ui.clicked(refresh_btn(view)) {
         refresh(board, state);
-    } else if gui.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    } else if gui.ui.clicked(back_btn(view)) || tick.back() {
         return Transition::To(Screen::Menu);
     }
 

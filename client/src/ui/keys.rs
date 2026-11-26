@@ -1,4 +1,4 @@
-use notan::prelude::{KeyCode, Keyboard};
+use aero::input::{Input, KeyCode};
 
 const REPEAT_DELAY: f32 = 0.4;
 const REPEAT_EVERY: f32 = 0.035;
@@ -68,7 +68,7 @@ pub struct Shortcuts {
 }
 
 impl EditKeys {
-    pub fn update(&mut self, keyboard: &Keyboard, dt: f32) {
+    pub fn update(&mut self, keyboard: &Input, dt: f32) {
         let keys = [
             (&mut self.erase, KeyCode::Backspace),
             (&mut self.delete, KeyCode::Delete),

@@ -1,3 +1,4 @@
+use aero::input::{Input, MouseButton};
 mod bar;
 mod button;
 mod controls;
@@ -35,13 +36,9 @@ pub use keys::EditKeys;
 pub use keys::Shortcuts;
 pub use layout::{Frame, ListCard, Size, FILL};
 pub use modal::Modal;
-#[cfg(not(feature = "aero"))]
-use notan::draw::DrawImages;
 use notan::draw::{CreateDraw, Draw};
 use notan::math::{vec2, Mat3};
-use notan::prelude::{App, Graphics};
-#[cfg(not(feature = "aero"))]
-use notan::prelude::{BlendMode, Color, RenderTexture, TextureFilter};
+use notan::prelude::Graphics;
 pub use pager::{page_count, Pager, PAGER_H};
 pub use panel::{action_row, card_body, card_height, panel_card, SettingsGrid, SettingsPanel, TILE_H};
 pub use rect::Rect;
@@ -60,10 +57,6 @@ pub fn cycle<T: Copy + PartialEq>(options: &[T], at: T, dir: i32) -> T {
 use crate::theme::{hue, Palette};
 
 const MAX_DT: f32 = 0.1;
-#[cfg(not(feature = "aero"))]
-const SUPERSAMPLE: f32 = 2.0;
-#[cfg(not(feature = "aero"))]
-const MAX_TARGET: f32 = 4096.0;
 pub const TRANSITION: f32 = 0.3;
 
 const HOVER_SPEED: f32 = 18.0;
@@ -86,8 +79,6 @@ impl Gui {
 }
 
 pub struct Ui {
-    #[cfg(not(feature = "aero"))]
-    target: Option<RenderTexture>,
     frame: u64,
     dt: f32,
     time: f64,
@@ -115,8 +106,6 @@ pub struct Ui {
 impl Default for Ui {
     fn default() -> Self {
         Self {
-            #[cfg(not(feature = "aero"))]
-            target: None,
             dt: 0.0,
             time: 0.0,
             view: View::default(),
@@ -179,12 +168,15 @@ pub struct Mouse {
 }
 
 impl Mouse {
-    pub fn of(app: &App, view: View) -> Self {
+    /// A finger is the left button: browsers report touches only as such.
+    pub fn of(input: &Input, view: View) -> Self {
+        let finger = input.fingers().first();
+        let at = finger.map(|f| f.at).or_else(|| input.pointer()).unwrap_or_default() / view.scale;
         Self {
-            x: app.mouse.x / view.scale,
-            y: app.mouse.y / view.scale,
-            down: app.mouse.left_is_down(),
-            pressed: app.mouse.left_was_pressed(),
+            x: at.x,
+            y: at.y,
+            down: input.is_button_down(MouseButton::Left) || finger.is_some_and(|f| !f.lifted),
+            pressed: input.was_clicked(MouseButton::Left) || finger.is_some_and(|f| f.new),
         }
     }
 }
@@ -280,7 +272,6 @@ impl Ui {
 
     /// A canvas for this frame, in the view's units: Aero smooths every edge
     /// itself.
-    #[cfg(feature = "aero")]
     pub fn canvas(&mut self, gfx: &mut Graphics) -> Draw {
         let mut draw = gfx.create_draw();
         let scale = self.view().scale;
@@ -288,60 +279,8 @@ impl Ui {
         draw
     }
 
-    #[cfg(feature = "aero")]
     pub fn render(&mut self, gfx: &mut Graphics, draw: &Draw) {
         gfx.render(draw);
-    }
-
-    #[cfg(feature = "aero")]
-    #[expect(clippy::unused_self, reason = "notan's backend presents the supersampled frame here")]
-    pub fn present(&mut self, _gfx: &mut Graphics) {}
-
-    /// A canvas for this frame. Everything is drawn into a texture
-    /// `SUPERSAMPLE` times the window's size and scaled down by `present`,
-    /// which smooths every edge: notan draws shapes as bare triangles, and
-    /// multisampling cannot be relied on (Wayland's EGL refuses it here).
-    #[cfg(not(feature = "aero"))]
-    pub fn canvas(&mut self, gfx: &mut Graphics) -> Draw {
-        let view = self.view();
-        let mut draw = self.target(gfx).create_draw();
-        let scale = view.scale * supersample(view);
-        draw.transform().push(Mat3::from_scale(vec2(scale, scale)));
-        draw.set_alpha_mode(Some(BlendMode::OVER));
-        draw
-    }
-
-    #[cfg(not(feature = "aero"))]
-    pub fn render(&mut self, gfx: &mut Graphics, draw: &Draw) {
-        let target = self.target(gfx);
-        gfx.render_to(&target, draw);
-    }
-
-    #[cfg(not(feature = "aero"))]
-    pub fn present(&mut self, gfx: &mut Graphics) {
-        let view = self.view();
-        let target = self.target(gfx);
-        let mut draw = gfx.create_draw();
-        draw.clear(Color::BLACK);
-        draw.image(&target).size(view.w * view.scale, view.h * view.scale);
-        gfx.render(&draw);
-    }
-
-    #[cfg(not(feature = "aero"))]
-    fn target(&mut self, gfx: &mut Graphics) -> RenderTexture {
-        let view = self.view();
-        let factor = view.scale * supersample(view);
-        let size = ((view.w * factor).ceil() as u32, (view.h * factor).ceil() as u32);
-        if let Some(target) = self.target.as_ref().filter(|t| t.size() == (size.0 as f32, size.1 as f32)) {
-            return target.clone();
-        }
-        let target = gfx
-            .create_render_texture(size.0.max(1), size.1.max(1))
-            .with_filter(TextureFilter::Linear, TextureFilter::Linear)
-            .build()
-            .expect("a render texture the size of the window");
-        self.target = Some(target.clone());
-        target
     }
 
     /// Keeps this frame's click from what lies under the widget that took it.
@@ -477,12 +416,6 @@ fn hash_of<T: Hash + ?Sized>(value: &T) -> u64 {
     h.finish()
 }
 
-#[cfg(not(feature = "aero"))]
-fn supersample(view: View) -> f32 {
-    let largest = (view.w * view.scale).max(view.h * view.scale).max(1.0);
-    SUPERSAMPLE.max(view.dpi).min(MAX_TARGET / largest)
-}
-
 fn transition_progress(time: f64, entered_at: f64, fade: f32) -> f32 {
     ((time - entered_at) / f64::from(fade)).clamp(0.0, 1.0) as f32
 }
@@ -561,23 +494,6 @@ mod tests {
         ui.move_focus((-1.0, -1.0));
         let click = ui.pad_click().unwrap();
         assert!(play.contains(click.x, click.y), "and never reached");
-    }
-
-    #[cfg(not(feature = "aero"))]
-    #[test]
-    fn supersampling_stays_within_texture_limits() {
-        assert!((supersample(View::fit(1280.0, 800.0)) - 2.0).abs() < f32::EPSILON);
-        let big = View::fit(3840.0, 2160.0);
-        assert!(3840.0 * supersample(big) <= MAX_TARGET + 0.5);
-    }
-
-    #[cfg(not(feature = "aero"))]
-    #[test]
-    fn a_dense_screen_is_drawn_at_its_own_resolution() {
-        let phone = View { dpi: 3.0, ..View::fit(393.0, 852.0) };
-        assert!((supersample(phone) - 3.0).abs() < f32::EPSILON);
-        let scaled = View { dpi: 1.25, ..View::fit(1536.0, 864.0) };
-        assert!((supersample(scaled) - 2.0).abs() < f32::EPSILON);
     }
 
     #[test]

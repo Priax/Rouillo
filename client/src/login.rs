@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use aero::input::KeyCode;
 use notan::prelude::*;
 
 use crate::connection::now_secs;
 use crate::nav::{Nav, Transition};
 use crate::state::{ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State};
+use crate::tick::Tick;
 use crate::ui::{self, field_clicked, text_field, Field, Gui, Rect, SharpText, Status, View, FILL};
 use crate::{http, theme};
 
@@ -137,7 +139,7 @@ pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
     }
 }
 
-pub fn update_auth(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
+pub fn update_auth(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
     if poll_auth(state) {
         return Transition::To(Screen::Menu);
     }
@@ -145,7 +147,7 @@ pub fn update_auth(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
     let layout = auth_layout(gui.ui.view(), state.auth_form.focused);
 
     state.auth_form.focused_input().edit(&state.input.keys);
-    if app.keyboard.was_pressed(KeyCode::Tab) {
+    if tick.pressed(KeyCode::Tab) {
         state.auth_form.focused = match state.auth_form.focused {
             AuthField::Username => AuthField::Password,
             AuthField::Password => AuthField::Username,
@@ -166,8 +168,7 @@ pub fn update_auth(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
         state.auth_form.focused = AuthField::Password;
     }
 
-    if (gui.ui.clicked(layout.submit) || app.keyboard.was_pressed(KeyCode::Enter)) && state.auth_form.pending.is_none()
-    {
+    if (gui.ui.clicked(layout.submit) || tick.pressed(KeyCode::Enter)) && state.auth_form.pending.is_none() {
         submit(&mut state.auth_form);
     }
 

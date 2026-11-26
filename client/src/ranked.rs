@@ -1,3 +1,4 @@
+use aero::input::KeyCode;
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 use shared::{config, ClientMessage};
@@ -7,6 +8,7 @@ use crate::http::{self, HttpSlot};
 use crate::nav::Transition;
 use crate::state::{ApiUserProfile, Room, Screen, State};
 use crate::theme::{self, Palette};
+use crate::tick::Tick;
 use crate::ui::{self, Fonts, Gui, Persona, Pill, Rect, SharpText, View, FILL};
 
 const PORTRAIT_R: f32 = 56.0;
@@ -155,7 +157,7 @@ fn poll_stats(ranked: &mut RankedView) {
     }
 }
 
-pub fn update(app: &App, gui: &Gui, state: &mut State) -> Transition {
+pub fn update(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
     poll_stats(&mut state.ranked);
     if state.room.as_ref().is_some_and(|r| r.info.ranked.is_some()) {
         return Transition::Stay;
@@ -163,8 +165,8 @@ pub fn update(app: &App, gui: &Gui, state: &mut State) -> Transition {
 
     let view = gui.ui.view();
     let b = buttons(view);
-    let escape = app.keyboard.was_pressed(KeyCode::Escape);
-    let confirm = app.keyboard.was_pressed(KeyCode::Enter);
+    let escape = tick.back();
+    let confirm = tick.pressed(KeyCode::Enter);
 
     match state.ranked.search {
         Search::Idle => {

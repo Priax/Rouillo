@@ -1,3 +1,4 @@
+use aero::input::KeyCode;
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 
@@ -6,6 +7,7 @@ use crate::demo::Demo;
 use crate::nav::Transition;
 use crate::pads::Pad;
 use crate::state::{Screen, State};
+use crate::tick::Tick;
 use crate::ui::{self, Face, Fonts, Frame, Gui, Icon, Rect, SharpText, Size, Ui, View, FILL};
 use crate::{draw as game_draw, theme};
 
@@ -76,16 +78,16 @@ pub fn enter() -> Transition {
     Transition::To(Screen::Help(Box::new(HelpView { demo: Demo::new(), rules: false })))
 }
 
-pub fn update(app: &App, gui: &Gui, help: &mut HelpView) -> Transition {
+pub fn update(tick: &Tick, gui: &Gui, help: &mut HelpView) -> Transition {
     let view = gui.ui.view();
     let (info, demo_card) = cards(view);
     let [previous, next] = lesson_arrows(demo_card);
     let [controls, rules] = tabs(info);
 
-    help.demo.update(app.timer.delta_f32());
-    if gui.ui.clicked(previous) || app.keyboard.was_pressed(KeyCode::ArrowLeft) {
+    help.demo.update(tick.dt);
+    if gui.ui.clicked(previous) || tick.pressed(KeyCode::ArrowLeft) {
         help.demo.previous();
-    } else if gui.ui.clicked(next) || app.keyboard.was_pressed(KeyCode::ArrowRight) {
+    } else if gui.ui.clicked(next) || tick.pressed(KeyCode::ArrowRight) {
         help.demo.next();
     }
     if gui.ui.clicked(controls) {
@@ -93,7 +95,7 @@ pub fn update(app: &App, gui: &Gui, help: &mut HelpView) -> Transition {
     } else if gui.ui.clicked(rules) {
         help.rules = true;
     }
-    if gui.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if gui.ui.clicked(back_btn(view)) || tick.back() {
         return Transition::To(Screen::Menu);
     }
 

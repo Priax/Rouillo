@@ -3,6 +3,7 @@ use notan::prelude::*;
 
 use crate::nav::Transition;
 use crate::state::{AuthForm, Screen, Settings, State};
+use crate::tick::Tick;
 use crate::ui::{Frame, Gui, Rect, SettingsPanel, SharpText, Status, View};
 use crate::{http, theme};
 
@@ -88,7 +89,7 @@ fn outdated_btn(ww: f32) -> Rect {
     Rect::at(0.0, avatar.y, avatar.x - 20.0, avatar.h).right(190.0).middle(50.0)
 }
 
-pub fn update_menu(app: &App, gui: &Gui, state: &mut State, play: bool) -> Transition {
+pub fn update_menu(tick: &Tick, gui: &Gui, state: &mut State, play: bool) -> Transition {
     let view = gui.ui.view();
     let ww = view.w;
     let logged_in = state.auth.is_some();
@@ -115,7 +116,7 @@ pub fn update_menu(app: &App, gui: &Gui, state: &mut State, play: bool) -> Trans
         Some(MenuItem::Logout) => return do_logout(state),
         Some(MenuItem::Back) => return Transition::To(Screen::Menu),
         None => {
-            if play && app.keyboard.was_pressed(KeyCode::Escape) {
+            if play && tick.back() {
                 return Transition::To(Screen::Menu);
             }
         }
@@ -226,12 +227,12 @@ fn settings_back(view: View) -> Rect {
     Frame::of(view).back
 }
 
-pub fn update_settings(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
+pub fn update_settings(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
     let view = gui.ui.view();
     let panel = settings_panel(view);
     let capturing = state.bindings_panel.capturing();
 
-    if state.bindings_panel.update(app, &gui.ui, &state.input.pads, &mut state.input.controls.bindings) {
+    if state.bindings_panel.update(tick, &gui.ui, &state.input.pads, &mut state.input.controls.bindings) {
         state.input.controls.bindings.save();
     }
     if capturing {
@@ -251,7 +252,7 @@ pub fn update_settings(app: &mut App, gui: &Gui, state: &mut State) -> Transitio
         state.settings.save();
     }
 
-    if gui.ui.clicked(settings_back(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if gui.ui.clicked(settings_back(view)) || tick.back() {
         return Transition::To(Screen::Menu);
     }
 

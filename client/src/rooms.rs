@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use aero::input::KeyCode;
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSetting, RoomSettings};
@@ -8,6 +9,7 @@ use crate::connection::Connection;
 use crate::cpu_seat::{self, CpuSeat};
 use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, Input, Invite, Network, Screen, State};
+use crate::tick::Tick;
 use crate::ui::{
     self, field_clicked, list_row, text_field, EditKeys, Face, Field, Fonts, Frame, Gui, Icon, ListCard, Modal, Pill,
     Rect, SettingsGrid, SharpText, Size, Stepper, TextInput, Ui, View, FILL, PAGER_H,
@@ -46,13 +48,13 @@ fn browser_buttons(view: View) -> BrowserButtons {
     BrowserButtons { create, join_id, refresh, back: frame.back }
 }
 
-pub fn update_browser(app: &App, gui: &Gui, state: &mut State) -> Transition {
+pub fn update_browser(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
     let view = gui.ui.view();
     let b = browser_buttons(view);
     let pages = room_pages(&state.rooms, view);
 
     state.room_pager.clamp(pages);
-    state.room_pager.update(app, &gui.ui, &gui.fonts, &state.input.keys, room_list(view).pager(), pages);
+    state.room_pager.update(tick, &gui.ui, &gui.fonts, &state.input.keys, room_list(view).pager(), pages);
 
     let clicked = shown_rooms(gui.ui.view(), state)
         .find(|&(i, _)| gui.ui.clicked(room_list(view).row(i)))
@@ -74,7 +76,7 @@ pub fn update_browser(app: &App, gui: &Gui, state: &mut State) -> Transition {
         return Transition::To(Screen::JoinById);
     } else if gui.ui.clicked(b.refresh) {
         state.net.conn.send(&ClientMessage::RequestRoomList);
-    } else if gui.ui.clicked(b.back) || app.keyboard.was_pressed(KeyCode::Escape) {
+    } else if gui.ui.clicked(b.back) || tick.back() {
         state.net.conn.disconnect();
         state.rooms.clear();
         return Transition::To(Screen::PlayMenu);
@@ -182,23 +184,23 @@ enum Entry {
     Confirmed(String),
 }
 
-fn update_entry(app: &mut App, gui: &Gui, state: &mut State) -> Entry {
+fn update_entry(tick: &Tick, gui: &Gui, state: &mut State) -> Entry {
     let (w, h) = gui.ui.view().size();
     let (confirm, back) = entry_buttons(w, h);
 
     state.text_input.edit(&state.input.keys);
     field_clicked(&gui.ui, &gui.fonts, entry_box(w, h), &mut state.text_input);
-    if gui.ui.clicked(confirm) || app.keyboard.was_pressed(KeyCode::Enter) {
+    if gui.ui.clicked(confirm) || tick.pressed(KeyCode::Enter) {
         return Entry::Confirmed(state.text_input.trim().to_string());
     }
-    if gui.ui.clicked(back) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if gui.ui.clicked(back) || tick.back() {
         return Entry::Back;
     }
     Entry::Typing
 }
 
-pub fn update_create_room(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
-    match update_entry(app, gui, state) {
+pub fn update_create_room(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
+    match update_entry(tick, gui, state) {
         Entry::Back => return Transition::To(Screen::RoomBrowser),
         Entry::Confirmed(name) if !name.is_empty() => {
             state.notice.clear();
@@ -210,8 +212,8 @@ pub fn update_create_room(app: &mut App, gui: &Gui, state: &mut State) -> Transi
     Transition::Stay
 }
 
-pub fn update_join_by_id(app: &mut App, gui: &Gui, state: &mut State) -> Transition {
-    match update_entry(app, gui, state) {
+pub fn update_join_by_id(tick: &Tick, gui: &Gui, state: &mut State) -> Transition {
+    match update_entry(tick, gui, state) {
         Entry::Back => return Transition::To(Screen::RoomBrowser),
         Entry::Confirmed(text) => {
             if let Ok(id) = text.parse::<u32>() {
@@ -538,14 +540,14 @@ fn invite_button(view: View, i: usize) -> Rect {
 
 /// The friend picked in the invitation window, which then closes.
 fn update_invite(
-    app: &App,
+    tick: &Tick,
     ui: &Ui,
     fonts: &Fonts,
     keys: &EditKeys,
     invite: &mut Invite,
     view: View,
 ) -> Option<String> {
-    if invite_modal(view).dismissed(ui) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if invite_modal(view).dismissed(ui) || tick.back() {
         invite.open = false;
         return None;
     }
@@ -554,7 +556,7 @@ fn update_invite(
     let pages = ui::page_count(invite.friends.len(), per_page);
     let loaded = invite.slot.is_none();
     invite.pager.clamp(pages);
-    invite.pager.update(app, ui, fonts, keys, invite_pager_area(view), pages);
+    invite.pager.update(tick, ui, fonts, keys, invite_pager_area(view), pages);
 
     let invited = invite
         .pager
@@ -568,11 +570,11 @@ fn update_invite(
 }
 
 /// Runs the editor of the CPU in seat `i`, opened with `seats` taken; returns whether it stays open.
-fn update_cpu_edit(app: &App, ui: &Ui, info: &LobbyInfo, (i, seats): (usize, usize), conn: &mut Connection) -> bool {
+fn update_cpu_edit(tick: &Tick, ui: &Ui, info: &LobbyInfo, (i, seats): (usize, usize), conn: &mut Connection) -> bool {
     let Some(seat) = cpu_seat_at(info, i).filter(|_| edits_cpus(info) && seats == info.names.len()) else {
         return false;
     };
-    match cpu_seat::update(app, ui, seat) {
+    match cpu_seat::update(tick, ui, seat) {
         Some(cpu_seat::Action::Close) => false,
         Some(cpu_seat::Action::Send(msg)) => {
             conn.send(&msg);
@@ -583,13 +585,13 @@ fn update_cpu_edit(app: &App, ui: &Ui, info: &LobbyInfo, (i, seats): (usize, usi
 }
 
 /// Which way the players list scrolls this frame, by its buttons or the wheel.
-fn list_scroll(app: &App, ui: &Ui, view: View, list: &PlayerList) -> Option<i32> {
+fn list_scroll(tick: &Tick, ui: &Ui, view: View, list: &PlayerList) -> Option<i32> {
     if !list.scrolls() {
         return None;
     }
 
     let [up, down] = list.scroll_buttons();
-    let wheel = app.mouse.wheel_delta.y;
+    let wheel = tick.input.wheel().y;
     let over = lobby_players(view).contains(ui.mouse().x, ui.mouse().y);
     if ui.clicked(up) || (over && wheel > 0.0) {
         Some(-1)
@@ -618,7 +620,7 @@ fn clicked_setting(ui: &Ui, view: View) -> Option<(RoomSetting, i32)> {
     })
 }
 
-pub fn update_lobby(app: &mut App, gui: &Gui, state: &mut State) {
+pub fn update_lobby(tick: &Tick, gui: &Gui, state: &mut State) {
     let view = gui.ui.view();
     let Gui { ui, fonts, .. } = gui;
     let State { room, auth, input: Input { keys, .. }, net: Network { conn, maintenance, .. }, .. } = state;
@@ -631,7 +633,7 @@ pub fn update_lobby(app: &mut App, gui: &Gui, state: &mut State) {
     }
 
     if room.invite.open {
-        if let Some(user_id) = update_invite(app, ui, fonts, keys, &mut room.invite, view) {
+        if let Some(user_id) = update_invite(tick, ui, fonts, keys, &mut room.invite, view) {
             conn.send(&ClientMessage::InviteFriend { user_id });
         }
         return;
@@ -642,7 +644,7 @@ pub fn update_lobby(app: &mut App, gui: &Gui, state: &mut State) {
         room.cpu_edit = None;
     }
     if room.sizing {
-        match board_size::update(app, ui, &info.settings.rules, editable) {
+        match board_size::update(tick, ui, &info.settings.rules, editable) {
             Some(board_size::Action::Close) => room.sizing = false,
             Some(board_size::Action::Adjust(steps)) => {
                 for (setting, dir) in steps {
@@ -655,7 +657,7 @@ pub fn update_lobby(app: &mut App, gui: &Gui, state: &mut State) {
     }
 
     if let Some(edit) = room.cpu_edit {
-        if !update_cpu_edit(app, ui, info, edit, conn) {
+        if !update_cpu_edit(tick, ui, info, edit, conn) {
             room.cpu_edit = None;
         }
         return;
@@ -663,7 +665,7 @@ pub fn update_lobby(app: &mut App, gui: &Gui, state: &mut State) {
 
     let list = PlayerList::new(view, info, room.players_first);
     room.players_first = list.first;
-    if let Some(dir) = list_scroll(app, ui, view, &list) {
+    if let Some(dir) = list_scroll(tick, ui, view, &list) {
         room.players_first = list.scrolled(dir);
         return;
     }
@@ -691,7 +693,7 @@ pub fn update_lobby(app: &mut App, gui: &Gui, state: &mut State) {
     }
 
     let chatting = room.chat.focused;
-    if let Some(text) = room.chat.update_lobby(&app.keyboard, keys) {
+    if let Some(text) = room.chat.update_lobby(tick, keys) {
         conn.send(&ClientMessage::Chat { text });
     }
     room.chat.click(ui, fonts, lobby_chat(view));
@@ -714,7 +716,7 @@ pub fn update_lobby(app: &mut App, gui: &Gui, state: &mut State) {
         return;
     }
 
-    let escape = !chatting && app.keyboard.was_pressed(KeyCode::Escape);
+    let escape = !chatting && tick.back();
     if ui.bar_clicked(lobby_leave(view)) || escape {
         conn.send(&ClientMessage::LeaveRoom);
         room.invite = Invite::default();

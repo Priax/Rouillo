@@ -314,10 +314,10 @@ fn winner(session: &GameSession, team: u8) -> String {
     format!("{} WINS", session.name_of(slot))
 }
 
-pub fn draw_game(app: &mut App, gfx: &mut Graphics, session: &GameSession, ui: &mut Ui, fonts: &Fonts, hud: Hud) {
+pub fn draw_game(gfx: &mut Graphics, session: &GameSession, ui: &mut Ui, fonts: &Fonts, hud: Hud) {
     let layout = GameLayout::new(ui.view(), session);
     let pal = ui.palette();
-    let time = app.timer.elapsed_f32();
+    let time = ui.time() as f32;
 
     let mut draw = ui.canvas(gfx);
     draw.clear(game::BACKGROUND);

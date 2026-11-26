@@ -1,4 +1,4 @@
-use notan::prelude::App;
+use aero::WindowInfo;
 
 const REFERENCE_W: f32 = 1280.0;
 const REFERENCE_H: f32 = 800.0;
@@ -13,8 +13,6 @@ pub struct View {
     pub w: f32,
     pub h: f32,
     pub scale: f32,
-    /// Device pixels per window pixel: 2 or 3 on a phone, 1.25 on a scaled desktop.
-    pub dpi: f32,
 }
 
 impl Default for View {
@@ -26,13 +24,11 @@ impl Default for View {
 impl View {
     pub fn fit(window_w: f32, window_h: f32) -> Self {
         let scale = (window_w / REFERENCE_W).min(window_h / REFERENCE_H).clamp(MIN_SCALE, MAX_SCALE);
-        Self { w: window_w / scale, h: window_h / scale, scale, dpi: 1.0 }
+        Self { w: window_w / scale, h: window_h / scale, scale }
     }
 
-    pub fn of(app: &mut App) -> Self {
-        let (w, h) = app.window().size();
-        let dpi = (app.window().dpi() as f32).max(1.0);
-        Self { dpi, ..Self::fit(w as f32, h as f32) }
+    pub fn of(window: WindowInfo) -> Self {
+        Self::fit(window.size.x, window.size.y)
     }
 
     /// A window taller than wide, such as a phone held upright: screens stack

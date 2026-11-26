@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 
 use notan::draw::Draw;
-use notan::prelude::*;
 
 use crate::state::ApiUserProfile;
 use crate::theme;
+use crate::tick::Tick;
 use crate::ui::{Face, Fonts, Modal, Rect, SharpText, Ui};
 
 const LINE_H: f32 = 24.0;
@@ -85,8 +85,8 @@ pub fn draw_more_link(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, area: Rect) {
     ui.link(draw, fonts, link, MORE, true);
 }
 
-pub fn overlay_closed(app: &App, ui: &Ui) -> bool {
-    Modal::new(ui.view(), OVERLAY_W).dismissed(ui) || app.keyboard.was_pressed(KeyCode::Escape)
+pub fn overlay_closed(tick: &Tick, ui: &Ui) -> bool {
+    Modal::new(ui.view(), OVERLAY_W).dismissed(ui) || tick.back()
 }
 
 pub fn draw_overlay(draw: &mut Draw, ui: &mut Ui, fonts: &Fonts, info: &ApiUserProfile) {

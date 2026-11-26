@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use notan::draw::Draw;
-use notan::prelude::*;
 
 use crate::http::{self, HttpSlot};
 use crate::state::ApiMatchEntry;
+use crate::tick::Tick;
 use crate::ui::{page_count, EditKeys, Fonts, Pager, Rect, TextInput, Ui};
 
 pub const PAGE_SIZE: usize = 7;
@@ -52,13 +52,22 @@ impl History {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn update(&mut self, app: &App, ui: &Ui, fonts: &Fonts, keys: &EditKeys, area: Rect, total: i64, rows: usize) {
+    pub fn update(
+        &mut self,
+        tick: &Tick,
+        ui: &Ui,
+        fonts: &Fonts,
+        keys: &EditKeys,
+        area: Rect,
+        total: i64,
+        rows: usize,
+    ) {
         let rows = rows.clamp(1, PAGE_SIZE);
         if rows != self.per_page {
             self.per_page = rows;
             self.pager = Pager::default();
             self.fetch();
-        } else if self.pager.update(app, ui, fonts, keys, area, self.pages(total)) {
+        } else if self.pager.update(tick, ui, fonts, keys, area, self.pages(total)) {
             self.fetch();
         }
     }

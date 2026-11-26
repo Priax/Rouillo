@@ -11,9 +11,6 @@ use crate::color::{BlendMode, Color};
 use crate::graphics::{Font, Texture};
 use crate::texts::Texts;
 
-/// notan's draw extension, which Aero needs no setup for.
-pub struct DrawConfig;
-
 /// Shapes to draw, in logical pixels for a window and in pixels for a render texture.
 #[derive(Clone)]
 pub struct Draw {

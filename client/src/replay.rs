@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use aero::input::KeyCode;
 use notan::draw::Draw;
 use notan::prelude::*;
 use shared::config::CLIENT_SIM_DT;
@@ -9,6 +10,7 @@ use crate::draw::{self, Hud};
 use crate::http::{self, HttpSlot};
 use crate::nav::{Nav, Transition};
 use crate::state::{GameSession, Player, Rival, Room, Screen, State};
+use crate::tick::Tick;
 use crate::ui::{Fonts, Gui, Icon, Rect, SharpText, Status, Ui, View};
 use crate::{logic, theme};
 
@@ -263,25 +265,24 @@ fn controls(view: View) -> [Rect; 4] {
     std::array::from_fn(|i| Rect::at(x + i as f32 * (W + GAP), y, W, H))
 }
 
-pub fn update(app: &App, gui: &Gui, viewer: &mut ReplayViewer) -> Transition {
-    let dt = app.timer.delta_f32();
+pub fn update(tick: &Tick, gui: &Gui, viewer: &mut ReplayViewer) -> Transition {
+    let dt = tick.dt;
     let view = gui.ui.view();
     let [play, speed, player, quit] = controls(view);
     let (leave_row, again_row) = draw::exit_rows(view, true);
     let over = viewer.over();
-    let keys = &app.keyboard;
     let leave = gui.ui.clicked(quit) || (over && gui.ui.bar_clicked(leave_row));
 
-    if (over && gui.ui.bar_clicked(again_row)) || keys.was_pressed(KeyCode::KeyR) {
+    if (over && gui.ui.bar_clicked(again_row)) || tick.pressed(KeyCode::KeyR) {
         viewer.restart();
-    } else if gui.ui.clicked(play) || keys.was_pressed(KeyCode::Space) {
+    } else if gui.ui.clicked(play) || tick.pressed(KeyCode::Space) {
         viewer.paused = !viewer.paused;
-    } else if gui.ui.clicked(speed) || keys.was_pressed(KeyCode::ArrowRight) {
+    } else if gui.ui.clicked(speed) || tick.pressed(KeyCode::ArrowRight) {
         viewer.speed = (viewer.speed + 1) % SPEEDS.len();
-    } else if gui.ui.clicked(player) || keys.was_pressed(KeyCode::Tab) {
+    } else if gui.ui.clicked(player) || tick.pressed(KeyCode::Tab) {
         viewer.next_player();
     }
-    if leave || keys.was_pressed(KeyCode::Escape) {
+    if leave || tick.back() {
         return Transition::Pop;
     }
     viewer.step(dt);
@@ -289,8 +290,8 @@ pub fn update(app: &App, gui: &Gui, viewer: &mut ReplayViewer) -> Transition {
     Transition::Stay
 }
 
-pub fn draw(app: &mut App, gfx: &mut Graphics, gui: &mut Gui, viewer: &ReplayViewer) {
-    draw::draw_game(app, gfx, &viewer.session, &mut gui.ui, &gui.fonts, Hud::Replay);
+pub fn draw(gfx: &mut Graphics, gui: &mut Gui, viewer: &ReplayViewer) {
+    draw::draw_game(gfx, &viewer.session, &mut gui.ui, &gui.fonts, Hud::Replay);
     if viewer.over() {
         return;
     }

@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use aero::input::KeyCode;
 use notan::draw::Draw;
-use notan::prelude::*;
 
 use crate::http::{self, HttpSlot};
 use crate::picker::{self, Picked};
 use crate::state::{ApiUserProfile, Input, ProfileData, State};
 use crate::theme;
+use crate::tick::Tick;
 use crate::ui::{
     area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field, Fonts, Gui, Rect, SharpText,
     Status, TextInput, Ui, FILL,
@@ -245,7 +246,7 @@ fn save(form: &mut EditForm, token: Option<String>) {
     form.status.clear();
 }
 
-pub fn update(app: &mut App, gui: &Gui, state: &mut State, profile: &mut ProfileData) {
+pub fn update(tick: &Tick, gui: &Gui, state: &mut State, profile: &mut ProfileData) {
     let cx = gui.ui.view().w / 2.0;
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let (save_btn, cancel_btn) = buttons(cx);
@@ -257,7 +258,7 @@ pub fn update(app: &mut App, gui: &Gui, state: &mut State, profile: &mut Profile
         EditField::Bio => area_keys(fonts, EditField::Bio.rect(cx), &mut form.bio, keys),
         EditField::Music => form.music.edit(keys),
     }
-    if app.keyboard.was_pressed(KeyCode::Tab) {
+    if tick.pressed(KeyCode::Tab) {
         form.focus_next();
     }
     if area_clicked(ui, fonts, EditField::Bio.rect(cx), &mut form.bio) {
@@ -283,11 +284,11 @@ pub fn update(app: &mut App, gui: &Gui, state: &mut State, profile: &mut Profile
         }
     }
 
-    let wants_save = app.keyboard.was_pressed(KeyCode::Enter) && form.enter();
+    let wants_save = tick.pressed(KeyCode::Enter) && form.enter();
     if ui.clicked(save_btn) || wants_save {
         save(form, token);
     }
-    if ui.clicked(cancel_btn) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if ui.clicked(cancel_btn) || tick.back() {
         profile.edit = None;
     }
 }

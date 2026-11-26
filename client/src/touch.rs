@@ -1,5 +1,6 @@
 use std::f32::consts::{FRAC_PI_2, PI};
 
+use aero::input::{Finger, Input};
 use notan::draw::{Draw, DrawShapes};
 use notan::prelude::*;
 
@@ -42,20 +43,19 @@ pub struct TouchPad {
 
 impl TouchPad {
     /// Returns the actions held by fingers and whether pause was tapped.
-    pub fn read(&mut self, app: &App, view: View, in_game: bool) -> ([bool; ACTIONS], bool) {
-        let touch = &app.touch;
-        if !touch.pressed.is_empty() {
+    pub fn read(&mut self, input: &Input, view: View, in_game: bool) -> ([bool; ACTIONS], bool) {
+        let fingers = input.fingers();
+        if fingers.iter().any(|f| f.new) {
             self.active = true;
         }
         let mut held = [false; ACTIONS];
         let mut pause = false;
         if self.active && in_game {
             for (button, rect) in layout(view) {
-                let on =
-                    |id: &u8| touch.position(*id).is_some_and(|(x, y)| rect.contains(x / view.scale, y / view.scale));
+                let on = |f: &Finger| rect.contains(f.at.x / view.scale, f.at.y / view.scale);
                 match button {
-                    Button::Act(action) => held[action as usize] = touch.down.keys().any(on),
-                    Button::Pause => pause = touch.pressed.iter().any(on),
+                    Button::Act(action) => held[action as usize] = fingers.iter().filter(|f| !f.lifted).any(on),
+                    Button::Pause => pause = fingers.iter().filter(|f| f.new).any(on),
                 }
             }
         }

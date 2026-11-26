@@ -1,17 +1,11 @@
-//! The part of notan's API that Rouillo uses, drawn by Aero: imported as `notan`, it runs the client unchanged.
-//! notan runs continuously, so this does too: every update asks for the next frame.
+//! The part of notan's drawing API that Rouillo still uses, drawn by Aero, until the client draws with Aero's own.
 
 mod color;
 mod drawing;
 mod graphics;
-mod input;
 mod texts;
 
-use aero::{Config, Cx, WindowIcon};
-
-pub mod app {
-    pub use crate::input::{App, Event};
-}
+use aero::{Cx, WindowIcon};
 
 pub mod math {
     pub use aero::math::{vec2, Mat3, Vec2};
@@ -19,8 +13,8 @@ pub mod math {
 
 pub mod draw {
     pub use crate::drawing::{
-        Draw, DrawBuilder, DrawConfig, DrawImages, DrawShapes, DrawTextSection, DrawTransform, Ellipse, Image, Line,
-        Path, Rectangle, Shape, Text, Transform,
+        Draw, DrawBuilder, DrawImages, DrawShapes, DrawTextSection, DrawTransform, Ellipse, Image, Line, Path,
+        Rectangle, Shape, Text, Transform,
     };
     pub use crate::graphics::{CreateDraw, CreateFont, Font};
 }
@@ -28,7 +22,6 @@ pub mod draw {
 pub mod prelude {
     pub use crate::color::{BlendMode, Color, TextureFilter};
     pub use crate::graphics::{Graphics, RenderTexture, RenderTextureBuilder, Texture, TextureBuilder};
-    pub use crate::input::{App, AppWindow, KeyCode, Keyboard, Mouse, Timer, Touch};
     pub use crate::WindowConfig;
 }
 
@@ -99,130 +92,36 @@ impl WindowConfig {
     }
 }
 
+impl From<WindowConfig> for aero::WindowConfig {
+    fn from(config: WindowConfig) -> Self {
+        config.window
+    }
+}
+
 impl Default for WindowConfig {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// What [`AppBuilder::add_config`] takes.
-pub trait AppConfig {
-    fn apply(self, config: &mut Option<aero::WindowConfig>);
-}
-
-impl AppConfig for draw::DrawConfig {
-    fn apply(self, _config: &mut Option<aero::WindowConfig>) {}
-}
-
-impl AppConfig for WindowConfig {
-    fn apply(self, config: &mut Option<aero::WindowConfig>) {
-        *config = Some(self.window);
-    }
-}
-
-type Setup<S> = Box<dyn FnOnce(&mut graphics::Graphics<'_>) -> S>;
-type OnEvent<S> = fn(&mut S, input::Event);
-type OnUpdate<S> = fn(&mut input::App, &mut S);
-type OnDraw<S> = fn(&mut input::App, &mut graphics::Graphics<'_>, &mut S);
-
-pub struct AppBuilder<S> {
-    setup: Setup<S>,
-    window: Option<aero::WindowConfig>,
-    event: Option<OnEvent<S>>,
-    update: Option<OnUpdate<S>>,
-    draw: Option<OnDraw<S>>,
-}
-
-pub fn init_with<S: 'static>(setup: impl FnOnce(&mut graphics::Graphics<'_>) -> S + 'static) -> AppBuilder<S> {
-    AppBuilder { setup: Box::new(setup), window: None, event: None, update: None, draw: None }
-}
-
-impl<S: 'static> AppBuilder<S> {
-    #[must_use]
-    pub fn add_config(mut self, config: impl AppConfig) -> Self {
-        config.apply(&mut self.window);
-        self
-    }
-
-    #[must_use]
-    pub fn event(mut self, event: OnEvent<S>) -> Self {
-        self.event = Some(event);
-        self
-    }
-
-    #[must_use]
-    pub fn update(mut self, update: OnUpdate<S>) -> Self {
-        self.update = Some(update);
-        self
-    }
-
-    #[must_use]
-    pub fn draw(mut self, draw: OnDraw<S>) -> Self {
-        self.draw = Some(draw);
-        self
-    }
-
-    pub fn build(self) -> Result<(), String> {
-        let Self { setup, window, event, update, draw } = self;
-        let config = Config::new().window(window.unwrap_or_default());
-        aero::run(config, move |cx| {
-            let mut texts = texts::Texts::default();
-            let state = setup(&mut graphics::Graphics { cx, frame: None, texts: &mut texts });
-            Runner { state, app: input::App::new(), texts, stale: false, event, update, draw }
-        })
-        .map_err(|e| e.to_string())
-    }
-}
-
-struct Runner<S> {
-    state: S,
-    app: input::App,
+/// Draws notan's way in an app that runs Aero's loop itself; kept between frames for the text it lays out.
+#[derive(Default)]
+pub struct Painter {
     texts: texts::Texts,
-    /// An update ran and no frame cleared its input yet.
-    stale: bool,
-    event: Option<OnEvent<S>>,
-    update: Option<OnUpdate<S>>,
-    draw: Option<OnDraw<S>>,
 }
 
-impl<S> Runner<S> {
-    /// notan clears the input once a frame is drawn: when none was, the next event or update does.
-    fn freshen(&mut self) {
-        if std::mem::replace(&mut self.stale, false) {
-            self.app.end_frame();
-        }
-    }
-}
-
-impl<S: 'static> aero::App for Runner<S> {
-    fn event(&mut self, _cx: &mut Cx, event: &aero::input::Event) {
-        self.freshen();
-        for typed in self.app.apply(event) {
-            if let Some(on_event) = self.event {
-                on_event(&mut self.state, typed);
-            }
-        }
+impl Painter {
+    /// What notan drew with, for `frame` while a window draws, without it outside drawing.
+    pub fn graphics<'a>(
+        &'a mut self,
+        cx: &'a mut Cx,
+        frame: Option<&'a mut aero::draw::Draw>,
+    ) -> graphics::Graphics<'a> {
+        graphics::Graphics { cx, frame, texts: &mut self.texts }
     }
 
-    fn update(&mut self, cx: &mut Cx) {
-        self.freshen();
-        self.app.timer.tick();
-        if let Some(info) = cx.window(aero::WindowId::MAIN) {
-            self.app.set_window(info);
-        }
-        if let Some(update) = self.update {
-            update(&mut self.app, &mut self.state);
-        }
-        self.stale = true;
-        cx.request_redraw();
-    }
-
-    fn draw(&mut self, cx: &mut Cx, frame: &mut aero::draw::Draw) {
-        if let Some(draw) = self.draw {
-            let mut gfx = graphics::Graphics { cx, frame: Some(frame), texts: &mut self.texts };
-            draw(&mut self.app, &mut gfx, &mut self.state);
-        }
+    /// Once a frame is drawn: drops the text it did not draw.
+    pub fn end_frame(&mut self) {
         self.texts.end_frame();
-        self.freshen();
     }
 }

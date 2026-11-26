@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use aero::input::KeyCode;
 use notan::draw::Draw;
 use notan::prelude::*;
 
 use crate::images::Images;
 use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State};
+use crate::tick::Tick;
 use crate::ui::{
     self, divider, field_clicked, list_row, page_count, text_field, Face, Field, Fonts, Frame, Gui, Label, Pager, Pill,
     Rect, SharpText, Size, Status, TextInput, Ui, View,
@@ -315,7 +317,7 @@ enum FriendAction {
     Cancel(String),
 }
 
-pub fn update_friends(app: &mut App, gui: &Gui, state: &mut State, f: &mut FriendsData) -> Transition {
+pub fn update_friends(tick: &Tick, gui: &Gui, state: &mut State, f: &mut FriendsData) -> Transition {
     poll_list(f);
     poll_search(f);
     poll_add(state, f);
@@ -337,10 +339,10 @@ pub fn update_friends(app: &mut App, gui: &Gui, state: &mut State, f: &mut Frien
     for col in 0..3 {
         let pages = page_count(lists(f)[col].len(), rows_for(view));
         f.pages[col].clamp(pages);
-        f.pages[col].update(app, &gui.ui, &gui.fonts, &state.input.keys, pager_area(view, col), pages);
+        f.pages[col].update(tick, &gui.ui, &gui.fonts, &state.input.keys, pager_area(view, col), pages);
     }
 
-    if gui.ui.clicked(search_submit_btn(view)) || (searching && app.keyboard.was_pressed(KeyCode::Enter)) {
+    if gui.ui.clicked(search_submit_btn(view)) || (searching && tick.pressed(KeyCode::Enter)) {
         let q = search_query(f);
         if looks_like_uuid(&q) {
             return crate::profile::enter_other_profile(state, q, "...".to_owned(), Some(f));
@@ -348,7 +350,7 @@ pub fn update_friends(app: &mut App, gui: &Gui, state: &mut State, f: &mut Frien
         try_search(state, f);
     }
 
-    if gui.ui.clicked(back_btn(view)) || app.keyboard.was_pressed(KeyCode::Escape) {
+    if gui.ui.clicked(back_btn(view)) || tick.back() {
         return Transition::To(Screen::Menu);
     }
 

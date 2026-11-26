@@ -1,9 +1,10 @@
+use aero::input::KeyCode;
 use notan::draw::Draw;
-use notan::prelude::*;
 
 use crate::controls::{Action, Bindings, KeyBinding, ACTIONS, RESERVED};
 use crate::pads::Pads;
 use crate::theme;
+use crate::tick::Tick;
 use crate::ui::{self, Fonts, Frame, Icon, Rect, SharpText, Size, Ui, View};
 
 const TOP: f32 = 360.0;
@@ -60,20 +61,19 @@ impl BindingsPanel {
     }
 
     /// Returns whether the bindings changed and must be saved.
-    pub fn update(&mut self, app: &App, ui: &Ui, pads: &Pads, bindings: &mut Bindings) -> bool {
+    pub fn update(&mut self, tick: &Tick, ui: &Ui, pads: &Pads, bindings: &mut Bindings) -> bool {
         let typed = self.typed.take();
         let mut changed = self.apply_label(typed, bindings);
         let view = ui.view();
-        let keyboard = &app.keyboard;
-        let erase = keyboard.was_pressed(KeyCode::Backspace) || keyboard.was_pressed(KeyCode::Delete);
+        let erase = tick.pressed(KeyCode::Backspace) || tick.pressed(KeyCode::Delete);
 
         match self.capture {
-            Some(_) if keyboard.was_pressed(KeyCode::Escape) => self.capture = None,
+            Some(_) if tick.back() => self.capture = None,
             Some((action, slot)) => {
                 match slot {
                     Slot::Key(i) if erase => bindings.set_key(action, i, None),
                     Slot::Pad if erase => bindings.set_pad(action, None),
-                    Slot::Key(i) => match keyboard.pressed.iter().copied().find(|k| !RESERVED.contains(k)) {
+                    Slot::Key(i) => match tick.input.pressed_keys().find(|k| !RESERVED.contains(k)) {
                         Some(code) => {
                             bindings.set_key(action, i, Some(KeyBinding::new(code)));
                             self.relabel = Some((action, i, code, RELABEL_FRAMES));
