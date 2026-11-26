@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "aero",
     "client",
     "loadbot",
     "server",

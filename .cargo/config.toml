@@ -40,3 +40,7 @@ strict = [
 # strip = true removes the section wasm-bindgen reads to know the enabled Wasm features
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "link-arg=--keep-section=target_features"]
+
+# Aero is a private repository: cargo fetches it with the system's git, which holds the SSH key.
+[net]
+git-fetch-with-cli = true

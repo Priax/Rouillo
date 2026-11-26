@@ -30,6 +30,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Access to the private Aero repository
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.AERO_DEPLOY_KEY }}
+
       - name: Check the tag matches the version
         if: github.event_name == 'push'
         shell: bash

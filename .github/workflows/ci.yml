@@ -28,7 +28,7 @@ jobs:
           components: rustfmt
       - run: cargo +nightly fmt --check
 
-  # Clippy and tests share one job so the (slow) native client build via notan
+  # Clippy and tests share one job so the (slow) native client build
   # is compiled once and reused across both steps.
   check:
     name: clippy + test
@@ -50,7 +50,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # notan builds natively against system X11/GL/audio libraries.
+      - name: Access to the private Aero repository
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.AERO_DEPLOY_KEY }}
+
+      # The client builds natively against system X11/GL/audio libraries.
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -86,18 +91,26 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
+      - name: Access to the private Aero repository
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.AERO_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p shared --release
 
   # The browser build has code of its own (Web Audio, local storage) that the
-  # native jobs never compile. Nothing to install: notan needs no system
+  # native jobs never compile. Nothing to install: Aero needs no system
   # libraries on wasm.
   wasm:
     name: clippy (wasm client)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Access to the private Aero repository
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.AERO_DEPLOY_KEY }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown

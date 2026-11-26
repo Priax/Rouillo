@@ -135,13 +135,13 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "aero"
 version = "0.1.0"
+source = "git+ssh://git@github.com/Priax/aero.git?rev=4895dee3786f6cdc47ed5b115af237926c7f5104#4895dee3786f6cdc47ed5b115af237926c7f5104"
 dependencies = [
  "accesskit",
  "accesskit_winit",
  "arboard",
  "bytemuck",
  "etagere",
- "fontique",
  "gilrs",
  "glam",
  "half",
@@ -1830,17 +1830,9 @@ dependencies = [
  "hashbrown 0.17.2",
  "linebender_resource_handle",
  "memmap2",
- "objc2 0.6.5",
- "objc2-core-foundation",
- "objc2-core-text",
- "objc2-foundation 0.3.2",
  "parlance",
  "read-fonts",
- "roxmltree",
  "smallvec",
- "windows",
- "windows-core 0.62.2",
- "yeslogic-fontconfig-sys",
 ]
 
 [[package]]
@@ -4729,15 +4721,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "roxmltree"
-version = "0.21.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9da7f59328b09405b181fee1018925fad50f157afb43c0c0f5c522c256dd5907"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7264,17 +7247,6 @@ checksum = "b5f6765e852b9b4dc8e2a76843e4d64d1cea8e79bcde0b6901aea8e7c7f08282"
 dependencies = [
  "bit-vec",
  "time",
-]
-
-[[package]]
-name = "yeslogic-fontconfig-sys"
-version = "6.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d8b8abf912b9a29ff112e1671c97c33636903d13a69712037190e6805af4f76"
-dependencies = [
- "dlib",
- "once_cell",
- "pkg-config",
 ]
 
 [[package]]
