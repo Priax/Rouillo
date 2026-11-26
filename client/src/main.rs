@@ -566,10 +566,11 @@ struct Rouillo(Root);
 
 impl aero::App for Rouillo {
     fn event(&mut self, _cx: &mut Cx, event: &Event) {
+        if matches!(event, Event::GpuReset) {
+            self.0.gui.images.rebuild();
+        }
         #[cfg(not(target_arch = "wasm32"))]
         event_typed(&mut self.0, event);
-        #[cfg(target_arch = "wasm32")]
-        let _ = event;
     }
 
     /// Every frame asks for the next: games, the network and the animations go on without input.
