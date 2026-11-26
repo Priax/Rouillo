@@ -1,35 +1,19 @@
 use aero::draw::Draw;
 use aero::geom::Color;
 use aero::image::Image;
+use aero::theme::{Painter, Theme};
 
-use super::{list_row, portrait, Face, Fonts, Persona, Rect, Ui};
-use crate::theme;
-
-const UNDERLINE: f32 = 3.0;
+use super::{list_row, portrait, Fonts, Persona, Rect, Ui};
 
 impl Ui {
-    /// A tab: its label, and an underline that grows from the centre on
-    /// hover and spans the whole tab once selected.
+    /// A tab, which takes no click while it is the one shown.
     pub fn tab(&mut self, draw: &mut Draw, fonts: &mut Fonts, rect: Rect, label: &str, active: bool) {
-        let pal = self.palette();
         let r = self.interact(label, rect, !active);
         if r.entered {
             crate::audio::play_ui_hover();
         }
-        let (cx, bottom) = (rect.x + rect.w / 2.0, rect.y + rect.h);
-        let reach = if active { 1.0 } else { 0.35 * r.hover };
-        if reach > 0.0 {
-            let w = rect.w * reach;
-            draw.rect(Rect::at(cx - w / 2.0, bottom - UNDERLINE, w, UNDERLINE))
-                .radius(UNDERLINE / 2.0)
-                .color(pal.accent);
-        }
-        let color = if active { pal.text } else { theme::mix(pal.text_muted, pal.text, r.hover) };
-        fonts
-            .write(draw, Face::Display, label)
-            .center(cx, rect.y + rect.h / 2.0 - UNDERLINE)
-            .size(theme::size::HEADING)
-            .color(color);
+        let look = self.look(fonts);
+        look.tab(&mut Painter { draw, fonts: fonts.library() }, rect.into(), label, active, r.visual(true));
     }
 
     /// A round avatar showing the player's initial.
@@ -45,24 +29,13 @@ impl Ui {
         portrait(draw, &pal, fonts, center, radius, &who);
     }
 
-    /// Text that can be clicked: it takes the link colour and an underline
-    /// when hovered. `enabled` false draws it as plain text.
     pub fn link(&mut self, draw: &mut Draw, fonts: &mut Fonts, rect: Rect, text: &str, enabled: bool) {
-        let pal = self.palette();
         let r = self.interact(text, rect, enabled);
         if r.entered {
             crate::audio::play_ui_hover();
         }
-        let (cx, cy) = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
-        fonts.write(draw, Face::Text, text).center(cx, cy).size(theme::size::BODY).color(theme::mix(
-            pal.text,
-            theme::LINK,
-            r.hover,
-        ));
-        if r.hover > 0.01 {
-            let w = rect.w * 0.6 * r.hover;
-            draw.rect(Rect::at(cx - w / 2.0, cy + 12.0, w, 1.5)).color(theme::LINK.with_alpha(r.hover));
-        }
+        let look = self.look(fonts);
+        look.link(&mut Painter { draw, fonts: fonts.library() }, rect.into(), text, r.visual(enabled));
     }
 
     /// A list row that reacts to the pointer: it lights up and grows an

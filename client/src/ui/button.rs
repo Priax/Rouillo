@@ -1,20 +1,10 @@
 use aero::draw::Draw;
-use aero::geom::Color;
-use aero::math::{vec2, Affine2};
+use aero::geom::{Color, Rect as Area};
+use aero::math::vec2;
 use aero::path::Cap;
+use aero::theme::{Content, Painter, Theme};
 
-use super::{Face, Fonts, Rect, Response, Ui};
-use crate::theme::{self, Palette};
-
-const HOVER_GROW: f32 = 0.03;
-const PRESS_SHRINK: f32 = 0.04;
-const SHADOW_LAYERS: u8 = 4;
-const SHADOW_ALPHA: f32 = 0.07;
-const SHEEN_ALPHA: f32 = 0.05;
-const BORDER_WIDTH: f32 = 1.5;
-const TEXT_HEIGHT: f32 = 0.52;
-const TEXT_MIN: f32 = 12.0;
-const TEXT_PADDING: f32 = 24.0;
+use super::{Fonts, Rect, Ui};
 
 const ICON_LENGTH: f32 = 0.36;
 const ICON_THICKNESS: f32 = 0.09;
@@ -109,64 +99,20 @@ impl Ui {
             crate::audio::play_ui_hover();
         }
         let time = self.time() as f32;
-        paint(draw, &self.palette(), fonts, rect, (label, time), r, enabled);
-    }
-}
-
-fn paint(
-    draw: &mut Draw,
-    pal: &Palette,
-    fonts: &mut Fonts,
-    b: Rect,
-    (label, time): (Label, f32),
-    r: Response,
-    enabled: bool,
-) {
-    let center = vec2(b.x + b.w / 2.0, b.y + b.h / 2.0);
-    let scale = 1.0 + HOVER_GROW * r.hover - PRESS_SHRINK * r.press;
-    draw.push_transform(
-        Affine2::from_translation(center)
-            * Affine2::from_scale(vec2(scale, scale))
-            * Affine2::from_translation(-center),
-    );
-
-    if enabled {
-        let lift = 1.0 + r.hover - r.press;
-        for i in 1..=SHADOW_LAYERS {
-            let spread = f32::from(i);
-            draw.rect(Rect::at(b.x - spread, b.y - spread + spread * lift, b.w + 2.0 * spread, b.h + 2.0 * spread))
-                .radius(theme::RADIUS + spread)
-                .color(Color::BLACK.with_alpha(SHADOW_ALPHA));
+        let look = self.look(fonts);
+        let visual = r.visual(enabled);
+        let painter = &mut Painter { draw, fonts: fonts.library() };
+        match label {
+            Label::Text(text) => look.button(painter, rect.into(), Content::Text(text), visual),
+            Label::Icon(icon) => {
+                let paint = |draw: &mut Draw, area: Area, color: Color| {
+                    let center = area.center();
+                    paint_icon(draw, icon, (center.x, center.y), area.size().min_element(), color, time);
+                };
+                look.button(painter, rect.into(), Content::Paint(&paint), visual);
+            }
         }
     }
-
-    let (fill, border, text) = if enabled {
-        (theme::mix(pal.raised, pal.raised_hover, r.hover), theme::mix(pal.border, pal.accent, r.hover), pal.text)
-    } else {
-        (pal.disabled, pal.divider, pal.text_disabled)
-    };
-    draw.rect(b).radius(theme::RADIUS).color(fill);
-    draw.rect(Rect::at(b.x, b.y, b.w, b.h / 2.0))
-        .radii([theme::RADIUS, theme::RADIUS, 0.0, 0.0])
-        .color(Color::WHITE.with_alpha(SHEEN_ALPHA + SHEEN_ALPHA * r.hover));
-    if r.flash > 0.0 {
-        draw.rect(b).radius(theme::RADIUS).color(Color::WHITE.with_alpha(0.25 * r.flash));
-    }
-    draw.rect(b).radius(theme::RADIUS).stroke(border, BORDER_WIDTH);
-
-    match label {
-        Label::Text(label) => {
-            // As tall as the button allows, narrowed only if it would overflow.
-            let tall = b.h * TEXT_HEIGHT;
-            let width = fonts.width(Face::Display, label, tall);
-            let room = b.w - TEXT_PADDING;
-            let size = if width > room { tall * room / width } else { tall }.max(TEXT_MIN);
-            fonts.write(draw, Face::Display, label).center(center.x, center.y).size(size).color(text);
-        }
-        Label::Icon(icon) => paint_icon(draw, icon, (center.x, center.y), b.h.min(b.w), text, time),
-    }
-
-    draw.pop_transform();
 }
 
 fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, color: Color, time: f32) {

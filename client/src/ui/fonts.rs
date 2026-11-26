@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use aero::draw::Draw;
 use aero::geom::Color;
@@ -21,13 +22,25 @@ pub enum Face {
 /// have, rather than its em.
 pub struct Fonts {
     library: aero::text::Fonts,
-    faces: [Family; 2],
+    faces: Faces,
     kept: HashMap<u64, Kept>,
 }
+
+/// The two families and how their sizes turn into Aero's, for whatever draws text the game's way.
+#[derive(Clone)]
+pub struct Faces(Arc<[Family; 2]>);
 
 struct Family {
     name: String,
     em_per_size: f32,
+}
+
+impl Faces {
+    /// A size spanning the font's ascent and descent, its lines as tall.
+    pub fn style(&self, face: Face, size: f32) -> TextStyle<'_> {
+        let family = &self.0[face as usize];
+        TextStyle::new().family(&family.name).size(size * family.em_per_size).line_height(1.0 / family.em_per_size)
+    }
 }
 
 /// A layout kept while it is drawn or measured every frame.
@@ -46,7 +59,7 @@ impl Fonts {
             let name = library.add(data).into_iter().next().ok_or("no font in the data")?;
             Ok(Family { name, em_per_size: em_per_size(data)? })
         };
-        Ok(Self { faces: [family(TEXT)?, family(DISPLAY)?], library, kept: HashMap::new() })
+        Ok(Self { faces: Faces(Arc::new([family(TEXT)?, family(DISPLAY)?])), library, kept: HashMap::new() })
     }
 
     pub fn layout(&mut self, face: Face, text: &str, size: f32) -> &TextLayout {
@@ -56,6 +69,16 @@ impl Fonts {
     /// Drops the layouts this frame did not use.
     pub fn end_frame(&mut self) {
         self.kept.retain(|_, kept| std::mem::replace(&mut kept.used, false));
+        self.library.next_frame();
+    }
+
+    pub fn faces(&self) -> Faces {
+        self.faces.clone()
+    }
+
+    /// The fonts themselves, for a theme to draw with.
+    pub fn library(&mut self) -> &mut aero::text::Fonts {
+        &mut self.library
     }
 
     /// Draws `text` with its top left corner at `at`.
@@ -144,7 +167,7 @@ impl Fonts {
 fn layout<'a>(
     kept: &'a mut HashMap<u64, Kept>,
     library: &mut aero::text::Fonts,
-    faces: &[Family; 2],
+    faces: &Faces,
     (face, text, size): (Face, &str, f32),
 ) -> &'a TextLayout {
     let mut hasher = std::hash::DefaultHasher::new();
@@ -154,11 +177,7 @@ fn layout<'a>(
     let kept = match entry {
         Entry::Occupied(found) if same(found.get()) => found.into_mut(),
         entry => {
-            let family = &faces[face as usize];
-            let style = TextStyle::new()
-                .family(&family.name)
-                .size(size * family.em_per_size)
-                .line_height(1.0 / family.em_per_size);
+            let style = faces.style(face, size);
             let made = Kept { face, size, text: text.to_owned(), layout: library.layout(text, &style), used: false };
             match entry {
                 Entry::Occupied(mut taken) => {

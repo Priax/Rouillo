@@ -8,6 +8,7 @@ mod fonts;
 mod input;
 mod keys;
 mod layout;
+mod look;
 mod modal;
 mod pager;
 mod panel;
@@ -30,12 +31,13 @@ pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge,
 mod clipboard;
 pub use clipboard::get as clipboard_text;
 pub use field::{area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field};
-pub use fonts::{Face, Fonts};
+pub use fonts::{Face, Faces, Fonts};
 pub use input::TextInput;
 pub use keys::EditKeys;
 #[cfg(target_arch = "wasm32")]
 pub use keys::Shortcuts;
 pub use layout::{Frame, ListCard, Size, FILL};
+pub use look::Look;
 pub use modal::Modal;
 pub use pager::{page_count, Pager, PAGER_H};
 pub use panel::{action_row, card_body, card_height, panel_card, SettingsGrid, SettingsPanel, TILE_H};
@@ -203,6 +205,12 @@ struct Response {
     entered: bool,
 }
 
+impl Response {
+    const fn visual(self, enabled: bool) -> aero::theme::Visual {
+        aero::theme::Visual { hover: self.hover, press: self.press, flash: self.flash, focused: false, enabled }
+    }
+}
+
 impl Ui {
     /// Called at the start of each frame, before the screen reacts to input:
     /// a click lands on the buttons drawn last frame, the ones the player saw,
@@ -267,6 +275,11 @@ impl Ui {
     /// How far the current screen is into its entrance, eased, in `0..=1`.
     fn transition(&self) -> f32 {
         ease_out(transition_progress(self.time, self.entered_at, self.fade))
+    }
+
+    /// The look of the game's widgets, in this screen's colors.
+    pub fn look(&self, fonts: &Fonts) -> Look {
+        Look { faces: fonts.faces(), palette: self.palette }
     }
 
     pub fn keep_moving(&mut self) {
