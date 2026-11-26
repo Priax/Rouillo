@@ -1,9 +1,8 @@
 use aero::draw::Draw;
 use aero::geom::Color;
-use aero::image::Image;
 use aero::theme::{Painter, Theme};
 
-use super::{list_row, portrait, Fonts, Persona, Rect, Ui};
+use super::{list_row, Fonts, Rect, Ui};
 
 impl Ui {
     /// A tab, which takes no click while it is the one shown.
@@ -14,19 +13,6 @@ impl Ui {
         }
         let look = self.look(fonts);
         look.tab(&mut Painter { draw, fonts: fonts.library() }, rect.into(), label, active, r.visual(true));
-    }
-
-    /// A round avatar showing the player's initial.
-    pub fn avatar(&mut self, draw: &mut Draw, fonts: &mut Fonts, rect: Rect, name: &str, picture: Option<&Image>) {
-        let pal = self.palette();
-        let r = self.interact_in(name, rect, super::Area::Pointer, true);
-        if r.entered {
-            crate::audio::play_ui_hover();
-        }
-        let center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
-        let radius = rect.w.min(rect.h) / 2.0 * (1.0 + 0.05 * r.hover);
-        let who = Persona { name, glow: r.hover, picture };
-        portrait(draw, &pal, fonts, center, radius, &who);
     }
 
     pub fn link(&mut self, draw: &mut Draw, fonts: &mut Fonts, rect: Rect, text: &str, enabled: bool) {

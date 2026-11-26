@@ -1,8 +1,10 @@
 use aero::draw::Draw;
 use aero::geom::{Color, Gradient};
 use aero::math::Vec2;
+use aero::theme::Visual;
 
 use super::{Area, Face, Fonts, Rect, Triangles, Ui};
+use crate::theme::Palette;
 
 const WIDTH: f32 = 0.56;
 const HOVER_WIDTH: f32 = 0.10;
@@ -25,42 +27,59 @@ impl Ui {
         color: Color,
         enabled: bool,
     ) {
-        let pal = self.palette();
-        let color = if enabled { color } else { pal.disabled };
         let r = self.interact_in(label, row, Area::Bar, enabled);
         if r.entered {
             crate::audio::play_ui_hover();
         }
-
-        draw.rect(row).color(BAND);
-
-        let cx = row.x + row.w / 2.0;
-        let bar = Slanted::of(row, r.hover);
-        let slant = bar.slant;
-
-        glow(draw, bar, color.with_alpha(0.45 * r.hover));
-        bar.fill(draw, color);
-
-        let triangles = Triangles {
-            seed: seed_of(label),
-            size: row.h * 1.2,
-            density: 2.5,
-            speed: 0.15,
-            color: Color::WHITE.with_alpha(0.13),
-        };
-        let area = Rect::at(bar.left - slant, row.y, bar.right - bar.left + 2.0 * slant, row.h);
-        triangles.draw_clipped(draw, area, self.time(), Some(&bar.corners()));
-
-        if r.flash > 0.0 {
-            bar.fill(draw, Color::WHITE.with_alpha(0.3 * r.flash));
-        }
-        let shrink = 1.0 - 0.03 * r.press;
-        fonts
-            .write(draw, Face::Display, label)
-            .center(cx, row.y + row.h / 2.0)
-            .size(row.h * TEXT_HEIGHT * shrink)
-            .color(if enabled { Color::WHITE } else { pal.text_disabled });
+        let time = self.time();
+        paint(draw, fonts, (&self.palette(), time), row, (label, color), r.visual(enabled));
     }
+}
+
+/// A slanted bar across `row`, wider when hovered, with triangles rising through it.
+pub(super) fn paint(
+    draw: &mut Draw,
+    fonts: &mut Fonts,
+    (pal, time): (&Palette, f64),
+    row: Rect,
+    (label, color): (&str, Color),
+    visual: Visual,
+) {
+    let color = if visual.enabled { color } else { pal.disabled };
+    draw.rect(row).color(BAND);
+
+    let cx = row.x + row.w / 2.0;
+    let bar = Slanted::of(row, visual.hover);
+    let slant = bar.slant;
+
+    glow(draw, bar, color.with_alpha(0.45 * visual.hover));
+    bar.fill(draw, color);
+
+    let triangles = Triangles {
+        seed: seed_of(label),
+        size: row.h * 1.2,
+        density: 2.5,
+        speed: 0.15,
+        color: Color::WHITE.with_alpha(0.13),
+    };
+    let area = Rect::at(bar.left - slant, row.y, bar.right - bar.left + 2.0 * slant, row.h);
+    triangles.draw_clipped(draw, area, time, Some(&bar.corners()));
+
+    if visual.flash > 0.0 {
+        bar.fill(draw, Color::WHITE.with_alpha(0.3 * visual.flash));
+    }
+    let shrink = 1.0 - 0.03 * visual.press;
+    fonts
+        .write(draw, Face::Display, label)
+        .center(cx, row.y + row.h / 2.0)
+        .size(row.h * TEXT_HEIGHT * shrink)
+        .color(if visual.enabled { Color::WHITE } else { pal.text_disabled });
+}
+
+/// Where a bar takes the pointer: its middle, as wide as it is drawn hovered or not.
+pub(super) fn reach(row: Rect, hovered: bool) -> Rect {
+    let bar = Slanted::of(row, f32::from(u8::from(hovered)));
+    Rect::at(bar.left, bar.top, bar.right - bar.left, bar.bottom - bar.top)
 }
 
 #[derive(Clone, Copy)]

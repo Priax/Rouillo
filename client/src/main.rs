@@ -404,8 +404,8 @@ fn update(cx: &mut Cx, root: &mut Root) {
     let transition = match nav.current_mut() {
         Screen::Title => title::update_title(tick, state),
         Screen::Auth => login::update_auth(tick, gui, state),
-        Screen::Menu => menu::update_menu(tick, gui, state, false),
-        Screen::PlayMenu => menu::update_menu(tick, gui, state, true),
+        Screen::Menu => menu::update_menu(tick, state, false),
+        Screen::PlayMenu => menu::update_menu(tick, state, true),
         Screen::Settings => menu::update_settings(tick, gui, state),
         Screen::RoomBrowser => rooms::update_browser(tick, gui, state),
         Screen::CreateRoom => rooms::update_create_room(tick, gui, state),
@@ -464,8 +464,8 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     match screen {
         Screen::Title => title::draw_title(ui.draw, gui),
         Screen::Auth => transition = login::show(ui, gui, state),
-        Screen::Menu => menu::draw_menu(ui.draw, gui, state, false),
-        Screen::PlayMenu => menu::draw_menu(ui.draw, gui, state, true),
+        Screen::Menu => transition = menu::show_menu(ui, gui, state, false),
+        Screen::PlayMenu => transition = menu::show_menu(ui, gui, state, true),
         Screen::Settings => menu::draw_settings(ui.draw, gui, state),
         Screen::RoomBrowser => rooms::draw_browser(ui.draw, gui, state),
         Screen::CreateRoom => rooms::draw_create_room(ui.draw, gui, state),

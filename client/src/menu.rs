@@ -5,7 +5,7 @@ use aero::math::vec2;
 use crate::nav::Transition;
 use crate::state::{AuthForm, Screen, Settings, State};
 use crate::tick::Tick;
-use crate::ui::{Face, Frame, Gui, Rect, SettingsPanel, Status, View};
+use crate::ui::{widgets, Face, Frame, Gui, Rect, SettingsPanel, Status, View};
 use crate::{http, theme};
 
 const ROW_H: f32 = 64.0;
@@ -90,49 +90,40 @@ fn outdated_btn(ww: f32) -> Rect {
     Rect::at(0.0, avatar.y, avatar.x - 20.0, avatar.h).right(190.0).middle(50.0)
 }
 
-pub fn update_menu(tick: &Tick, gui: &mut Gui, state: &mut State, play: bool) -> Transition {
-    let view = gui.ui.view();
-    let ww = view.w;
-    let logged_in = state.auth.is_some();
-
-    let clicked = menu_rows(view, items(play, logged_in)).find(|&(_, row)| gui.ui.bar_clicked(row));
-    match clicked.map(|(item, _)| item) {
-        Some(MenuItem::Play) => {
-            state.notice.clear();
-            return Transition::To(Screen::PlayMenu);
-        }
-        Some(MenuItem::Multiplayer | MenuItem::Ranked) if state.net.too_old => {
-            state.notice = Status::error("Mettez d'abord le jeu à jour, avec le bouton en haut à droite.");
-        }
-        Some(MenuItem::Multiplayer) => return start_play(state),
-        Some(MenuItem::Ranked) => return crate::ranked::enter(state),
-        Some(MenuItem::Leaderboard) => return crate::leaderboard::enter(state),
-        Some(MenuItem::Help) => return crate::help::enter(),
-        Some(MenuItem::Solo) => {
-            state.notice.clear();
-            return Transition::To(Screen::SoloSetup);
-        }
-        Some(MenuItem::Friends) => return crate::friends::enter_friends(state),
-        Some(MenuItem::Settings) => return Transition::To(Screen::Settings),
-        Some(MenuItem::Logout) => return do_logout(state),
-        Some(MenuItem::Back) => return Transition::To(Screen::Menu),
-        None => {
-            if play && tick.back() {
-                return Transition::To(Screen::Menu);
-            }
-        }
+/// What a menu does with the keys and the gamepad; its clicks are in [`show_menu`].
+pub fn update_menu(tick: &Tick, state: &mut State, play: bool) -> Transition {
+    if play && tick.back() {
+        return Transition::To(Screen::Menu);
     }
-
-    if state.outdated && gui.ui.clicked(outdated_btn(ww)) {
-        crate::update::apply();
-    }
-
-    let profile_pad = state.input.pads.pressed(crate::pads::Pad::North);
-    if logged_in && (gui.ui.clicked(avatar_rect(ww)) || profile_pad) {
+    if state.auth.is_some() && state.input.pads.pressed(crate::pads::Pad::North) {
         return crate::profile::enter_profile(state);
     }
-
     Transition::Stay
+}
+
+fn choose(item: MenuItem, state: &mut State) -> Transition {
+    match item {
+        MenuItem::Play => {
+            state.notice.clear();
+            Transition::To(Screen::PlayMenu)
+        }
+        MenuItem::Multiplayer | MenuItem::Ranked if state.net.too_old => {
+            state.notice = Status::error("Mettez d'abord le jeu à jour, avec le bouton en haut à droite.");
+            Transition::Stay
+        }
+        MenuItem::Multiplayer => start_play(state),
+        MenuItem::Ranked => crate::ranked::enter(state),
+        MenuItem::Leaderboard => crate::leaderboard::enter(state),
+        MenuItem::Help => crate::help::enter(),
+        MenuItem::Solo => {
+            state.notice.clear();
+            Transition::To(Screen::SoloSetup)
+        }
+        MenuItem::Friends => crate::friends::enter_friends(state),
+        MenuItem::Settings => Transition::To(Screen::Settings),
+        MenuItem::Logout => do_logout(state),
+        MenuItem::Back => Transition::To(Screen::Menu),
+    }
 }
 
 pub fn do_logout(state: &mut State) -> Transition {
@@ -160,67 +151,80 @@ pub fn clear_auth(state: &mut State) {
     state.solo.best_slot = None;
 }
 
-pub fn draw_menu(draw: &mut Draw, gui: &mut Gui, state: &State, play: bool) {
+pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, play: bool) -> Transition {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let (ww, wh) = view.size();
     let items = items(play, state.auth.is_some());
+    let mut chosen = None;
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
     gui.fonts
-        .write(draw, Face::Display, "Rouillo")
+        .write(ui.draw, Face::Display, "Rouillo")
         .center(ww / 2.0, menu_top(view, items.len()) - 80.0)
         .size(theme::size::HERO)
         .color(pal.title);
     for (item, row) in menu_rows(view, items) {
-        gui.ui.menu_bar(draw, &mut gui.fonts, row, item.label(), item.color());
+        if widgets::menu_bar(ui, gui, row, (item.label(), item.color()), true) {
+            chosen = Some(item);
+        }
     }
 
     if state.outdated {
         let btn = outdated_btn(ww);
-        gui.ui.button(draw, &mut gui.fonts, btn, "Mettre à jour");
+        if widgets::button(ui, "update", btn, "Mettre à jour", true) {
+            crate::update::apply();
+        }
         if let Some((text, done)) = crate::update::progress() {
             let bar = Rect::at(btn.x, btn.y + btn.h + 10.0, btn.w, 6.0);
             let y = btn.y + btn.h + if done.is_some() { 30.0 } else { 18.0 };
             if let Some(done) = done {
-                draw.rect(bar).radius(3.0).color(pal.text_dim.with_alpha(0.3));
-                draw.rect(Rect::at(bar.x, bar.y, bar.w * done, bar.h)).radius(3.0).color(pal.title);
+                ui.draw.rect(bar).radius(3.0).color(pal.text_dim.with_alpha(0.3));
+                ui.draw.rect(Rect::at(bar.x, bar.y, bar.w * done, bar.h)).radius(3.0).color(pal.title);
             }
             gui.fonts
-                .write(draw, Face::Text, &text)
+                .write(ui.draw, Face::Text, &text)
                 .center(btn.x + btn.w / 2.0, y)
                 .size(theme::size::SMALL)
                 .color(pal.text_dim);
         }
     }
 
+    let mut profile = false;
     if let Some(auth) = &state.auth {
         let avatar = avatar_rect(ww);
         let picture = gui.images.get_opt(auth.avatar_url.as_deref());
         let (x, y) = (avatar.x + 6.0, avatar.y + avatar.h - 6.0);
 
-        gui.ui.avatar(draw, &mut gui.fonts, avatar, &auth.username, picture.as_ref());
+        profile = widgets::avatar(ui, gui, avatar, &auth.username, picture.as_ref());
         if gui.ui.pad_active() {
-            draw.circle(vec2(x, y), 14.0).color(theme::GOLD);
+            ui.draw.circle(vec2(x, y), 14.0).color(theme::GOLD);
             gui.fonts
-                .write(draw, Face::Display, crate::pads::Pad::North.label())
+                .write(ui.draw, Face::Display, crate::pads::Pad::North.label())
                 .center(x, y)
                 .size(theme::size::LABEL)
                 .color(Color::BLACK);
         }
         gui.fonts
-            .write(draw, Face::Text, &auth.username)
+            .write(ui.draw, Face::Text, &auth.username)
             .center(avatar.x + avatar.w / 2.0, avatar.y + avatar.h + 16.0)
             .size(theme::size::BODY)
             .color(pal.text_dim);
     }
 
     if let Some((msg, color)) = state.notice.shown(&pal) {
-        gui.fonts.write(draw, Face::Text, msg).center(ww / 2.0, wh - 60.0).size(theme::size::EMPHASIS).color(color);
+        gui.fonts.write(ui.draw, Face::Text, msg).center(ww / 2.0, wh - 60.0).size(theme::size::EMPHASIS).color(color);
     }
+    crate::title::draw_version(ui.draw, &gui.ui, &mut gui.fonts);
 
-    crate::title::draw_version(draw, &gui.ui, &mut gui.fonts);
+    if let Some(item) = chosen {
+        return choose(item, state);
+    }
+    if profile {
+        return crate::profile::enter_profile(state);
+    }
+    Transition::Stay
 }
 
 fn settings_panel(view: View) -> SettingsPanel {

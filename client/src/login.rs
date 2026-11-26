@@ -203,8 +203,8 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Tran
         let field = Field { placeholder, input, focused: form.focused == which };
         text_field(ui.draw, &mut gui.ui, &mut gui.fonts, rect, &field);
     }
-    let submitted = widgets::button(ui, layout.submit, submit_label, !loading);
-    let guest = widgets::button(ui, layout.guest, "Jouer en invité", true);
+    let submitted = widgets::button(ui, "submit", layout.submit, submit_label, !loading);
+    let guest = widgets::button(ui, "guest", layout.guest, "Jouer en invité", true);
     if let Some((msg, color)) = form.status.shown(&pal) {
         gui.fonts.write(ui.draw, Face::Text, msg).center(cx, base_y + 370.0).size(theme::size::LABEL).color(color);
     }
