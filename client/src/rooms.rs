@@ -11,8 +11,8 @@ use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, Input, Invite, Network, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
-    self, field_clicked, list_row, text_field, EditKeys, Face, Field, Fonts, Frame, Gui, Icon, ListCard, Modal, Pill,
-    Rect, SettingsGrid, Size, Stepper, TextInput, Ui, View, FILL, PAGER_H,
+    self, field_clicked, list_row, text_field, widgets, EditKeys, Face, Field, Fonts, Frame, Gui, Icon, ListCard,
+    Modal, Pill, Rect, SettingsGrid, Size, Stepper, TextInput, Ui, View, FILL, PAGER_H,
 };
 use crate::{board_size, http, theme};
 
@@ -48,81 +48,85 @@ fn browser_buttons(view: View) -> BrowserButtons {
     BrowserButtons { create, join_id, refresh, back: frame.back }
 }
 
+/// What the room list does with the keys; its clicks are in [`show_browser`].
 pub fn update_browser(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
     let view = gui.ui.view();
-    let b = browser_buttons(view);
     let pages = room_pages(&state.rooms, view);
-
     state.room_pager.clamp(pages);
-    state.room_pager.update(tick, &gui.ui, &mut gui.fonts, &state.input.keys, room_list(view).pager(), pages);
-
-    let clicked = shown_rooms(gui.ui.view(), state)
-        .find(|&(i, _)| gui.ui.clicked(room_list(view).row(i)))
-        .map(|(_, room)| (room.id, watch_only(room)));
-    if let Some((id, watch)) = clicked {
-        state.notice.clear();
-        let msg = if watch { ClientMessage::Spectate { id } } else { ClientMessage::JoinRoom { id } };
-        state.net.conn.send(&msg);
-        return Transition::Stay;
+    state.room_pager.update_keys(tick, &gui.ui, &mut gui.fonts, &state.input.keys, room_list(view).pager(), pages);
+    if tick.back() {
+        return leave_browser(state);
     }
-
-    if gui.ui.clicked(b.create) {
-        state.text_input = TextInput::default().max_chars(24);
-        state.notice.clear();
-        return Transition::To(Screen::CreateRoom);
-    } else if gui.ui.clicked(b.join_id) {
-        state.text_input = TextInput::default().max_chars(9).only(|c| c.is_ascii_digit());
-        state.notice.clear();
-        return Transition::To(Screen::JoinById);
-    } else if gui.ui.clicked(b.refresh) {
-        state.net.conn.send(&ClientMessage::RequestRoomList);
-    } else if gui.ui.clicked(b.back) || tick.back() {
-        state.net.conn.disconnect();
-        state.rooms.clear();
-        return Transition::To(Screen::PlayMenu);
-    }
-
     Transition::Stay
 }
 
-pub fn draw_browser(draw: &mut Draw, gui: &mut Gui, state: &State) {
+fn leave_browser(state: &mut State) -> Transition {
+    state.net.conn.disconnect();
+    state.rooms.clear();
+    Transition::To(Screen::PlayMenu)
+}
+
+pub fn show_browser(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let card = room_list(view).card;
     let pages = room_pages(&state.rooms, view);
     let b = browser_buttons(view);
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    gui.ui.page_header(draw, &mut gui.fonts, "Rooms");
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    gui.ui.page_header(ui.draw, &mut gui.fonts, "Rooms");
 
-    ui::card(draw, &pal, card);
+    ui::card(ui.draw, &pal, card);
     if state.rooms.is_empty() {
         gui.fonts
-            .write(draw, Face::Text, "Aucune room. Créez-en une !")
+            .write(ui.draw, Face::Text, "Aucune room. Créez-en une !")
             .center(card.x + card.w / 2.0, card.y + 60.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text_muted);
     }
-    for (i, room) in shown_rooms(gui.ui.view(), state) {
-        draw_room_row(draw, gui, room_list(view).row(i), i, room);
+    let mut chosen = None;
+    for (i, room) in shown_rooms(view, state) {
+        let row = room_list(view).row(i);
+        if widgets::row(ui, gui, ("room", room.id), row, i) {
+            chosen = Some((room.id, watch_only(room)));
+        }
+        draw_room_row(ui.draw, gui, row, room);
     }
     if pages > 1 {
-        state.room_pager.draw(draw, &mut gui.ui, &mut gui.fonts, room_list(view).pager(), pages);
+        state.room_pager.show(ui, gui, "pages", room_list(view).pager(), pages);
     }
 
-    gui.ui.button(draw, &mut gui.fonts, b.create, "Créer une room");
-    gui.ui.button(draw, &mut gui.fonts, b.join_id, "Rejoindre par ID");
-    gui.ui.button(draw, &mut gui.fonts, b.refresh, "Rafraîchir");
-    gui.ui.button(draw, &mut gui.fonts, b.back, "Retour");
-
+    let create = widgets::button(ui, "create", b.create, "Créer une room", true);
+    let join_id = widgets::button(ui, "join id", b.join_id, "Rejoindre par ID", true);
+    let refresh = widgets::button(ui, "refresh", b.refresh, "Rafraîchir", true);
+    let back = widgets::button(ui, "back", b.back, "Retour", true);
     if let Some((msg, color)) = state.notice.shown(&pal) {
         gui.fonts
-            .write(draw, Face::Text, msg)
+            .write(ui.draw, Face::Text, msg)
             .center(view.w / 2.0, b.back.y + b.back.h / 2.0)
             .size(theme::size::EMPHASIS)
             .color(color);
     }
+
+    if let Some((id, watch)) = chosen {
+        state.notice.clear();
+        let msg = if watch { ClientMessage::Spectate { id } } else { ClientMessage::JoinRoom { id } };
+        state.net.conn.send(&msg);
+    } else if create {
+        state.text_input = TextInput::default().max_chars(24);
+        state.notice.clear();
+        return Transition::To(Screen::CreateRoom);
+    } else if join_id {
+        state.text_input = TextInput::default().max_chars(9).only(|c| c.is_ascii_digit());
+        state.notice.clear();
+        return Transition::To(Screen::JoinById);
+    } else if refresh {
+        state.net.conn.send(&ClientMessage::RequestRoomList);
+    } else if back {
+        return leave_browser(state);
+    }
+    Transition::Stay
 }
 
 /// A full room, or one already playing, is joined as a spectator.
@@ -130,7 +134,8 @@ fn watch_only(room: &RoomInfo) -> bool {
     room.ranked || (!room.friends_only && (room.players >= room.max || room.in_game))
 }
 
-fn draw_room_row(draw: &mut Draw, gui: &mut Gui, row: Rect, index: usize, room: &RoomInfo) {
+/// What a room's row holds, drawn over the row itself.
+fn draw_room_row(draw: &mut Draw, gui: &mut Gui, row: Rect, room: &RoomInfo) {
     let pal = gui.ui.palette();
     let fonts = &mut gui.fonts;
     let mid = row.y + row.h / 2.0;
@@ -153,7 +158,6 @@ fn draw_room_row(draw: &mut Draw, gui: &mut Gui, row: Rect, index: usize, room: 
         pills.push(Pill::small("Regarder", theme::LINK));
     }
 
-    gui.ui.row(draw, row, index, &format!("room:{}", room.id));
     fonts
         .write(draw, Face::Text, &format!("#{}", room.id))
         .left(row.x + 18.0, mid)
@@ -186,23 +190,30 @@ enum Entry {
     Confirmed(String),
 }
 
+/// What a one-field screen does with the keys: typing, Enter to confirm, Escape to go back.
 fn update_entry(tick: &Tick, gui: &mut Gui, state: &mut State) -> Entry {
     let (w, h) = gui.ui.view().size();
-    let (confirm, back) = entry_buttons(w, h);
-
     state.text_input.edit(&state.input.keys);
     field_clicked(&gui.ui, &mut gui.fonts, entry_box(w, h), &mut state.text_input);
-    if gui.ui.clicked(confirm) || tick.pressed(KeyCode::Enter) {
+    if tick.pressed(KeyCode::Enter) {
         return Entry::Confirmed(state.text_input.trim().to_string());
     }
-    if gui.ui.clicked(back) || tick.back() {
+    if tick.back() {
         return Entry::Back;
     }
     Entry::Typing
 }
 
 pub fn update_create_room(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
-    match update_entry(tick, gui, state) {
+    create_room(update_entry(tick, gui, state), state)
+}
+
+pub fn update_join_by_id(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
+    join_by_id(update_entry(tick, gui, state), state)
+}
+
+fn create_room(entry: Entry, state: &mut State) -> Transition {
+    match entry {
         Entry::Back => return Transition::To(Screen::RoomBrowser),
         Entry::Confirmed(name) if !name.is_empty() => {
             state.notice.clear();
@@ -214,8 +225,8 @@ pub fn update_create_room(tick: &Tick, gui: &mut Gui, state: &mut State) -> Tran
     Transition::Stay
 }
 
-pub fn update_join_by_id(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
-    match update_entry(tick, gui, state) {
+fn join_by_id(entry: Entry, state: &mut State) -> Transition {
+    match entry {
         Entry::Back => return Transition::To(Screen::RoomBrowser),
         Entry::Confirmed(text) => {
             if let Ok(id) = text.parse::<u32>() {
@@ -229,40 +240,54 @@ pub fn update_join_by_id(tick: &Tick, gui: &mut Gui, state: &mut State) -> Trans
     Transition::Stay
 }
 
-fn draw_entry(draw: &mut Draw, gui: &mut Gui, state: &State, title: &str, confirm: &str, placeholder: &str) {
+/// Draws a one-field screen and tells what its buttons asked.
+fn show_entry(
+    ui: &mut aero::ui::Ui<'_>,
+    gui: &mut Gui,
+    state: &State,
+    (title, confirm, placeholder): (&str, &str, &str),
+) -> Entry {
     let pal = gui.ui.palette();
     let (w, h) = gui.ui.view().size();
     let card = entry_card(w, h);
     let field = Field { placeholder, input: &state.text_input, focused: true };
     let (cbtn, back) = entry_buttons(w, h);
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    ui::card(draw, &pal, card);
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    ui::card(ui.draw, &pal, card);
     gui.fonts
-        .write(draw, Face::Display, title)
+        .write(ui.draw, Face::Display, title)
         .center(card.x + card.w / 2.0, card.y + 58.0)
         .size(theme::size::TITLE)
         .color(pal.text);
-    text_field(draw, &mut gui.ui, &mut gui.fonts, entry_box(w, h), &field);
-    gui.ui.button(draw, &mut gui.fonts, cbtn, confirm);
-    gui.ui.button(draw, &mut gui.fonts, back, "Retour");
-
+    text_field(ui.draw, &mut gui.ui, &mut gui.fonts, entry_box(w, h), &field);
+    let confirmed = widgets::button(ui, "confirm", cbtn, confirm, true);
+    let back = widgets::button(ui, "back", back, "Retour", true);
     if let Some((msg, color)) = state.notice.shown(&pal) {
         gui.fonts
-            .write(draw, Face::Text, msg)
+            .write(ui.draw, Face::Text, msg)
             .center(card.x + card.w / 2.0, card.y + card.h + 40.0)
             .size(theme::size::EMPHASIS)
             .color(color);
     }
+    if confirmed {
+        Entry::Confirmed(state.text_input.trim().to_string())
+    } else if back {
+        Entry::Back
+    } else {
+        Entry::Typing
+    }
 }
 
-pub fn draw_create_room(draw: &mut Draw, gui: &mut Gui, state: &State) {
-    draw_entry(draw, gui, state, "Créer une room", "Créer", "Nom de la room...");
+pub fn show_create_room(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
+    let entry = show_entry(ui, gui, state, ("Créer une room", "Créer", "Nom de la room..."));
+    create_room(entry, state)
 }
 
-pub fn draw_join_by_id(draw: &mut Draw, gui: &mut Gui, state: &State) {
-    draw_entry(draw, gui, state, "Rejoindre par ID", "Rejoindre", "Numéro de la room...");
+pub fn show_join_by_id(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
+    let entry = show_entry(ui, gui, state, ("Rejoindre par ID", "Rejoindre", "Numéro de la room..."));
+    join_by_id(entry, state)
 }
 
 const INVITE_ROW_H: f32 = 52.0;

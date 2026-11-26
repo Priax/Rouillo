@@ -1,7 +1,9 @@
+use std::hash::Hash;
+
 use aero::draw::Draw;
 use aero::input::KeyCode;
 
-use super::{field_clicked, text_field, EditKeys, Face, Field, Fonts, Icon, Rect, TextInput, Ui};
+use super::{field_clicked, text_field, widgets, EditKeys, Face, Field, Fonts, Gui, Icon, Rect, TextInput, Ui};
 use crate::theme;
 use crate::tick::Tick;
 
@@ -94,7 +96,48 @@ impl Pager {
         }
     }
 
-    /// Returns whether the page changed.
+    /// Moves to `page`, kept within `pages`; returns whether it changed.
+    fn go(&mut self, page: usize, pages: usize) -> bool {
+        let page = page.min(pages.max(1) - 1);
+        let changed = page != self.page;
+        self.set(page);
+        changed
+    }
+
+    /// The page each button leads to: first, previous, next, last.
+    fn targets(&self, pages: usize) -> [usize; 4] {
+        [0, self.page.saturating_sub(1), self.page + 1, pages.max(1) - 1]
+    }
+
+    /// The page field: clicked into or away from, typed in, Enter to go. Returns whether the page changed.
+    pub fn update_keys(
+        &mut self,
+        tick: &Tick,
+        ui: &Ui,
+        fonts: &mut Fonts,
+        keys: &EditKeys,
+        area: Rect,
+        pages: usize,
+    ) -> bool {
+        let l = Layout::new(area);
+        if field_clicked(ui, fonts, l.field, &mut self.input) {
+            self.focused = true;
+        } else if ui.clicked(Rect::at(0.0, 0.0, ui.view().w, ui.view().h)) {
+            self.focused = false;
+        }
+        if !self.focused {
+            return false;
+        }
+        self.input.edit(keys);
+        if !tick.pressed(KeyCode::Enter) {
+            return false;
+        }
+        self.focused = false;
+        let page = self.input.parse::<usize>().unwrap_or(1).max(1) - 1;
+        self.go(page, pages)
+    }
+
+    /// The field and the buttons of the screens not on Aero yet. Returns whether the page changed.
     pub fn update(
         &mut self,
         tick: &Tick,
@@ -104,41 +147,15 @@ impl Pager {
         area: Rect,
         pages: usize,
     ) -> bool {
-        let pages = pages.max(1);
-        let l = Layout::new(area);
-        if field_clicked(ui, fonts, l.field, &mut self.input) {
-            self.focused = true;
-        } else if ui.clicked(Rect::at(0.0, 0.0, ui.view().w, ui.view().h)) {
-            self.focused = false;
+        if self.update_keys(tick, ui, fonts, keys, area, pages) {
+            return true;
         }
-        let wanted = if self.focused {
-            self.input.edit(keys);
-            tick.pressed(KeyCode::Enter).then(|| {
-                self.focused = false;
-                self.input.parse::<usize>().unwrap_or(1).max(1) - 1
-            })
-        } else {
-            None
-        };
-        let wanted = wanted.or_else(|| {
-            if ui.clicked(l.first) {
-                Some(0)
-            } else if ui.clicked(l.prev) {
-                Some(self.page.saturating_sub(1))
-            } else if ui.clicked(l.next) {
-                Some(self.page + 1)
-            } else if ui.clicked(l.last) {
-                Some(pages - 1)
-            } else {
-                None
-            }
-        });
-        let Some(page) = wanted.map(|p| p.min(pages - 1)) else {
-            return false;
-        };
-        let changed = page != self.page;
-        self.set(page);
-        changed
+        let l = Layout::new(area);
+        let targets = self.targets(pages);
+        match [l.first, l.prev, l.next, l.last].into_iter().zip(targets).find(|&(rect, _)| ui.clicked(rect)) {
+            Some((_, page)) => self.go(page, pages),
+            None => false,
+        }
     }
 
     pub fn draw(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect, pages: usize) {
@@ -148,6 +165,12 @@ impl Pager {
         let forward = self.page + 1 < pages;
         ui.button_enabled(draw, fonts, l.first, Icon::First, back);
         ui.button_enabled(draw, fonts, l.prev, Icon::Previous, back);
+        self.paint_field(draw, ui, fonts, (&l, pages));
+        ui.button_enabled(draw, fonts, l.next, Icon::Next, forward);
+        ui.button_enabled(draw, fonts, l.last, Icon::Last, forward);
+    }
+
+    fn paint_field(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, (l, pages): (&Layout, usize)) {
         let field = Field { placeholder: "", input: &self.input, focused: self.focused };
         text_field(draw, ui, fonts, l.field, &field);
         fonts
@@ -155,8 +178,36 @@ impl Pager {
             .left(l.of_x, l.field.y + l.field.h / 2.0)
             .size(theme::size::LABEL)
             .color(ui.palette().text_dim);
-        ui.button_enabled(draw, fonts, l.next, Icon::Next, forward);
-        ui.button_enabled(draw, fonts, l.last, Icon::Last, forward);
+    }
+
+    /// Draws the pager on Aero's interface and moves to the page its buttons ask; `key` names it among the widgets.
+    /// Returns whether the page changed.
+    pub fn show(
+        &mut self,
+        ui: &mut aero::ui::Ui<'_>,
+        gui: &mut Gui,
+        key: impl Hash + Copy,
+        area: Rect,
+        pages: usize,
+    ) -> bool {
+        let pages = pages.max(1);
+        let l = Layout::new(area);
+        let (back, forward) = (self.page > 0, self.page + 1 < pages);
+        let buttons = [
+            (l.first, Icon::First, back),
+            (l.prev, Icon::Previous, back),
+            (l.next, Icon::Next, forward),
+            (l.last, Icon::Last, forward),
+        ];
+        let targets = self.targets(pages);
+        let mut wanted = None;
+        for (i, ((rect, icon, enabled), page)) in buttons.into_iter().zip(targets).enumerate() {
+            if widgets::button(ui, (key, i), rect, icon, enabled) {
+                wanted = Some(page);
+            }
+        }
+        self.paint_field(ui.draw, &mut gui.ui, &mut gui.fonts, (&l, pages));
+        wanted.is_some_and(|page| self.go(page, pages))
     }
 }
 

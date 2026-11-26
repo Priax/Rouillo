@@ -1,8 +1,9 @@
 use aero::draw::Draw;
 use aero::geom::Color;
-use aero::theme::{Painter, Theme};
+use aero::theme::{Painter, Theme, Visual};
 
 use super::{list_row, Fonts, Rect, Ui};
+use crate::theme::Palette;
 
 impl Ui {
     /// A tab, which takes no click while it is the one shown.
@@ -27,18 +28,21 @@ impl Ui {
     /// A list row that reacts to the pointer: it lights up and grows an
     /// accent bar on its left edge. The caller draws what the row holds.
     pub fn row(&mut self, draw: &mut Draw, rect: Rect, index: usize, id: &str) {
-        let pal = self.palette();
         let r = self.interact(id, rect, true);
         if r.entered {
             crate::audio::play_ui_hover();
         }
-        list_row(draw, &pal, rect, index);
-        if r.hover > 0.0 {
-            draw.rect(rect).color(pal.raised_hover.with_alpha(0.7 * r.hover));
-            draw.rect(Rect::at(rect.x, rect.y, 4.0 * r.hover, rect.h)).color(pal.accent);
-        }
-        if r.flash > 0.0 {
-            draw.rect(rect).color(Color::WHITE.with_alpha(0.2 * r.flash));
-        }
+        paint_row(draw, &self.palette(), rect, index, r.visual(true));
+    }
+}
+
+pub(super) fn paint_row(draw: &mut Draw, pal: &Palette, rect: Rect, index: usize, visual: Visual) {
+    list_row(draw, pal, rect, index);
+    if visual.hover > 0.0 {
+        draw.rect(rect).color(pal.raised_hover.with_alpha(0.7 * visual.hover));
+        draw.rect(Rect::at(rect.x, rect.y, 4.0 * visual.hover, rect.h)).color(pal.accent);
+    }
+    if visual.flash > 0.0 {
+        draw.rect(rect).color(Color::WHITE.with_alpha(0.2 * visual.flash));
     }
 }

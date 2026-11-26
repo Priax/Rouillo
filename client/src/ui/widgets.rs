@@ -10,6 +10,7 @@ use aero::ui::{Response, Role, Sense, Ui};
 use aero::widgets::{control, Button, Tab};
 
 use super::button::paint_icon;
+use super::controls::paint_row;
 use super::stepper::{paint_labelled, paint_value, tile_label};
 use super::{bar, portrait, Gui, Icon, Label, Modal, Persona, Rect, Stepper};
 
@@ -53,6 +54,13 @@ pub fn menu_bar(ui: &mut Ui<'_>, gui: &mut Gui, row: Rect, (label, color): (&str
     let hovered = ui.hovered(ui.id(label));
     let (response, visual) = control(ui, label, bar::reach(row, hovered).into(), enabled, Role::Button, label);
     bar::paint(ui.draw, &mut gui.fonts, (&gui.ui.palette(), gui.ui.time()), row, (label, color), visual);
+    sounds(response).clicked
+}
+
+/// A list row that lights up under the pointer; the caller draws what it holds. Returns whether it was clicked.
+pub fn row(ui: &mut Ui<'_>, gui: &Gui, key: impl Hash, rect: Rect, index: usize) -> bool {
+    let (response, visual) = control(ui, key, rect.into(), true, Role::Button, "");
+    paint_row(ui.draw, &gui.ui.palette(), rect, index, visual);
     sounds(response).clicked
 }
 
