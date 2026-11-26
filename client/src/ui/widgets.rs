@@ -10,7 +10,7 @@ use aero::ui::{Response, Role, Sense, Ui};
 use aero::widgets::{control, Button, Tab};
 
 use super::button::paint_icon;
-use super::stepper::{paint_value, tile_label};
+use super::stepper::{paint_labelled, paint_value, tile_label};
 use super::{bar, portrait, Gui, Icon, Label, Modal, Persona, Rect, Stepper};
 
 fn sounds(response: Response) -> Response {
@@ -64,6 +64,14 @@ pub fn avatar(ui: &mut Ui<'_>, gui: &mut Gui, rect: Rect, name: &str, picture: O
     let who = Persona { name, glow: visual.hover, picture };
     portrait(ui.draw, &gui.ui.palette(), &mut gui.fonts, center, radius, &who);
     sounds(response).clicked
+}
+
+/// A labelled value with a button on each side to step it. Returns the step asked: -1, 1, or 0.
+pub fn stepper(ui: &mut Ui<'_>, gui: &mut Gui, key: impl Hash + Copy, s: Stepper, (label, value): (&str, &str)) -> i32 {
+    paint_labelled(ui.draw, &mut gui.fonts, &gui.ui.palette(), s, (label, value));
+    let less = button(ui, (key, "minus"), s.minus, Icon::Minus, true);
+    let more = button(ui, (key, "plus"), s.plus, Icon::Plus, true);
+    i32::from(more) - i32::from(less)
 }
 
 /// A value between a minus and a plus button across `band`, the buttons only when `editable`. Returns the step

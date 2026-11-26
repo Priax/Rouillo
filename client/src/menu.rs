@@ -1,4 +1,3 @@
-use aero::draw::Draw;
 use aero::geom::Color;
 use aero::math::vec2;
 
@@ -235,54 +234,47 @@ fn settings_back(view: View) -> Rect {
     Frame::of(view).back
 }
 
-pub fn update_settings(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
-    let view = gui.ui.view();
-    let panel = settings_panel(view);
+/// What the settings do with the keys and the gamepad; their clicks are in [`show_settings`].
+pub fn update_settings(tick: &Tick, state: &mut State) -> Transition {
     let capturing = state.bindings_panel.capturing();
-
-    if state.bindings_panel.update(tick, &gui.ui, &state.input.pads, &mut state.input.controls.bindings) {
+    if state.bindings_panel.update(tick, &state.input.pads, &mut state.input.controls.bindings) {
         state.input.controls.bindings.save();
     }
-    if capturing {
-        return Transition::Stay;
+    if !capturing && tick.back() {
+        return Transition::To(Screen::Menu);
     }
+    Transition::Stay
+}
 
+pub fn show_settings(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
+    let pal = gui.ui.palette();
+    let view = gui.ui.view();
+    let panel = settings_panel(view);
+
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    gui.ui.page_header(ui.draw, &mut gui.fonts, "Paramètres");
+    panel.draw(ui.draw, &pal, &mut gui.fonts, "Contrôles");
     let before = state.settings;
     for i in 0..Settings::COUNT {
-        if gui.ui.clicked(panel.stepper(i).minus) {
-            state.settings.adjust(i, -1);
-        }
-        if gui.ui.clicked(panel.stepper(i).plus) {
-            state.settings.adjust(i, 1);
+        let value = format!("{:.0} ms", state.settings.value(i) * 1000.0);
+        let step = widgets::stepper(ui, gui, ("setting", i), panel.stepper(i), (Settings::label(i), &value));
+        if step != 0 && !state.bindings_panel.capturing() {
+            state.settings.adjust(i, step);
         }
     }
     if state.settings != before {
         state.settings.save();
     }
 
-    if gui.ui.clicked(settings_back(view)) || tick.back() {
+    if state.bindings_panel.show(ui, gui, &mut state.input.controls.bindings) {
+        state.input.controls.bindings.save();
+    }
+    let back = widgets::button(ui, "back", settings_back(view), "Retour", true);
+    if back && !state.bindings_panel.capturing() {
         return Transition::To(Screen::Menu);
     }
-
     Transition::Stay
-}
-
-pub fn draw_settings(draw: &mut Draw, gui: &mut Gui, state: &State) {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
-    let panel = settings_panel(view);
-
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    gui.ui.page_header(draw, &mut gui.fonts, "Paramètres");
-    panel.draw(draw, &pal, &mut gui.fonts, "Contrôles");
-    for i in 0..Settings::COUNT {
-        let value = format!("{:.0} ms", state.settings.value(i) * 1000.0);
-        gui.ui.stepper(draw, &mut gui.fonts, panel.stepper(i), Settings::label(i), &value, true);
-    }
-
-    state.bindings_panel.draw(draw, &mut gui.ui, &mut gui.fonts, &state.input.controls.bindings);
-    gui.ui.button(draw, &mut gui.fonts, settings_back(view), "Retour");
 }
 
 fn start_play(state: &mut State) -> Transition {

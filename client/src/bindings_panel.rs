@@ -1,11 +1,10 @@
-use aero::draw::Draw;
 use aero::input::KeyCode;
 
 use crate::controls::{Action, Bindings, KeyBinding, ACTIONS, RESERVED};
 use crate::pads::Pads;
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{self, Face, Fonts, Frame, Icon, Rect, Size, Ui, View};
+use crate::ui::{self, widgets, Face, Frame, Gui, Icon, Label, Rect, Size, View};
 
 const TOP: f32 = 360.0;
 const TITLE_H: f32 = 48.0;
@@ -60,11 +59,11 @@ impl BindingsPanel {
         }
     }
 
+    /// What the keys and the gamepad do while a binding waits for one; its clicks are in [`BindingsPanel::show`].
     /// Returns whether the bindings changed and must be saved.
-    pub fn update(&mut self, tick: &Tick, ui: &Ui, pads: &Pads, bindings: &mut Bindings) -> bool {
+    pub fn update(&mut self, tick: &Tick, pads: &Pads, bindings: &mut Bindings) -> bool {
         let typed = self.typed.take();
         let mut changed = self.apply_label(typed, bindings);
-        let view = ui.view();
         let erase = tick.pressed(KeyCode::Backspace) || tick.pressed(KeyCode::Delete);
 
         match self.capture {
@@ -89,20 +88,7 @@ impl BindingsPanel {
                 self.capture = None;
                 changed = true;
             }
-            None => {
-                let clicked = Action::ALL
-                    .into_iter()
-                    .enumerate()
-                    .flat_map(|(row, action)| SLOTS.map(|slot| (row, action, slot)))
-                    .find(|&(row, _, slot)| ui.clicked(cell(view, row, slot)));
-                if let Some((_, action, slot)) = clicked {
-                    self.capture = Some((action, slot));
-                }
-                if ui.clicked(reset_btn(view)) {
-                    *bindings = Bindings::default();
-                    changed = true;
-                }
-            }
+            None => {}
         }
 
         changed
@@ -123,9 +109,11 @@ impl BindingsPanel {
         false
     }
 
-    pub fn draw(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, bindings: &Bindings) {
-        let pal = ui.palette();
-        let view = ui.view();
+    /// Draws the panel and answers its clicks: a cell clicked waits for a key or a button. Returns whether the
+    /// bindings changed and must be saved.
+    pub fn show(&mut self, ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, bindings: &mut Bindings) -> bool {
+        let pal = gui.ui.palette();
+        let view = gui.ui.view();
         let c = card(view);
         let reset = reset_btn(view);
         let hint = match self.capture {
@@ -134,52 +122,63 @@ impl BindingsPanel {
             None => "Start met en pause, Select relance une partie terminée.",
         };
         let hint_color = if self.capturing() { pal.accent } else { pal.text_muted };
+        let fonts = &mut gui.fonts;
 
-        ui::card(draw, &pal, c);
+        ui::card(ui.draw, &pal, c);
         fonts
-            .write(draw, Face::Display, "Touches")
+            .write(ui.draw, Face::Display, "Touches")
             .left(c.x + 20.0, c.y + TITLE_H / 2.0)
             .size(theme::size::EMPHASIS)
             .color(pal.text_dim);
         for (slot, heading) in SLOTS.into_iter().zip(["Touche 1", "Touche 2", "Manette"]) {
             let r = cell(view, 0, slot);
-
             fonts
-                .write(draw, Face::Text, heading)
+                .write(ui.draw, Face::Text, heading)
                 .center(r.x + r.w / 2.0, c.y + TITLE_H / 2.0)
                 .size(theme::size::SMALL)
                 .color(pal.text_muted);
         }
-        ui::divider(draw, &pal, c.x + 20.0, c.y + TITLE_H, c.w - 40.0);
+        ui::divider(ui.draw, &pal, c.x + 20.0, c.y + TITLE_H, c.w - 40.0);
 
+        let mut clicked = None;
         for (row, action) in Action::ALL.into_iter().enumerate() {
             let r = cell(view, row, Slot::Pad);
-
-            fonts
-                .write(draw, Face::Text, action.label())
+            gui.fonts
+                .write(ui.draw, Face::Text, action.label())
                 .left(c.x + 20.0, r.y + r.h / 2.0)
                 .size(theme::size::BODY)
                 .color(pal.text);
-            for slot in SLOTS {
+            for (col, slot) in SLOTS.into_iter().enumerate() {
                 let rect = cell(view, row, slot);
-                if self.capture == Some((action, slot)) {
-                    ui.button(draw, fonts, rect, Icon::Busy);
-                    continue;
-                }
-                let label = match slot {
+                let name = match slot {
                     Slot::Key(i) => bindings.key(action, i).map(|k| k.label.clone()),
                     Slot::Pad => bindings.pad(action).map(|p| p.label().to_owned()),
                 }
                 .unwrap_or_else(|| "-".to_owned());
-                ui.button(draw, fonts, rect, label.as_str());
+                let waiting = self.capture == Some((action, slot));
+                let label = if waiting { Label::Icon(Icon::Busy) } else { Label::Text(&name) };
+                if widgets::button(ui, ("binding", row, col), rect, label, true) {
+                    clicked = Some((action, slot));
+                }
             }
         }
 
-        fonts
-            .write(draw, Face::Text, hint)
+        gui.fonts
+            .write(ui.draw, Face::Text, hint)
             .left(reset.x + reset.w + 20.0, reset.y + reset.h / 2.0)
             .size(theme::size::SMALL)
             .color(hint_color);
-        ui.button(draw, fonts, reset, "Touches par défaut");
+        let reset_all = widgets::button(ui, "reset bindings", reset, "Touches par défaut", true);
+
+        if let Some(cell) = clicked.filter(|_| !self.capturing()) {
+            self.capture = Some(cell);
+            // The key that answers must reach the capture, not the button it was asked from.
+            ui.blur();
+        }
+        if reset_all {
+            *bindings = Bindings::default();
+            return true;
+        }
+        false
     }
 }

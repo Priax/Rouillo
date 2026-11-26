@@ -59,33 +59,6 @@ impl Stepper {
 }
 
 impl Ui {
-    /// Draws the stepper; its buttons only when `editable`.
-    pub fn stepper(
-        &mut self,
-        draw: &mut Draw,
-        fonts: &mut Fonts,
-        s: Stepper,
-        label: &str,
-        value: &str,
-        editable: bool,
-    ) {
-        let pal = self.palette();
-        fonts
-            .write(draw, Face::Text, label)
-            .right(s.label_x(), s.mid_y())
-            .size(theme::size::EMPHASIS)
-            .color(pal.text_dim);
-        fonts
-            .write(draw, Face::Display, value)
-            .center(s.value_x(), s.mid_y())
-            .size(theme::size::EMPHASIS)
-            .color(theme::GOLD);
-        if editable {
-            self.button(draw, fonts, s.minus, Icon::Minus);
-            self.button(draw, fonts, s.plus, Icon::Plus);
-        }
-    }
-
     fn tile_label(&self, draw: &mut Draw, fonts: &mut Fonts, tile: Rect, label: &str) {
         tile_label(draw, fonts, &self.palette(), tile, label);
     }
@@ -161,6 +134,22 @@ impl Ui {
             .size(theme::size::EMPHASIS)
             .color(theme::GOLD);
     }
+}
+
+/// A stepper's label before it and its value between its buttons.
+pub(super) fn paint_labelled(
+    draw: &mut Draw,
+    fonts: &mut Fonts,
+    pal: &Palette,
+    s: Stepper,
+    (label, value): (&str, &str),
+) {
+    fonts.write(draw, Face::Text, label).right(s.label_x(), s.mid_y()).size(theme::size::EMPHASIS).color(pal.text_dim);
+    fonts
+        .write(draw, Face::Display, value)
+        .center(s.value_x(), s.mid_y())
+        .size(theme::size::EMPHASIS)
+        .color(theme::GOLD);
 }
 
 /// A settings tile's name, above its controls.
