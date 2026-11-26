@@ -56,7 +56,7 @@ impl<'a> Label<'a> {
         }
     }
 
-    fn id(self) -> &'a str {
+    pub(super) fn id(self) -> &'a str {
         match self {
             Self::Text(text) => text,
             Self::Icon(Icon::Minus) => "icon:minus",
@@ -115,7 +115,7 @@ impl Ui {
     }
 }
 
-fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, color: Color, time: f32) {
+pub(super) fn paint_icon(draw: &mut Draw, icon: Icon, (cx, cy): (f32, f32), size: f32, color: Color, time: f32) {
     let (long, thick) = (size * ICON_LENGTH, size * ICON_THICKNESS);
     let bar = |draw: &mut Draw, x: f32, w: f32, h: f32| {
         draw.rect(Rect::at(x - w / 2.0, cy - h / 2.0, w, h)).radius(thick / 2.0).color(color);

@@ -164,6 +164,12 @@ impl Fonts {
     }
 }
 
+/// Adds the game's faces to `library`, such as Aero's own, which its widgets draw with.
+pub fn register(library: &mut aero::text::Fonts) {
+    library.add(TEXT);
+    library.add(DISPLAY);
+}
+
 fn layout<'a>(
     kept: &'a mut HashMap<u64, Kept>,
     library: &mut aero::text::Fonts,

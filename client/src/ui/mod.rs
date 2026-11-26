@@ -19,6 +19,7 @@ mod stepper;
 mod text;
 mod triangles;
 mod view;
+pub mod widgets;
 
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
@@ -31,7 +32,7 @@ pub use deco::{banner, card, divider, list_row, pills_ending_at, portrait, Edge,
 mod clipboard;
 pub use clipboard::get as clipboard_text;
 pub use field::{area_clicked, area_height, area_keys, field_clicked, text_area, text_field, Field};
-pub use fonts::{Face, Faces, Fonts};
+pub use fonts::{register as register_fonts, Face, Faces, Fonts};
 pub use input::TextInput;
 pub use keys::EditKeys;
 #[cfg(target_arch = "wasm32")]

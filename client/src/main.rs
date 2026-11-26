@@ -327,7 +327,7 @@ fn update_online_game(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transiti
     transition
 }
 
-fn update(cx: &Cx, root: &mut Root) {
+fn update(cx: &mut Cx, root: &mut Root) {
     #[cfg(not(target_arch = "wasm32"))]
     pace_frame();
     let Root { nav, state, gui } = root;
@@ -342,12 +342,17 @@ fn update(cx: &Cx, root: &mut Root) {
     }
     let pad_nav = pad_menus(state, nav.current());
     gui.ui.note_pointer(real);
-    let mouse = if pad_nav && state.input.pads.pressed(Pad::South) { gui.ui.pad_click().unwrap_or(real) } else { real };
+    let pad_press = pad_nav && state.input.pads.pressed(Pad::South);
+    let mouse = if pad_press { gui.ui.pad_click().unwrap_or(real) } else { real };
+    if pad_press {
+        cx.press_focus(aero::WindowId::MAIN);
+    }
     gui.ui.set_clock(connection::now_secs());
     gui.ui.begin_frame(dt, view, mouse);
     if pad_nav {
         if let Some(dir) = pad_direction(&state.input.pads) {
             gui.ui.move_focus(dir);
+            cx.move_focus(aero::WindowId::MAIN, Vec2::from(dir));
         }
     }
     let back = pad_nav && state.input.pads.pressed(Pad::East);
@@ -446,36 +451,41 @@ fn draw_invitation_banner(draw: &mut Draw, gui: &mut Gui, state: &State) {
     gui.ui.button(draw, &mut gui.fonts, decline_btn, "Ignorer");
 }
 
-fn draw_frame(draw: &mut Draw, root: &mut Root) {
+fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     let Root { nav, state, gui } = root;
+    if let Some(look) = cx.theme_mut::<ui::Look>() {
+        look.palette = gui.ui.palette();
+    }
     let scale = gui.ui.view().scale;
     draw.push_transform(Affine2::from_scale(Vec2::splat(scale)));
+    let ui = &mut aero::ui::Ui::new(cx, draw);
+    let mut transition = Transition::Stay;
     let screen = nav.current();
     match screen {
-        Screen::Title => title::draw_title(draw, gui),
-        Screen::Auth => login::draw_auth(draw, gui, state),
-        Screen::Menu => menu::draw_menu(draw, gui, state, false),
-        Screen::PlayMenu => menu::draw_menu(draw, gui, state, true),
-        Screen::Settings => menu::draw_settings(draw, gui, state),
-        Screen::RoomBrowser => rooms::draw_browser(draw, gui, state),
-        Screen::CreateRoom => rooms::draw_create_room(draw, gui, state),
-        Screen::JoinById => rooms::draw_join_by_id(draw, gui, state),
-        Screen::RoomLobby => rooms::draw_lobby(draw, gui, state),
-        Screen::Profile(p) => profile::draw_profile(draw, gui, p),
-        Screen::Friends(f) => friends::draw_friends(draw, gui, f),
-        Screen::OtherProfile(p) => profile::draw_other_profile(draw, gui, p),
-        Screen::SoloSetup => solo::draw_setup(draw, gui, state),
-        Screen::Ranked => ranked::draw(draw, gui, state),
-        Screen::Leaderboard(board) => leaderboard::draw(draw, gui, state, board),
-        Screen::Help(view) => help::draw(draw, gui, state, view),
-        Screen::Replay(viewer) => replay::draw(draw, gui, viewer),
+        Screen::Title => title::draw_title(ui.draw, gui),
+        Screen::Auth => transition = login::show(ui, gui, state),
+        Screen::Menu => menu::draw_menu(ui.draw, gui, state, false),
+        Screen::PlayMenu => menu::draw_menu(ui.draw, gui, state, true),
+        Screen::Settings => menu::draw_settings(ui.draw, gui, state),
+        Screen::RoomBrowser => rooms::draw_browser(ui.draw, gui, state),
+        Screen::CreateRoom => rooms::draw_create_room(ui.draw, gui, state),
+        Screen::JoinById => rooms::draw_join_by_id(ui.draw, gui, state),
+        Screen::RoomLobby => rooms::draw_lobby(ui.draw, gui, state),
+        Screen::Profile(p) => profile::draw_profile(ui.draw, gui, p),
+        Screen::Friends(f) => friends::draw_friends(ui.draw, gui, f),
+        Screen::OtherProfile(p) => profile::draw_other_profile(ui.draw, gui, p),
+        Screen::SoloSetup => solo::draw_setup(ui.draw, gui, state),
+        Screen::Ranked => ranked::draw(ui.draw, gui, state),
+        Screen::Leaderboard(board) => leaderboard::draw(ui.draw, gui, state, board),
+        Screen::Help(view) => help::draw(ui.draw, gui, state, view),
+        Screen::Replay(viewer) => replay::draw(ui.draw, gui, viewer),
         Screen::Solo(game) => {
             let hud = game.hud(state.solo.best);
-            draw::draw_game(draw, &game.session, &mut gui.ui, &mut gui.fonts, hud);
+            draw::draw_game(ui.draw, &game.session, &mut gui.ui, &mut gui.fonts, hud);
         }
         Screen::Game => {
             if let Some((room, session)) = state.room.as_ref().and_then(|r| Some((r, r.session.as_ref()?))) {
-                draw::draw_game(draw, session, &mut gui.ui, &mut gui.fonts, draw::Hud::Online(online_role(room)));
+                draw::draw_game(ui.draw, session, &mut gui.ui, &mut gui.fonts, draw::Hud::Online(online_role(room)));
             }
         }
     }
@@ -484,26 +494,30 @@ fn draw_frame(draw: &mut Draw, root: &mut Root) {
         if let Some(room) = state.room.as_ref().filter(|_| matches!(screen, Screen::Game)) {
             let hint = can_chat(state).then_some("Entrée pour écrire");
             let area = game_chat_area(gui.ui.view(), state.input.touch.active);
-            room.chat.draw_overlay(draw, &mut gui.ui, &mut gui.fonts, area, hint);
-            replay::draw_keep(draw, gui, state);
+            room.chat.draw_overlay(ui.draw, &mut gui.ui, &mut gui.fonts, area, hint);
+            replay::draw_keep(ui.draw, gui, state);
         }
-        state.input.touch.draw(draw, &mut gui.fonts, gui.ui.view());
+        state.input.touch.draw(ui.draw, &mut gui.fonts, gui.ui.view());
     }
 
-    draw_invitation_banner(draw, gui, state);
-    draw_maintenance_banner(draw, gui, state, screen);
-    draw_too_old_banner(draw, gui, state, screen);
-    draw_reconnect_banner(draw, gui, state, screen);
+    draw_invitation_banner(ui.draw, gui, state);
+    draw_maintenance_banner(ui.draw, gui, state, screen);
+    draw_too_old_banner(ui.draw, gui, state, screen);
+    draw_reconnect_banner(ui.draw, gui, state, screen);
 
     let view = gui.ui.view();
     // A game, and the screens that lead straight into one, need the phone
     // turned: the boards are laid out side by side.
     let needs_landscape = matches!(screen, Screen::RoomLobby | Screen::Game | Screen::Ranked | Screen::Solo(_));
     if state.input.touch.active && view.portrait() && needs_landscape {
-        touch::draw_turn_hint(draw, &mut gui.fonts, view);
+        touch::draw_turn_hint(ui.draw, &mut gui.fonts, view);
     }
-    draw.pop_transform();
+    ui.draw.pop_transform();
     gui.fonts.end_frame();
+    if !matches!(transition, Transition::Stay) {
+        nav.apply(transition);
+        ui.cx.request_redraw();
+    }
 }
 
 /// The player's place in an online game, as its screen shows it.
@@ -591,7 +605,7 @@ impl aero::App for Rouillo {
     /// A frame follows while something moves, or when something shown changes; otherwise a slow beat of updates
     /// without drawing keeps the network's timers going.
     fn draw(&mut self, cx: &mut Cx, draw: &mut Draw) {
-        draw_frame(draw, &mut self.0);
+        draw_frame(cx, draw, &mut self.0);
         let change_in = self.0.gui.ui.take_change_in();
         if self.0.gui.ui.take_moving() {
             cx.request_redraw();
@@ -620,6 +634,9 @@ fn main() -> Result<(), aero::Error> {
 
     aero::run(aero::Config::new().window(window), |cx| {
         wake::init(cx.waker());
-        Rouillo(setup())
+        let root = setup();
+        ui::register_fonts(&mut cx.fonts);
+        cx.set_theme(root.gui.ui.look(&root.gui.fonts));
+        Rouillo(root)
     })
 }

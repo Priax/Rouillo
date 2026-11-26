@@ -13,10 +13,11 @@ impl Ui {
     /// The canvas a screen draws on: its section's background with triangles
     /// drifting up through it, then the screen's own content, which fades and
     /// slides in while a transition runs. The backdrop stays put under it.
-    pub fn screen_canvas<'a>(&mut self, draw: &'a mut Draw) -> ScreenCanvas<'a> {
+    pub fn screen_canvas<'a, C: Canvas + ?Sized>(&mut self, canvas: &'a mut C) -> ScreenCanvas<'a, C> {
         self.keep_moving();
         let pal = self.palette();
         let view = self.view();
+        let draw = canvas.draw();
         draw.background(pal.background);
         let backdrop =
             Triangles { seed: 0x5eed, size: 220.0, density: 0.35, speed: 0.015, color: pal.raised.with_alpha(0.35) };
@@ -25,7 +26,7 @@ impl Ui {
         let t = self.transition();
         draw.push_alpha(t);
         draw.push_transform(Affine2::from_translation(vec2((1.0 - t) * SLIDE, 0.0)));
-        ScreenCanvas(draw)
+        ScreenCanvas(canvas)
     }
 
     /// The header band along the top of a page, with its title.
@@ -56,26 +57,44 @@ impl Ui {
     }
 }
 
+/// What a screen draws on: the frame itself, or Aero's interface over it.
+pub trait Canvas {
+    fn draw(&mut self) -> &mut Draw;
+}
+
+impl Canvas for Draw {
+    fn draw(&mut self) -> &mut Draw {
+        self
+    }
+}
+
+impl Canvas for aero::ui::Ui<'_> {
+    fn draw(&mut self) -> &mut Draw {
+        self.draw
+    }
+}
+
 /// The frame while a screen draws on it, as the transition fades and slides it.
-pub struct ScreenCanvas<'a>(&'a mut Draw);
+pub struct ScreenCanvas<'a, C: Canvas + ?Sized>(&'a mut C);
 
-impl Deref for ScreenCanvas<'_> {
-    type Target = Draw;
+impl<C: Canvas + ?Sized> Deref for ScreenCanvas<'_, C> {
+    type Target = C;
 
-    fn deref(&self) -> &Draw {
+    fn deref(&self) -> &C {
         self.0
     }
 }
 
-impl DerefMut for ScreenCanvas<'_> {
-    fn deref_mut(&mut self) -> &mut Draw {
+impl<C: Canvas + ?Sized> DerefMut for ScreenCanvas<'_, C> {
+    fn deref_mut(&mut self) -> &mut C {
         self.0
     }
 }
 
-impl Drop for ScreenCanvas<'_> {
+impl<C: Canvas + ?Sized> Drop for ScreenCanvas<'_, C> {
     fn drop(&mut self) {
-        self.0.pop_transform();
-        self.0.pop_alpha();
+        let draw = self.0.draw();
+        draw.pop_transform();
+        draw.pop_alpha();
     }
 }

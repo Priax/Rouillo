@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
-use aero::draw::Draw;
 use aero::input::KeyCode;
 
 use crate::connection::now_secs;
 use crate::nav::{Nav, Transition};
 use crate::state::{ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State};
 use crate::tick::Tick;
-use crate::ui::{self, field_clicked, text_field, Face, Field, Gui, Rect, Status, View, FILL};
+use crate::ui::{self, field_clicked, text_field, widgets, Face, Field, Gui, Rect, Status, View, FILL};
 use crate::{http, theme};
 
 const STARTUP_RETRY_SECS: f64 = 5.0;
@@ -154,13 +153,6 @@ pub fn update_auth(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition 
         };
     }
 
-    for (tab, mode) in layout.tabs.iter().zip([AuthMode::Login, AuthMode::Register]) {
-        if gui.ui.clicked(*tab) {
-            state.auth_form.mode = mode;
-            state.auth_form.status.clear();
-        }
-    }
-
     if field_clicked(&gui.ui, &mut gui.fonts, layout.username, &mut state.auth_form.username) {
         state.auth_form.focused = AuthField::Username;
     }
@@ -168,20 +160,15 @@ pub fn update_auth(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition 
         state.auth_form.focused = AuthField::Password;
     }
 
-    if (gui.ui.clicked(layout.submit) || tick.pressed(KeyCode::Enter)) && state.auth_form.pending.is_none() {
+    if tick.pressed(KeyCode::Enter) {
         submit(&mut state.auth_form);
-    }
-
-    if gui.ui.clicked(layout.guest) {
-        state.auth = None;
-        state.auth_form = AuthForm::default();
-        return Transition::To(Screen::Menu);
     }
 
     Transition::Stay
 }
 
-pub fn draw_auth(draw: &mut Draw, gui: &mut Gui, state: &State) {
+/// Draws the form and answers its buttons; the fields still answer in [`update_auth`].
+pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
     let pal = gui.ui.palette();
     let layout = auth_layout(gui.ui.view(), state.auth_form.focused);
     let AuthLayout { cx, base_y, .. } = layout;
@@ -198,21 +185,42 @@ pub fn draw_auth(draw: &mut Draw, gui: &mut Gui, state: &State) {
         (false, AuthMode::Register) => "S'inscrire",
     };
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
-    gui.fonts.write(draw, Face::Display, "Rouillo").center(cx, base_y - 110.0).size(theme::size::HERO).color(pal.title);
-    ui::card(draw, &pal, layout.card);
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    gui.fonts
+        .write(ui.draw, Face::Display, "Rouillo")
+        .center(cx, base_y - 110.0)
+        .size(theme::size::HERO)
+        .color(pal.title);
+    ui::card(ui.draw, &pal, layout.card);
+    let mut chosen = None;
     for (&tab, (label, mode)) in layout.tabs.iter().zip(modes) {
-        gui.ui.tab(draw, &mut gui.fonts, tab, label, form.mode == mode);
+        if widgets::tab(ui, tab, label, form.mode == mode) {
+            chosen = Some(mode);
+        }
     }
     for (rect, placeholder, input, which) in fields {
         let field = Field { placeholder, input, focused: form.focused == which };
-        text_field(draw, &mut gui.ui, &mut gui.fonts, rect, &field);
+        text_field(ui.draw, &mut gui.ui, &mut gui.fonts, rect, &field);
     }
-    gui.ui.button_enabled(draw, &mut gui.fonts, layout.submit, submit_label, !loading);
-    gui.ui.button(draw, &mut gui.fonts, layout.guest, "Jouer en invité");
-
+    let submitted = widgets::button(ui, layout.submit, submit_label, !loading);
+    let guest = widgets::button(ui, layout.guest, "Jouer en invité", true);
     if let Some((msg, color)) = form.status.shown(&pal) {
-        gui.fonts.write(draw, Face::Text, msg).center(cx, base_y + 370.0).size(theme::size::LABEL).color(color);
+        gui.fonts.write(ui.draw, Face::Text, msg).center(cx, base_y + 370.0).size(theme::size::LABEL).color(color);
     }
+
+    let form = &mut state.auth_form;
+    if let Some(mode) = chosen {
+        form.mode = mode;
+        form.status.clear();
+    }
+    if submitted {
+        submit(form);
+    }
+    if guest {
+        state.auth = None;
+        state.auth_form = AuthForm::default();
+        return Transition::To(Screen::Menu);
+    }
+    Transition::Stay
 }
