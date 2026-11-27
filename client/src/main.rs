@@ -271,6 +271,15 @@ fn update(cx: &mut Cx, root: &mut Root) {
     #[cfg(not(target_arch = "wasm32"))]
     pace_frame();
     let Root { nav, state, gui } = root;
+    #[cfg(not(target_arch = "wasm32"))]
+    match updater::status() {
+        updater::Status::Available(_) => state.outdated = true,
+        updater::Status::Done => {
+            cx.exit();
+            return;
+        }
+        _ => {}
+    }
     let dt = cx.dt();
     let Some(window) = cx.window(aero::WindowId::MAIN) else { return };
     let view = ui::View::of(window);
@@ -297,12 +306,6 @@ fn update(cx: &mut Cx, root: &mut Root) {
     #[cfg(target_arch = "wasm32")]
     let back = web::take_back() || back;
     let tick = &Tick::new(&cx.input, dt, (back, cx.wants_text(aero::WindowId::MAIN)));
-    #[cfg(not(target_arch = "wasm32"))]
-    match updater::status() {
-        updater::Status::Available(_) => state.outdated = true,
-        updater::Status::Done => std::process::exit(0),
-        _ => {}
-    }
 
     let in_game = matches!(nav.current(), Screen::Game | Screen::Solo(_));
     let (touch_held, touch_pause) = state.input.touch.read(tick.input, view, in_game);
