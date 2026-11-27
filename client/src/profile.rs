@@ -72,6 +72,18 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
     }
 }
 
+/// What a profile's own part does with the keys: its about box, its match list, the way back.
+fn update_core(tick: &Tick, gui: &Gui, core: &mut ProfileCore) -> Transition {
+    if update_about(tick, core) {
+        return Transition::Stay;
+    }
+    update_history(gui, core);
+    if tick.back() {
+        return Transition::Pop;
+    }
+    Transition::Stay
+}
+
 /// The match list's size, and the answer to a favorite; the clicks are in [`show_history_panel`].
 fn update_history(gui: &Gui, core: &mut ProfileCore) {
     core.history.fit(history_rows(gui.stage.view()));
@@ -450,14 +462,7 @@ pub fn update_profile(tick: &Tick, gui: &mut Gui, state: &mut State, p: &mut Pro
     if p.account.is_some() {
         return update_account(tick, state, p);
     }
-    if update_about(tick, &mut p.core) {
-        return Transition::Stay;
-    }
-    update_history(gui, &mut p.core);
-    if tick.back() {
-        return Transition::Pop;
-    }
-    Transition::Stay
+    update_core(tick, gui, &mut p.core)
 }
 
 fn update_account(tick: &Tick, state: &mut State, p: &mut ProfileData) -> Transition {
@@ -608,14 +613,7 @@ pub fn update_other_profile(tick: &Tick, gui: &Gui, p: &mut OtherProfileData) ->
     }
     p.core.history.poll();
     poll_friend(p);
-    if update_about(tick, &mut p.core) {
-        return Transition::Stay;
-    }
-    update_history(gui, &mut p.core);
-    if tick.back() {
-        return Transition::Pop;
-    }
-    Transition::Stay
+    update_core(tick, gui, &mut p.core)
 }
 
 pub fn show_other_profile(
