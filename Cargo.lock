@@ -989,7 +989,6 @@ name = "client"
 version = "0.11.4"
 dependencies = [
  "aero",
- "arboard",
  "ed25519-dalek",
  "ehttp",
  "ewebsock",
