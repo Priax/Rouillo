@@ -349,9 +349,9 @@ fn winner(session: &GameSession, team: u8) -> String {
 /// Draws a game, and returns what was clicked for the update to come.
 pub fn draw_game(ui: &mut aero::ui::Ui<'_>, session: &GameSession, gui: &mut Gui, hud: Hud) -> GameClicks {
     ui.cx.request_redraw();
-    let layout = GameLayout::new(gui.ui.view(), session);
-    let pal = gui.ui.palette();
-    let time = gui.ui.time() as f32;
+    let layout = GameLayout::new(gui.stage.view(), session);
+    let pal = gui.stage.palette();
+    let time = gui.stage.time() as f32;
     let pointer = arena_pointer(ui, &layout, session);
     let fonts = &mut ui.cx.fonts;
     let draw = &mut *ui.draw;
@@ -582,7 +582,7 @@ fn draw_out(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, mine: Rect, hud: Hud) -> b
 
     ui.draw.rect(frame).radius(18.0).color(theme::SCRIM_DARK);
     shadowed(ui.draw, &mut ui.cx.fonts, "K.O.", (cx, cy - 40.0), theme::size::HERO, theme::DANGER);
-    widgets::menu_bar(ui, gui, out_row(gui.ui.view()), (label, theme::bar::RED), true)
+    widgets::menu_bar(ui, gui, out_row(gui.stage.view()), (label, theme::bar::RED), true)
 }
 
 /// The way out for a player knocked out of a game the others play on.
@@ -894,7 +894,7 @@ fn draw_exit_buttons(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, hud: Hud, forfeit
         Hud::Online(role) if forfeits => ("Abandonner (défaite)", "Lobby (défaite)", role.is_host),
         Hud::Online(role) => ("Quitter la room", "Retour au lobby", role.is_host),
     };
-    let (leave_row, back_row) = exit_rows(gui.ui.view(), has_back);
+    let (leave_row, back_row) = exit_rows(gui.stage.view(), has_back);
 
     let left = widgets::menu_bar(ui, gui, leave_row, (leave, theme::bar::RED), true);
     let went_back = has_back && widgets::menu_bar(ui, gui, back_row, (back, theme::bar::YELLOW), true);

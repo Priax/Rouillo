@@ -4,7 +4,7 @@ use aero::draw::Draw;
 
 use crate::state::ApiUserProfile;
 use crate::theme;
-use crate::ui::{widgets, Face, Fonts, Gui, Modal, Rect, Typeset, Ui};
+use crate::ui::{widgets, Face, Fonts, Gui, Modal, Rect, Stage, Typeset};
 
 const LINE_H: f32 = 24.0;
 const LABEL_H: f32 = 22.0;
@@ -58,8 +58,8 @@ pub fn summary<'a>(fonts: &mut Fonts, info: &'a ApiUserProfile, area: Rect, musi
     Summary { bio, music, cut: bio_cut || music_cut }
 }
 
-pub fn draw_summary(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, summary: &Summary, area: Rect) {
-    let pal = ui.palette();
+pub fn draw_summary(draw: &mut Draw, stage: &Stage, fonts: &mut Fonts, summary: &Summary, area: Rect) {
+    let pal = stage.palette();
     let blocks = [("Bio", &summary.bio, pal.text), ("Musique", &summary.music, pal.accent)];
 
     let mut y = area.y();
@@ -87,12 +87,12 @@ pub fn show_more_link(ui: &mut aero::ui::Ui<'_>, area: Rect) -> bool {
 
 /// The whole bio and music over the profile. Returns whether it was dismissed.
 pub fn show_overlay(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &ApiUserProfile) -> bool {
-    let modal = Modal::new(gui.ui.view(), OVERLAY_W);
+    let modal = Modal::new(gui.stage.view(), OVERLAY_W);
     let title = ui.cx.fonts.fit(Face::Display, &info.username, theme::size::HEADING, modal.card.w() - 120.0);
     let area = modal.body().below(LABEL_H);
     let ((), dismissed) = widgets::modal(ui, gui, (modal, &title), |ui, gui| {
         let lines = summary(&mut ui.cx.fonts, info, area, OVERLAY_MUSIC_LINES);
-        draw_summary(ui.draw, &gui.ui, &mut ui.cx.fonts, &lines, area);
+        draw_summary(ui.draw, &gui.stage, &mut ui.cx.fonts, &lines, area);
     });
     dismissed
 }

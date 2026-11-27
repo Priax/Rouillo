@@ -227,8 +227,8 @@ pub fn update(tick: &Tick, profile: &mut ProfileData) {
 }
 
 pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, profile: &mut ProfileData) {
-    let pal = gui.ui.palette();
-    let cx = gui.ui.view().w / 2.0;
+    let pal = gui.stage.palette();
+    let cx = gui.stage.view().w / 2.0;
     let (save_btn, cancel_btn) = buttons(cx);
     let info = &profile.core.info;
     let Some(form) = profile.edit.as_mut() else { return };

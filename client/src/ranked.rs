@@ -254,8 +254,8 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Tran
 
 /// Draws the screen; returns the button clicked.
 fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pressed> {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let (cx, cy) = (view.w / 2.0, view.h / 2.0);
     let picture = gui.images.get_opt(opponent_avatar(state.room.as_ref(), &state.ranked));
     let b = buttons(view);
@@ -268,9 +268,9 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
         draw_opponent(draw, &pal, fonts, (cx, cy), opponent, elo, picture.as_ref());
     };
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui, "Classé");
+    gui.stage.page_header(ui, "Classé");
     let mut pressed = None;
 
     if let Some((lobby, ranked)) = state.room.as_ref().and_then(|r| Some((&r.info, r.info.ranked.as_ref()?))) {
@@ -291,8 +291,8 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
     match &ranked.search {
         Search::Idle => pressed = paint_idle(ui, gui, state),
         Search::Searching { since } => {
-            let text = format!("Recherche d'un adversaire{}", gui.ui.waiting_dots(ui.cx));
-            gui.ui.next_second(ui.cx);
+            let text = format!("Recherche d'un adversaire{}", gui.stage.waiting_dots(ui.cx));
+            gui.stage.next_second(ui.cx);
             let waited = clock((now_secs() - since).max(0.0) as u64);
 
             line(ui.draw, &mut ui.cx.fonts, &text, cy - 40.0, theme::size::HEADING, pal.text);
@@ -353,8 +353,8 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
 
 /// The screen before any search: the player's ELO and record, and the button to search.
 fn paint_idle(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pressed> {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let (cx, cy) = (view.w / 2.0, view.h / 2.0);
     let b = buttons(view);
     let ranked = &state.ranked;
@@ -389,7 +389,7 @@ fn paint_idle(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option
             ("Rechercher une partie".to_string(), false)
         }
         (None, Some(left)) => {
-            gui.ui.next_second(ui.cx);
+            gui.stage.next_second(ui.cx);
             (format!("Disponible dans {}", clock(left)), false)
         }
         (None, None) => ("Rechercher une partie".to_string(), true),

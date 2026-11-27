@@ -7,7 +7,7 @@ use shared::{RoomSetting, Rules, BOARD_COLUMNS, BOARD_ROWS};
 
 use crate::draw::{draw_empty_well, FRAME_PAD};
 use crate::tick::Tick;
-use crate::ui::{widgets, Face, Fonts, Gui, Icon, Modal, Rect, Typeset, Ui, View};
+use crate::ui::{widgets, Face, Fonts, Gui, Icon, Modal, Rect, Stage, Typeset, View};
 use crate::{config, theme};
 
 const CARD_W: f32 = 600.0;
@@ -144,11 +144,11 @@ pub fn update_keys(tick: &Tick, editable: bool) -> Option<Action> {
 
 /// The dialog, on Aero's interface, and what its buttons ask.
 pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, rules: &Rules, editable: bool) -> Option<Action> {
-    let layout = Layout::new(gui.ui.view());
+    let layout = Layout::new(gui.stage.view());
     let (action, dismissed) = widgets::modal(ui, gui, (layout.modal, "Taille du plateau"), |ui, gui| {
-        paint(ui.draw, &gui.ui, &mut ui.cx.fonts, &layout, rules);
+        paint(ui.draw, &gui.stage, &mut ui.cx.fonts, &layout, rules);
         if !editable {
-            footnote(ui.draw, &gui.ui, &mut ui.cx.fonts, &layout);
+            footnote(ui.draw, &gui.stage, &mut ui.cx.fonts, &layout);
             return None;
         }
         let mut step = None;
@@ -169,13 +169,13 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, rules: &Rules, editable: b
 }
 
 /// The well at its size, the standard one dashed behind it, and the axes.
-fn paint(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules: &Rules) {
-    let pal = ui.palette();
+fn paint(draw: &mut Draw, stage: &Stage, fonts: &mut Fonts, layout: &Layout, rules: &Rules) {
+    let pal = stage.palette();
     let well = layout.well(rules.columns, rules.rows);
     let standard = Rules::default();
     let outline = layout.well(standard.columns, standard.rows);
     let dim = pal.text_dim.with_alpha(0.6);
-    draw_empty_well(draw, rules, well, ui.time() as f32);
+    draw_empty_well(draw, rules, well, stage.time() as f32);
     if !is_standard(rules) {
         dashed_rect(draw, outline, dim);
         fonts
@@ -184,20 +184,20 @@ fn paint(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules: &R
             .size(theme::size::SMALL)
             .color(dim);
     }
-    draw_axes(draw, ui, fonts, layout, rules);
+    draw_axes(draw, stage, fonts, layout, rules);
 }
 
-fn footnote(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout) {
+fn footnote(draw: &mut Draw, stage: &Stage, fonts: &mut Fonts, layout: &Layout) {
     let (x, y) = layout.standard.center().into();
     fonts
         .write(draw, Face::Text, "Seul l'hôte peut changer la taille.")
         .center(x, y)
         .size(theme::size::BODY)
-        .color(ui.palette().text_dim);
+        .color(stage.palette().text_dim);
 }
 
-fn draw_axes(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, layout: &Layout, rules: &Rules) {
-    let pal = ui.palette();
+fn draw_axes(draw: &mut Draw, stage: &Stage, fonts: &mut Fonts, layout: &Layout, rules: &Rules) {
+    let pal = stage.palette();
     let (cx, cy) = layout.corner;
     let (x_end, y_end) = (layout.x_end, layout.y_end);
     let well = layout.well(rules.columns, rules.rows);

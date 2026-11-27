@@ -129,7 +129,7 @@ impl Pager {
             .write(ui.draw, Face::Text, &format!("/ {pages}"))
             .left(l.of_x, l.field.y() + l.field.h() / 2.0)
             .size(theme::size::LABEL)
-            .color(gui.ui.palette().text_dim);
+            .color(gui.stage.palette().text_dim);
         wanted.is_some_and(|page| self.go(page, pages))
     }
 }

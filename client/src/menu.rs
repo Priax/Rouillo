@@ -151,13 +151,13 @@ pub fn clear_auth(state: &mut State) {
 }
 
 pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, play: bool) -> Transition {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let (ww, wh) = view.size();
     let items = items(play, state.auth.is_some());
     let mut chosen = None;
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
     ui.cx
         .fonts
@@ -199,7 +199,7 @@ pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, pl
         let (x, y) = (avatar.x() + 6.0, avatar.y() + avatar.h() - 6.0);
 
         profile = widgets::avatar(ui, gui, avatar, &auth.username, picture.as_ref());
-        if gui.ui.pad_active() {
+        if gui.stage.pad_active() {
             ui.draw.circle(vec2(x, y), 14.0).color(theme::GOLD);
             ui.cx
                 .fonts
@@ -224,7 +224,7 @@ pub fn show_menu(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, pl
             .size(theme::size::EMPHASIS)
             .color(color);
     }
-    crate::title::draw_version(ui.draw, &gui.ui, &mut ui.cx.fonts);
+    crate::title::draw_version(ui.draw, &gui.stage, &mut ui.cx.fonts);
 
     if let Some(item) = chosen {
         return choose(item, state);
@@ -256,13 +256,13 @@ pub fn update_settings(tick: &Tick, state: &mut State) -> Transition {
 }
 
 pub fn show_settings(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let panel = settings_panel(view);
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui, "Paramètres");
+    gui.stage.page_header(ui, "Paramètres");
     panel.draw(ui.draw, &pal, &mut ui.cx.fonts, "Contrôles");
     let before = state.settings;
     for i in 0..Settings::COUNT {

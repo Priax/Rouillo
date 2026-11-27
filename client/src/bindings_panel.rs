@@ -112,8 +112,8 @@ impl BindingsPanel {
     /// Draws the panel and answers its clicks: a cell clicked waits for a key or a button. Returns whether the
     /// bindings changed and must be saved.
     pub fn show(&mut self, ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, bindings: &mut Bindings) -> bool {
-        let pal = gui.ui.palette();
-        let view = gui.ui.view();
+        let pal = gui.stage.palette();
+        let view = gui.stage.view();
         let c = card(view);
         let reset = reset_btn(view);
         let hint = match self.capture {

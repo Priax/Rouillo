@@ -478,15 +478,15 @@ fn apply_size(state: &mut State, action: Option<board_size::Action>) {
 }
 
 pub fn show_setup(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let setup = Setup::new(view);
     let best = format!("Meilleur score: {}", state.solo.best);
     let settings = &mut state.solo.settings;
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui, "Solo");
+    gui.stage.page_header(ui, "Solo");
     if state.solo.best > 0 {
         let pill = [Pill::small(&best, theme::GOLD)];
         ui::pills_ending_at(ui.draw, &mut ui.cx.fonts, &pill, view.w - 60.0, theme::HEADER_H / 2.0);

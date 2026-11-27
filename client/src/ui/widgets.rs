@@ -62,14 +62,14 @@ pub fn link(ui: &mut Ui<'_>, key: impl Hash, rect: Rect, text: &str, enabled: bo
 pub fn menu_bar(ui: &mut Ui<'_>, gui: &mut Gui, row: Rect, (label, color): (&str, Color), enabled: bool) -> bool {
     let hovered = ui.hovered(ui.id(label));
     let (response, visual) = control(ui, label, bar::reach(row, hovered), enabled, Role::Button, label);
-    bar::paint(ui.draw, &mut ui.cx.fonts, (&gui.ui.palette(), gui.ui.time()), row, (label, color), visual);
+    bar::paint(ui.draw, &mut ui.cx.fonts, (&gui.stage.palette(), gui.stage.time()), row, (label, color), visual);
     sounds(response).clicked
 }
 
 /// A list row that lights up under the pointer; the caller draws what it holds. Returns whether it was clicked.
 pub fn row(ui: &mut Ui<'_>, gui: &Gui, key: impl Hash, rect: Rect, index: usize) -> bool {
     let (response, visual) = control(ui, key, rect, true, Role::Button, "");
-    paint_row(ui.draw, &gui.ui.palette(), rect, index, visual);
+    paint_row(ui.draw, &gui.stage.palette(), rect, index, visual);
     sounds(response).clicked
 }
 
@@ -79,13 +79,13 @@ pub fn avatar(ui: &mut Ui<'_>, gui: &mut Gui, rect: Rect, name: &str, picture: O
     let center = rect.center().into();
     let radius = rect.w().min(rect.h()) / 2.0 * (1.0 + 0.05 * visual.hover);
     let who = Persona { name, glow: visual.hover, picture };
-    portrait(ui.draw, &gui.ui.palette(), &mut ui.cx.fonts, center, radius, &who);
+    portrait(ui.draw, &gui.stage.palette(), &mut ui.cx.fonts, center, radius, &who);
     sounds(response).clicked
 }
 
 /// A labelled value with a button on each side to step it. Returns the step asked: -1, 1, or 0.
 pub fn stepper(ui: &mut Ui<'_>, gui: &mut Gui, key: impl Hash + Copy, s: Stepper, (label, value): (&str, &str)) -> i32 {
-    paint_labelled(ui.draw, &mut ui.cx.fonts, &gui.ui.palette(), s, (label, value));
+    paint_labelled(ui.draw, &mut ui.cx.fonts, &gui.stage.palette(), s, (label, value));
     let less = button(ui, (key, "minus"), s.minus, Icon::Minus, true);
     let more = button(ui, (key, "plus"), s.plus, Icon::Plus, true);
     i32::from(more) - i32::from(less)
@@ -113,13 +113,13 @@ pub fn stepper_tile(
     (label, value): (&str, &str),
     editable: bool,
 ) -> i32 {
-    tile_label(ui.draw, &mut ui.cx.fonts, &gui.ui.palette(), tile, label);
+    tile_label(ui.draw, &mut ui.cx.fonts, &gui.stage.palette(), tile, label);
     stepper_band(ui, key, Stepper::tile_band(tile), value, editable)
 }
 
 /// A settings tile whose value is a button, for a setting changed somewhere else. Returns whether it was clicked.
 pub fn button_tile(ui: &mut Ui<'_>, gui: &mut Gui, key: impl Hash, tile: Rect, (label, value): (&str, &str)) -> bool {
-    tile_label(ui.draw, &mut ui.cx.fonts, &gui.ui.palette(), tile, label);
+    tile_label(ui.draw, &mut ui.cx.fonts, &gui.stage.palette(), tile, label);
     button(ui, key, Stepper::tile_band(tile), value, true)
 }
 
@@ -133,7 +133,7 @@ pub fn switch_tile(
     (label, on): (&str, bool),
     editable: bool,
 ) -> bool {
-    let pal = gui.ui.palette();
+    let pal = gui.stage.palette();
     tile_label(ui.draw, &mut ui.cx.fonts, &pal, tile, label);
     let band = Stepper::tile_band(tile);
     let (response, visual) = control(ui, key, band, editable, Role::Button, label);
@@ -150,10 +150,10 @@ pub fn modal<R>(
     inside: impl FnOnce(&mut Ui<'_>, &mut Gui) -> R,
 ) -> (R, bool) {
     ui.modal(|ui| {
-        let view = gui.ui.view();
+        let view = gui.stage.view();
         let screen = Rect::at(0.0, 0.0, view.w, view.h);
         let beside = ui.interact(ui.id("modal scrim"), screen, Sense::CLICK).clicked;
-        modal.paint(ui.draw, &mut ui.cx.fonts, &gui.ui.palette(), (view, title));
+        modal.paint(ui.draw, &mut ui.cx.fonts, &gui.stage.palette(), (view, title));
         ui.interact(ui.id("modal card"), modal.card, Sense::NONE);
         let closed = button(ui, "modal close", modal.close(), Icon::Close, true);
         (inside(ui, gui), beside || closed)
@@ -183,7 +183,7 @@ pub fn text_field(
     field: TextField<'_>,
     text: &mut String,
 ) -> EditResponse {
-    let pal = gui.ui.palette();
+    let pal = gui.stage.palette();
     let border = if ui.is_focused(ui.id(key)) { pal.accent } else { pal.border };
     ui.draw.rect(rect).radius(theme::RADIUS).color(pal.surface);
     ui.draw.rect(rect).radius(theme::RADIUS).stroke(border, 2.0);

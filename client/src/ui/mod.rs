@@ -54,17 +54,18 @@ const DOT_STEP: f64 = 0.5;
 /// What screens draw with: the widgets, the fonts, and the pictures
 /// fetched from the server.
 pub struct Gui {
-    pub ui: Ui,
+    pub stage: Stage,
     pub images: crate::images::Images,
 }
 
 impl Gui {
     pub fn new() -> Self {
-        Self { ui: Ui::default(), images: crate::images::Images::default() }
+        Self { stage: Stage::default(), images: crate::images::Images::default() }
     }
 }
 
-pub struct Ui {
+/// The frame screens are laid out in: the view, the clock, and the screen coming in with its colors.
+pub struct Stage {
     dt: f32,
     time: f64,
     view: View,
@@ -82,7 +83,7 @@ pub struct Ui {
     clock: f64,
 }
 
-impl Default for Ui {
+impl Default for Stage {
     fn default() -> Self {
         Self {
             dt: 0.0,
@@ -102,7 +103,7 @@ impl Default for Ui {
     }
 }
 
-impl Ui {
+impl Stage {
     /// Called at the start of each frame, before the screen reacts to input.
     pub fn begin_frame(&mut self, dt: f32, view: View) {
         self.dt = dt.clamp(0.0, MAX_DT);
@@ -217,8 +218,8 @@ mod tests {
 
     #[test]
     fn a_new_screen_comes_in_then_settles() {
-        let mut ui = Ui::default();
-        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default());
+        let mut ui = Stage::default();
+        let frame = |ui: &mut Stage| ui.begin_frame(1.0 / 60.0, View::default());
         ui.set_screen(0, hue::GREEN, TRANSITION);
         frame(&mut ui);
         assert!(!ui.transitioning(), "the first screen is there at once");
@@ -232,7 +233,7 @@ mod tests {
 
     #[test]
     fn the_first_screen_shows_up_at_once() {
-        let mut ui = Ui::default();
+        let mut ui = Stage::default();
         ui.set_screen(0, hue::GREEN, TRANSITION);
         ui.begin_frame(1.0 / 60.0, View::default());
         assert!((ui.transition() - 1.0).abs() < f32::EPSILON);
@@ -241,8 +242,8 @@ mod tests {
 
     #[test]
     fn a_new_screen_brings_its_colours_the_short_way_round() {
-        let mut ui = Ui::default();
-        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default());
+        let mut ui = Stage::default();
+        let frame = |ui: &mut Stage| ui.begin_frame(1.0 / 60.0, View::default());
         ui.set_screen(0, hue::PURPLE, TRANSITION);
         frame(&mut ui);
         ui.set_screen(1, hue::PINK, TRANSITION);
@@ -265,8 +266,8 @@ mod tests {
 
     #[test]
     fn a_transition_lasts_its_own_fade() {
-        let mut ui = Ui::default();
-        let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default());
+        let mut ui = Stage::default();
+        let frame = |ui: &mut Stage| ui.begin_frame(1.0 / 60.0, View::default());
         ui.set_screen(0, hue::PURPLE, TRANSITION);
         frame(&mut ui);
         ui.set_screen(1, hue::PURPLE, 1.2);

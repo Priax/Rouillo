@@ -113,8 +113,8 @@ impl Chat {
 
     /// The lobby's chat: a card with the conversation and its field. Returns the message to send.
     pub fn show_card(&mut self, ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, area: Rect) -> Option<String> {
-        crate::ui::card(ui.draw, &gui.ui.palette(), area);
-        self.draw_lines(ui, &gui.ui.palette(), area, false);
+        crate::ui::card(ui.draw, &gui.stage.palette(), area);
+        self.draw_lines(ui, &gui.stage.palette(), area, false);
         self.show_field(ui, gui, area, "Écrire un message...")
     }
 
@@ -127,7 +127,7 @@ impl Chat {
         area: Rect,
         hint: Option<&str>,
     ) -> Option<String> {
-        let pal = gui.ui.palette();
+        let pal = gui.stage.palette();
         if !self.open {
             if ui.is_focused(ui.id(FIELD)) {
                 ui.blur();
@@ -148,7 +148,7 @@ impl Chat {
             return None;
         }
         ui.draw.rect(area).radius(theme::RADIUS).color(Color::BLACK.with_alpha(0.55));
-        self.draw_lines(ui, &gui.ui.palette(), area, false);
+        self.draw_lines(ui, &gui.stage.palette(), area, false);
         let said = self.show_field(ui, gui, area, "Entrée pour envoyer, Échap pour fermer");
         if said.is_some() {
             self.open = false;

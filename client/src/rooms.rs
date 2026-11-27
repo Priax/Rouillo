@@ -52,7 +52,7 @@ fn browser_buttons(view: View) -> BrowserButtons {
 
 /// What the room list does with the keys; its clicks are in [`show_browser`].
 pub fn update_browser(tick: &Tick, gui: &mut Gui, state: &mut State) -> Transition {
-    let view = gui.ui.view();
+    let view = gui.stage.view();
     let pages = room_pages(&state.rooms, view);
     state.room_pager.clamp(pages);
     if tick.back() {
@@ -68,15 +68,15 @@ fn leave_browser(state: &mut State) -> Transition {
 }
 
 pub fn show_browser(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let card = room_list(view).card;
     let pages = room_pages(&state.rooms, view);
     let b = browser_buttons(view);
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui, "Rooms");
+    gui.stage.page_header(ui, "Rooms");
 
     ui::card(ui.draw, &pal, card);
     if state.rooms.is_empty() {
@@ -139,7 +139,7 @@ fn watch_only(room: &RoomInfo) -> bool {
 
 /// What a room's row holds, drawn over the row itself.
 fn draw_room_row(draw: &mut Draw, fonts: &mut Fonts, gui: &mut Gui, row: Rect, room: &RoomInfo) {
-    let pal = gui.ui.palette();
+    let pal = gui.stage.palette();
     let mid = row.y() + row.h() / 2.0;
     let players = format!("{}/{} joueurs", room.players, room.max);
     let watchers = format!("{} spectateur{}", room.spectators, if room.spectators > 1 { "s" } else { "" });
@@ -236,12 +236,12 @@ fn show_entry(
     (title, confirm): (&str, &str),
     field: TextField<'_>,
 ) -> Entry {
-    let pal = gui.ui.palette();
-    let (w, h) = gui.ui.view().size();
+    let pal = gui.stage.palette();
+    let (w, h) = gui.stage.view().size();
     let card = entry_card(w, h);
     let (cbtn, back) = entry_buttons(w, h);
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
     ui::card(ui.draw, &pal, card);
     ui.cx
@@ -484,8 +484,8 @@ enum PlayersClick {
 }
 
 fn show_players(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo, first: usize) -> Option<PlayersClick> {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let card = lobby_players(view);
     if card.w() < 160.0 {
         return None;
@@ -582,7 +582,7 @@ fn invite_button(view: View, i: usize) -> Rect {
 
 /// What the lobby does with the keys and the server's answers; its clicks are in [`show_lobby`].
 pub fn update_lobby(tick: &Tick, gui: &mut Gui, state: &mut State) {
-    let view = gui.ui.view();
+    let view = gui.stage.view();
     let State { room, net: Network { conn, .. }, .. } = state;
     let Some(room) = room.as_mut() else { return };
     let info = &room.info;
@@ -683,7 +683,7 @@ fn show_tiles(
     info: &LobbyInfo,
     editable: bool,
 ) -> (bool, Option<(RoomSetting, i32)>) {
-    let view = gui.ui.view();
+    let view = gui.stage.view();
     let mut sizing = false;
     let mut setting = None;
     for (tile, rect) in lobby_tiles(view) {
@@ -711,15 +711,15 @@ fn show_tiles(
 }
 
 pub fn show_lobby(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let State { room, auth, net: Network { conn, maintenance, .. }, .. } = state;
     let Some(room) = room.as_mut() else { return Transition::Stay };
     let editable = room.info.is_host && room.info.countdown.is_none();
     let (label, color, enabled) = launch_bar(&room.info, *maintenance);
     let may_invite = room.info.your_slot != 0 && auth.is_some();
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
     draw_lobby_header(ui, gui, &room.info);
     let players = show_players(ui, gui, &room.info, room.players_first);
@@ -825,8 +825,8 @@ fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool
 }
 
 fn draw_lobby_header(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo) {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let mid = theme::HEADER_H / 2.0;
     let id = format!("Room #{}", info.id);
     let players = format!("{}/{} joueurs", info.players, info.settings.max_players);
@@ -841,7 +841,7 @@ fn draw_lobby_header(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo)
         pills.push(Pill::small(&watchers, pal.text_dim));
     }
 
-    gui.ui.header_band(ui, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    gui.stage.header_band(ui, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
     let (draw, fonts) = (&mut *ui.draw, &mut ui.cx.fonts);
     let pills_start = ui::pills_ending_at(draw, fonts, &pills, view.w - 60.0, mid);
     let name = fonts.fit(Face::Display, &info.name, theme::size::TITLE, pills_start - 30.0 - 60.0);
@@ -850,7 +850,7 @@ fn draw_lobby_header(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo)
 
 /// The invitation window: friends to invite, a page at a time. Returns the friend invited, which closes it.
 fn show_invite(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, invite: &mut Invite) -> Option<String> {
-    let view = gui.ui.view();
+    let view = gui.stage.view();
     let modal = invite_modal(view);
     let card = modal.card;
     let message = if invite.slot.is_some() {
@@ -861,7 +861,7 @@ fn show_invite(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, invite: &mut Invite) ->
         None
     };
     let (invited, dismissed) = widgets::modal(ui, gui, (modal, "Inviter un ami"), |ui, gui| {
-        let pal = gui.ui.palette();
+        let pal = gui.stage.palette();
         if let Some(message) = message {
             ui.cx
                 .fonts

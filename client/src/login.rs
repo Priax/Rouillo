@@ -145,8 +145,8 @@ pub fn update_auth(state: &mut State) -> Transition {
 }
 
 pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
-    let pal = gui.ui.palette();
-    let layout = auth_layout(gui.ui.view(), state.auth_form.focused);
+    let pal = gui.stage.palette();
+    let layout = auth_layout(gui.stage.view(), state.auth_form.focused);
     let AuthLayout { cx, base_y, .. } = layout;
     let form = &state.auth_form;
     let modes = [("Connexion", AuthMode::Login), ("Inscription", AuthMode::Register)];
@@ -157,7 +157,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Tran
         (false, AuthMode::Register) => "S'inscrire",
     };
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
     ui.cx
         .fonts

@@ -9,7 +9,7 @@ use crate::nav::Transition;
 use crate::pads::Pad;
 use crate::state::{Screen, State};
 use crate::tick::Tick;
-use crate::ui::{self, px, widgets, Face, Fonts, Frame, Gui, Icon, Rect, Typeset, Ui, View, FILL};
+use crate::ui::{self, px, widgets, Face, Fonts, Frame, Gui, Icon, Rect, Stage, Typeset, View, FILL};
 use crate::{draw as game_draw, theme};
 
 const RULES: [(&str, &str); 7] = [
@@ -103,8 +103,8 @@ fn pad_icon(draw: &mut Draw, (x, cy): (f32, f32), color: Color, hole: Color) {
 }
 
 /// A key or pad button as a small cap; returns where the next one goes.
-fn chip(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, (x, cy): (f32, f32), label: &str, pad: bool) -> f32 {
-    let pal = ui.palette();
+fn chip(draw: &mut Draw, stage: &Stage, fonts: &mut Fonts, (x, cy): (f32, f32), label: &str, pad: bool) -> f32 {
+    let pal = stage.palette();
     let size = theme::size::LABEL;
     let icon = if pad { 32.0 } else { 0.0 };
     let w = fonts.width(Face::Text, label, size) + 24.0 + icon;
@@ -133,8 +133,8 @@ fn controls_rows(bindings: &Bindings) -> Vec<(&'static str, Vec<String>, Option<
     rows
 }
 
-fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect, bindings: &Bindings) {
-    let pal = ui.palette();
+fn draw_controls(draw: &mut Draw, stage: &Stage, fonts: &mut Fonts, card: Rect, bindings: &Bindings) {
+    let pal = stage.palette();
     let label_w = 300.0_f32.min(card.w() * 0.42);
     let note = "Les touches se changent dans Paramètres. Sur téléphone, des boutons apparaissent \
                 à l'écran dès que vous le touchez.";
@@ -148,13 +148,13 @@ fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect, bindin
         fonts.write(draw, Face::Text, label).left(card.x() + 24.0, y).size(theme::size::EMPHASIS).color(pal.text);
         let mut x = card.x() + 24.0 + label_w;
         if keys.is_empty() && pad.is_none() {
-            chip(draw, ui, fonts, (x, y), "aucune touche", false);
+            chip(draw, stage, fonts, (x, y), "aucune touche", false);
         }
         for key in &keys {
-            x = chip(draw, ui, fonts, (x, y), key, false);
+            x = chip(draw, stage, fonts, (x, y), key, false);
         }
         if let Some(pad) = pad {
-            chip(draw, ui, fonts, (x, y), pad, true);
+            chip(draw, stage, fonts, (x, y), pad, true);
         }
         y += row_h;
     }
@@ -166,8 +166,8 @@ fn draw_controls(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect, bindin
     }
 }
 
-fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect) {
-    let pal = ui.palette();
+fn draw_rules(draw: &mut Draw, stage: &Stage, fonts: &mut Fonts, card: Rect) {
+    let pal = stage.palette();
     let mut y = card.y() + TAB_H + 30.0;
     for (title, text) in RULES {
         fonts.write(draw, Face::Display, title).left(card.x() + 24.0, y).size(theme::size::EMPHASIS).color(pal.accent);
@@ -184,7 +184,7 @@ fn draw_rules(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, card: Rect) {
 /// the explanation over the board while the game stands still.
 /// The demo's card; returns the lesson its arrows step to: -1, 1, or 0.
 fn show_demo(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, card: Rect, demo: &Demo, time: f32) -> i32 {
-    let pal = gui.ui.palette();
+    let pal = gui.stage.palette();
     let title = demo.title();
     let title = ui.cx.fonts.fit(Face::Display, &title, theme::size::LABEL, card.w() - 110.0);
     let board = if demo.rival.is_some() {
@@ -233,14 +233,14 @@ fn show_demo(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, card: Rect, demo: &Demo, 
 }
 
 pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State, help: &mut HelpView) -> Transition {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let (info, demo_card) = cards(view);
     let [controls_tab, rules_tab] = tabs(info);
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui, "Comment jouer");
+    gui.stage.page_header(ui, "Comment jouer");
     ui::card(ui.draw, &pal, info);
     if widgets::tab(ui, controls_tab, "Contrôles", !help.rules) {
         help.rules = false;
@@ -249,11 +249,11 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State, help: &mut 
         help.rules = true;
     }
     if help.rules {
-        draw_rules(ui.draw, &gui.ui, &mut ui.cx.fonts, info);
+        draw_rules(ui.draw, &gui.stage, &mut ui.cx.fonts, info);
     } else {
-        draw_controls(ui.draw, &gui.ui, &mut ui.cx.fonts, info, &state.input.controls.bindings);
+        draw_controls(ui.draw, &gui.stage, &mut ui.cx.fonts, info, &state.input.controls.bindings);
     }
-    let time = gui.ui.time() as f32;
+    let time = gui.stage.time() as f32;
     match show_demo(ui, gui, demo_card, &help.demo, time) {
         -1 => help.demo.previous(),
         1 => help.demo.next(),

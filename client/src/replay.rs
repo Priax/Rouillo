@@ -10,7 +10,7 @@ use crate::http::{self, HttpSlot};
 use crate::nav::{Nav, Transition};
 use crate::state::{GameSession, Player, Rival, Room, Screen, State};
 use crate::tick::Tick;
-use crate::ui::{widgets, Face, Fonts, Gui, Icon, Rect, Status, Typeset, Ui, View};
+use crate::ui::{widgets, Face, Fonts, Gui, Icon, Rect, Stage, Status, Typeset, View};
 use crate::{logic, theme};
 
 const MAX_REPLAY_SIZE: usize = 64 << 20;
@@ -86,7 +86,7 @@ pub fn show_keep(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) {
         return;
     };
 
-    let rect = keep_button(gui.ui.view());
+    let rect = keep_button(gui.stage.view());
     let label = if offer.kept { "Replay gardé" } else { "Garder le replay" };
     let enabled = !offer.kept && offer.slot.is_none();
 
@@ -94,7 +94,7 @@ pub fn show_keep(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) {
         offer.status = Status::Empty;
         offer.slot = Some(set_favorite(&offer.id, true, auth.token.clone()));
     }
-    if let Some((msg, color)) = offer.status.shown(&gui.ui.palette()) {
+    if let Some((msg, color)) = offer.status.shown(&gui.stage.palette()) {
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, msg)
@@ -294,7 +294,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, viewer: &mut ReplayViewer)
         return Transition::Stay;
     }
 
-    let [play, speed, player, quit] = controls(gui.ui.view());
+    let [play, speed, player, quit] = controls(gui.stage.view());
     let icon = if viewer.paused { Icon::Play } else { Icon::Pause };
     let label = format!("Vitesse x{}", SPEEDS[viewer.speed]);
     let multi = viewer.playback.replay().players.len() > 1;
@@ -303,7 +303,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, viewer: &mut ReplayViewer)
     let faster = widgets::button(ui, "speed", speed, label.as_str(), true);
     let next = widgets::button(ui, "player", player, "Joueur suivant", multi);
     let quit = widgets::button(ui, "quit", quit, "Quitter", true);
-    draw_clock(ui.draw, &gui.ui, &mut ui.cx.fonts, &viewer.clock(), play);
+    draw_clock(ui.draw, &gui.stage, &mut ui.cx.fonts, &viewer.clock(), play);
 
     if toggled {
         viewer.paused = !viewer.paused;
@@ -318,10 +318,10 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, viewer: &mut ReplayViewer)
     Transition::Stay
 }
 
-fn draw_clock(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts, clock: &str, play: Rect) {
+fn draw_clock(draw: &mut Draw, stage: &Stage, fonts: &mut Fonts, clock: &str, play: Rect) {
     fonts
         .write(draw, Face::Display, clock)
         .right(play.x() - 20.0, play.y() + play.h() / 2.0)
         .size(theme::size::LABEL)
-        .color(ui.palette().text_dim);
+        .color(stage.palette().text_dim);
 }

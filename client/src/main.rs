@@ -287,15 +287,15 @@ fn update(cx: &mut Cx, root: &mut Root) {
     state.input.pads.update(&cx.input);
     let pad_nav = pad_menus(state, nav.current());
     let finger = cx.input.fingers().first().map(|f| f.at);
-    gui.ui.note_pointer(finger.or_else(|| cx.input.pointer()));
+    gui.stage.note_pointer(finger.or_else(|| cx.input.pointer()));
     if pad_nav && state.input.pads.pressed(Pad::South) {
         cx.press_focus(aero::WindowId::MAIN);
     }
-    gui.ui.set_clock(connection::now_secs());
-    gui.ui.begin_frame(dt, view);
+    gui.stage.set_clock(connection::now_secs());
+    gui.stage.begin_frame(dt, view);
     if pad_nav {
         if let Some(dir) = pad_direction(&state.input.pads) {
-            gui.ui.use_pad();
+            gui.stage.use_pad();
             cx.move_focus(aero::WindowId::MAIN, Vec2::from(dir));
         }
     }
@@ -357,8 +357,11 @@ fn update(cx: &mut Cx, root: &mut Root) {
         nav.apply(Transition::To(Screen::Title));
     }
     let fade = if was_title { title::FADE } else { ui::TRANSITION };
-    gui.ui.set_screen(nav.current().id(), nav.current().hue(), fade);
-    if gui.ui.transitioning() {
+    gui.stage.set_screen(nav.current().id(), nav.current().hue(), fade);
+    if let Some(look) = cx.theme_mut::<ui::Look>() {
+        look.palette = gui.stage.palette();
+    }
+    if gui.stage.transitioning() {
         cx.request_redraw();
     }
     cx.request_update_in(IDLE_BEAT);
@@ -370,8 +373,8 @@ fn show_invitation(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) 
         return Transition::Stay;
     };
 
-    let pal = gui.ui.palette();
-    let (ww, wh) = gui.ui.view().size();
+    let pal = gui.stage.palette();
+    let (ww, wh) = gui.stage.view().size();
     let band = Rect::at(0.0, wh - BANNER_H, ww, BANNER_H);
     let msg = format!("{from} vous invite dans \"{room_name}\"");
     let (accept_btn, decline_btn) = banner_buttons(ww, wh);
@@ -399,10 +402,7 @@ fn show_invitation(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) 
 
 fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     let Root { nav, state, gui } = root;
-    if let Some(look) = cx.theme_mut::<ui::Look>() {
-        look.palette = gui.ui.palette();
-    }
-    let scale = gui.ui.view().scale;
+    let scale = gui.stage.view().scale;
     draw.push_transform(Affine2::from_scale(Vec2::splat(scale)));
     let ui = &mut aero::ui::Ui::new(cx, draw);
     let mut transition = Transition::Stay;
@@ -438,7 +438,7 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     let screen = nav.current();
     if matches!(screen, Screen::Game | Screen::Solo(_)) {
         let hint = can_chat(state).then_some("Entrée pour écrire");
-        let area = game_chat_area(gui.ui.view(), state.input.touch.active);
+        let area = game_chat_area(gui.stage.view(), state.input.touch.active);
         if let Some(room) = state.room.as_mut().filter(|_| matches!(screen, Screen::Game)) {
             if let Some(text) = room.chat.show_overlay(ui, gui, area, hint) {
                 state.net.conn.send(&ClientMessage::Chat { text });
@@ -447,7 +447,7 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
         if matches!(screen, Screen::Game) {
             replay::show_keep(ui, gui, state);
         }
-        state.input.touch.draw(ui.draw, &mut ui.cx.fonts, gui.ui.view());
+        state.input.touch.draw(ui.draw, &mut ui.cx.fonts, gui.stage.view());
     }
 
     let invited = show_invitation(ui, gui, state);
@@ -458,7 +458,7 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     draw_too_old_banner(ui.draw, &mut ui.cx.fonts, gui, state, screen);
     draw_reconnect_banner(ui, gui, state, screen);
 
-    let view = gui.ui.view();
+    let view = gui.stage.view();
     // A game, and the screens that lead straight into one, need the phone
     // turned: the boards are laid out side by side.
     let needs_landscape = matches!(screen, Screen::RoomLobby | Screen::Game | Screen::Ranked | Screen::Solo(_));
@@ -489,12 +489,12 @@ fn online_role(room: &state::Room) -> draw::Role {
     }
 }
 
-fn draw_maintenance_banner(draw: &mut Draw, fonts: &mut ui::Fonts, gui: &mut Gui, state: &State, screen: &Screen) {
+fn draw_maintenance_banner(draw: &mut Draw, fonts: &mut ui::Fonts, gui: &Gui, state: &State, screen: &Screen) {
     let playing = matches!(screen, Screen::Game) && state.session().is_some_and(|s| !s.decided());
     if state.net.maintenance && state.net.conn.is_live() && screen.needs_connection() && !playing {
         draw_warning_banner(
             draw,
-            &mut gui.ui,
+            &gui.stage,
             fonts,
             "Le serveur redémarre: les parties en cours se terminent, aucune autre ne démarre.",
         );
@@ -502,14 +502,14 @@ fn draw_maintenance_banner(draw: &mut Draw, fonts: &mut ui::Fonts, gui: &mut Gui
 }
 
 /// Says why online play is closed while the server refuses this version.
-fn draw_too_old_banner(draw: &mut Draw, fonts: &mut ui::Fonts, gui: &mut Gui, state: &State, screen: &Screen) {
+fn draw_too_old_banner(draw: &mut Draw, fonts: &mut ui::Fonts, gui: &Gui, state: &State, screen: &Screen) {
     if state.net.too_old && matches!(screen, Screen::Menu | Screen::PlayMenu) {
-        draw_warning_banner(draw, &mut gui.ui, fonts, crate::update::TOO_OLD);
+        draw_warning_banner(draw, &gui.stage, fonts, crate::update::TOO_OLD);
     }
 }
 
-fn draw_warning_banner(draw: &mut Draw, ui: &mut ui::Ui, fonts: &mut ui::Fonts, text: &str) {
-    let ww = ui.view().w;
+fn draw_warning_banner(draw: &mut Draw, stage: &ui::Stage, fonts: &mut ui::Fonts, text: &str) {
+    let ww = stage.view().w;
 
     ui::banner(draw, Rect::at(0.0, 0.0, ww, MAINTENANCE_H), theme::WARNING_BANNER, theme::WARNING, ui::Edge::Bottom);
     fonts
@@ -519,7 +519,7 @@ fn draw_warning_banner(draw: &mut Draw, ui: &mut ui::Ui, fonts: &mut ui::Fonts, 
         .color(theme::WARNING_TEXT);
 }
 
-fn draw_reconnect_banner(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State, screen: &Screen) {
+fn draw_reconnect_banner(ui: &mut aero::ui::Ui<'_>, gui: &Gui, state: &State, screen: &Screen) {
     let Some((attempts, secs_left)) = state.net.conn.recovering(connection::now_secs()) else {
         return;
     };
@@ -527,9 +527,9 @@ fn draw_reconnect_banner(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State
         return;
     }
 
-    let ww = gui.ui.view().w;
-    let dots = gui.ui.waiting_dots(ui.cx);
-    gui.ui.next_second(ui.cx);
+    let ww = gui.stage.view().w;
+    let dots = gui.stage.waiting_dots(ui.cx);
+    gui.stage.next_second(ui.cx);
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
 
     let (draw, fonts) = (&mut *ui.draw, &mut ui.cx.fonts);
@@ -574,7 +574,7 @@ fn main() -> Result<(), aero::Error> {
         wake::init(cx.waker());
         let root = setup();
         ui::register_fonts(&mut cx.fonts);
-        cx.set_theme(root.gui.ui.look());
+        cx.set_theme(root.gui.stage.look());
         Rouillo(root)
     })
 }

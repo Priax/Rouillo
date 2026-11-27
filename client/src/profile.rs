@@ -76,7 +76,7 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
 
 /// The match list's size, and the answer to a favorite; the clicks are in [`show_history_panel`].
 fn update_history(gui: &Gui, core: &mut ProfileCore) {
-    core.history.fit(history_rows(gui.ui.view()));
+    core.history.fit(history_rows(gui.stage.view()));
     match http::take_done(&mut core.favorite_slot) {
         Some(Ok(())) => core.history.fetch(),
         Some(Err(e)) => core.replay_status = Status::error(e),
@@ -136,8 +136,8 @@ fn cover(draw: &mut Draw, picture: &Image, r: Rect) {
 }
 
 fn draw_header(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, core: &ProfileCore) {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let banner = gui.images.get_opt(core.info.banner_url.as_deref());
     let avatar = gui.images.get_opt(core.info.avatar_url.as_deref());
     let radius = 48.0;
@@ -147,7 +147,7 @@ fn draw_header(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, core: &ProfileCore) {
     let elo = format!("ELO {}", core.info.elo);
     let rating = Pill { text: &elo, color: theme::GOLD, size: theme::size::BODY };
 
-    gui.ui.header_band(ui, Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H));
+    gui.stage.header_band(ui, Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H));
     let (draw, fonts) = (&mut *ui.draw, &mut ui.cx.fonts);
     let name = fonts.fit(Face::Display, &core.info.username, theme::size::TITLE, view.w - text_x - 60.0);
     if let Some(banner) = banner {
@@ -221,8 +221,8 @@ fn card_message(draw: &mut Draw, fonts: &mut Fonts, card: Rect, text: &str, colo
 
 /// Returns whether the link to the whole bio was clicked.
 fn show_stats_panel(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, core: &ProfileCore, load_failed: bool) -> bool {
-    let pal = gui.ui.palette();
-    let (card, _) = cards(gui.ui.view());
+    let pal = gui.stage.palette();
+    let (card, _) = cards(gui.stage.view());
     let fonts = &mut ui.cx.fonts;
     let draw = &mut *ui.draw;
 
@@ -257,7 +257,7 @@ fn show_stats_panel(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, core: &ProfileCore
     }
 
     divider(draw, &pal, label_x, stats_end(card), card.w() - 2.0 * CARD_PAD);
-    profile_about::draw_summary(draw, &gui.ui, fonts, &summary, area);
+    profile_about::draw_summary(draw, &gui.stage, fonts, &summary, area);
     summary.cut && profile_about::show_more_link(ui, area)
 }
 
@@ -293,8 +293,8 @@ fn show_history_panel(
     core: &mut ProfileCore,
     own: bool,
 ) -> Option<HistoryClick> {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let (_, card) = cards(view);
     let fonts = &mut ui.cx.fonts;
 
@@ -370,7 +370,7 @@ fn show_match_row(
 ) -> Option<HistoryClick> {
     let me = m.me(viewed_id)?;
 
-    let pal = gui.ui.palette();
+    let pal = gui.stage.palette();
     let fonts = &mut ui.cx.fonts;
     let mid = row.y() + row.h() / 2.0;
     let opp = m.opponent(viewed_id);
@@ -490,10 +490,10 @@ fn account_outcome(state: &mut State, p: &mut ProfileData, outcome: Outcome) -> 
 }
 
 pub fn show_profile(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, p: &mut ProfileData) -> Transition {
-    let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(gui.ui.view());
+    let [back_btn, edit_btn, account_btn, logout_btn] = own_buttons(gui.stage.view());
     let token = state.auth.as_ref().map(|a| a.token.clone());
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
     draw_header(ui, gui, &p.core);
     if p.edit.is_some() {
@@ -628,15 +628,15 @@ pub fn show_other_profile(
     state: &mut State,
     p: &mut OtherProfileData,
 ) -> Transition {
-    let pal = gui.ui.palette();
-    let cx = gui.ui.view().w / 2.0;
-    let btn_y = buttons_top(gui.ui.view());
+    let pal = gui.stage.palette();
+    let cx = gui.stage.view().w / 2.0;
+    let btn_y = buttons_top(gui.stage.view());
     let sending = p.friend_slot.is_some();
-    let (add_btn, back_btn) = other_buttons(gui.ui.view());
+    let (add_btn, back_btn) = other_buttons(gui.stage.view());
     let can_add = !p.load_failed && p.friendship == FriendshipStatus::NotFriends;
     let label = if sending { "Envoi..." } else { "Ajouter en ami" };
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
     draw_header(ui, gui, &p.core);
     let more = show_stats_panel(ui, gui, &p.core, p.load_failed);

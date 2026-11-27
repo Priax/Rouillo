@@ -237,8 +237,8 @@ pub fn update(tick: &Tick, form: &mut AccountForm) -> Outcome {
 }
 
 pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, form: &mut AccountForm, token: Option<String>) -> Outcome {
-    let pal = gui.ui.palette();
-    let cx = gui.ui.view().w / 2.0;
+    let pal = gui.stage.palette();
+    let cx = gui.stage.view().w / 2.0;
     let choosing = form.page == Page::Choose;
     let (confirm_btn, cancel_btn) = buttons(cx, form);
     let busy = form.pending.is_some();

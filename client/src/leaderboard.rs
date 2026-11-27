@@ -87,7 +87,7 @@ fn refresh_btn(view: View) -> Rect {
 /// The answers to come and what the keys do; the clicks are in [`show`].
 pub fn update(tick: &Tick, gui: &mut Gui, state: &mut State, board: &mut Leaderboard) -> Transition {
     let me = state.auth.as_ref().map(|a| a.user_id.clone());
-    let list = list(gui.ui.view());
+    let list = list(gui.stage.view());
     poll(board, me.as_deref());
     let pages = ui::page_count(board.top.len(), list.per_page());
     board.pager.clamp(pages);
@@ -116,7 +116,7 @@ fn draw_row(
     mine: bool,
     picture: Option<&Image>,
 ) {
-    let pal = gui.ui.palette();
+    let pal = gui.stage.palette();
     let mid = row.y() + row.h() / 2.0;
     let who = ui::Persona { name: &e.username, glow: 0.0, picture };
     let name_x = row.x() + 100.0 + 2.0 * AVATAR_R + 12.0;
@@ -141,8 +141,8 @@ fn draw_row(
 }
 
 pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, board: &mut Leaderboard) -> Transition {
-    let pal = gui.ui.palette();
-    let view = gui.ui.view();
+    let pal = gui.stage.palette();
+    let view = gui.stage.view();
     let list = list(view);
     let card = list.card;
     let me = state.auth.as_ref().map(|a| a.user_id.as_str());
@@ -164,10 +164,10 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, board: 
         None
     };
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
     let mut chosen = None;
-    gui.ui.page_header(ui, "Classement");
+    gui.stage.page_header(ui, "Classement");
     ui::card(ui.draw, &pal, card);
     if let Some(text) = empty {
         ui.cx

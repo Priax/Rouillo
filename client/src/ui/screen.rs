@@ -2,13 +2,13 @@ use std::ops::{Deref, DerefMut};
 
 use aero::math::{vec2, Affine2};
 
-use super::{Face, Rect, Triangles, Typeset, Ui};
+use super::{Face, Rect, Stage, Triangles, Typeset};
 use crate::theme;
 
 /// How far a new screen slides in from, rightwards.
 const SLIDE: f32 = 40.0;
 
-impl Ui {
+impl Stage {
     /// The canvas a screen draws on: its section's background with triangles
     /// drifting up through it, then the screen's own content, which fades and
     /// slides in while a transition runs. The backdrop stays put under it.

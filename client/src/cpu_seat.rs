@@ -72,9 +72,9 @@ pub fn update_keys(tick: &Tick) -> Option<Action> {
 
 /// The editor of a CPU's seat, and what its buttons ask.
 pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, seat: CpuSeat) -> Option<Action> {
-    let modal = modal(gui.ui.view());
+    let modal = modal(gui.stage.view());
     let (action, dismissed) = widgets::modal(ui, gui, (modal, "CPU"), |ui, gui| {
-        let pal = gui.ui.palette();
+        let pal = gui.stage.palette();
         let mut action = None;
         for i in 0..TILES {
             let step = widgets::stepper_tile(

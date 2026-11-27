@@ -9,8 +9,8 @@ use crate::nav::Transition;
 use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
-    self, divider, list_row, page_count, px, widgets, Face, Fonts, Frame, Gui, Label, Pager, Pill, Rect, Status,
-    Typeset, Ui, View,
+    self, divider, list_row, page_count, px, widgets, Face, Fonts, Frame, Gui, Label, Pager, Pill, Rect, Stage, Status,
+    Typeset, View,
 };
 use crate::{http, theme};
 
@@ -124,7 +124,7 @@ fn pictures<'a>(images: &mut Images, urls: impl Iterator<Item = &'a Option<Strin
 
 fn avatar(
     draw: &mut Draw,
-    ui: &Ui,
+    stage: &Stage,
     fonts: &mut Fonts,
     (x, cy): (f32, f32),
     name: &str,
@@ -132,7 +132,7 @@ fn avatar(
     pics: &Pictures,
 ) {
     let who = ui::Persona { name, glow: 0.0, picture: url.and_then(|u| pics.get(u)) };
-    ui::portrait(draw, &ui.palette(), fonts, (x + AVATAR_R, cy), AVATAR_R, &who);
+    ui::portrait(draw, &stage.palette(), fonts, (x + AVATAR_R, cy), AVATAR_R, &who);
 }
 
 /// Up to the row's first button: "Regarder" only shows while the friend plays.
@@ -314,7 +314,7 @@ pub fn update_friends(tick: &Tick, gui: &mut Gui, state: &mut State, f: &mut Fri
     poll_add(state, f);
     poll_action(state, f);
 
-    let view = gui.ui.view();
+    let view = gui.stage.view();
     for col in 0..3 {
         let pages = page_count(lists(f)[col].len(), rows_for(view));
         f.pages[col].clamp(pages);
@@ -386,14 +386,14 @@ struct Clicks {
 }
 
 pub fn show_friends(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, f: &mut FriendsData) -> Transition {
-    let view = gui.ui.view();
+    let view = gui.stage.view();
     let urls = lists(f).into_iter().flatten().map(|e| &e.avatar_url);
     let pics = pictures(&mut gui.images, urls.chain(f.search_results.iter().map(|e| &e.avatar_url)));
     let label = Label::busy_or(f.list_slot.is_some(), "Rafraîchir");
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui, "Amis");
+    gui.stage.page_header(ui, "Amis");
     let mut clicks = Clicks::default();
     let searched = show_search(ui, gui, f, (view, &pics), &mut clicks);
     show_lists(ui, gui, f, (view, &pics), &mut clicks);
@@ -433,7 +433,7 @@ fn show_search(
     (view, pics): (View, &Pictures),
     clicks: &mut Clicks,
 ) -> bool {
-    let pal = gui.ui.palette();
+    let pal = gui.stage.palette();
     let field = search_box(view);
     let searching = f.search_slot.is_some();
     let submit = Label::busy_or(searching, "Rechercher");
@@ -475,7 +475,7 @@ fn show_search(
         let rating = Pill::small(&elo, theme::GOLD);
 
         list_row(ui.draw, &pal, row, i);
-        avatar(ui.draw, &gui.ui, &mut ui.cx.fonts, (row.x() + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
+        avatar(ui.draw, &gui.stage, &mut ui.cx.fonts, (row.x() + 10.0, mid), &e.username, e.avatar_url.as_ref(), pics);
         ui.cx
             .fonts
             .write(ui.draw, Face::Text, &e.username)
@@ -510,7 +510,7 @@ fn show_lists(
     (view, pics): (View, &Pictures),
     clicks: &mut Clicks,
 ) {
-    let pal = gui.ui.palette();
+    let pal = gui.stage.palette();
     let columns = [
         ("Amis", "Aucun ami pour l'instant"),
         ("Demandes reçues", "Aucune demande reçue"),
@@ -610,7 +610,7 @@ fn show_col(
     (empty_msg, clicks): (&str, &mut Clicks),
     mut buttons: impl FnMut(&mut aero::ui::Ui<'_>, &FriendEntry, usize) -> Option<FriendAction>,
 ) {
-    let pal = gui.ui.palette();
+    let pal = gui.stage.palette();
     if list.is_empty() {
         let card = column_card(view, col);
         ui.cx
@@ -633,7 +633,7 @@ fn show_col(
         }
         let fonts = &mut ui.cx.fonts;
         let name = fonts.fit(Face::Text, &e.username, theme::size::BODY, zone.w() - 12.0 - AVATAR_ROOM);
-        avatar(ui.draw, &gui.ui, fonts, (row.x() + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
+        avatar(ui.draw, &gui.stage, fonts, (row.x() + 8.0, mid), &e.username, e.avatar_url.as_ref(), pics);
         fonts.write(ui.draw, Face::Text, &name).left(text_x, mid - 8.0).size(theme::size::BODY).color(pal.text);
         fonts
             .write(ui.draw, Face::Text, &format!("ELO {}", e.elo))

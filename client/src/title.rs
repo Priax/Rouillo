@@ -5,7 +5,7 @@ use crate::nav::Transition;
 use crate::state::{Screen, State};
 use crate::theme;
 use crate::tick::Tick;
-use crate::ui::{Face, Fonts, Gui, Typeset, Ui};
+use crate::ui::{Face, Fonts, Gui, Stage, Typeset};
 
 const PROMPT: &str = "Appuyez sur une touche !!";
 const PULSE_SPEED: f64 = 3.0;
@@ -39,11 +39,11 @@ pub fn update_title(tick: &Tick, state: &mut State) -> Transition {
 }
 
 pub fn draw_title(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui) {
-    let pal = gui.ui.palette();
-    let (ww, wh) = gui.ui.view().size();
-    let pulse = 0.6 + 0.4 * (gui.ui.time() * PULSE_SPEED).sin() as f32;
+    let pal = gui.stage.palette();
+    let (ww, wh) = gui.stage.view().size();
+    let pulse = 0.6 + 0.4 * (gui.stage.time() * PULSE_SPEED).sin() as f32;
 
-    let mut canvas = gui.ui.screen_canvas(ui);
+    let mut canvas = gui.stage.screen_canvas(ui);
     let ui = &mut *canvas;
     let (draw, fonts) = (&mut *ui.draw, &mut ui.cx.fonts);
     fonts
@@ -56,14 +56,14 @@ pub fn draw_title(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui) {
         .center(ww / 2.0, wh / 2.0 + 90.0)
         .size(theme::size::EMPHASIS)
         .color(pal.text_dim.with_alpha(pulse));
-    draw_version(draw, &gui.ui, fonts);
+    draw_version(draw, &gui.stage, fonts);
 }
 
-pub fn draw_version(draw: &mut Draw, ui: &Ui, fonts: &mut Fonts) {
-    let (ww, wh) = ui.view().size();
+pub fn draw_version(draw: &mut Draw, stage: &Stage, fonts: &mut Fonts) {
+    let (ww, wh) = stage.view().size();
     fonts
         .write(draw, Face::Text, concat!("v", env!("CARGO_PKG_VERSION")))
         .right(ww - 20.0, wh - 24.0)
         .size(theme::size::SMALL)
-        .color(ui.palette().text_dim);
+        .color(stage.palette().text_dim);
 }
