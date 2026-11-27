@@ -215,38 +215,6 @@ fn accept_invitation(state: &mut State) -> Transition {
     Transition::To(Screen::RoomBrowser)
 }
 
-/// The fastest connected screen's frame time: Wayland does not say which
-/// screen holds the window.
-#[cfg(not(target_arch = "wasm32"))]
-fn frame_time() -> std::time::Duration {
-    static FRAME: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
-    *FRAME.get_or_init(|| {
-        let hz = display_info::DisplayInfo::all()
-            .ok()
-            .and_then(|screens| screens.iter().map(|s| s.frequency).reduce(f32::max))
-            .filter(|hz| (30.0..=500.0).contains(hz))
-            .unwrap_or(60.0);
-        std::time::Duration::from_secs_f32(1.0 / hz)
-    })
-}
-
-/// Caps the native loop at the screen's refresh rate. Vsync would do it, but on
-/// Wayland it blocks the whole loop, network included, while the window is hidden.
-#[cfg(not(target_arch = "wasm32"))]
-fn pace_frame() {
-    use std::cell::Cell;
-    use std::time::Instant;
-    thread_local!(static NEXT: Cell<Option<Instant>> = const { Cell::new(None) });
-    NEXT.with(|next| {
-        let now = Instant::now();
-        let due = next.get().unwrap_or(now);
-        if due > now {
-            std::thread::sleep(due - now);
-        }
-        next.set(Some(due.max(now) + frame_time()));
-    });
-}
-
 /// What the room tells a game about the player.
 fn online_of(state: &State) -> logic::Online {
     state.room.as_ref().map_or_else(logic::Online::default, |r| logic::Online {
@@ -292,8 +260,6 @@ fn show_online_game(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State)
 }
 
 fn update(cx: &mut Cx, root: &mut Root) {
-    #[cfg(not(target_arch = "wasm32"))]
-    pace_frame();
     let Root { nav, state, gui } = root;
     #[cfg(not(target_arch = "wasm32"))]
     match updater::status() {

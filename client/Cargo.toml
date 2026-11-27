@@ -28,7 +28,6 @@ rfd = "0.18"
 ed25519-dalek = "3"
 sha2 = "0.11"
 self-replace = "1"
-display-info = "0.5"
 web-transport-quinn = "0.14"
 quinn = { version = "0.11", default-features = false, features = ["rustls-ring"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
