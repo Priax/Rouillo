@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
-aero = { git = "ssh://git@github.com/Priax/aero.git", rev = "0788f57c440935eb5b224768805bfbe3fd6b5bb0", features = ["serde", "gamepad"] }
+aero = { git = "ssh://git@github.com/Priax/aero.git", rev = "664ec1fc7f8d3a552c60cc058d415cdfe660ee43", features = ["serde", "gamepad"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico"] }
 rand = "0.10"
 serde = { version = "1.0", features = ["derive"] }

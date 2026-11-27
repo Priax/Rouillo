@@ -135,7 +135,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "aero"
 version = "0.1.0"
-source = "git+ssh://git@github.com/Priax/aero.git?rev=0788f57c440935eb5b224768805bfbe3fd6b5bb0#0788f57c440935eb5b224768805bfbe3fd6b5bb0"
+source = "git+ssh://git@github.com/Priax/aero.git?rev=664ec1fc7f8d3a552c60cc058d415cdfe660ee43#664ec1fc7f8d3a552c60cc058d415cdfe660ee43"
 dependencies = [
  "accesskit",
  "accesskit_winit",
