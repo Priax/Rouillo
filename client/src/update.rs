@@ -1,3 +1,9 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::process::Command;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::updater::{self, Status};
+
 /// Why online play stopped: the server refused this version.
 #[cfg(not(target_arch = "wasm32"))]
 pub const TOO_OLD: &str =
@@ -16,7 +22,6 @@ pub fn apply() {
 /// the click: the one checked at start may not have been published yet.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn apply() {
-    use crate::updater::{self, Status};
     match updater::status() {
         Status::Available(_) => updater::install(),
         Status::Checking | Status::Downloading { .. } | Status::Verifying | Status::Installing | Status::Done => {}
@@ -27,7 +32,6 @@ pub fn apply() {
 /// The releases page, for when GitHub cannot be asked for the binary.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn open_download_page() {
-    use std::process::Command;
     const RELEASES: &str = "https://github.com/Priax/Rouillo/releases/latest";
     let opened = if cfg!(target_os = "windows") {
         Command::new("explorer").arg(RELEASES).spawn()
@@ -45,8 +49,7 @@ pub fn open_download_page() {
 /// the download is done when that is known.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn progress() -> Option<(String, Option<f32>)> {
-    use crate::updater::Status;
-    let text = match crate::updater::status() {
+    let text = match updater::status() {
         Status::Checking => "Recherche de la mise à jour...".to_owned(),
         Status::Downloading { done, total: Some(total) } if total > 0 => {
             let text = format!("Téléchargement: {} / {} Mo", megabytes(done), megabytes(total));

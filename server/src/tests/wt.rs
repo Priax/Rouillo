@@ -1,4 +1,5 @@
 use shared::api::Offer;
+use tower::ServiceExt;
 use web_transport_quinn::{ClientBuilder, Session};
 
 use super::connection::commands_until;
@@ -120,7 +121,6 @@ async fn an_outdated_webtransport_client_is_turned_away() {
 }
 
 async fn offered(offer: Option<Offer>) -> serde_json::Value {
-    use tower::ServiceExt;
     let req = axum::http::Request::get("/api/transport").body(axum::body::Body::empty()).unwrap();
     let res = crate::wt::offer_route(offer).oneshot(req).await.unwrap();
     let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();

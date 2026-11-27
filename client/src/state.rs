@@ -1,3 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use shared::api::{Auth, Friend, FriendList, Profile, Uuid};
 use shared::{
     config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, Rotation, Rules, StampedInput, Targeting,
@@ -38,8 +41,7 @@ pub enum Screen {
 impl Screen {
     /// Tells screens of different kinds apart.
     pub fn id(&self) -> usize {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = DefaultHasher::new();
         std::mem::discriminant(self).hash(&mut hasher);
         hasher.finish() as usize
     }

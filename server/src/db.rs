@@ -701,6 +701,8 @@ pub async fn purge_replays(pool: &DbPool) -> Result<u64, sqlx::Error> {
 
 #[cfg(test)]
 mod tests {
+    use argon2::{CustomizedPasswordHasher, Params};
+
     use super::*;
 
     /// Made by argon2 0.5, as every password stored before the upgrade.
@@ -723,7 +725,6 @@ mod tests {
 
     #[test]
     fn a_hash_is_checked_with_its_own_costs_not_the_current_defaults() {
-        use argon2::{CustomizedPasswordHasher, Params};
         let cheaper = Params::new(8192, 1, 1, None).unwrap();
         let hash = Argon2::default()
             .hash_password_customized(b"password123", b"somesaltsomesalt", None, None, cheaper)

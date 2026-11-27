@@ -1,4 +1,7 @@
+use axum::body::Body;
+use axum::http::Request;
 use sqlx::PgPool;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::db::{self, FriendshipError, MatchRecord, PlayerRecord};
@@ -278,7 +281,6 @@ async fn wrong_logins(api: &axum::Router, ip: &str, count: usize) -> Vec<u16> {
 }
 
 async fn wrong_logins_as(api: &axum::Router, ip: &str, username: &str, count: usize) -> Vec<u16> {
-    use tower::ServiceExt;
     let body = serde_json::json!({ "username": username, "password": "wrong-password" }).to_string();
     let peer = format!("{ip}:5000");
     let tries = (0..count).map(|_| {
@@ -330,7 +332,6 @@ async fn db_usernames_are_unique_whatever_their_case(pool: PgPool) {
 #[sqlx::test]
 #[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
 async fn db_a_player_can_rename_with_their_password(pool: PgPool) {
-    use tower::ServiceExt;
     let alice = user(&pool, "alice").await;
     user(&pool, "Bob").await;
     let token = db::create_session(&pool, alice).await.unwrap();
@@ -367,9 +368,6 @@ fn noisy_png(w: u32, h: u32) -> Vec<u8> {
 #[sqlx::test]
 #[ignore = "needs Postgres: DATABASE_URL, run with --ignored"]
 async fn db_avatars_are_uploaded_served_and_removed(pool: PgPool) {
-    use axum::body::Body;
-    use axum::http::Request;
-    use tower::ServiceExt;
     let alice = user(&pool, "alice").await;
     let token = db::create_session(&pool, alice).await.unwrap();
     let api = login_api(pool.clone());

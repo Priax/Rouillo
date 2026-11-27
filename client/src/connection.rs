@@ -1,10 +1,12 @@
+use std::sync::OnceLock;
+
+use aero::web_time::Instant;
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use shared::{config, ClientMessage, ServerMessage};
 
 /// Seconds since the first call.
 pub fn now_secs() -> f64 {
-    use aero::web_time::Instant;
-    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_secs_f64()
 }
 

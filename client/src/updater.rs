@@ -1,7 +1,10 @@
 use std::ops::ControlFlow;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signature, VerifyingKey};
+use ehttp::streaming::Part;
 use sha2::{Digest, Sha256};
 
 const DOWNLOADS: &str = "https://github.com/Priax/Rouillo/releases/download";
@@ -119,8 +122,7 @@ struct Transfer {
 }
 
 impl Transfer {
-    fn take(&mut self, part: ehttp::Result<ehttp::streaming::Part>, url: &str) -> ControlFlow<()> {
-        use ehttp::streaming::Part;
+    fn take(&mut self, part: ehttp::Result<Part>, url: &str) -> ControlFlow<()> {
         match part {
             Ok(Part::Response(resp)) if resp.ok => {
                 self.total = resp.headers.get("content-length").and_then(|n| n.parse().ok());
@@ -220,10 +222,7 @@ fn run(release: &Release) -> Result<(), String> {
     let fresh = exe.with_extension("new");
     std::fs::write(&fresh, &binary).map_err(|e| format!("{}: {e}", fresh.display()))?;
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
-    }
+    std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     let replaced = self_replace::self_replace(&fresh).map_err(|e| e.to_string());
     let _ = std::fs::remove_file(&fresh);
     replaced?;

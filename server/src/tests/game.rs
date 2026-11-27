@@ -1,4 +1,5 @@
 use super::*;
+use crate::room::{Member, Phase, Room};
 
 pub(super) fn last_update_tick(rx: &mut mpsc::Receiver<bytes::Bytes>) -> Option<u32> {
     drain(rx).into_iter().rev().find_map(|m| match m {
@@ -361,7 +362,6 @@ fn every_update_carries_the_draws_so_far() {
 
 #[test]
 fn a_three_player_game_goes_on_until_one_player_is_left() {
-    use crate::room::{Member, Phase, Room};
     let members = (0..3).map(|i| Member::present(format!("P{i}"), i, None, format!("p{i}"))).collect();
     let mut room = Room::new(1, "trio".into(), members, shared::RoomSettings::default(), None);
     room.phase = Phase::CountingDown(0.0);

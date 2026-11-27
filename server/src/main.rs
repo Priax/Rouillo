@@ -15,6 +15,8 @@ use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use shared::config;
+#[cfg(unix)]
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio::time::{interval, Duration, Instant};
@@ -208,7 +210,6 @@ async fn manager_loop(mut cmd_rx: mpsc::Receiver<Command>, cmd_tx: mpsc::Sender<
 async fn stop_signal() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
         let mut term = signal(SignalKind::terminate()).expect("SIGTERM handler");
         tokio::select! {
             _ = term.recv() => {}

@@ -1,4 +1,5 @@
 use super::*;
+use crate::manager::rooms::clean_name;
 
 pub(super) fn spectator(mgr: &mut Manager, conn: ConnId) -> mpsc::Receiver<bytes::Bytes> {
     let mut rx = reg(mgr, conn);
@@ -263,7 +264,6 @@ fn chat_stays_in_the_room_and_is_rate_limited() {
 
 #[test]
 fn a_room_name_is_one_printable_line() {
-    use crate::manager::rooms::clean_name;
     assert_eq!(clean_name("ma\nroom\u{7}"), "ma room");
     assert_eq!(clean_name(" \u{0} "), "Room");
     assert_eq!(clean_name(&"x".repeat(40)).len(), 24);

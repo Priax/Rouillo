@@ -1,3 +1,5 @@
+use shared::cpu::{Difficulty, Style};
+
 use super::*;
 
 #[test]
@@ -740,7 +742,6 @@ fn only_the_host_seats_cpus_and_only_up_to_the_seats() {
 
 #[test]
 fn the_host_changes_and_removes_a_cpu_in_the_lobby() {
-    use shared::cpu::{Difficulty, Style};
     let mut mgr = new_mgr();
     let _rxs = cpu_room(&mut mgr, 3, 2);
     mgr.handle(Command::Client { conn: 1, msg: ClientMessage::AddCpu });
@@ -808,7 +809,6 @@ fn a_room_left_to_its_cpus_closes() {
 #[test]
 #[ignore = "prints what a tick of a room full of CPUs costs"]
 fn report_cpu_room_cost() {
-    use shared::cpu::{Difficulty, Style};
     for difficulty in [Difficulty::Normal, Difficulty::Pro] {
         let mut mgr = new_mgr();
         let _rxs = cpu_room(&mut mgr, 16, 1);

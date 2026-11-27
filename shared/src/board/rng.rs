@@ -1,4 +1,5 @@
 use bitcode::{Decode, Encode};
+use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +42,6 @@ impl BoardRng {
     }
 
     fn stream(&self, stream: Stream) -> ChaCha12Rng {
-        use rand::SeedableRng;
         let mut rng = ChaCha12Rng::seed_from_u64(self.seed);
         if matches!(stream, Stream::Garbage) {
             rng.set_stream(1);

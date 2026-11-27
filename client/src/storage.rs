@@ -40,6 +40,8 @@ mod file {
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::io::{self, Write};
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
     use std::path::{Path, PathBuf};
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -92,10 +94,7 @@ mod file {
         let mut options = OpenOptions::new();
         options.write(true).create(true).truncate(true);
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        options.mode(0o600);
         options.open(&tmp)?.write_all(&json)?;
         fs::rename(&tmp, path)
     }
@@ -131,6 +130,9 @@ mod file {
 
     #[cfg(test)]
     mod tests {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+
         use super::*;
 
         fn temp_path(name: &str) -> PathBuf {
@@ -168,7 +170,6 @@ mod file {
         #[cfg(unix)]
         #[test]
         fn only_the_owner_can_read_the_file() {
-            use std::os::unix::fs::PermissionsExt;
             let path = temp_path("mode");
             FileStore::open(Some(path.clone())).set("token", "secret");
             let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
