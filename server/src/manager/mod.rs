@@ -3,7 +3,10 @@ use std::collections::{HashMap, HashSet};
 use bytes::Bytes;
 use rayon::prelude::*;
 use shared::cpu::{Difficulty, Style};
-use shared::{config, InputKind, PausePolicy, RoomId, RoomInfo, RoomSetting, RoomSettings, ServerMessage, Targeting};
+use shared::{
+    config, ClientMessage, InputKind, PausePolicy, RoomId, RoomInfo, RoomSetting, RoomSettings, ServerMessage,
+    Targeting,
+};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tracing::{info, warn};
@@ -76,6 +79,11 @@ pub enum Command {
     Unregister {
         conn: ConnId,
     },
+    /// What a connection sent, past its greeting.
+    Client {
+        conn: ConnId,
+        msg: ClientMessage,
+    },
     Hello {
         conn: ConnId,
         token: Token,
@@ -85,54 +93,9 @@ pub enum Command {
         last_disconnect_reason: Option<String>,
         background: bool,
     },
-    RequestRoomList {
-        conn: ConnId,
-    },
-    ListRooms {
-        conn: ConnId,
-        on: bool,
-    },
     MatchSaved {
         id: Uuid,
         users: Vec<Uuid>,
-    },
-    CreateRoom {
-        conn: ConnId,
-        name: String,
-    },
-    JoinRoom {
-        conn: ConnId,
-        id: RoomId,
-    },
-    LeaveRoom {
-        conn: ConnId,
-    },
-    SetSetting {
-        conn: ConnId,
-        setting: RoomSetting,
-        dir: i32,
-    },
-    ToggleCountdown {
-        conn: ConnId,
-    },
-    ReturnToLobby {
-        conn: ConnId,
-    },
-    Input {
-        conn: ConnId,
-        kind: InputKind,
-        seq: u32,
-        tick: u32,
-    },
-    TogglePause {
-        conn: ConnId,
-    },
-    Restart {
-        conn: ConnId,
-    },
-    InviteFriend {
-        conn: ConnId,
-        target_user_id: String,
     },
     FriendCheckDone {
         check: FriendCheck,
@@ -145,53 +108,6 @@ pub enum Command {
     FriendshipChanged {
         users: (Uuid, Uuid),
         friends: bool,
-    },
-    JoinQueue {
-        conn: ConnId,
-    },
-    LeaveQueue {
-        conn: ConnId,
-    },
-    AcceptMatch {
-        conn: ConnId,
-    },
-    Chat {
-        conn: ConnId,
-        text: String,
-    },
-    Spectate {
-        conn: ConnId,
-        id: RoomId,
-    },
-    WatchFriend {
-        conn: ConnId,
-        user_id: String,
-    },
-    SetTargeting {
-        conn: ConnId,
-        targeting: Targeting,
-    },
-    SetTeam {
-        conn: ConnId,
-        team: Option<u8>,
-    },
-    AddCpu {
-        conn: ConnId,
-    },
-    SetCpu {
-        conn: ConnId,
-        slot: u8,
-        difficulty: Difficulty,
-        style: Style,
-        team: Option<u8>,
-    },
-    RemoveCpu {
-        conn: ConnId,
-        slot: u8,
-    },
-    Follow {
-        conn: ConnId,
-        slot: u8,
     },
     /// Which of `users` are in a room, for the friend list.
     Playing {
@@ -226,32 +142,7 @@ impl Command {
             | Self::Rename { .. }
             | Self::Playing { .. }
             | Self::Shutdown => None,
-            Self::Unregister { conn }
-            | Self::Hello { conn, .. }
-            | Self::RequestRoomList { conn }
-            | Self::ListRooms { conn, .. }
-            | Self::CreateRoom { conn, .. }
-            | Self::JoinRoom { conn, .. }
-            | Self::LeaveRoom { conn }
-            | Self::SetSetting { conn, .. }
-            | Self::ToggleCountdown { conn }
-            | Self::ReturnToLobby { conn }
-            | Self::Input { conn, .. }
-            | Self::TogglePause { conn }
-            | Self::Restart { conn }
-            | Self::InviteFriend { conn, .. }
-            | Self::JoinQueue { conn }
-            | Self::LeaveQueue { conn }
-            | Self::AcceptMatch { conn }
-            | Self::Chat { conn, .. }
-            | Self::Spectate { conn, .. }
-            | Self::WatchFriend { conn, .. }
-            | Self::SetTargeting { conn, .. }
-            | Self::SetTeam { conn, .. }
-            | Self::AddCpu { conn }
-            | Self::SetCpu { conn, .. }
-            | Self::RemoveCpu { conn, .. }
-            | Self::Follow { conn, .. } => Some(*conn),
+            Self::Unregister { conn } | Self::Hello { conn, .. } | Self::Client { conn, .. } => Some(*conn),
         }
     }
 }
@@ -364,6 +255,48 @@ impl Manager {
         self.rooms.values().find(|r| r.members.iter().any(|m| m.token == token)).map(|r| r.id)
     }
 
+    fn on_message(&mut self, conn: ConnId, msg: ClientMessage) {
+        match msg {
+            ClientMessage::Hello { .. } | ClientMessage::Ping { .. } | ClientMessage::Inputs { .. } => {}
+            ClientMessage::RequestRoomList => self.send_room_list_to(conn),
+            ClientMessage::ListRooms { on } => {
+                if let Some(client) = self.clients.get_mut(conn) {
+                    client.lists_rooms = on;
+                }
+                if on {
+                    self.send_room_list_to(conn);
+                }
+            }
+            ClientMessage::CreateRoom { name } => self.create_room(conn, &name),
+            ClientMessage::JoinRoom { id } => self.request_join(conn, id),
+            ClientMessage::LeaveRoom => {
+                self.leave_current(conn);
+                self.send_room_list_to(conn);
+            }
+            ClientMessage::SetRoomSetting { setting, dir } => self.set_setting(conn, setting, dir),
+            ClientMessage::ToggleCountdown => self.toggle_countdown(conn),
+            ClientMessage::ReturnToLobby => self.return_to_lobby(conn),
+            ClientMessage::Input { kind, seq, tick } => self.on_input(conn, kind, seq, tick),
+            ClientMessage::TogglePause => self.toggle_pause(conn),
+            ClientMessage::RequestRestart => self.restart(conn),
+            ClientMessage::InviteFriend { user_id } => self.request_invite(conn, &user_id),
+            ClientMessage::JoinQueue => self.join_queue(conn),
+            ClientMessage::LeaveQueue => self.leave_queue(conn),
+            ClientMessage::AcceptMatch => self.accept_match(conn),
+            ClientMessage::Chat { text } => self.chat(conn, &text),
+            ClientMessage::Spectate { id } => self.spectate(conn, id),
+            ClientMessage::WatchFriend { user_id } => self.watch_friend(conn, &user_id),
+            ClientMessage::SetTargeting { targeting } => self.set_targeting(conn, targeting),
+            ClientMessage::SetTeam { team } => self.set_team(conn, team),
+            ClientMessage::AddCpu => self.add_cpu(conn),
+            ClientMessage::SetCpu { slot, difficulty, style, team } => {
+                self.set_cpu(conn, slot, difficulty, style, team)
+            }
+            ClientMessage::RemoveCpu { slot } => self.remove_cpu(conn, slot),
+            ClientMessage::Follow { slot } => self.follow(conn, slot),
+        }
+    }
+
     pub fn handle(&mut self, cmd: Command) {
         if cmd.client().is_some_and(|conn| !self.clients.contains(conn)) {
             return;
@@ -378,46 +311,11 @@ impl Manager {
                 self.on_hello(conn, token, background);
             }
             Command::Unregister { conn } => self.drop_connection(conn),
-            Command::RequestRoomList { conn } => self.send_room_list_to(conn),
-            Command::ListRooms { conn, on } => {
-                if let Some(client) = self.clients.get_mut(conn) {
-                    client.lists_rooms = on;
-                }
-                if on {
-                    self.send_room_list_to(conn);
-                }
-            }
+            Command::Client { conn, msg } => self.on_message(conn, msg),
             Command::MatchSaved { id, users } => self.match_saved(id, &users),
-            Command::CreateRoom { conn, name } => self.create_room(conn, &name),
-            Command::JoinRoom { conn, id } => self.request_join(conn, id),
-            Command::LeaveRoom { conn } => {
-                self.leave_current(conn);
-                self.send_room_list_to(conn);
-            }
-            Command::SetSetting { conn, setting, dir } => self.set_setting(conn, setting, dir),
-            Command::ToggleCountdown { conn } => self.toggle_countdown(conn),
-            Command::ReturnToLobby { conn } => self.return_to_lobby(conn),
-            Command::Input { conn, kind, seq, tick } => self.on_input(conn, kind, seq, tick),
-            Command::TogglePause { conn } => self.toggle_pause(conn),
-            Command::Restart { conn } => self.restart(conn),
-            Command::InviteFriend { conn, target_user_id } => self.request_invite(conn, &target_user_id),
             Command::FriendCheckDone { check, friends } => self.friend_check_done(check, friends),
             Command::FriendsLoaded { user, friends } => self.friends_loaded(user, friends),
             Command::FriendshipChanged { users, friends } => self.friendship_changed(users, friends),
-            Command::JoinQueue { conn } => self.join_queue(conn),
-            Command::LeaveQueue { conn } => self.leave_queue(conn),
-            Command::AcceptMatch { conn } => self.accept_match(conn),
-            Command::Chat { conn, text } => self.chat(conn, &text),
-            Command::Spectate { conn, id } => self.spectate(conn, id),
-            Command::WatchFriend { conn, user_id } => self.watch_friend(conn, &user_id),
-            Command::SetTargeting { conn, targeting } => self.set_targeting(conn, targeting),
-            Command::SetTeam { conn, team } => self.set_team(conn, team),
-            Command::AddCpu { conn } => self.add_cpu(conn),
-            Command::SetCpu { conn, slot, difficulty, style, team } => {
-                self.set_cpu(conn, slot, difficulty, style, team)
-            }
-            Command::RemoveCpu { conn, slot } => self.remove_cpu(conn, slot),
-            Command::Follow { conn, slot } => self.follow(conn, slot),
             Command::Playing { users, reply } => {
                 let _ = reply.send(self.playing(&users));
             }

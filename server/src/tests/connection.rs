@@ -119,7 +119,7 @@ async fn flooding_client_is_throttled_then_disconnected() {
     let refill = started.elapsed().as_secs_f64() * CLIENT_MSG_RATE;
 
     let cmds = commands_until(&mut rx, |c| matches!(c, Command::Unregister { .. })).await;
-    let inputs = cmds.iter().filter(|c| matches!(c, Command::Input { .. })).count();
+    let inputs = cmds.iter().filter(|c| matches!(c, Command::Client { msg: ClientMessage::Input { .. }, .. })).count();
     let most = (CLIENT_MSG_BURST + refill).ceil() as usize;
     assert!(inputs <= most, "{inputs} inputs reached the manager, at most {most} allowed");
     assert!(inputs >= CLIENT_MSG_BURST as usize, "only {inputs}: the burst was not honoured");
@@ -138,7 +138,8 @@ async fn only_the_first_hello_per_connection_counts() {
         client.send(hello.clone()).await.expect("send");
     }
     client.send(frame(&ClientMessage::RequestRoomList)).await.expect("send");
-    let cmds = commands_until(&mut rx, |c| matches!(c, Command::RequestRoomList { .. })).await;
+    let cmds =
+        commands_until(&mut rx, |c| matches!(c, Command::Client { msg: ClientMessage::RequestRoomList, .. })).await;
     let hellos = cmds.iter().filter(|c| matches!(c, Command::Hello { .. })).count();
     assert_eq!(hellos, 1);
 }
@@ -150,8 +151,12 @@ async fn a_normal_session_gets_everything_through() {
         client.send(frame(&ClientMessage::Input { kind: InputKind::RotateCW, seq, tick: 0 })).await.expect("send");
     }
     client.send(frame(&ClientMessage::RequestRoomList)).await.expect("send");
-    let cmds = commands_until(&mut rx, |c| matches!(c, Command::RequestRoomList { .. })).await;
-    assert_eq!(cmds.iter().filter(|c| matches!(c, Command::Input { .. })).count(), 100);
+    let cmds =
+        commands_until(&mut rx, |c| matches!(c, Command::Client { msg: ClientMessage::RequestRoomList, .. })).await;
+    assert_eq!(
+        cmds.iter().filter(|c| matches!(c, Command::Client { msg: ClientMessage::Input { .. }, .. })).count(),
+        100
+    );
 }
 
 #[test]
@@ -183,7 +188,7 @@ fn late_commands_from_a_dead_connection_are_ignored() {
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
     mgr.handle(Command::Unregister { conn: 1 });
-    mgr.handle(Command::CreateRoom { conn: 1, name: "ghost".into() });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::CreateRoom { name: "ghost".into() } });
     assert!(mgr.rooms.is_empty());
     assert!(!mgr.clients.contains(1));
 }
@@ -234,7 +239,7 @@ fn the_same_account_still_gets_its_seat_back() {
     create_room(&mut mgr, 1);
     let _rx2 = reg(&mut mgr, 2);
     hello_as(&mut mgr, 2, "B", 2);
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     mgr.handle(Command::Unregister { conn: 2 });
     let _rx3 = reg(&mut mgr, 3);
     hello_as(&mut mgr, 3, "B", 2);
@@ -255,7 +260,8 @@ async fn a_ping_is_answered_without_reaching_the_manager() {
     assert!(matches!(shared::decode::<ServerMessage>(&reply.into_data()), Some(ServerMessage::Pong { id: 7 })));
 
     client.send(frame(&ClientMessage::RequestRoomList)).await.expect("send");
-    let cmds = commands_until(&mut rx, |c| matches!(c, Command::RequestRoomList { .. })).await;
+    let cmds =
+        commands_until(&mut rx, |c| matches!(c, Command::Client { msg: ClientMessage::RequestRoomList, .. })).await;
     assert!(matches!(cmds.first(), Some(Command::Register { .. })), "expected the socket's own Register first");
     assert_eq!(cmds.len(), 2, "the ping reached the manager");
 }

@@ -21,7 +21,10 @@ pub(super) fn friends_only_room(mgr: &mut Manager) -> (mpsc::Receiver<bytes::Byt
     let rx1 = reg(mgr, 1);
     hello_as(mgr, 1, "A", 1);
     create_room(mgr, 1);
-    mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::FriendsOnly, dir: 1 });
+    mgr.handle(Command::Client {
+        conn: 1,
+        msg: ClientMessage::SetRoomSetting { setting: RoomSetting::FriendsOnly, dir: 1 },
+    });
     assert!(mgr.rooms[&1].settings.friends_only, "setup");
     let rx2 = reg(mgr, 2);
     hello_as(mgr, 2, "J", 2);
@@ -39,7 +42,7 @@ pub(super) fn only_join_check(mgr: &mut Manager) -> FriendCheck {
 fn friends_only_join_is_queued_not_awaited() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = friends_only_room(&mut mgr);
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     assert_eq!(mgr.clients.room_of(2), None, "not joined before the answer");
     let check = only_join_check(&mut mgr);
     assert_eq!(check.users(), (Uuid::from_u128(2), Uuid::from_u128(1)));
@@ -49,7 +52,7 @@ fn friends_only_join_is_queued_not_awaited() {
 fn friends_only_join_completes_for_a_friend() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = friends_only_room(&mut mgr);
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     let check = only_join_check(&mut mgr);
     mgr.handle(Command::FriendCheckDone { check, friends: true });
     assert_eq!(mgr.clients.room_of(2), Some(1));
@@ -59,7 +62,7 @@ fn friends_only_join_completes_for_a_friend() {
 fn friends_only_join_refused_for_a_stranger() {
     let mut mgr = new_mgr();
     let (_rx1, mut rx2) = friends_only_room(&mut mgr);
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     let check = only_join_check(&mut mgr);
     mgr.handle(Command::FriendCheckDone { check, friends: false });
     assert_eq!(mgr.clients.room_of(2), None);
@@ -72,7 +75,7 @@ fn guest_cannot_join_friends_only_room() {
     let (_rx1, _rx2) = friends_only_room(&mut mgr);
     let mut rx3 = reg(&mut mgr, 3);
     hello(&mut mgr, 3, "G"); // no account
-    mgr.handle(Command::JoinRoom { conn: 3, id: 1 });
+    mgr.handle(Command::Client { conn: 3, msg: ClientMessage::JoinRoom { id: 1 } });
     assert!(mgr.take_friend_checks().is_empty(), "no lookup for a guest");
     assert!(has(&drain(&mut rx3), |m| matches!(m, ServerMessage::JoinFailed { .. })));
 }
@@ -82,11 +85,11 @@ fn one_lookup_in_flight_per_connection() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = friends_only_room(&mut mgr);
     for _ in 0..20 {
-        mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+        mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     }
     let check = only_join_check(&mut mgr);
     mgr.handle(Command::FriendCheckDone { check, friends: false });
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     assert_eq!(mgr.take_friend_checks().len(), 1, "a new lookup once the last one answered");
 }
 
@@ -94,9 +97,9 @@ fn one_lookup_in_flight_per_connection() {
 fn stale_join_answer_is_ignored_if_the_player_moved() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = friends_only_room(&mut mgr);
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     let check = only_join_check(&mut mgr);
-    mgr.handle(Command::CreateRoom { conn: 2, name: "mine".into() });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::CreateRoom { name: "mine".into() } });
     let mine = mgr.clients.room_of(2).expect("in own room");
     mgr.handle(Command::FriendCheckDone { check, friends: true });
     assert_eq!(mgr.clients.room_of(2), Some(mine));
@@ -106,7 +109,7 @@ fn stale_join_answer_is_ignored_if_the_player_moved() {
 fn join_answer_for_a_disconnected_player_is_ignored() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = friends_only_room(&mut mgr);
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     let check = only_join_check(&mut mgr);
     mgr.handle(Command::Unregister { conn: 2 });
     assert!(!mgr.clients.contains(2), "cleaned up on disconnect");
@@ -118,7 +121,7 @@ fn join_answer_for_a_disconnected_player_is_ignored() {
 fn join_answer_after_the_room_filled_is_refused() {
     let mut mgr = new_mgr();
     let (_rx1, mut rx2) = friends_only_room(&mut mgr);
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     let check = only_join_check(&mut mgr);
     let filler = Member::present("K".into(), 7, Some(Uuid::from_u128(7)), "K".into());
     mgr.rooms.get_mut(&1).unwrap().members.push(filler);
@@ -132,7 +135,7 @@ fn join_answer_after_the_room_filled_is_refused() {
 fn join_is_rechecked_if_the_host_changed() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = friends_only_room(&mut mgr);
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     let check = only_join_check(&mut mgr);
     {
         let room = mgr.rooms.get_mut(&1).unwrap();
@@ -157,7 +160,10 @@ pub(super) fn inviter_and_target(mgr: &mut Manager) -> mpsc::Receiver<bytes::Byt
 }
 
 pub(super) fn invite_b(mgr: &mut Manager) {
-    mgr.handle(Command::InviteFriend { conn: 1, target_user_id: Uuid::from_u128(2).to_string() });
+    mgr.handle(Command::Client {
+        conn: 1,
+        msg: ClientMessage::InviteFriend { user_id: Uuid::from_u128(2).to_string() },
+    });
 }
 
 pub(super) fn invitations(rx: &mut mpsc::Receiver<bytes::Bytes>) -> usize {
@@ -239,10 +245,10 @@ fn invitation_dropped_if_inviter_left_the_room() {
     let mut rx2 = inviter_and_target(&mut mgr);
     let _rx3 = reg(&mut mgr, 3);
     hello_as(&mut mgr, 3, "C", 3);
-    mgr.handle(Command::JoinRoom { conn: 3, id: 1 });
+    mgr.handle(Command::Client { conn: 3, msg: ClientMessage::JoinRoom { id: 1 } });
     invite_b(&mut mgr);
     let check = mgr.take_friend_checks().remove(0);
-    mgr.handle(Command::LeaveRoom { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::LeaveRoom });
     assert!(mgr.rooms.contains_key(&1), "setup: the room must survive");
     mgr.handle(Command::FriendCheckDone { check, friends: true });
     assert_eq!(invitations(&mut rx2), 0);
@@ -279,7 +285,7 @@ fn a_friends_only_room_is_listed_for_the_hosts_friends_only() {
     mgr.handle(Command::FriendsLoaded { user: Uuid::from_u128(3), friends: vec![] });
     assert_eq!(listed(&mut rx2), Some(vec![1]), "a friend sees it");
     for (conn, rx) in [(3, &mut rx3), (4, &mut rx4)] {
-        mgr.handle(Command::RequestRoomList { conn });
+        mgr.handle(Command::Client { conn, msg: ClientMessage::RequestRoomList });
         assert_eq!(listed(rx), Some(vec![]), "a stranger or a guest does not");
     }
 }
@@ -292,10 +298,10 @@ fn a_new_or_ended_friendship_updates_the_list() {
     assert_eq!(listed(&mut rx2), Some(vec![]));
     let users = (Uuid::from_u128(1), Uuid::from_u128(2));
     mgr.handle(Command::FriendshipChanged { users, friends: true });
-    mgr.handle(Command::RequestRoomList { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::RequestRoomList });
     assert_eq!(listed(&mut rx2), Some(vec![1]), "accepted");
     mgr.handle(Command::FriendshipChanged { users, friends: false });
-    mgr.handle(Command::RequestRoomList { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::RequestRoomList });
     assert_eq!(listed(&mut rx2), Some(vec![]), "removed");
 }
 
@@ -335,7 +341,7 @@ fn a_friendship_changed_while_loading_is_read_again() {
     mgr.handle(Command::FriendshipChanged { users: (Uuid::from_u128(1), Uuid::from_u128(2)), friends: false });
     mgr.handle(Command::FriendsLoaded { user: Uuid::from_u128(2), friends: vec![Uuid::from_u128(1)] });
     assert_eq!(mgr.take_friend_loads(), vec![Uuid::from_u128(2)], "read again");
-    mgr.handle(Command::RequestRoomList { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::RequestRoomList });
     assert_eq!(listed(&mut rx2), Some(vec![]), "the stale answer was not kept");
     mgr.handle(Command::FriendsLoaded { user: Uuid::from_u128(2), friends: vec![] });
     assert!(mgr.take_friend_loads().is_empty());
@@ -380,10 +386,10 @@ fn the_room_list_goes_only_to_those_who_want_it() {
     let mut mgr = Manager::new();
     let mut rx = reg(&mut mgr, 1);
     hello_as(&mut mgr, 1, "A", 1);
-    mgr.handle(Command::ListRooms { conn: 1, on: false });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ListRooms { on: false } });
     let _ = drain(&mut rx);
     mgr.broadcast_room_list();
     assert!(!has(&drain(&mut rx), |m| matches!(m, ServerMessage::RoomList { .. })));
-    mgr.handle(Command::ListRooms { conn: 1, on: true });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ListRooms { on: true } });
     assert!(has(&drain(&mut rx), |m| matches!(m, ServerMessage::RoomList { .. })));
 }

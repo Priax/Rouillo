@@ -54,7 +54,7 @@ fn hello(mgr: &mut Manager, conn: ConnId, token: &str) {
 }
 
 fn create_room(mgr: &mut Manager, conn: ConnId) {
-    mgr.handle(Command::CreateRoom { conn, name: "R".into() });
+    mgr.handle(Command::Client { conn, msg: ClientMessage::CreateRoom { name: "R".into() } });
 }
 
 fn drain(rx: &mut mpsc::Receiver<bytes::Bytes>) -> Vec<ServerMessage> {
@@ -84,7 +84,7 @@ fn two_player_room(mgr: &mut Manager) -> (RoomId, mpsc::Receiver<bytes::Bytes>, 
     create_room(mgr, 1);
     let rx2 = reg(mgr, 2);
     hello(mgr, 2, "B");
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     (1, rx1, rx2)
 }
 
@@ -93,7 +93,7 @@ fn create_room_lobbies_host() {
     let mut mgr = new_mgr();
     let mut rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "Room".into() });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::CreateRoom { name: "Room".into() } });
     let info = last_lobby(&drain(&mut rx1)).expect("host should get a Lobby");
     assert_eq!(info.players, 1);
     assert_eq!(info.your_slot, 1);

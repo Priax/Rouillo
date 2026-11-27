@@ -279,7 +279,8 @@ impl Inbox {
                         Verdict::Drop => return true,
                         Verdict::Disconnect => return false,
                     }
-                    let cmd = Command::Input { conn, kind: i.kind, seq: i.seq, tick: i.tick };
+                    let cmd =
+                        Command::Client { conn, msg: ClientMessage::Input { kind: i.kind, seq: i.seq, tick: i.tick } };
                     if self.cmd_tx.send(cmd).await.is_err() {
                         return false;
                     }
@@ -298,35 +299,10 @@ impl Inbox {
 /// The manager's command for a message; greetings and pings are the
 /// connection's own business.
 fn command(conn: ConnId, msg: ClientMessage) -> Option<Command> {
-    Some(match msg {
-        ClientMessage::Hello { .. } | ClientMessage::Ping { .. } | ClientMessage::Inputs { .. } => return None,
-        ClientMessage::Input { kind, seq, tick } => Command::Input { conn, kind, seq, tick },
-        ClientMessage::TogglePause => Command::TogglePause { conn },
-        ClientMessage::RequestRestart => Command::Restart { conn },
-        ClientMessage::RequestRoomList => Command::RequestRoomList { conn },
-        ClientMessage::ListRooms { on } => Command::ListRooms { conn, on },
-        ClientMessage::CreateRoom { name } => Command::CreateRoom { conn, name },
-        ClientMessage::JoinRoom { id } => Command::JoinRoom { conn, id },
-        ClientMessage::LeaveRoom => Command::LeaveRoom { conn },
-        ClientMessage::SetRoomSetting { setting, dir } => Command::SetSetting { conn, setting, dir },
-        ClientMessage::ToggleCountdown => Command::ToggleCountdown { conn },
-        ClientMessage::ReturnToLobby => Command::ReturnToLobby { conn },
-        ClientMessage::InviteFriend { user_id } => Command::InviteFriend { conn, target_user_id: user_id },
-        ClientMessage::JoinQueue => Command::JoinQueue { conn },
-        ClientMessage::LeaveQueue => Command::LeaveQueue { conn },
-        ClientMessage::AcceptMatch => Command::AcceptMatch { conn },
-        ClientMessage::Chat { text } => Command::Chat { conn, text },
-        ClientMessage::Spectate { id } => Command::Spectate { conn, id },
-        ClientMessage::WatchFriend { user_id } => Command::WatchFriend { conn, user_id },
-        ClientMessage::SetTargeting { targeting } => Command::SetTargeting { conn, targeting },
-        ClientMessage::SetTeam { team } => Command::SetTeam { conn, team },
-        ClientMessage::AddCpu => Command::AddCpu { conn },
-        ClientMessage::SetCpu { slot, difficulty, style, team } => {
-            Command::SetCpu { conn, slot, difficulty, style, team }
-        }
-        ClientMessage::RemoveCpu { slot } => Command::RemoveCpu { conn, slot },
-        ClientMessage::Follow { slot } => Command::Follow { conn, slot },
-    })
+    match msg {
+        ClientMessage::Hello { .. } | ClientMessage::Ping { .. } | ClientMessage::Inputs { .. } => None,
+        msg => Some(Command::Client { conn, msg }),
+    }
 }
 
 async fn handle_connection(ws: WebSocket, cmd_tx: mpsc::Sender<Command>, conn: ConnId, pool: db::DbPool) {

@@ -51,7 +51,8 @@ async fn a_webtransport_client_plays_over_a_stream_and_datagrams() {
     assert!(matches!(within(read_frame(&mut recv)).await.expect("a pong"), ServerMessage::Pong { id: 7 }));
 
     write_frame(&mut send, &ClientMessage::RequestRoomList).await;
-    let cmds = commands_until(&mut rx, |c| matches!(c, Command::RequestRoomList { .. })).await;
+    let cmds =
+        commands_until(&mut rx, |c| matches!(c, Command::Client { msg: ClientMessage::RequestRoomList, .. })).await;
     let Some(Command::Register { sender, states: Some(states), .. }) = cmds.into_iter().next() else {
         panic!("registered without a way for states");
     };
@@ -91,9 +92,17 @@ async fn a_webtransport_client_plays_over_a_stream_and_datagrams() {
     let datagram = |msg: &ClientMessage| bytes::Bytes::from(shared::encode(msg));
     session.send_datagram(datagram(&ClientMessage::RequestRoomList)).unwrap();
     session.send_datagram(datagram(&ClientMessage::Inputs { inputs: vec![input(1), input(2)] })).unwrap();
-    let cmds = commands_until(&mut rx, |c| matches!(c, Command::Input { seq: 2, .. })).await;
+    let cmds =
+        commands_until(&mut rx, |c| matches!(c, Command::Client { msg: ClientMessage::Input { seq: 2, .. }, .. }))
+            .await;
     assert!(
-        matches!(cmds.as_slice(), [Command::Input { seq: 1, .. }, Command::Input { seq: 2, .. }]),
+        matches!(
+            cmds.as_slice(),
+            [
+                Command::Client { msg: ClientMessage::Input { seq: 1, .. }, .. },
+                Command::Client { msg: ClientMessage::Input { seq: 2, .. }, .. }
+            ]
+        ),
         "a datagram carries inputs only"
     );
 

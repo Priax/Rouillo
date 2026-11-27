@@ -34,7 +34,7 @@ fn a_decided_game_no_longer_holds_a_shutdown_back() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
     mgr.handle(Command::Shutdown);
-    mgr.handle(Command::LeaveRoom { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::LeaveRoom });
     assert_eq!(mgr.take_unsaved_matches().len(), 1, "the forfeit is still recorded");
     assert_eq!(mgr.games_running(), 0);
 }
@@ -45,7 +45,7 @@ fn no_rematch_during_a_shutdown() {
     let (_rx1, _rx2) = running_game(&mut mgr);
     sim_of(&mut mgr).finished = true;
     mgr.handle(Command::Shutdown);
-    mgr.handle(Command::Restart { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::RequestRestart });
     assert!(mgr.rooms[&1].sim.finished, "a rematch would hold the server up again");
     assert_eq!(mgr.games_running(), 0);
 }
@@ -54,14 +54,14 @@ fn no_rematch_during_a_shutdown() {
 fn a_shutdown_cancels_a_countdown_and_refuses_new_ones() {
     let mut mgr = new_mgr();
     let (_id, mut rx1, _rx2) = two_player_room(&mut mgr);
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     assert!(matches!(mgr.rooms[&1].phase, Phase::CountingDown(_)));
     drain(&mut rx1);
     mgr.handle(Command::Shutdown);
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby));
     let lobby = last_lobby(&drain(&mut rx1)).expect("the host must see the countdown stop");
     assert_eq!(lobby.countdown, None);
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     mgr.tick(3.5, false);
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby));
     assert_eq!(mgr.games_running(), 0);
@@ -79,11 +79,11 @@ fn no_new_room_and_no_join_during_a_shutdown() {
     drain(&mut rx1);
     drain(&mut rx2);
 
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::JoinFailed { .. })));
     assert_eq!(mgr.rooms[&1].members.len(), 1);
 
-    mgr.handle(Command::CreateRoom { conn: 2, name: "S".into() });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::CreateRoom { name: "S".into() } });
     assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::JoinFailed { .. })));
     assert_eq!(mgr.rooms.len(), 1);
 }
@@ -92,7 +92,7 @@ fn no_new_room_and_no_join_during_a_shutdown() {
 fn a_join_being_checked_when_the_shutdown_starts_is_refused() {
     let mut mgr = new_mgr();
     let (_rx1, mut rx2) = friends_only_room(&mut mgr);
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     let check = only_join_check(&mut mgr);
     mgr.handle(Command::Shutdown);
     drain(&mut rx2);
@@ -180,15 +180,15 @@ async fn the_manager_loop_outlives_a_shutdown_while_a_game_runs() {
         }
     }
     let start = [
-        Command::CreateRoom { conn: 1, name: "R".into() },
-        Command::JoinRoom { conn: 2, id: 1 },
-        Command::ToggleCountdown { conn: 1 },
+        Command::Client { conn: 1, msg: ClientMessage::CreateRoom { name: "R".into() } },
+        Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } },
+        Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown },
     ];
     for cmd in start {
         tx.send(cmd).await.expect("manager gone");
     }
     tokio::time::sleep(Duration::from_secs(4)).await;
-    tx.send(Command::TogglePause { conn: 1 }).await.expect("manager gone");
+    tx.send(Command::Client { conn: 1, msg: ClientMessage::TogglePause }).await.expect("manager gone");
     tx.send(Command::Shutdown).await.expect("manager gone");
     tokio::time::sleep(SHUTDOWN_DEADLINE - Duration::from_secs(30)).await;
     assert!(!manager.is_finished(), "the server left in the middle of a game");
@@ -206,7 +206,7 @@ fn an_account_cannot_take_both_slots() {
     create_room(&mut mgr, 1);
     let mut rx2 = reg(&mut mgr, 2);
     hello_as(&mut mgr, 2, "B", 1);
-    mgr.handle(Command::JoinRoom { conn: 2, id: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::JoinRoom { id: 1 } });
     assert_eq!(mgr.rooms[&1].members.len(), 1);
     assert!(has(&drain(&mut rx2), |m| matches!(m, ServerMessage::JoinFailed { .. })));
 }

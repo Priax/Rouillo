@@ -57,7 +57,7 @@ fn seat(mgr: &mut Manager, setup: &Setup) -> (Vec<Link>, Vec<Link>) {
         let first = links.len() as ConnId + 1;
         let host = Link::new(mgr, first, datagrams);
         hello(mgr, first, &format!("p{first}"));
-        mgr.handle(Command::CreateRoom { conn: first, name: "load".into() });
+        mgr.handle(Command::Client { conn: first, msg: ClientMessage::CreateRoom { name: "load".into() } });
         let id = mgr.clients.room_of(first).expect("the room was made");
         ids.push(id);
         mgr.rooms.get_mut(&id).expect("room").settings.max_players = u8::try_from(players).expect("at most 255");
@@ -66,12 +66,12 @@ fn seat(mgr: &mut Manager, setup: &Setup) -> (Vec<Link>, Vec<Link>) {
         for conn in first + 1..first + players as ConnId {
             links.push(Link::new(mgr, conn, datagrams));
             hello(mgr, conn, &format!("p{conn}"));
-            mgr.handle(Command::JoinRoom { conn, id });
+            mgr.handle(Command::Client { conn, msg: ClientMessage::JoinRoom { id } });
             for link in &mut links[start..] {
                 link.drain();
             }
         }
-        mgr.handle(Command::ToggleCountdown { conn: first });
+        mgr.handle(Command::Client { conn: first, msg: ClientMessage::ToggleCountdown });
     }
     mgr.tick(3.5, false);
     let playing = mgr.rooms.values().filter(|r| r.game_running()).count();
@@ -82,7 +82,7 @@ fn seat(mgr: &mut Manager, setup: &Setup) -> (Vec<Link>, Vec<Link>) {
             let conn = (links.len() + watching.len()) as ConnId + 1;
             watching.push(Link::new(mgr, conn, datagrams));
             hello(mgr, conn, &format!("s{conn}"));
-            mgr.handle(Command::Spectate { conn, id });
+            mgr.handle(Command::Client { conn, msg: ClientMessage::Spectate { id } });
         }
     }
     for link in links.iter_mut().chain(&mut watching) {
@@ -130,7 +130,7 @@ fn run(setup: &Setup) -> Report {
             if let Some(kind) = input(&mut noise) {
                 let tick = mgr.clients.room_of(link.conn).map_or(0, |id| mgr.rooms[&id].sim.tick) + 1;
                 *seq += 1;
-                mgr.handle(Command::Input { conn: link.conn, kind, seq: *seq, tick });
+                mgr.handle(Command::Client { conn: link.conn, msg: ClientMessage::Input { kind, seq: *seq, tick } });
             }
         }
         mgr.tick(dt, true);

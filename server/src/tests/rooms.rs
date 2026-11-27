@@ -17,7 +17,7 @@ fn join_missing_room_fails() {
     let mut mgr = new_mgr();
     let mut rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
-    mgr.handle(Command::JoinRoom { conn: 1, id: 999 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::JoinRoom { id: 999 } });
     assert!(has(&drain(&mut rx1), |m| matches!(m, ServerMessage::JoinFailed { .. })));
 }
 
@@ -27,7 +27,7 @@ fn join_full_room_fails() {
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
     let mut rx3 = reg(&mut mgr, 3);
     hello(&mut mgr, 3, "C");
-    mgr.handle(Command::JoinRoom { conn: 3, id: 1 });
+    mgr.handle(Command::Client { conn: 3, msg: ClientMessage::JoinRoom { id: 1 } });
     assert!(has(&drain(&mut rx3), |m| matches!(m, ServerMessage::JoinFailed { .. })));
     assert_eq!(mgr.rooms[&1].members.len(), 2);
 }
@@ -38,7 +38,7 @@ fn countdown_needs_two_players() {
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
     create_room(&mut mgr, 1);
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby));
 }
 
@@ -46,7 +46,7 @@ fn countdown_needs_two_players() {
 fn countdown_starts_game_after_delay() {
     let mut mgr = new_mgr();
     let (_id, mut rx1, _rx2) = two_player_room(&mut mgr);
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     assert!(matches!(mgr.rooms[&1].phase, Phase::CountingDown(_)));
     mgr.tick(3.5, false);
     assert!(matches!(mgr.rooms[&1].phase, Phase::Playing));
@@ -57,7 +57,7 @@ fn countdown_starts_game_after_delay() {
 fn host_leaving_promotes_remaining_member() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
-    mgr.handle(Command::LeaveRoom { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::LeaveRoom });
     let room = &mgr.rooms[&1];
     assert_eq!(room.members.len(), 1);
     assert_eq!(room.host.as_str(), "B");
@@ -70,7 +70,7 @@ fn last_member_leaving_closes_room() {
     hello(&mut mgr, 1, "A");
     create_room(&mut mgr, 1);
     assert!(mgr.rooms.contains_key(&1));
-    mgr.handle(Command::LeaveRoom { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::LeaveRoom });
     assert!(!mgr.rooms.contains_key(&1));
 }
 
@@ -78,7 +78,7 @@ fn last_member_leaving_closes_room() {
 fn opponent_disconnect_pauses_running_game() {
     let mut mgr = new_mgr();
     let (_id, mut rx1, _rx2) = two_player_room(&mut mgr);
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     mgr.tick(3.5, false);
     assert!(matches!(mgr.rooms[&1].phase, Phase::Playing));
     let _ = drain(&mut rx1); // clear GameStart
@@ -90,7 +90,7 @@ fn opponent_disconnect_pauses_running_game() {
 
 pub(super) fn running_game(mgr: &mut Manager) -> (mpsc::Receiver<bytes::Bytes>, mpsc::Receiver<bytes::Bytes>) {
     let (_id, rx1, rx2) = two_player_room(mgr);
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     mgr.tick(3.5, false);
     assert!(mgr.rooms[&1].game_running(), "setup: game must be running");
     assert!(mgr.take_unsaved_matches().is_empty(), "setup: nothing decided yet");
@@ -102,7 +102,7 @@ fn countdown_refused_while_a_player_is_disconnected() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
     mgr.handle(Command::Unregister { conn: 2 });
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby));
 }
 
@@ -110,7 +110,7 @@ fn countdown_refused_while_a_player_is_disconnected() {
 fn disconnect_during_countdown_cancels_it() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     mgr.handle(Command::Unregister { conn: 2 });
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby));
     mgr.tick(3.5, false);
@@ -121,8 +121,8 @@ fn disconnect_during_countdown_cancels_it() {
 fn leaving_a_running_game_is_a_forfeit() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
-    mgr.handle(Command::TogglePause { conn: 2 });
-    mgr.handle(Command::LeaveRoom { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::TogglePause });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::LeaveRoom });
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
     assert_eq!(recs[0].winner_slot(), Some(1), "the player who stayed wins");
@@ -132,7 +132,7 @@ fn leaving_a_running_game_is_a_forfeit() {
 fn creating_another_room_mid_game_is_a_forfeit() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
-    mgr.handle(Command::CreateRoom { conn: 2, name: "escape".into() });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::CreateRoom { name: "escape".into() } });
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
     assert_eq!(recs[0].winner_slot(), Some(1));
@@ -142,7 +142,7 @@ fn creating_another_room_mid_game_is_a_forfeit() {
 fn host_returning_to_lobby_mid_game_is_a_forfeit() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
-    mgr.handle(Command::ReturnToLobby { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ReturnToLobby });
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
     assert_eq!(recs[0].winner_slot(), Some(2), "the host abandoned, the guest wins");
@@ -168,7 +168,7 @@ fn leaving_while_opponent_is_disconnected_voids_the_game() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
     mgr.handle(Command::Unregister { conn: 2 });
-    mgr.handle(Command::LeaveRoom { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::LeaveRoom });
     assert!(mgr.take_unsaved_matches().is_empty());
 }
 
@@ -177,7 +177,7 @@ fn leaving_a_finished_game_records_nothing_more() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
-    mgr.handle(Command::LeaveRoom { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::LeaveRoom });
     assert!(mgr.take_unsaved_matches().is_empty());
 }
 
@@ -185,11 +185,11 @@ fn leaving_a_finished_game_records_nothing_more() {
 fn restart_refused_while_the_game_is_undecided() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
-    mgr.handle(Command::Restart { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::RequestRestart });
     assert!(mgr.rooms[&1].sim.last_restart.is_none());
 
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
-    mgr.handle(Command::Restart { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::RequestRestart });
     assert!(mgr.rooms[&1].sim.last_restart.is_some(), "allowed once decided");
 }
 
@@ -198,7 +198,7 @@ fn room_with_only_disconnected_members_is_closed() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
     mgr.handle(Command::Unregister { conn: 2 });
-    mgr.handle(Command::LeaveRoom { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::LeaveRoom });
     assert!(!mgr.rooms.contains_key(&1));
     assert!(mgr.public_room_list().is_empty());
 }
@@ -208,7 +208,7 @@ fn reconnecting_to_a_closed_room_lands_on_the_room_list() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
     mgr.handle(Command::Unregister { conn: 2 });
-    mgr.handle(Command::LeaveRoom { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::LeaveRoom });
     let mut rx3 = reg(&mut mgr, 3);
     hello(&mut mgr, 3, "B");
     assert_eq!(mgr.clients.room_of(3), None);
@@ -221,7 +221,7 @@ fn joining_your_own_room_keeps_it() {
     let _rx1 = reg(&mut mgr, 1);
     hello(&mut mgr, 1, "A");
     create_room(&mut mgr, 1);
-    mgr.handle(Command::JoinRoom { conn: 1, id: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::JoinRoom { id: 1 } });
     assert!(mgr.rooms.contains_key(&1));
     assert_eq!(mgr.clients.room_of(1), Some(1));
 }
@@ -231,7 +231,10 @@ pub(super) fn set_pause_policy(mgr: &mut Manager, policy: PausePolicy) {
         if mgr.rooms[&1].settings.pause == policy {
             return;
         }
-        mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::Pause, dir: 1 });
+        mgr.handle(Command::Client {
+            conn: 1,
+            msg: ClientMessage::SetRoomSetting { setting: RoomSetting::Pause, dir: 1 },
+        });
     }
     assert_eq!(mgr.rooms[&1].settings.pause, policy, "host could not set the pause policy");
 }
@@ -240,7 +243,7 @@ pub(super) fn set_pause_policy(mgr: &mut Manager, policy: PausePolicy) {
 fn pause_policy_everyone() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
-    mgr.handle(Command::TogglePause { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::TogglePause });
     assert!(mgr.rooms[&1].sim.paused);
 }
 
@@ -249,12 +252,12 @@ fn pause_policy_host_only() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
     set_pause_policy(&mut mgr, PausePolicy::HostOnly);
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     mgr.tick(3.5, false);
 
-    mgr.handle(Command::TogglePause { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::TogglePause });
     assert!(!mgr.rooms[&1].sim.paused, "guest may not pause");
-    mgr.handle(Command::TogglePause { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::TogglePause });
     assert!(mgr.rooms[&1].sim.paused, "host may");
 }
 
@@ -263,11 +266,11 @@ fn pause_policy_nobody() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
     set_pause_policy(&mut mgr, PausePolicy::Nobody);
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     mgr.tick(3.5, false);
 
-    mgr.handle(Command::TogglePause { conn: 1 });
-    mgr.handle(Command::TogglePause { conn: 2 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::TogglePause });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::TogglePause });
     assert!(!mgr.rooms[&1].sim.paused);
 }
 
@@ -275,12 +278,12 @@ fn pause_policy_nobody() {
 fn pause_policy_is_host_and_lobby_only() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
-    mgr.handle(Command::SetSetting { conn: 2, setting: RoomSetting::Pause, dir: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::SetRoomSetting { setting: RoomSetting::Pause, dir: 1 } });
     assert_eq!(mgr.rooms[&1].settings.pause, PausePolicy::Everyone, "guest cannot change it");
 
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     mgr.tick(3.5, false);
-    mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::Pause, dir: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::SetRoomSetting { setting: RoomSetting::Pause, dir: 1 } });
     assert_eq!(mgr.rooms[&1].settings.pause, PausePolicy::Everyone, "not mid-game");
 }
 
@@ -289,9 +292,9 @@ fn the_host_sets_the_board_size_the_match_is_played_on() {
     let mut mgr = new_mgr();
     let (_id, _rx1, _rx2) = two_player_room(&mut mgr);
     for (setting, dir) in [(RoomSetting::Columns, 1), (RoomSetting::Columns, 1), (RoomSetting::Rows, -1)] {
-        mgr.handle(Command::SetSetting { conn: 1, setting, dir });
+        mgr.handle(Command::Client { conn: 1, msg: ClientMessage::SetRoomSetting { setting, dir } });
     }
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     mgr.tick(3.5, false);
     let board = &mgr.rooms[&1].sim.boards[0];
     assert_eq!((board.width(), board.height()), (8, 12));
@@ -303,7 +306,7 @@ fn opponent_cannot_lift_a_disconnect_pause() {
     let (_rx1, _rx2) = running_game(&mut mgr);
     mgr.handle(Command::Unregister { conn: 2 });
     assert!(mgr.rooms[&1].sim.paused);
-    mgr.handle(Command::TogglePause { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::TogglePause });
     assert!(mgr.rooms[&1].sim.paused);
 }
 
@@ -330,7 +333,7 @@ fn restart_refused_while_opponent_is_disconnected() {
     let (_rx1, _rx2) = running_game(&mut mgr);
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
     mgr.handle(Command::Unregister { conn: 2 });
-    mgr.handle(Command::Restart { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::RequestRestart });
     assert!(!mgr.rooms[&1].game_running());
     assert!(mgr.rooms[&1].sim.last_restart.is_none());
 }
@@ -339,14 +342,17 @@ fn restart_refused_while_opponent_is_disconnected() {
 fn big_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<bytes::Bytes>> {
     let mut rxs = vec![reg(mgr, 1)];
     hello(mgr, 1, "P1");
-    mgr.handle(Command::CreateRoom { conn: 1, name: "big".into() });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::CreateRoom { name: "big".into() } });
     for _ in 2..max {
-        mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::MaxPlayers, dir: 1 });
+        mgr.handle(Command::Client {
+            conn: 1,
+            msg: ClientMessage::SetRoomSetting { setting: RoomSetting::MaxPlayers, dir: 1 },
+        });
     }
     for conn in 2..=players as ConnId {
         rxs.push(reg(mgr, conn));
         hello(mgr, conn, &format!("P{conn}"));
-        mgr.handle(Command::JoinRoom { conn, id: 1 });
+        mgr.handle(Command::Client { conn, msg: ClientMessage::JoinRoom { id: 1 } });
     }
     rxs
 }
@@ -359,7 +365,7 @@ fn cpu_room(mgr: &mut Manager, max: u8, players: usize) -> Vec<mpsc::Receiver<by
 }
 
 fn start(mgr: &mut Manager) {
-    mgr.handle(Command::ToggleCountdown { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ToggleCountdown });
     mgr.tick(3.5, false);
 }
 
@@ -370,7 +376,7 @@ fn a_room_seats_as_many_players_as_its_setting() {
     assert_eq!(mgr.rooms[&1].members.len(), 3);
     let _rx = reg(&mut mgr, 9);
     hello(&mut mgr, 9, "late");
-    mgr.handle(Command::JoinRoom { conn: 9, id: 1 });
+    mgr.handle(Command::Client { conn: 9, msg: ClientMessage::JoinRoom { id: 1 } });
     assert_eq!(mgr.rooms[&1].members.len(), 3, "the fourth is refused");
     start(&mut mgr);
     assert_eq!(mgr.rooms[&1].sim.boards.len(), 3);
@@ -381,11 +387,11 @@ fn one_team_alone_cannot_start() {
     let mut mgr = new_mgr();
     let _rxs = big_room(&mut mgr, 3, 3);
     for conn in 1..=3 {
-        mgr.handle(Command::SetTeam { conn, team: Some(2) });
+        mgr.handle(Command::Client { conn, msg: ClientMessage::SetTeam { team: Some(2) } });
     }
     start(&mut mgr);
     assert!(matches!(mgr.rooms[&1].phase, Phase::Lobby), "nobody to play against");
-    mgr.handle(Command::SetTeam { conn: 3, team: None });
+    mgr.handle(Command::Client { conn: 3, msg: ClientMessage::SetTeam { team: None } });
     start(&mut mgr);
     assert!(mgr.rooms[&1].game_running());
     assert_eq!(mgr.rooms[&1].sim.teams[0], mgr.rooms[&1].sim.teams[1]);
@@ -396,12 +402,12 @@ fn one_team_alone_cannot_start() {
 fn a_team_is_picked_in_the_lobby_only_and_must_exist() {
     let mut mgr = new_mgr();
     let _rxs = big_room(&mut mgr, 3, 3);
-    mgr.handle(Command::SetTeam { conn: 2, team: Some(shared::MAX_TEAMS + 1) });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::SetTeam { team: Some(shared::MAX_TEAMS + 1) } });
     assert_eq!(mgr.rooms[&1].members[1].team, None);
-    mgr.handle(Command::SetTeam { conn: 2, team: Some(1) });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::SetTeam { team: Some(1) } });
     assert_eq!(mgr.rooms[&1].members[1].team, Some(1));
     start(&mut mgr);
-    mgr.handle(Command::SetTeam { conn: 2, team: None });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::SetTeam { team: None } });
     assert_eq!(mgr.rooms[&1].members[1].team, Some(1), "not during a game");
 }
 
@@ -410,7 +416,10 @@ fn the_seats_never_drop_below_who_is_seated() {
     let mut mgr = new_mgr();
     let _rxs = big_room(&mut mgr, 4, 3);
     for _ in 0..5 {
-        mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::MaxPlayers, dir: -1 });
+        mgr.handle(Command::Client {
+            conn: 1,
+            msg: ClientMessage::SetRoomSetting { setting: RoomSetting::MaxPlayers, dir: -1 },
+        });
     }
     assert_eq!(mgr.rooms[&1].settings.max_players, 3);
 }
@@ -423,14 +432,14 @@ fn a_player_leaving_mid_game_is_out_and_the_others_play_on() {
     for rx in &mut rxs {
         drain(rx);
     }
-    mgr.handle(Command::LeaveRoom { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::LeaveRoom });
     assert!(mgr.rooms[&1].game_running(), "two players are still in");
     assert!(!mgr.rooms[&1].sim.alive(1));
     assert!(mgr.take_unsaved_matches().is_empty());
     for i in [0, 2] {
         assert!(last_lobby(&drain(&mut rxs[i])).is_none(), "nobody is sent back to the lobby");
     }
-    mgr.handle(Command::LeaveRoom { conn: 3 });
+    mgr.handle(Command::Client { conn: 3, msg: ClientMessage::LeaveRoom });
     let recs = mgr.take_unsaved_matches();
     assert_eq!(recs.len(), 1);
     assert_eq!(recs[0].winner_slot(), Some(1));
@@ -444,7 +453,7 @@ fn a_late_comer_watches_then_plays_the_next_game() {
     start(&mut mgr);
     let mut late = reg(&mut mgr, 9);
     hello(&mut mgr, 9, "late");
-    mgr.handle(Command::JoinRoom { conn: 9, id: 1 });
+    mgr.handle(Command::Client { conn: 9, msg: ClientMessage::JoinRoom { id: 1 } });
     let info = last_lobby(&drain(&mut late)).expect("a lobby");
     assert_eq!(info.your_slot, 0, "watching the running game");
     let before = mgr.rooms[&1].sim.queued_inputs.iter().map(Vec::len).sum::<usize>();
@@ -453,8 +462,8 @@ fn a_late_comer_watches_then_plays_the_next_game() {
     let after = mgr.rooms[&1].sim.queued_inputs.iter().map(Vec::len).sum::<usize>();
     assert_eq!(before, after, "no board to play");
 
-    mgr.handle(Command::LeaveRoom { conn: 2 });
-    mgr.handle(Command::ReturnToLobby { conn: 1 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::LeaveRoom });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::ReturnToLobby });
     start(&mut mgr);
     assert_eq!(mgr.rooms[&1].sim.boards.len(), 2, "host and late comer");
     assert_eq!(mgr.rooms[&1].members[1].game_slot, Some(1));
@@ -477,8 +486,8 @@ fn a_restart_after_a_leave_tells_each_player_their_new_slot() {
         assert_eq!(game_start(&drain(rx)), Some((slot_byte(i + 1), 3)));
     }
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
-    mgr.handle(Command::LeaveRoom { conn: 2 });
-    mgr.handle(Command::Restart { conn: 3 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::LeaveRoom });
+    mgr.handle(Command::Client { conn: 3, msg: ClientMessage::RequestRestart });
     assert_eq!(game_start(&drain(&mut rxs[0])), Some((1, 2)));
     assert_eq!(game_start(&drain(&mut rxs[2])), Some((2, 2)));
 }
@@ -488,7 +497,10 @@ fn a_manual_target_is_a_slot_from_one() {
     let mut mgr = new_mgr();
     let _rxs = big_room(&mut mgr, 3, 3);
     start(&mut mgr);
-    mgr.handle(Command::SetTargeting { conn: 1, targeting: shared::Targeting::Manual(3) });
+    mgr.handle(Command::Client {
+        conn: 1,
+        msg: ClientMessage::SetTargeting { targeting: shared::Targeting::Manual(3) },
+    });
     mgr.tick(0.02, true);
     assert_eq!(mgr.rooms[&1].sim.targets[0], Some(2));
 }
@@ -526,7 +538,7 @@ fn with_three_boards_the_others_come_small_ten_times_a_second() {
     start(&mut mgr);
     let mut watcher = reg(&mut mgr, 8);
     hello(&mut mgr, 8, "W");
-    mgr.handle(Command::Spectate { conn: 8, id: 1 });
+    mgr.handle(Command::Client { conn: 8, msg: ClientMessage::Spectate { id: 1 } });
     for rx in &mut rxs {
         drain(rx);
     }
@@ -545,15 +557,15 @@ fn a_late_comer_in_a_big_room_watches_like_a_spectator() {
     start(&mut mgr);
     let mut late = reg(&mut mgr, 9);
     hello(&mut mgr, 9, "late");
-    mgr.handle(Command::JoinRoom { conn: 9, id: 1 });
+    mgr.handle(Command::Client { conn: 9, msg: ClientMessage::JoinRoom { id: 1 } });
     assert_eq!(mgr.rooms[&1].game_slot_of_conn(9), None, "setup: no board this game");
     let (whole, small) = twelve_ticks(&mut mgr, &mut late);
     assert_eq!(whole, vec![('S', vec![1]); 12]);
     assert_eq!(small, 2);
-    mgr.handle(Command::Follow { conn: 9, slot: 2 });
+    mgr.handle(Command::Client { conn: 9, msg: ClientMessage::Follow { slot: 2 } });
     let (whole, _) = twelve_ticks(&mut mgr, &mut late);
     assert_eq!(whole, vec![('S', vec![2]); 12]);
-    mgr.handle(Command::Follow { conn: 1, slot: 3 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::Follow { slot: 3 } });
     assert!(!mgr.rooms[&1].follows.contains_key(&1), "a player watches their own board");
 }
 
@@ -564,16 +576,16 @@ fn a_spectator_picks_the_board_it_watches_large_until_the_next_game() {
     start(&mut mgr);
     let mut watcher = reg(&mut mgr, 8);
     hello(&mut mgr, 8, "W");
-    mgr.handle(Command::Spectate { conn: 8, id: 1 });
-    mgr.handle(Command::Follow { conn: 8, slot: 3 });
+    mgr.handle(Command::Client { conn: 8, msg: ClientMessage::Spectate { id: 1 } });
+    mgr.handle(Command::Client { conn: 8, msg: ClientMessage::Follow { slot: 3 } });
     let (whole, _) = twelve_ticks(&mut mgr, &mut watcher);
     assert_eq!(whole, vec![('S', vec![3]); 12]);
     for slot in [0, 4] {
-        mgr.handle(Command::Follow { conn: 8, slot });
+        mgr.handle(Command::Client { conn: 8, msg: ClientMessage::Follow { slot } });
     }
     assert_eq!(mgr.rooms[&1].follows[&8], 2, "no such board");
     sim_of(&mut mgr).finished = true;
-    mgr.handle(Command::Restart { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::RequestRestart });
     let (whole, _) = twelve_ticks(&mut mgr, &mut watcher);
     assert_eq!(whole, vec![('S', vec![1]); 12], "a new game starts on the first board");
 }
@@ -616,7 +628,7 @@ fn each_game_of_a_room_has_its_number() {
     mgr.tick(1.0 / 60.0, true);
     let (_, first) = games_seen(&drain(&mut rx1));
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
-    mgr.handle(Command::Restart { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::RequestRestart });
     mgr.tick(1.0 / 60.0, true);
     let (starts, states) = games_seen(&drain(&mut rx1));
     assert_eq!(first.len(), 1);
@@ -637,7 +649,7 @@ fn a_datagram_link_gets_its_own_board_alone_and_the_others_small() {
     let _rxs = big_room(&mut mgr, 3, 3);
     start(&mut mgr);
     hello(&mut mgr, 9, "W");
-    mgr.handle(Command::Spectate { conn: 9, id: 1 });
+    mgr.handle(Command::Client { conn: 9, msg: ClientMessage::Spectate { id: 1 } });
     let mut player = mgr.rooms[&1].members[1].conn.expect("seated");
     let (ptx, _prx) = mpsc::channel(CLIENT_CHAN_CAP);
     let (pstates_tx, mut pstates) = mpsc::channel(64);
@@ -667,7 +679,7 @@ fn the_thumbnails_of_a_big_room_are_packed_into_datagrams_that_fit() {
         .map(|conn| {
             let rx = reg(&mut mgr, conn);
             hello(&mut mgr, conn, &format!("P{conn}"));
-            mgr.handle(Command::JoinRoom { conn, id: 1 });
+            mgr.handle(Command::Client { conn, msg: ClientMessage::JoinRoom { id: 1 } });
             rx
         })
         .collect();
@@ -686,7 +698,7 @@ fn the_thumbnails_of_a_big_room_are_packed_into_datagrams_that_fit() {
     let (states_tx, mut states) = mpsc::channel(64);
     mgr.handle(Command::Register { conn: 500, sender: tx, states: Some(states_tx) });
     hello(&mut mgr, 500, "W");
-    mgr.handle(Command::Spectate { conn: 500, id: 1 });
+    mgr.handle(Command::Client { conn: 500, msg: ClientMessage::Spectate { id: 1 } });
     for _ in 0..6 {
         mgr.tick(1.0 / 60.0, true);
     }
@@ -704,10 +716,10 @@ fn a_new_game_aims_at_random_as_the_client_shows() {
     let mut mgr = new_mgr();
     let _rxs = big_room(&mut mgr, 3, 3);
     start(&mut mgr);
-    mgr.handle(Command::SetTargeting { conn: 1, targeting: shared::Targeting::Danger });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::SetTargeting { targeting: shared::Targeting::Danger } });
     assert_eq!(mgr.rooms[&1].sim.targeting[0], shared::Targeting::Danger);
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
-    mgr.handle(Command::Restart { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::RequestRestart });
     assert_eq!(mgr.rooms[&1].sim.targeting[0], shared::Targeting::Random);
 }
 
@@ -715,10 +727,10 @@ fn a_new_game_aims_at_random_as_the_client_shows() {
 fn only_the_host_seats_cpus_and_only_up_to_the_seats() {
     let mut mgr = new_mgr();
     let _rxs = cpu_room(&mut mgr, 3, 2);
-    mgr.handle(Command::AddCpu { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::AddCpu });
     assert_eq!(mgr.rooms[&1].members.len(), 2, "a guest seated a CPU");
     for _ in 0..3 {
-        mgr.handle(Command::AddCpu { conn: 1 });
+        mgr.handle(Command::Client { conn: 1, msg: ClientMessage::AddCpu });
     }
     let room = &mgr.rooms[&1];
     assert_eq!(room.members.len(), 3, "past the seats");
@@ -731,9 +743,11 @@ fn the_host_changes_and_removes_a_cpu_in_the_lobby() {
     use shared::cpu::{Difficulty, Style};
     let mut mgr = new_mgr();
     let _rxs = cpu_room(&mut mgr, 3, 2);
-    mgr.handle(Command::AddCpu { conn: 1 });
-    let set =
-        |conn, slot, team| Command::SetCpu { conn, slot, difficulty: Difficulty::Pro, style: Style::Counter, team };
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::AddCpu });
+    let set = |conn, slot, team| Command::Client {
+        conn,
+        msg: ClientMessage::SetCpu { slot, difficulty: Difficulty::Pro, style: Style::Counter, team },
+    };
     mgr.handle(set(1, 2, Some(1)));
     assert!(mgr.rooms[&1].members[1].cpu.is_none(), "slot 2 is a player, not a CPU");
     mgr.handle(set(2, 3, Some(1)));
@@ -742,9 +756,9 @@ fn the_host_changes_and_removes_a_cpu_in_the_lobby() {
     let info = mgr.rooms[&1].spectator_info();
     assert_eq!(info.cpus[2], Some((Difficulty::Pro, Style::Counter)));
     assert_eq!((info.teams[2], info.names[2].as_str()), (Some(1), "Personnage 4 (Pro)"));
-    mgr.handle(Command::RemoveCpu { conn: 1, slot: 2 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::RemoveCpu { slot: 2 } });
     assert_eq!(mgr.rooms[&1].members.len(), 3, "a player is not removed as a CPU");
-    mgr.handle(Command::RemoveCpu { conn: 1, slot: 3 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::RemoveCpu { slot: 3 } });
     assert_eq!(mgr.rooms[&1].members.len(), 2);
 }
 
@@ -752,7 +766,7 @@ fn the_host_changes_and_removes_a_cpu_in_the_lobby() {
 fn a_cpu_plays_its_seat_and_the_game_is_not_kept() {
     let mut mgr = new_mgr();
     let mut rxs = cpu_room(&mut mgr, 2, 1);
-    mgr.handle(Command::AddCpu { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::AddCpu });
     start(&mut mgr);
     assert!(mgr.rooms[&1].game_running(), "the CPU did not count as a side");
     let first = mgr.rooms[&1].sim.boards[1].piece_id;
@@ -784,10 +798,10 @@ fn a_cpu_plays_its_seat_and_the_game_is_not_kept() {
 fn a_room_left_to_its_cpus_closes() {
     let mut mgr = new_mgr();
     let _rxs = cpu_room(&mut mgr, 3, 2);
-    mgr.handle(Command::AddCpu { conn: 1 });
-    mgr.handle(Command::LeaveRoom { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::AddCpu });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::LeaveRoom });
     assert_eq!(mgr.rooms[&1].host.as_str(), "P2", "a CPU became host");
-    mgr.handle(Command::LeaveRoom { conn: 2 });
+    mgr.handle(Command::Client { conn: 2, msg: ClientMessage::LeaveRoom });
     assert!(!mgr.rooms.contains_key(&1));
 }
 
@@ -799,10 +813,13 @@ fn report_cpu_room_cost() {
         let mut mgr = new_mgr();
         let _rxs = cpu_room(&mut mgr, 16, 1);
         for _ in 0..15 {
-            mgr.handle(Command::AddCpu { conn: 1 });
+            mgr.handle(Command::Client { conn: 1, msg: ClientMessage::AddCpu });
         }
         for slot in 2..=16 {
-            mgr.handle(Command::SetCpu { conn: 1, slot, difficulty, style: Style::Balanced, team: None });
+            mgr.handle(Command::Client {
+                conn: 1,
+                msg: ClientMessage::SetCpu { slot, difficulty, style: Style::Balanced, team: None },
+            });
         }
         start(&mut mgr);
         let ticks = 60 * 60;
@@ -830,9 +847,12 @@ fn a_release_server_seats_no_cpu() {
     let mut mgr = new_mgr();
     let mut rxs = big_room(&mut mgr, 3, 1);
     mgr.rooms.get_mut(&1).expect("the room").cpu_seats = false;
-    mgr.handle(Command::AddCpu { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::AddCpu });
     assert_eq!(mgr.rooms[&1].members.len(), 1, "a CPU was seated");
-    mgr.handle(Command::SetSetting { conn: 1, setting: RoomSetting::MaxPlayers, dir: 1 });
+    mgr.handle(Command::Client {
+        conn: 1,
+        msg: ClientMessage::SetRoomSetting { setting: RoomSetting::MaxPlayers, dir: 1 },
+    });
     let lobby = last_lobby(&drain(&mut rxs[0])).expect("a lobby");
     assert!(!lobby.cpu_seats, "the client was offered CPUs");
 }

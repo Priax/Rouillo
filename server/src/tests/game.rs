@@ -24,14 +24,14 @@ fn the_tick_counter_follows_the_simulation() {
 fn a_paused_game_stops_the_tick_counter() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = running_game(&mut mgr);
-    mgr.handle(Command::TogglePause { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::TogglePause });
     let paused_at = mgr.rooms[&1].sim.tick;
     for _ in 0..10 {
         mgr.tick(STEP, false);
     }
     assert_eq!(mgr.rooms[&1].sim.tick, paused_at, "the clock ran while paused");
 
-    mgr.handle(Command::TogglePause { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::TogglePause });
     mgr.tick(STEP, false);
     assert_eq!(mgr.rooms[&1].sim.tick, paused_at + 1, "and never restarted");
 }
@@ -58,7 +58,7 @@ fn restart_resets_the_tick_counter() {
     assert!(mgr.rooms[&1].sim.tick > 0, "setup: the clock must have run");
 
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
-    mgr.handle(Command::Restart { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::RequestRestart });
     assert_eq!(mgr.rooms[&1].sim.tick, 0);
 }
 
@@ -81,7 +81,7 @@ pub(super) fn piece_col(mgr: &Manager, slot: usize) -> i32 {
 }
 
 pub(super) fn press(mgr: &mut Manager, conn: ConnId, seq: u32, tick: u32) {
-    mgr.handle(Command::Input { conn, kind: InputKind::MoveLeft, seq, tick });
+    mgr.handle(Command::Client { conn, msg: ClientMessage::Input { kind: InputKind::MoveLeft, seq, tick } });
 }
 
 #[test]
@@ -171,7 +171,7 @@ fn a_restart_clears_the_input_queue() {
     assert!(!mgr.rooms[&1].sim.queued_inputs[0].is_empty(), "setup");
 
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
-    mgr.handle(Command::Restart { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::RequestRestart });
     assert!(mgr.rooms[&1].sim.queued_inputs[0].is_empty());
     assert_eq!(mgr.rooms[&1].sim.late_inputs, [0; 2]);
 }
@@ -184,7 +184,10 @@ fn a_full_input_queue_drops_without_acknowledging() {
 
     let flood = INPUT_QUEUE_CAP as u32 + 50;
     for seq in 1..=flood {
-        mgr.handle(Command::Input { conn: 1, kind: InputKind::RotateCW, seq, tick: now + 20 });
+        mgr.handle(Command::Client {
+            conn: 1,
+            msg: ClientMessage::Input { kind: InputKind::RotateCW, seq, tick: now + 20 },
+        });
     }
     assert_eq!(mgr.rooms[&1].sim.queued_inputs[0].len(), INPUT_QUEUE_CAP);
     assert_eq!(mgr.rooms[&1].sim.last_seq[0], 0, "acknowledged what it dropped");
@@ -320,7 +323,7 @@ fn a_restart_clears_attacks_in_flight() {
     assert!(!mgr.rooms[&1].sim.garbage_in_flight.is_empty(), "setup");
 
     mgr.rooms.get_mut(&1).unwrap().sim.finished = true;
-    mgr.handle(Command::Restart { conn: 1 });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::RequestRestart });
     assert!(mgr.rooms[&1].sim.garbage_in_flight.is_empty());
 
     for _ in 0..60 {
@@ -395,7 +398,7 @@ fn a_reconnected_player_numbers_inputs_from_one_again() {
     let (_rx1, _rx2) = running_game(&mut mgr);
     for seq in 1..=5 {
         let tick = mgr.rooms[&1].sim.tick + 1;
-        mgr.handle(Command::Input { conn: 2, kind: InputKind::RotateCW, seq, tick });
+        mgr.handle(Command::Client { conn: 2, msg: ClientMessage::Input { kind: InputKind::RotateCW, seq, tick } });
         mgr.tick(STEP, false);
     }
     assert_eq!(mgr.rooms[&1].sim.last_seq[1], 5);
