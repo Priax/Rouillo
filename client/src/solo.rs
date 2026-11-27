@@ -336,12 +336,11 @@ pub fn poll_best(solo: &mut Solo, signed_in: bool) {
 pub fn update_game(tick: &Tick, state: &mut State, game: &mut SoloGame) -> Transition {
     let signed_in = state.auth.is_some();
     let mut record = None;
-    let State { solo, settings, input: Input { controls, clicks, .. }, .. } = state;
+    let State { solo, settings, input: Input { controls, .. }, .. } = state;
     let input = controls.frame;
-    let clicks = *clicks;
     let best = &mut solo.best;
 
-    if game.knocked_out() && (input.pause || clicks.leave) {
+    if game.knocked_out() && input.pause {
         return Transition::To(Screen::SoloSetup);
     }
     if !game.over() && input.pause {
@@ -350,21 +349,16 @@ pub fn update_game(tick: &Tick, state: &mut State, game: &mut SoloGame) -> Trans
     let (over, paused) = (game.over(), game.paused());
     let dt = tick.dt;
 
-    if over || paused {
-        if clicks.leave {
-            return Transition::To(Screen::SoloSetup);
-        }
-        if clicks.back || (over && input.restart) {
-            *game = SoloGame::new(game.settings.clone());
-            return Transition::Stay;
-        }
+    if over && input.restart {
+        *game = SoloGame::new(game.settings.clone());
+        return Transition::Stay;
     }
 
     if over || paused {
         logic::hold(&mut game.session);
     } else {
         if game.pilot.is_none() && !game.knocked_out() {
-            logic::choose_target(&input, clicks.click, &mut game.session);
+            logic::choose_target(&input, None, &mut game.session);
             logic::read_controls(&input, &mut game.session, *settings, None, dt);
         }
         game.step(dt);
@@ -443,6 +437,20 @@ impl Setup {
         let lower = if self.foes.bottom() > self.game.bottom() { self.foes } else { self.game };
         ui::action_row(lower, self.view_w, k)
     }
+}
+
+/// Draws the game and answers its clicks: leaving, playing again, aiming.
+pub fn show_game(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State, game: &mut SoloGame) -> Transition {
+    let clicks = crate::draw::draw_game(ui, &game.session, gui, game.hud(state.solo.best));
+    if (game.knocked_out() || game.over() || game.paused()) && clicks.leave {
+        return Transition::To(Screen::SoloSetup);
+    }
+    if (game.over() || game.paused()) && clicks.back {
+        *game = SoloGame::new(game.settings.clone());
+    } else if !game.over() && !game.paused() && game.pilot.is_none() && !game.knocked_out() {
+        logic::choose_target(&crate::controls::Frame::default(), clicks.click, &mut game.session);
+    }
+    Transition::Stay
 }
 
 /// What the setup does with the keys; its clicks are in [`show_setup`].

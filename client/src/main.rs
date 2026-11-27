@@ -247,24 +247,48 @@ fn pace_frame() {
     });
 }
 
-fn update_online_game(tick: &Tick, state: &mut State) -> Transition {
-    let online = state.room.as_ref().map_or_else(logic::Online::default, |r| logic::Online {
+/// What the room tells a game about the player.
+fn online_of(state: &State) -> logic::Online {
+    state.room.as_ref().map_or_else(logic::Online::default, |r| logic::Online {
         is_host: r.info.is_host,
         ranked: r.info.ranked.is_some(),
         ended: r.series_over.is_some(),
-    });
+    })
+}
+
+/// A ranked player who leaves goes back to the queue's screen.
+fn after_leaving(state: &mut State, left: bool, online: logic::Online) -> Transition {
+    if left && online.ranked {
+        ranked::enter(state)
+    } else {
+        Transition::Stay
+    }
+}
+
+fn update_online_game(tick: &Tick, state: &mut State) -> Transition {
+    let online = online_of(state);
     let input = game_chat(tick, state);
-    let clicks = state.input.clicks;
     let State { room, settings, net: Network { conn, .. }, .. } = &mut *state;
     let left = room
         .as_mut()
         .and_then(|r| r.session.as_mut())
-        .is_some_and(|s| logic::update_game(tick, (&input, clicks), s, *settings, conn, online));
+        .is_some_and(|s| logic::update_game(tick, &input, s, *settings, conn, online));
 
-    let transition = if left && online.ranked { ranked::enter(state) } else { Transition::Stay };
+    let transition = after_leaving(state, left, online);
     replay::update_keep(state);
 
     transition
+}
+
+fn show_online_game(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -> Transition {
+    let online = online_of(state);
+    let State { room, net: Network { conn, .. }, .. } = &mut *state;
+    let Some(room) = room.as_mut() else { return Transition::Stay };
+    let role = online_role(room);
+    let Some(session) = room.session.as_mut() else { return Transition::Stay };
+    let clicks = draw::draw_game(ui, session, gui, draw::Hud::Online(role));
+    let left = logic::apply_clicks(clicks, session, conn, online);
+    after_leaving(state, left, online)
 }
 
 fn update(cx: &mut Cx, root: &mut Root) {
@@ -351,8 +375,6 @@ fn update(cx: &mut Cx, root: &mut Root) {
     };
 
     nav.apply(transition);
-    // A game's clicks are for the update right after its frame: past it, they are stale.
-    state.input.clicks = draw::GameClicks::default();
     if matches!(nav.current(), Screen::Menu) && !state.startup.title_seen {
         nav.apply(Transition::To(Screen::Title));
     }
@@ -424,15 +446,8 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
         Screen::Leaderboard(board) => transition = leaderboard::show(ui, gui, state, board),
         Screen::Help(view) => transition = help::show(ui, gui, state, view),
         Screen::Replay(viewer) => transition = replay::show(ui, gui, viewer),
-        Screen::Solo(game) => {
-            let hud = game.hud(state.solo.best);
-            state.input.clicks = draw::draw_game(ui, &game.session, gui, hud);
-        }
-        Screen::Game => {
-            if let Some((room, session)) = state.room.as_ref().and_then(|r| Some((r, r.session.as_ref()?))) {
-                state.input.clicks = draw::draw_game(ui, session, gui, draw::Hud::Online(online_role(room)));
-            }
-        }
+        Screen::Solo(game) => transition = solo::show_game(ui, gui, state, game),
+        Screen::Game => transition = show_online_game(ui, gui, state),
     }
 
     let screen = nav.current();

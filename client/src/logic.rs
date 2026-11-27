@@ -15,7 +15,7 @@ pub struct Online {
 
 pub fn update_game(
     tick: &Tick,
-    (input, clicks): (&Frame, GameClicks),
+    input: &Frame,
     session: &mut GameSession,
     settings: Settings,
     conn: &mut Connection,
@@ -27,28 +27,10 @@ pub fn update_game(
 
     let game_over = session.decided() || online.ended;
     let paused = session.large.board.state() == GameState::Paused;
-    let is_host = online.is_host;
     let menu = paused || game_over || session.opponent_disconnected || session.quit_menu;
 
-    if menu || session.eliminated() {
-        let with_back = menu && is_host && !online.ranked;
-        if clicks.leave {
-            conn.send(&ClientMessage::LeaveRoom);
-            return true;
-        }
-        if with_back && clicks.back {
-            conn.send(&ClientMessage::ReturnToLobby);
-            return false;
-        }
-    }
-
     let dt = tick.dt;
-    let click = clicks.click;
     if session.spectating() {
-        if let Some(crate::draw::GameClick::Board(slot)) = click {
-            session.follow(slot);
-            conn.send(&ClientMessage::Follow { slot });
-        }
         if input.pause {
             conn.send(&ClientMessage::LeaveRoom);
             return true;
@@ -63,7 +45,7 @@ pub fn update_game(
 
     handle_global_input(input, session, conn, online.ranked);
     if !menu && !session.eliminated() {
-        if let Some(targeting) = choose_target(input, click, session) {
+        if let Some(targeting) = choose_target(input, None, session) {
             conn.send(&ClientMessage::SetTargeting { targeting });
         }
     }
@@ -252,6 +234,42 @@ fn handle_global_input(input: &Frame, session: &mut GameSession, conn: &mut Conn
 fn opponents(session: &GameSession) -> Vec<u8> {
     let foes = session.rivals.iter().filter(|r| !r.out() && r.player.team != session.large.team);
     foes.map(|r| r.player.slot).collect()
+}
+
+/// Answers what the game's screen was clicked for. Returns whether the player left the room.
+pub fn apply_clicks(clicks: GameClicks, session: &mut GameSession, conn: &mut Connection, online: Online) -> bool {
+    if !conn.is_live() {
+        return false;
+    }
+
+    let game_over = session.decided() || online.ended;
+    let paused = session.large.board.state() == GameState::Paused;
+    let menu = paused || game_over || session.opponent_disconnected || session.quit_menu;
+    if menu || session.eliminated() {
+        if clicks.leave {
+            conn.send(&ClientMessage::LeaveRoom);
+            return true;
+        }
+        if menu && online.is_host && !online.ranked && clicks.back {
+            conn.send(&ClientMessage::ReturnToLobby);
+            return false;
+        }
+    }
+
+    if session.spectating() {
+        if let Some(crate::draw::GameClick::Board(slot)) = clicks.click {
+            session.follow(slot);
+            conn.send(&ClientMessage::Follow { slot });
+        }
+        return false;
+    }
+    if session.opponent_disconnected || menu || session.eliminated() {
+        return false;
+    }
+    if let Some(targeting) = choose_target(&Frame::default(), clicks.click, session) {
+        conn.send(&ClientMessage::SetTargeting { targeting });
+    }
+    false
 }
 
 /// The way of aiming the player switches to, by key or click: the session
