@@ -1,5 +1,6 @@
 use aero::draw::Draw;
 use aero::input::KeyCode;
+use shared::api::Uuid;
 use shared::config::CLIENT_SIM_DT;
 use shared::{Board, Playback, Replay};
 
@@ -23,7 +24,7 @@ pub struct Loading {
 
 /// Once a game is saved, the choice of keeping its replay.
 pub struct KeepOffer {
-    id: String,
+    id: Uuid,
     game: u32,
     slot: Option<Done>,
     status: Status,
@@ -31,7 +32,7 @@ pub struct KeepOffer {
 }
 
 impl KeepOffer {
-    pub const fn new(id: String, game: u32) -> Self {
+    pub const fn new(id: Uuid, game: u32) -> Self {
         Self { id, game, slot: None, status: Status::Empty, kept: false }
     }
 
@@ -87,7 +88,7 @@ pub fn show_keep(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) {
 
     if widgets::button(ui, "keep replay", rect, label, enabled) {
         offer.status = Status::Empty;
-        offer.slot = Some(set_favorite(&offer.id, true, auth.token.clone()));
+        offer.slot = Some(set_favorite(offer.id, true, auth.token.clone()));
     }
     if let Some((msg, color)) = offer.status.shown(&gui.stage.palette()) {
         ui.cx

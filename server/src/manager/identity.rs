@@ -6,7 +6,7 @@ impl Manager {
     /// Tells the players of a saved game, those still in a room, that its
     /// replay can be kept.
     pub(super) fn match_saved(&mut self, id: Uuid, users: &[Uuid]) {
-        let msg = encode(&ServerMessage::MatchSaved { id: id.to_string() });
+        let msg = encode(&ServerMessage::MatchSaved { id });
         for &user in users {
             self.clients.deliver_user(user, &msg, |c| c.room.is_some());
         }

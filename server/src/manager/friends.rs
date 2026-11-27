@@ -139,7 +139,7 @@ impl Manager {
         self.room_list_dirty = true;
     }
 
-    pub(super) fn request_invite(&mut self, conn: ConnId, target: &str) {
+    pub(super) fn request_invite(&mut self, conn: ConnId, target: Uuid) {
         let Some(inviter) = self.clients.user_of(conn) else {
             return;
         };
@@ -147,7 +147,6 @@ impl Manager {
         let Some(room) = self.clients.room_of(conn).filter(|id| self.series(*id).is_none() && member(id)) else {
             return;
         };
-        let Ok(target) = Uuid::parse_str(target) else { return };
         if target == inviter {
             return;
         }

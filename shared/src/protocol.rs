@@ -1,11 +1,12 @@
 use bitcode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::board::{Board, IncomingGarbage, InputKind, Phase, PuyoType};
 use crate::cpu::{Difficulty, Style};
 use crate::room::{RoomSetting, RoomSettings};
 
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 15;
 
 pub const MAX_CHAT_CHARS: usize = 200;
 pub const MAX_SPECTATORS: usize = 20;
@@ -165,7 +166,7 @@ pub enum ClientMessage {
     ToggleCountdown,
     ReturnToLobby,
     InviteFriend {
-        user_id: String,
+        user_id: Uuid,
     },
     Ping {
         id: u32,
@@ -180,7 +181,7 @@ pub enum ClientMessage {
         id: RoomId,
     },
     WatchFriend {
-        user_id: String,
+        user_id: Uuid,
     },
     SetTargeting {
         targeting: Targeting,
@@ -302,6 +303,6 @@ pub enum ServerMessage {
     },
     /// The game just played is in the database under this id.
     MatchSaved {
-        id: String,
+        id: Uuid,
     },
 }

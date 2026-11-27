@@ -160,10 +160,7 @@ pub(super) fn inviter_and_target(mgr: &mut Manager) -> mpsc::Receiver<bytes::Byt
 }
 
 pub(super) fn invite_b(mgr: &mut Manager) {
-    mgr.handle(Command::Client {
-        conn: 1,
-        msg: ClientMessage::InviteFriend { user_id: Uuid::from_u128(2).to_string() },
-    });
+    mgr.handle(Command::Client { conn: 1, msg: ClientMessage::InviteFriend { user_id: Uuid::from_u128(2) } });
 }
 
 pub(super) fn invitations(rx: &mut mpsc::Receiver<bytes::Bytes>) -> usize {

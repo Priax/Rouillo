@@ -326,7 +326,7 @@ fn watch(state: &mut State, user_id: Uuid) -> Transition {
     state.notice.clear();
 
     if state.net.conn.is_live() {
-        state.net.conn.send(&shared::ClientMessage::WatchFriend { user_id: user_id.to_string() });
+        state.net.conn.send(&shared::ClientMessage::WatchFriend { user_id });
     } else {
         state.net.pending_watch = Some(user_id);
         state.net.conn.connect(crate::connection::now_secs());

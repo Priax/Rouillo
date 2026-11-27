@@ -84,8 +84,8 @@ impl Manager {
     }
 
     /// Watches the game a friend is in, wherever it is.
-    pub(super) fn watch_friend(&mut self, conn: ConnId, friend: &str) {
-        let (Some(watcher), Ok(friend)) = (self.clients.user_of(conn), Uuid::parse_str(friend)) else {
+    pub(super) fn watch_friend(&mut self, conn: ConnId, friend: Uuid) {
+        let Some(watcher) = self.clients.user_of(conn) else {
             return;
         };
         let found =

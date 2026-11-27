@@ -23,10 +23,7 @@ fn a_spectator_sees_the_game_and_cannot_touch_it() {
     assert!(!mgr.rooms[&1].sim.paused, "a spectator paused the game");
     mgr.handle(Command::Client { conn: 3, msg: ClientMessage::Input { kind: InputKind::HardDrop, seq: 1, tick: 1 } });
     assert!(mgr.rooms[&1].sim.queued_inputs.iter().all(Vec::is_empty));
-    mgr.handle(Command::Client {
-        conn: 3,
-        msg: ClientMessage::InviteFriend { user_id: Uuid::from_u128(2).to_string() },
-    });
+    mgr.handle(Command::Client { conn: 3, msg: ClientMessage::InviteFriend { user_id: Uuid::from_u128(2) } });
     assert!(mgr.take_friend_checks().is_empty());
 
     mgr.tick(STEP, true);
@@ -157,10 +154,7 @@ fn a_late_watch_answer_leaves_a_player_who_moved_on_alone() {
     create_room(&mut mgr, 1);
     let _rx4 = reg(&mut mgr, 4);
     hello_as(&mut mgr, 4, "F", 4);
-    mgr.handle(Command::Client {
-        conn: 4,
-        msg: ClientMessage::WatchFriend { user_id: Uuid::from_u128(1).to_string() },
-    });
+    mgr.handle(Command::Client { conn: 4, msg: ClientMessage::WatchFriend { user_id: Uuid::from_u128(1) } });
     let check = watch_check(&mut mgr);
     mgr.handle(Command::Client { conn: 4, msg: ClientMessage::CreateRoom { name: "own".into() } });
     mgr.handle(Command::FriendCheckDone { check, friends: true });
@@ -177,10 +171,7 @@ fn watching_through_a_friend_respects_the_spectator_limit() {
     assert_eq!(mgr.rooms[&1].spectators.len(), shared::MAX_SPECTATORS, "setup");
     let _rx4 = reg(&mut mgr, 4);
     hello_as(&mut mgr, 4, "F", 4);
-    mgr.handle(Command::Client {
-        conn: 4,
-        msg: ClientMessage::WatchFriend { user_id: Uuid::from_u128(1).to_string() },
-    });
+    mgr.handle(Command::Client { conn: 4, msg: ClientMessage::WatchFriend { user_id: Uuid::from_u128(1) } });
     let check = watch_check(&mut mgr);
     mgr.handle(Command::FriendCheckDone { check, friends: true });
     assert_eq!(mgr.rooms[&1].spectators.len(), shared::MAX_SPECTATORS);
@@ -224,8 +215,8 @@ fn watching_a_friend_finds_their_room_after_checking_the_friendship() {
     hello_as(&mut mgr, 1, "A", 1);
     let mut rx4 = reg(&mut mgr, 4);
     hello_as(&mut mgr, 4, "F", 4);
-    let friend = Uuid::from_u128(1).to_string();
-    mgr.handle(Command::Client { conn: 4, msg: ClientMessage::WatchFriend { user_id: friend.clone() } });
+    let friend = Uuid::from_u128(1);
+    mgr.handle(Command::Client { conn: 4, msg: ClientMessage::WatchFriend { user_id: friend } });
     assert!(has(&drain(&mut rx4), |m| matches!(m, ServerMessage::JoinFailed { .. })), "not playing");
 
     create_room(&mut mgr, 1);

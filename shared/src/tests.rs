@@ -290,14 +290,14 @@ fn client_samples() -> Vec<ClientMessage> {
         ClientMessage::SetRoomSetting { setting: RoomSetting::Colors, dir: -1 },
         ClientMessage::ToggleCountdown,
         ClientMessage::ReturnToLobby,
-        ClientMessage::InviteFriend { user_id: "f".into() },
+        ClientMessage::InviteFriend { user_id: uuid::Uuid::from_u128(1) },
         ClientMessage::Ping { id: 5 },
         ClientMessage::JoinQueue,
         ClientMessage::LeaveQueue,
         ClientMessage::AcceptMatch,
         ClientMessage::Chat { text: "c".into() },
         ClientMessage::Spectate { id: 9 },
-        ClientMessage::WatchFriend { user_id: "u".into() },
+        ClientMessage::WatchFriend { user_id: uuid::Uuid::from_u128(2) },
         ClientMessage::SetTargeting { targeting: Targeting::Manual(2) },
         ClientMessage::SetTeam { team: Some(2) },
         ClientMessage::Inputs { inputs: vec![SentInput { seq: 4, tick: 90, kind: InputKind::HardDrop }] },
@@ -460,7 +460,7 @@ fn server_samples() -> Vec<ServerMessage> {
                 .chain([Thumb::of(&boards[0], false)])
                 .collect(),
         },
-        ServerMessage::MatchSaved { id: "m".into() },
+        ServerMessage::MatchSaved { id: uuid::Uuid::from_u128(3) },
     ]
 }
 
@@ -513,7 +513,7 @@ fn protocol_digest() -> u64 {
     h.finish()
 }
 
-const PROTOCOL_DIGEST: (u32, u64) = (14, 8_470_218_414_645_481_342);
+const PROTOCOL_DIGEST: (u32, u64) = (15, 3_126_118_982_314_659_291);
 
 #[test]
 fn protocol_changes_bump_the_version() {

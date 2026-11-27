@@ -751,7 +751,7 @@ pub fn show_lobby(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
 
     if room.invite.open {
         if let Some(user_id) = show_invite(ui, gui, &mut room.invite) {
-            conn.send(&ClientMessage::InviteFriend { user_id: user_id.to_string() });
+            conn.send(&ClientMessage::InviteFriend { user_id });
         }
         return Transition::Stay;
     }
