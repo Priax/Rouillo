@@ -1,12 +1,11 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use aero::image::{Filter, Image};
 
-use crate::http::{self, HttpSlot};
+use crate::http::{self, Answer, Request};
 
 enum Entry {
-    Loading(HttpSlot),
+    Loading(Request),
     /// The encoded picture is kept: a GPU lost takes the image with it.
     Ready(Image, Vec<u8>),
     Failed,
@@ -23,13 +22,10 @@ impl Images {
     /// The picture at `url`, a path on the API server, once it has loaded.
     pub fn get(&mut self, url: &str) -> Option<Image> {
         let entries = &mut self.entries;
-        let entry = entries.entry(url.to_owned()).or_insert_with(|| {
-            let slot = http::new_slot();
-            http::get(http::resource_url(url), None, Arc::clone(&slot));
-            Entry::Loading(slot)
-        });
+        let entry =
+            entries.entry(url.to_owned()).or_insert_with(|| Entry::Loading(http::get(http::resource_url(url), None)));
         if let Entry::Loading(slot) = entry {
-            match http::poll(slot) {
+            match slot.poll() {
                 Some(Ok(resp)) if resp.status == 200 => {
                     *entry = picture(&resp.bytes).map_or(Entry::Failed, |image| Entry::Ready(image, resp.bytes));
                 }

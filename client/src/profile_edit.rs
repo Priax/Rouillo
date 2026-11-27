@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use crate::http::{self, HttpSlot};
+use crate::http::{self, Json};
 use crate::picker::{self, Picked};
 use crate::state::{ApiUserProfile, ProfileData, State};
 use crate::theme;
@@ -70,10 +68,10 @@ pub struct EditForm {
     pub music: String,
     /// The field last typed in, which keeps the keyboard.
     pub focused: EditField,
-    pub pending: Option<HttpSlot>,
+    pending: Option<Json<PatchResp>>,
     pub status: Status,
     picking: Option<Picture>,
-    uploading: Option<HttpSlot>,
+    uploading: Option<Json<Pictures>>,
 }
 
 impl Default for EditForm {
@@ -160,9 +158,8 @@ fn poll_pictures(state: &mut State, p: &mut ProfileData) {
     if let Some(picture) = form.picking {
         match picker::take() {
             Some(Picked::File(bytes)) => {
-                let slot = http::new_slot();
-                http::put_bytes(http::api_url(picture.path()), bytes, token, Arc::clone(&slot));
-                form.uploading = Some(slot);
+                let slot = http::put_bytes(http::api_url(picture.path()), bytes, token);
+                form.uploading = Some(slot.json());
                 form.status = Status::info("Envoi de l'image...");
                 form.picking = None;
             }
@@ -175,7 +172,7 @@ fn poll_pictures(state: &mut State, p: &mut ProfileData) {
         }
     }
 
-    let Some(result) = http::take_json::<Pictures>(&mut form.uploading) else {
+    let Some(result) = http::take(&mut form.uploading) else {
         return;
     };
     match result {
@@ -195,7 +192,7 @@ pub fn poll(state: &mut State, p: &mut ProfileData) {
     poll_pictures(state, p);
 
     let Some(form) = p.edit.as_mut() else { return };
-    let Some(result) = http::take_json::<PatchResp>(&mut form.pending) else {
+    let Some(result) = http::take(&mut form.pending) else {
         return;
     };
     match result {
@@ -213,9 +210,8 @@ fn save(form: &mut EditForm, token: Option<String>) {
         return;
     }
 
-    let slot = http::new_slot();
-    http::patch_json(http::api_url("me"), form.body(), token, Arc::clone(&slot));
-    form.pending = Some(slot);
+    let slot = http::patch_json(http::api_url("me"), form.body(), token);
+    form.pending = Some(slot.json());
     form.status.clear();
 }
 
@@ -299,9 +295,8 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, token: Option<String>, pro
             picker::open();
         }
         Some((picture, false)) => {
-            let slot = http::new_slot();
-            http::delete_req(http::api_url(picture.path()), token.clone(), Arc::clone(&slot));
-            form.uploading = Some(slot);
+            let slot = http::delete(http::api_url(picture.path()), token.clone());
+            form.uploading = Some(slot.json());
         }
         None => {}
     }

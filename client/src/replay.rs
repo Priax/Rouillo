@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
 use aero::draw::Draw;
 use aero::input::KeyCode;
 use shared::config::CLIENT_SIM_DT;
 use shared::{Board, Playback, Replay};
 
 use crate::draw::{self, Hud};
-use crate::http::{self, HttpSlot};
+use crate::http::{self, Answer, Done, Request};
 use crate::nav::{Nav, Transition};
 use crate::state::{GameSession, Player, Rival, Room, Screen, State};
 use crate::tick::Tick;
@@ -19,7 +17,7 @@ const MAX_STEPS_PER_FRAME: u32 = 40;
 
 /// A replay on its way from the server, and whose board to show large.
 pub struct Loading {
-    slot: HttpSlot,
+    slot: Request,
     focus: u8,
 }
 
@@ -27,7 +25,7 @@ pub struct Loading {
 pub struct KeepOffer {
     id: String,
     game: u32,
-    slot: Option<HttpSlot>,
+    slot: Option<Done>,
     status: Status,
     kept: bool,
 }
@@ -47,16 +45,13 @@ fn favorite_url(match_id: &str) -> String {
 }
 
 /// Asks the server to keep the replay of a match, or to let it go.
-pub fn set_favorite(match_id: &str, on: bool, token: String) -> HttpSlot {
-    let slot = http::new_slot();
-
-    if on {
-        http::post_empty(favorite_url(match_id), Some(token), Arc::clone(&slot));
+pub fn set_favorite(match_id: &str, on: bool, token: String) -> Done {
+    let request = if on {
+        http::post_empty(favorite_url(match_id), Some(token))
     } else {
-        http::delete_req(favorite_url(match_id), Some(token), Arc::clone(&slot));
-    }
-
-    slot
+        http::delete(favorite_url(match_id), Some(token))
+    };
+    request.done()
 }
 
 fn keep_button(view: View) -> Rect {
@@ -68,7 +63,7 @@ pub fn update_keep(state: &mut State) {
     let Some(offer) = state.room.as_mut().and_then(|r| r.keep.as_mut()) else {
         return;
     };
-    match http::take_done(&mut offer.slot) {
+    match http::take(&mut offer.slot) {
         Some(Ok(())) => offer.kept = true,
         Some(Err(e)) => offer.status = Status::error(e),
         None => {}
@@ -220,10 +215,8 @@ impl ReplayViewer {
 
 /// Asks the server for a match's replay, to show `focus`'s board large.
 pub fn open(state: &mut State, match_id: &str, focus: u8) {
-    let slot = http::new_slot();
     let url = http::api_url(&format!("matches/{match_id}/replay"));
-    http::get(url, None, Arc::clone(&slot));
-    state.replay_loading = Some(Loading { slot, focus });
+    state.replay_loading = Some(Loading { slot: http::get(url, None), focus });
 }
 
 /// Opens the replay once it has come, over the history it was asked from.
@@ -232,7 +225,7 @@ pub fn poll(state: &mut State, nav: &mut Nav) {
     let Some(loading) = state.replay_loading.as_mut() else {
         return;
     };
-    let Some(result) = http::poll(&loading.slot) else {
+    let Some(result) = loading.slot.poll() else {
         return;
     };
     let Some(Loading { focus, .. }) = state.replay_loading.take() else {

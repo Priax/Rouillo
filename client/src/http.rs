@@ -1,27 +1,98 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
 use shared::config;
 
-pub type HttpSlot = Arc<Mutex<Option<ehttp::Result<ehttp::Response>>>>;
+use crate::connection::now_secs;
 
-const TIMEOUT: Duration = Duration::from_secs(10);
+const TIMEOUT_SECS: f64 = 10.0;
 const TIMEOUT_MESSAGE: &str = "le serveur ne répond pas";
 
-pub fn new_slot() -> HttpSlot {
-    Arc::new(Mutex::new(None))
+type Slot = Arc<Mutex<Option<ehttp::Result<ehttp::Response>>>>;
+
+/// A request on its way. Past its deadline it answers with the timeout, whatever comes after.
+pub struct Request {
+    answer: Slot,
+    deadline: f64,
 }
 
-pub fn poll(slot: &HttpSlot) -> Option<ehttp::Result<ehttp::Response>> {
-    slot.lock().unwrap().take()
+impl Request {
+    fn send(mut req: ehttp::Request, token: Option<String>) -> Self {
+        if let Some(t) = token {
+            push_header(&mut req, "authorization", format!("Bearer {t}"));
+        }
+        let answer: Slot = Arc::default();
+        let slot = Arc::clone(&answer);
+        ehttp::fetch(req, move |result| {
+            if let Ok(mut slot) = slot.lock() {
+                *slot = Some(result);
+            }
+            crate::wake::wake();
+        });
+        Self { answer, deadline: now_secs() + TIMEOUT_SECS }
+    }
+
+    /// Its body decoded, once it came.
+    pub fn json<T: serde::de::DeserializeOwned>(self) -> Json<T> {
+        Json { request: self, body: PhantomData }
+    }
+
+    /// Whether it went through, for an answer whose body is not needed.
+    pub fn done(self) -> Done {
+        Done(self)
+    }
 }
 
-pub fn take(slot: &mut Option<HttpSlot>) -> Option<ehttp::Result<ehttp::Response>> {
-    let result = slot.as_ref().and_then(poll)?;
+/// A request whose answer's body is decoded as `T`.
+pub struct Json<T> {
+    request: Request,
+    body: PhantomData<fn() -> T>,
+}
+
+/// A request whose answer's body is not needed.
+pub struct Done(Request);
+
+/// What a request gives once it is over.
+pub trait Answer {
+    type Output;
+    fn poll(&self) -> Option<Self::Output>;
+}
+
+impl Answer for Request {
+    type Output = ehttp::Result<ehttp::Response>;
+
+    fn poll(&self) -> Option<Self::Output> {
+        let came = self.answer.lock().ok().and_then(|mut slot| slot.take());
+        came.or_else(|| (now_secs() >= self.deadline).then(|| Err(TIMEOUT_MESSAGE.to_owned())))
+    }
+}
+
+impl<T: serde::de::DeserializeOwned> Answer for Json<T> {
+    type Output = Result<T, String>;
+
+    fn poll(&self) -> Option<Self::Output> {
+        self.request.poll().map(answer)
+    }
+}
+
+impl Answer for Done {
+    type Output = Result<(), String>;
+
+    fn poll(&self) -> Option<Self::Output> {
+        self.0.poll().map(|result| match result {
+            Ok(resp) if resp.ok => Ok(()),
+            Ok(resp) => Err(error_message(&resp)),
+            Err(e) => Err(network_error(&e)),
+        })
+    }
+}
+
+/// The answer of the request in `slot` once it is over, which empties it.
+pub fn take<A: Answer>(slot: &mut Option<A>) -> Option<A::Output> {
+    let output = slot.as_ref()?.poll()?;
     *slot = None;
-    Some(result)
+    Some(output)
 }
 
 pub fn json<T: serde::de::DeserializeOwned>(resp: &ehttp::Response) -> Option<T> {
@@ -38,17 +109,6 @@ fn answer<T: serde::de::DeserializeOwned>(result: ehttp::Result<ehttp::Response>
         Ok(resp) => Err(error_message(&resp)),
         Err(e) => Err(network_error(&e)),
     }
-}
-
-/// The request in `slot` once it has finished, its body decoded.
-pub fn take_json<T: serde::de::DeserializeOwned>(slot: &mut Option<HttpSlot>) -> Option<Result<T, String>> {
-    take(slot).map(answer)
-}
-
-/// The request in `slot` once it has finished, for an answer whose body is
-/// not needed.
-pub fn take_done(slot: &mut Option<HttpSlot>) -> Option<Result<(), String>> {
-    take(slot).map(|result| answer::<serde::de::IgnoredAny>(result).map(|_| ()))
 }
 
 pub fn network_error(e: &str) -> String {
@@ -129,75 +189,59 @@ fn push_header(req: &mut ehttp::Request, key: &str, value: String) {
     req.headers.headers.push((key.to_owned(), value));
 }
 
-fn send(mut req: ehttp::Request, token: Option<String>, slot: HttpSlot) {
-    if let Some(t) = token {
-        push_header(&mut req, "authorization", format!("Bearer {t}"));
-    }
-    let done = Arc::new(AtomicBool::new(false));
-    {
-        let (slot, done) = (Arc::clone(&slot), Arc::clone(&done));
-        after(TIMEOUT, move || deliver(&slot, &done, Err(TIMEOUT_MESSAGE.to_owned())));
-    }
-    ehttp::fetch(req, move |r| deliver(&slot, &done, r));
-}
-
-fn deliver(slot: &HttpSlot, done: &AtomicBool, result: ehttp::Result<ehttp::Response>) {
-    if !done.swap(true, Ordering::AcqRel) {
-        *slot.lock().unwrap() = Some(result);
-        crate::wake::wake();
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn after(delay: Duration, f: impl FnOnce() + 'static) {
-    crate::web::after(delay, f);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn after(delay: Duration, f: impl FnOnce() + Send + 'static) {
-    std::thread::spawn(move || {
-        std::thread::sleep(delay);
-        f();
-    });
-}
-
 fn json_body(url: String, method: ehttp::Method, body: String) -> ehttp::Request {
     let mut req = ehttp::Request { method, body: body.into_bytes(), ..ehttp::Request::get(url) };
     push_header(&mut req, "content-type", "application/json".to_owned());
     req
 }
 
-pub fn get_user(user_id: &str, token: Option<String>) -> HttpSlot {
-    let slot = new_slot();
-    get(api_url(&format!("users/{user_id}")), token, Arc::clone(&slot));
-    slot
+pub fn get_user(user_id: &str, token: Option<String>) -> Request {
+    get(api_url(&format!("users/{user_id}")), token)
 }
 
-pub fn get(url: String, token: Option<String>, slot: HttpSlot) {
-    send(ehttp::Request::get(url), token, slot);
+pub fn get(url: String, token: Option<String>) -> Request {
+    Request::send(ehttp::Request::get(url), token)
 }
 
-pub fn post_json(url: String, body: String, token: Option<String>, slot: HttpSlot) {
-    send(json_body(url, ehttp::Method::POST, body), token, slot);
+pub fn post_json(url: String, body: String, token: Option<String>) -> Request {
+    Request::send(json_body(url, ehttp::Method::POST, body), token)
 }
 
-pub fn patch_json(url: String, body: String, token: Option<String>, slot: HttpSlot) {
-    send(json_body(url, ehttp::Method::PATCH, body), token, slot);
+pub fn patch_json(url: String, body: String, token: Option<String>) -> Request {
+    Request::send(json_body(url, ehttp::Method::PATCH, body), token)
 }
 
-pub fn delete_req(url: String, token: Option<String>, slot: HttpSlot) {
-    let req = ehttp::Request { method: ehttp::Method::DELETE, ..ehttp::Request::get(url) };
-    send(req, token, slot);
+pub fn delete(url: String, token: Option<String>) -> Request {
+    Request::send(ehttp::Request { method: ehttp::Method::DELETE, ..ehttp::Request::get(url) }, token)
 }
 
-pub fn put_bytes(url: String, body: Vec<u8>, token: Option<String>, slot: HttpSlot) {
+pub fn put_bytes(url: String, body: Vec<u8>, token: Option<String>) -> Request {
     let mut req = ehttp::Request { method: ehttp::Method::PUT, body, ..ehttp::Request::get(url) };
     push_header(&mut req, "content-type", "application/octet-stream".to_owned());
-    send(req, token, slot);
+    Request::send(req, token)
 }
 
-pub fn post_empty(url: String, token: Option<String>, slot: HttpSlot) {
-    send(ehttp::Request::post(url, vec![]), token, slot);
+pub fn post_empty(url: String, token: Option<String>) -> Request {
+    Request::send(ehttp::Request::post(url, vec![]), token)
+}
+
+#[cfg(test)]
+impl Request {
+    /// A request that never went out, answered by [`Request::answer`].
+    pub fn unsent() -> Self {
+        Self { answer: Arc::default(), deadline: f64::INFINITY }
+    }
+
+    pub fn answer(&self, status: u16, body: &str) {
+        *self.answer.lock().unwrap() = Some(Ok(ehttp::Response {
+            url: String::new(),
+            ok: (200..300).contains(&status),
+            status,
+            status_text: String::new(),
+            headers: ehttp::Headers::default(),
+            bytes: body.as_bytes().to_vec(),
+        }));
+    }
 }
 
 #[cfg(test)]
@@ -228,6 +272,21 @@ mod tests {
         assert_eq!(answer::<Vec<u8>>(Ok(refused)), Err("Ce pseudo est déjà pris.".to_owned()));
         assert_eq!(answer::<Vec<u8>>(Err("down".into())), Err(network_error("down")));
         assert_eq!(answer::<serde::de::IgnoredAny>(Ok(ok(200, "{}"))).map(|_| ()), Ok(()));
+    }
+
+    #[test]
+    fn a_late_request_answers_with_the_timeout() {
+        let late = Request { answer: Arc::default(), deadline: f64::NEG_INFINITY };
+        assert_eq!(late.json::<u8>().poll(), Some(Err(network_error(TIMEOUT_MESSAGE))));
+    }
+
+    #[test]
+    fn taking_an_answer_empties_its_slot() {
+        let mut slot = Some(Request::unsent().done());
+        assert!(take(&mut slot).is_none() && slot.is_some(), "nothing came yet");
+        slot.as_ref().unwrap().0.answer(204, "");
+        assert_eq!(take(&mut slot), Some(Ok(())));
+        assert!(slot.is_none());
     }
 
     #[test]

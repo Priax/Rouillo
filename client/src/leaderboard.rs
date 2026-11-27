@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
 use aero::draw::Draw;
 use aero::geom::Color;
 use aero::image::Image;
 
-use crate::http::{self, HttpSlot};
+use crate::http::{self, Json};
 use crate::nav::Transition;
 use crate::state::{Screen, State};
 use crate::theme;
@@ -34,7 +32,7 @@ pub struct Entry {
 pub struct Leaderboard {
     top: Vec<Entry>,
     me: Option<Entry>,
-    slot: Option<HttpSlot>,
+    slot: Option<Json<Vec<Entry>>>,
     status: Status,
     pager: Pager,
 }
@@ -53,14 +51,13 @@ fn refresh(board: &mut Leaderboard, state: &State) {
         None => http::api_url("leaderboard"),
     };
 
-    let slot = http::new_slot();
-    http::get(url, None, Arc::clone(&slot));
-    board.slot = Some(slot);
+    let slot = http::get(url, None);
+    board.slot = Some(slot.json());
     board.status.clear();
 }
 
 fn poll(board: &mut Leaderboard, me: Option<&str>) {
-    let Some(result) = http::take_json::<Vec<Entry>>(&mut board.slot) else {
+    let Some(result) = http::take(&mut board.slot) else {
         return;
     };
     match result {

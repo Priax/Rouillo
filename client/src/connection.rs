@@ -142,7 +142,7 @@ impl Net {
 /// Whether the server takes WebTransport, which it says once asked.
 enum Transport {
     Unknown,
-    Asking { slot: crate::http::HttpSlot, since: f64 },
+    Asking { slot: crate::http::Request, since: f64 },
     Known(Option<crate::wt::Offer>),
 }
 
@@ -248,8 +248,7 @@ impl Connection {
 
     pub fn connect(&mut self, now: f64) {
         if matches!(self.dialer.transport, Transport::Unknown) {
-            let slot = crate::http::new_slot();
-            crate::http::get(crate::http::api_url("transport"), None, std::sync::Arc::clone(&slot));
+            let slot = crate::http::get(crate::http::api_url("transport"), None);
             self.dialer.transport = Transport::Asking { slot, since: now };
         }
         self.link = Link::Waiting { retry: Retry::initial(now) };
@@ -300,7 +299,7 @@ impl Dialer {
     /// connection.
     fn offer(&mut self, now: f64) -> Result<Option<crate::wt::Offer>, ()> {
         if let Transport::Asking { slot, since } = &self.transport {
-            match crate::http::poll(slot) {
+            match crate::http::Answer::poll(slot) {
                 Some(Ok(resp)) if resp.ok => {
                     self.transport = Transport::Known(crate::http::json::<Option<crate::wt::Offer>>(&resp).flatten());
                 }
@@ -703,30 +702,22 @@ mod tests {
         assert!(matches!(events.as_slice(), [ConnEvent::Retrying]));
     }
 
-    fn asking(c: &mut Connection, since: f64) -> crate::http::HttpSlot {
-        let slot = crate::http::new_slot();
-        c.dialer.transport = Transport::Asking { slot: std::sync::Arc::clone(&slot), since };
-        slot
+    fn asking(c: &mut Connection, since: f64) {
+        c.dialer.transport = Transport::Asking { slot: crate::http::Request::unsent(), since };
     }
 
-    fn answered(slot: &crate::http::HttpSlot, status: u16, body: &str) {
-        *slot.lock().unwrap() = Some(Ok(ehttp::Response {
-            url: String::new(),
-            ok: (200..300).contains(&status),
-            status,
-            status_text: String::new(),
-            headers: ehttp::Headers::default(),
-            bytes: body.as_bytes().to_vec(),
-        }));
+    fn answered(c: &Connection, status: u16, body: &str) {
+        let Transport::Asking { slot, .. } = &c.dialer.transport else { panic!("setup: asking") };
+        slot.answer(status, body);
     }
 
     #[test]
     fn a_dial_waits_a_little_for_the_offer_then_goes_without() {
         let mut c = Connection::new("p");
-        let slot = asking(&mut c, 0.0);
+        asking(&mut c, 0.0);
         assert!(c.dialer.offer(OFFER_WAIT - 0.1).is_err(), "too soon to give up on it");
         assert!(matches!(c.dialer.offer(OFFER_WAIT), Ok(None)));
-        answered(&slot, 200, r#"{"url":"https://h/wt"}"#);
+        answered(&c, 200, r#"{"url":"https://h/wt"}"#);
         assert!(
             matches!(c.dialer.offer(OFFER_WAIT + 5.0), Ok(Some(o)) if o.url == "https://h/wt"),
             "a late answer serves the next dial"
@@ -738,12 +729,12 @@ mod tests {
     #[test]
     fn a_failed_question_is_asked_again_later() {
         let mut c = Connection::new("p");
-        let slot = asking(&mut c, 0.0);
-        answered(&slot, 502, "Bad Gateway");
+        asking(&mut c, 0.0);
+        answered(&c, 502, "Bad Gateway");
         assert!(matches!(c.dialer.offer(0.5), Ok(None)));
         assert!(matches!(c.dialer.transport, Transport::Unknown), "a server being restarted is no answer");
-        let slot = asking(&mut c, 1.0);
-        answered(&slot, 200, "null");
+        asking(&mut c, 1.0);
+        answered(&c, 200, "null");
         assert!(matches!(c.dialer.offer(1.5), Ok(None)));
         assert!(matches!(c.dialer.transport, Transport::Known(None)));
     }

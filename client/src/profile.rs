@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use aero::draw::Draw;
 use aero::geom::Color;
 use aero::image::Image;
@@ -9,8 +7,8 @@ use crate::history::History;
 use crate::nav::Transition;
 use crate::profile_edit::{self, EditForm};
 use crate::state::{
-    ApiFriendsResponse, ApiMatchEntry, ApiUserProfile, FriendEntry, FriendsData, FriendshipStatus, OtherProfileData,
-    ProfileCore, ProfileData, Screen, State,
+    ApiMatchEntry, ApiUserProfile, FriendEntry, FriendsData, FriendshipStatus, OtherProfileData, ProfileCore,
+    ProfileData, Screen, State,
 };
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
@@ -77,7 +75,7 @@ fn load_core(user_id: String, username: String, elo: i32, token: Option<String>)
 /// The match list's size, and the answer to a favorite; the clicks are in [`show_history_panel`].
 fn update_history(gui: &Gui, core: &mut ProfileCore) {
     core.history.fit(history_rows(gui.stage.view()));
-    match http::take_done(&mut core.favorite_slot) {
+    match http::take(&mut core.favorite_slot) {
         Some(Ok(())) => core.history.fetch(),
         Some(Err(e)) => core.replay_status = Status::error(e),
         None => {}
@@ -542,9 +540,8 @@ pub fn enter_other_profile(
     let (friendship, friendship_check_slot) = if let Some(f) = friends {
         (friendship_with(&f.friends, &f.sent, &f.received, &core.user_id), None)
     } else if token.is_some() {
-        let slot = http::new_slot();
-        http::get(http::api_url("friends"), token, Arc::clone(&slot));
-        (FriendshipStatus::Unknown, Some(slot))
+        let slot = http::get(http::api_url("friends"), token);
+        (FriendshipStatus::Unknown, Some(slot.json()))
     } else {
         (FriendshipStatus::Unknown, None)
     };
@@ -560,13 +557,13 @@ pub fn enter_other_profile(
 }
 
 fn poll_friendship_check(p: &mut OtherProfileData) {
-    if let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut p.friendship_check_slot) {
+    if let Some(Ok(data)) = http::take(&mut p.friendship_check_slot) {
         p.friendship = friendship_with(&data.friends, &data.sent, &data.received, &p.core.user_id);
     }
 }
 
 fn poll_friend(p: &mut OtherProfileData) {
-    let Some(result) = http::take_done(&mut p.friend_slot) else {
+    let Some(result) = http::take(&mut p.friend_slot) else {
         return;
     };
     match result {
@@ -585,9 +582,8 @@ fn add_friend(state: &State, p: &mut OtherProfileData) {
 
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let body = serde_json::json!({ "user_id": p.core.user_id }).to_string();
-    let slot = http::new_slot();
-    http::post_json(http::api_url("friends"), body, token, Arc::clone(&slot));
-    p.friend_slot = Some(slot);
+    let slot = http::post_json(http::api_url("friends"), body, token);
+    p.friend_slot = Some(slot.done());
     p.friend_status.clear();
 }
 

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use aero::draw::Draw;
 use aero::edit::TextField;
 use aero::geom::Color;
@@ -10,7 +8,7 @@ use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSettin
 use crate::connection::Connection;
 use crate::cpu_seat::{self, CpuSeat};
 use crate::nav::Transition;
-use crate::state::{ApiFriendsResponse, Invite, Network, Room, Screen, State};
+use crate::state::{Invite, Network, Room, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
     self, list_row, px, widgets, Face, Fonts, Frame, Gui, Icon, ListCard, Modal, Pill, Rect, SettingsGrid, Typeset,
@@ -588,7 +586,7 @@ pub fn update_lobby(tick: &Tick, gui: &mut Gui, state: &mut State) {
     let info = &room.info;
     let editable = info.is_host && info.countdown.is_none();
 
-    if let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut room.invite.slot) {
+    if let Some(Ok(data)) = http::take(&mut room.invite.slot) {
         room.invite.friends = data.friends;
     }
     if room.invite.open {
@@ -649,9 +647,8 @@ fn leave_room(room: &mut Room, conn: &mut Connection) {
 fn open_invite(invite: &mut Invite, token: Option<String>) {
     invite.open = true;
     if invite.friends.is_empty() && invite.slot.is_none() {
-        let slot = http::new_slot();
-        http::get(http::api_url("friends"), token, Arc::clone(&slot));
-        invite.slot = Some(slot);
+        let slot = http::get(http::api_url("friends"), token);
+        invite.slot = Some(slot.json());
     }
 }
 

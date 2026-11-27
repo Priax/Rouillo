@@ -127,7 +127,7 @@ fn choose(item: MenuItem, state: &mut State) -> Transition {
 
 pub fn do_logout(state: &mut State) -> Transition {
     if let Some(auth) = &state.auth {
-        http::post_empty(http::api_url("logout"), Some(auth.token.clone()), http::new_slot());
+        http::post_empty(http::api_url("logout"), Some(auth.token.clone()));
     }
 
     forget_session(state)

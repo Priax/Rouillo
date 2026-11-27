@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use crate::http::{self, HttpSlot};
+use crate::http::{self, Json};
 use crate::state::ApiMatchEntry;
 use crate::ui::{page_count, Gui, Pager, Rect};
 
@@ -12,7 +10,7 @@ pub struct History {
     user_id: String,
     token: Option<String>,
     pub entries: Vec<ApiMatchEntry>,
-    pub slot: Option<HttpSlot>,
+    pub slot: Option<Json<Vec<ApiMatchEntry>>>,
     pager: Pager,
     pub per_page: usize,
 }
@@ -27,19 +25,17 @@ impl History {
     }
 
     pub fn fetch(&mut self) {
-        let slot = http::new_slot();
         let url = format!(
             "users/{}/matches?limit={}&offset={}",
             self.user_id,
             self.per_page,
             self.pager.page() * self.per_page
         );
-        http::get(http::api_url(&url), self.token.clone(), Arc::clone(&slot));
-        self.slot = Some(slot);
+        self.slot = Some(http::get(http::api_url(&url), self.token.clone()).json());
     }
 
     pub fn poll(&mut self) {
-        if let Some(Ok(matches)) = http::take_json::<Vec<ApiMatchEntry>>(&mut self.slot) {
+        if let Some(Ok(matches)) = http::take(&mut self.slot) {
             self.entries = matches;
         }
     }

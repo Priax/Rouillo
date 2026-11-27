@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use aero::input::KeyCode;
 use shared::cpu::{Cpu, Difficulty, Style};
 use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings, Targeting};
@@ -30,7 +28,7 @@ pub struct Solo {
     pub sizing: bool,
     /// A guest's best lives on the device, an account's on the server.
     pub best: u32,
-    pub best_slot: Option<crate::state::HttpSlot>,
+    pub best_slot: Option<crate::http::Json<Best>>,
 }
 
 impl Solo {
@@ -300,23 +298,21 @@ impl SoloGame {
 fn send_best(solo: &mut Solo, auth: Option<&AuthInfo>, score: u32) {
     let Some(auth) = auth else { return };
 
-    let slot = http::new_slot();
     let body = serde_json::json!({ "score": score }).to_string();
-    http::post_json(http::api_url("me/solo-best"), body, Some(auth.token.clone()), Arc::clone(&slot));
-    solo.best_slot = Some(slot);
+    solo.best_slot = Some(http::post_json(http::api_url("me/solo-best"), body, Some(auth.token.clone())).json());
 }
 
 pub fn signed_in(state: &mut State) {
     send_best(&mut state.solo, state.auth.as_ref(), crate::state::load_best_score());
 }
 
-pub fn poll_best(solo: &mut Solo, signed_in: bool) {
-    #[derive(serde::Deserialize)]
-    struct Best {
-        solo_best: u32,
-    }
+#[derive(serde::Deserialize)]
+pub struct Best {
+    solo_best: u32,
+}
 
-    let Some(result) = http::take_json::<Best>(&mut solo.best_slot) else {
+pub fn poll_best(solo: &mut Solo, signed_in: bool) {
+    let Some(result) = http::take(&mut solo.best_slot) else {
         return;
     };
     if !signed_in {

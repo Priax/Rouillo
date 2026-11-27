@@ -1,12 +1,11 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use aero::draw::Draw;
 use aero::image::Image;
 
 use crate::images::Images;
 use crate::nav::Transition;
-use crate::state::{ApiFriendsResponse, FriendEntry, FriendsData, Screen, State};
+use crate::state::{FriendEntry, FriendsData, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
     self, divider, list_row, page_count, px, widgets, Face, Fonts, Frame, Gui, Label, Pager, Pill, Rect, Stage, Status,
@@ -170,14 +169,13 @@ fn refresh_btn(view: View) -> Rect {
 
 pub fn enter_friends(state: &State) -> Transition {
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let slot = http::new_slot();
-    http::get(http::api_url("friends"), token, Arc::clone(&slot));
+    let slot = http::get(http::api_url("friends"), token);
 
     Transition::To(Screen::Friends(Box::new(FriendsData {
         friends: Vec::new(),
         sent: Vec::new(),
         received: Vec::new(),
-        list_slot: Some(slot),
+        list_slot: Some(slot.json()),
         search_input: String::new(),
         search_results: Vec::new(),
         search_slot: None,
@@ -193,9 +191,8 @@ pub fn enter_friends(state: &State) -> Transition {
 
 fn refresh_list(state: &State, f: &mut FriendsData) {
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let slot = http::new_slot();
-    http::get(http::api_url("friends"), token, Arc::clone(&slot));
-    f.list_slot = Some(slot);
+    let slot = http::get(http::api_url("friends"), token);
+    f.list_slot = Some(slot.json());
 }
 
 fn looks_like_uuid(s: &str) -> bool {
@@ -229,9 +226,8 @@ fn try_search(state: &State, f: &mut FriendsData) {
     }
 
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let slot = http::new_slot();
-    http::get(http::api_url(&format!("users/search?q={}", http::encode_query(&q))), token, Arc::clone(&slot));
-    f.search_slot = Some(slot);
+    let slot = http::get(http::api_url(&format!("users/search?q={}", http::encode_query(&q))), token);
+    f.search_slot = Some(slot.json());
     f.search_status.clear();
     f.search_results.clear();
 }
@@ -243,14 +239,13 @@ fn send_add_request(state: &State, f: &mut FriendsData, user_id: &str) {
 
     let token = state.auth.as_ref().map(|a| a.token.clone());
     let body = serde_json::json!({ "user_id": user_id }).to_string();
-    let slot = http::new_slot();
-    http::post_json(http::api_url("friends"), body, token, Arc::clone(&slot));
-    f.add_pending = Some(slot);
+    let slot = http::post_json(http::api_url("friends"), body, token);
+    f.add_pending = Some(slot.done());
     f.add_status.clear();
 }
 
 fn poll_list(f: &mut FriendsData) {
-    let Some(Ok(data)) = http::take_json::<ApiFriendsResponse>(&mut f.list_slot) else {
+    let Some(Ok(data)) = http::take(&mut f.list_slot) else {
         return;
     };
     f.friends = data.friends;
@@ -259,7 +254,7 @@ fn poll_list(f: &mut FriendsData) {
 }
 
 fn poll_search(f: &mut FriendsData) {
-    let Some(result) = http::take_json::<Vec<FriendEntry>>(&mut f.search_slot) else {
+    let Some(result) = http::take(&mut f.search_slot) else {
         return;
     };
     match result {
@@ -274,7 +269,7 @@ fn poll_search(f: &mut FriendsData) {
 }
 
 fn poll_add(state: &State, f: &mut FriendsData) {
-    let Some(result) = http::take_done(&mut f.add_pending) else {
+    let Some(result) = http::take(&mut f.add_pending) else {
         return;
     };
     match result {
@@ -287,7 +282,7 @@ fn poll_add(state: &State, f: &mut FriendsData) {
 }
 
 fn poll_action(state: &State, f: &mut FriendsData) {
-    let Some(result) = http::take_done(&mut f.action_pending) else {
+    let Some(result) = http::take(&mut f.action_pending) else {
         return;
     };
     match result {
@@ -362,16 +357,14 @@ fn apply_action(state: &State, f: &mut FriendsData, action: FriendAction) {
         FriendAction::StartRemove(id) => f.confirm_remove = Some(id),
         FriendAction::CancelRemove => f.confirm_remove = None,
         FriendAction::ConfirmRemove(id) | FriendAction::Reject(id) | FriendAction::Cancel(id) => {
-            let slot = http::new_slot();
-            http::delete_req(http::api_url(&format!("friends/{id}")), token, Arc::clone(&slot));
-            f.action_pending = Some(slot);
+            let slot = http::delete(http::api_url(&format!("friends/{id}")), token);
+            f.action_pending = Some(slot.done());
             f.action_status.clear();
             f.confirm_remove = None;
         }
         FriendAction::Accept(id) => {
-            let slot = http::new_slot();
-            http::post_empty(http::api_url(&format!("friends/{id}/accept")), token, Arc::clone(&slot));
-            f.action_pending = Some(slot);
+            let slot = http::post_empty(http::api_url(&format!("friends/{id}/accept")), token);
+            f.action_pending = Some(slot.done());
             f.action_status.clear();
         }
     }

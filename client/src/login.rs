@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::connection::now_secs;
 use crate::nav::{Nav, Transition};
 use crate::state::{
@@ -58,20 +56,18 @@ fn submit(form: &mut AuthForm) {
     }
 
     let body = serde_json::json!({ "username": username, "password": password }).to_string();
-    let slot = http::new_slot();
     let path = match form.mode {
         AuthMode::Login => "login",
         AuthMode::Register => "register",
     };
 
-    http::post_json(http::api_url(path), body, None, Arc::clone(&slot));
+    form.pending = Some(http::post_json(http::api_url(path), body, None).json());
     form.status.clear();
-    form.pending = Some(slot);
 }
 
 /// Whether the answer to the form just signed the player in.
 fn poll_auth(state: &mut State) -> bool {
-    let Some(result) = http::take_json::<AuthInfo>(&mut state.auth_form.pending) else {
+    let Some(result) = http::take(&mut state.auth_form.pending) else {
         return false;
     };
     match result {
@@ -94,9 +90,7 @@ pub fn check_stored_session(startup: &mut Startup) {
         return;
     };
 
-    let slot = http::new_slot();
-    http::get(http::api_url("me"), Some(token), Arc::clone(&slot));
-    startup.check = Some(slot);
+    startup.check = Some(http::get(http::api_url("me"), Some(token)));
 }
 
 pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {

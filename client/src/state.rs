@@ -3,7 +3,7 @@ use shared::{
 };
 
 use crate::connection::Connection;
-pub use crate::http::HttpSlot;
+use crate::http::{Done, Json, Request};
 use crate::interp::OpponentView;
 use crate::storage;
 use crate::theme::hue;
@@ -102,7 +102,7 @@ pub struct AuthForm {
     pub focused: AuthField,
     pub mode: AuthMode,
     pub status: Status,
-    pub pending: Option<HttpSlot>,
+    pub pending: Option<Json<AuthInfo>>,
 }
 
 impl Default for AuthForm {
@@ -178,15 +178,15 @@ pub struct FriendsData {
     pub friends: Vec<FriendEntry>,
     pub sent: Vec<FriendEntry>,
     pub received: Vec<FriendEntry>,
-    pub list_slot: Option<HttpSlot>,
+    pub list_slot: Option<Json<ApiFriendsResponse>>,
     pub search_input: String,
     pub search_results: Vec<FriendEntry>,
-    pub search_slot: Option<HttpSlot>,
+    pub search_slot: Option<Json<Vec<FriendEntry>>>,
     pub search_status: Status,
-    pub add_pending: Option<HttpSlot>,
+    pub add_pending: Option<Done>,
     pub add_status: Status,
     pub confirm_remove: Option<String>,
-    pub action_pending: Option<HttpSlot>,
+    pub action_pending: Option<Done>,
     pub action_status: Status,
     pub pages: [crate::ui::Pager; 3],
 }
@@ -202,10 +202,10 @@ pub enum FriendshipStatus {
 
 pub struct OtherProfileData {
     pub core: ProfileCore,
-    pub friendship_check_slot: Option<HttpSlot>,
+    pub friendship_check_slot: Option<Json<ApiFriendsResponse>>,
     pub load_failed: bool,
     pub friendship: FriendshipStatus,
-    pub friend_slot: Option<HttpSlot>,
+    pub friend_slot: Option<Done>,
     pub friend_status: Status,
 }
 
@@ -258,10 +258,10 @@ pub struct ProfileCore {
     pub info: ApiUserProfile,
     pub history: crate::history::History,
     pub about_open: bool,
-    pub profile_slot: Option<HttpSlot>,
+    pub profile_slot: Option<Request>,
     /// Why a replay asked from the history did not come, or could not be kept.
     pub replay_status: Status,
-    pub favorite_slot: Option<HttpSlot>,
+    pub favorite_slot: Option<Done>,
 }
 
 pub struct ProfileData {
@@ -430,7 +430,7 @@ impl Room {
 #[derive(Default)]
 pub struct Invite {
     pub open: bool,
-    pub slot: Option<HttpSlot>,
+    pub slot: Option<Json<ApiFriendsResponse>>,
     pub friends: Vec<FriendEntry>,
     pub pager: crate::ui::Pager,
 }
@@ -716,7 +716,7 @@ pub fn load_or_create_player_id() -> String {
 /// The check of a stored session when the game opens, and the title screen.
 #[derive(Default)]
 pub struct Startup {
-    pub check: Option<HttpSlot>,
+    pub check: Option<Request>,
     pub retry_at: Option<f64>,
     pub title_seen: bool,
 }

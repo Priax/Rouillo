@@ -5,7 +5,7 @@ use aero::input::KeyCode;
 use shared::{config, ClientMessage};
 
 use crate::connection::{now_secs, Connection};
-use crate::http::{self, HttpSlot};
+use crate::http::{self, Json};
 use crate::nav::Transition;
 use crate::state::{ApiUserProfile, Room, Screen, State};
 use crate::theme::{self, Palette};
@@ -36,7 +36,7 @@ pub struct RankedView {
     pub search: Search,
     cooldown_until: Option<f64>,
     stats: Option<ApiUserProfile>,
-    stats_slot: Option<HttpSlot>,
+    stats_slot: Option<Json<ApiUserProfile>>,
 }
 
 impl RankedView {
@@ -125,7 +125,7 @@ pub fn enter(state: &mut State) -> Transition {
     state.room = None;
     let ranked = &mut state.ranked;
     ranked.search = Search::Idle;
-    ranked.stats_slot = state.auth.as_ref().map(|auth| http::get_user(&auth.user_id, Some(auth.token.clone())));
+    ranked.stats_slot = state.auth.as_ref().map(|auth| http::get_user(&auth.user_id, Some(auth.token.clone())).json());
 
     Transition::To(Screen::Ranked)
 }
@@ -153,7 +153,7 @@ fn stop_search(conn: &mut Connection, ranked: &mut RankedView) {
 }
 
 fn poll_stats(ranked: &mut RankedView) {
-    if let Some(Ok(stats)) = http::take_json(&mut ranked.stats_slot) {
+    if let Some(Ok(stats)) = http::take(&mut ranked.stats_slot) {
         ranked.stats = Some(stats);
     }
 }

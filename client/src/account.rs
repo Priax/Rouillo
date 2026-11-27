@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
 use aero::edit::TextField;
 
-use crate::http::{self, HttpSlot};
+use crate::http::{self, Json};
 use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
 use crate::tick::Tick;
@@ -60,7 +58,7 @@ pub struct AccountForm {
     confirm: String,
     /// The field last typed in, which keeps the keyboard.
     focused: usize,
-    pending: Option<HttpSlot>,
+    pending: Option<Json<serde_json::Value>>,
     status: Status,
 }
 
@@ -137,7 +135,6 @@ impl AccountForm {
             return;
         }
 
-        let slot = http::new_slot();
         let (path, body) = match self.page {
             Page::Password => {
                 ("me/password", serde_json::json!({ "current": &*self.current, "new": &*self.new }).to_string())
@@ -151,17 +148,17 @@ impl AccountForm {
             Page::Choose => return,
         };
 
-        if body.is_empty() {
-            http::post_empty(http::api_url(path), token, Arc::clone(&slot));
+        let request = if body.is_empty() {
+            http::post_empty(http::api_url(path), token)
         } else {
-            http::post_json(http::api_url(path), body, token, Arc::clone(&slot));
-        }
-        self.pending = Some(slot);
+            http::post_json(http::api_url(path), body, token)
+        };
+        self.pending = Some(request.json());
         self.status.clear();
     }
 
     fn poll(&mut self) -> Outcome {
-        let Some(result) = http::take_json::<serde_json::Value>(&mut self.pending) else {
+        let Some(result) = http::take(&mut self.pending) else {
             return Outcome::Stay;
         };
 
