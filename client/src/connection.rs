@@ -1,18 +1,11 @@
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use shared::{config, ClientMessage, ServerMessage};
 
+/// Seconds since the first call.
 pub fn now_secs() -> f64 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        web_sys::window().and_then(|w| w.performance()).map(|p| p.now() / 1000.0).unwrap_or(0.0)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use std::sync::OnceLock;
-        use std::time::Instant;
-        static START: OnceLock<Instant> = OnceLock::new();
-        START.get_or_init(Instant::now).elapsed().as_secs_f64()
-    }
+    use aero::web_time::Instant;
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64()
 }
 
 const BACKOFF_START: f64 = 0.2;

@@ -2,7 +2,7 @@
 
 use aero::draw::Draw;
 use aero::input::{Event, KeyCode};
-use aero::math::{Affine2, Vec2};
+use aero::math::Vec2;
 use aero::{Cx, WindowConfig, WindowIcon};
 use shared::{config, ClientMessage};
 
@@ -390,8 +390,6 @@ fn show_invitation(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) 
 
 fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     let Root { nav, state, gui } = root;
-    let scale = gui.stage.view().scale;
-    draw.push_transform(Affine2::from_scale(Vec2::splat(scale)));
     let ui = &mut aero::ui::Ui::new(cx, draw);
     let mut transition = Transition::Stay;
     match nav.current_mut() {
@@ -446,7 +444,6 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     if state.input.touch.active && view.portrait() && needs_landscape {
         touch::draw_turn_hint(ui.draw, &mut ui.cx.fonts, view);
     }
-    ui.draw.pop_transform();
     if !matches!(transition, Transition::Stay) {
         nav.apply(transition);
         ui.cx.request_redraw();
@@ -540,7 +537,12 @@ impl aero::App for Rouillo {
 fn main() -> Result<(), aero::Error> {
     #[cfg(windows)]
     windows::log_to_file();
-    let window = WindowConfig::new().title("Rouillo").size(1280, 800).resizable(true).app_id("org.priax.Rouillo");
+    let window = WindowConfig::new()
+        .title("Rouillo")
+        .size(1280, 800)
+        .resizable(true)
+        .app_id("org.priax.Rouillo")
+        .reference(ui::REFERENCE.size.x, ui::REFERENCE.size.y, ui::REFERENCE.zoom);
     let window = match images::decode(include_bytes!("../../assets/puyo_puyo_icon.ico")) {
         Ok((width, height, rgba)) => window.icon(WindowIcon { width, height, rgba }),
         Err(e) => {

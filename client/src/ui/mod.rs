@@ -29,7 +29,7 @@ pub use panel::{action_row, card_body, card_height, panel_card, SettingsGrid, Se
 pub use status::Status;
 pub use stepper::Stepper;
 pub use triangles::Triangles;
-pub use view::View;
+pub use view::{View, REFERENCE};
 
 /// A stroke with flat ends and pointed corners, bevelled where a corner would point past 10 half widths.
 pub fn pointed(width: f32) -> Stroke {

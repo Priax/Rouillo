@@ -54,7 +54,7 @@ impl TouchPad {
         let mut pause = false;
         if self.active && in_game {
             for (button, rect) in layout(view) {
-                let on = |f: &Finger| rect.contains(aero::math::vec2(f.at.x / view.scale, f.at.y / view.scale));
+                let on = |f: &Finger| rect.contains(f.at);
                 match button {
                     Button::Act(action) => held[action as usize] = fingers.iter().filter(|f| !f.lifted).any(on),
                     Button::Pause => pause = fingers.iter().filter(|f| f.new).any(on),

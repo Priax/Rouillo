@@ -5,7 +5,7 @@ use aero::draw::Draw;
 use aero::geom::Color;
 use aero::math::Vec2;
 pub use aero::text::Fonts;
-use aero::text::{TextLayout, TextStyle};
+use aero::text::{FontMetrics, TextLayout, TextStyle};
 
 use super::text::Text;
 
@@ -46,7 +46,7 @@ pub fn faces() -> &'static Faces {
 pub fn register(fonts: &mut Fonts) {
     let mut family = |data: &'static [u8]| Family {
         name: fonts.add(data).into_iter().next().expect("the bundled fonts are valid"),
-        em_per_size: em_per_size(data).expect("the bundled fonts have metrics"),
+        em_per_size: FontMetrics::of(data).and_then(|m| m.em_per_height()).expect("the bundled fonts have metrics"),
     };
     let faces = Faces([family(TEXT), family(DISPLAY)]);
     let _ = FACES.set(faces);
@@ -127,17 +127,6 @@ fn line_end(fonts: &mut Fonts, face: Face, text: &str, size: f32, max: f32) -> u
 }
 
 /// The em of a font whose ascent and descent span 1.
-fn em_per_size(data: &[u8]) -> Result<f32, String> {
-    use skrifa::MetadataProvider;
-    let font = skrifa::FontRef::new(data).map_err(|e| e.to_string())?;
-    let metrics = font.metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default());
-    let height = metrics.ascent - metrics.descent;
-    if height <= 0.0 {
-        return Err("a font without ascent nor descent".into());
-    }
-    Ok(f32::from(metrics.units_per_em) / height)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
