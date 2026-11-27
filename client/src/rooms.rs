@@ -3,6 +3,7 @@ use aero::edit::TextField;
 use aero::geom::Color;
 use aero::input::KeyCode;
 use aero::ui::Sense;
+use shared::api::Uuid;
 use shared::{config, ClientMessage, LobbyInfo, PausePolicy, RoomInfo, RoomSetting, RoomSettings};
 
 use crate::connection::Connection;
@@ -750,7 +751,7 @@ pub fn show_lobby(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
 
     if room.invite.open {
         if let Some(user_id) = show_invite(ui, gui, &mut room.invite) {
-            conn.send(&ClientMessage::InviteFriend { user_id });
+            conn.send(&ClientMessage::InviteFriend { user_id: user_id.to_string() });
         }
         return Transition::Stay;
     }
@@ -846,7 +847,7 @@ fn draw_lobby_header(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo)
 }
 
 /// The invitation window: friends to invite, a page at a time. Returns the friend invited, which closes it.
-fn show_invite(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, invite: &mut Invite) -> Option<String> {
+fn show_invite(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, invite: &mut Invite) -> Option<Uuid> {
     let view = gui.stage.view();
     let modal = invite_modal(view);
     let card = modal.card;
@@ -884,7 +885,7 @@ fn show_invite(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, invite: &mut Invite) ->
                 .size(theme::size::LABEL)
                 .color(pal.text);
             if widgets::button(ui, ("invite", &friend.user_id), invite_button(view, i), "Inviter", true) {
-                invited = Some(friend.user_id.clone());
+                invited = Some(friend.user_id);
             }
         }
         invited

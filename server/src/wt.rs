@@ -16,7 +16,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
-use serde::Serialize;
+use shared::api::Offer;
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration, Instant};
 use tracing::{error, info, warn};
@@ -40,16 +40,6 @@ const RECHECK: Duration = Duration::from_secs(60);
 /// A self-signed certificate is only accepted by browsers for two weeks,
 /// and only through its hash.
 const SELF_SIGNED_DAYS: i64 = 13;
-
-/// How a client reaches the WebTransport server, as the API tells it.
-#[derive(Clone, Serialize)]
-pub struct Offer {
-    pub url: String,
-    /// The SHA-256 of a self-signed certificate, which a browser accepts
-    /// only when told this hash.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cert_hash: Option<Vec<u8>>,
-}
 
 pub struct Config {
     pub addr: SocketAddr,

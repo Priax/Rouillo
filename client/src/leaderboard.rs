@@ -1,6 +1,7 @@
 use aero::draw::Draw;
 use aero::geom::Color;
 use aero::image::Image;
+use shared::api::{LeaderboardEntry, Uuid};
 
 use crate::http::{self, Json};
 use crate::nav::Transition;
@@ -16,23 +17,11 @@ const AVATAR_R: f32 = 17.0;
 const SILVER: Color = Color::srgb(0.78, 0.8, 0.84);
 const BRONZE: Color = Color::srgb(0.85, 0.55, 0.3);
 
-#[derive(serde::Deserialize, Clone)]
-pub struct Entry {
-    rank: i64,
-    user_id: String,
-    username: String,
-    elo: i32,
-    series: i64,
-    series_won: i64,
-    #[serde(default)]
-    avatar_url: Option<String>,
-}
-
 #[derive(Default)]
 pub struct Leaderboard {
-    top: Vec<Entry>,
-    me: Option<Entry>,
-    slot: Option<Json<Vec<Entry>>>,
+    top: Vec<LeaderboardEntry>,
+    me: Option<LeaderboardEntry>,
+    slot: Option<Json<Vec<LeaderboardEntry>>>,
     status: Status,
     pager: Pager,
 }
@@ -45,7 +34,7 @@ pub fn enter(state: &State) -> Transition {
 }
 
 fn refresh(board: &mut Leaderboard, state: &State) {
-    let me = state.auth.as_ref().map(|a| a.user_id.clone());
+    let me = state.auth.as_ref().map(|a| a.user_id);
     let url = match me {
         Some(id) => http::api_url(&format!("leaderboard?me={id}")),
         None => http::api_url("leaderboard"),
@@ -56,13 +45,13 @@ fn refresh(board: &mut Leaderboard, state: &State) {
     board.status.clear();
 }
 
-fn poll(board: &mut Leaderboard, me: Option<&str>) {
+fn poll(board: &mut Leaderboard, me: Option<Uuid>) {
     let Some(result) = http::take(&mut board.slot) else {
         return;
     };
     match result {
         Ok(rows) => {
-            board.me = rows.iter().find(|e| Some(e.user_id.as_str()) == me).cloned();
+            board.me = rows.iter().find(|e| Some(e.user_id) == me).cloned();
             board.top = rows.into_iter().filter(|e| e.rank <= SIZE).collect();
         }
         Err(msg) => board.status = Status::error(msg),
@@ -83,9 +72,9 @@ fn refresh_btn(view: View) -> Rect {
 
 /// The answers to come and what the keys do; the clicks are in [`show`].
 pub fn update(tick: &Tick, gui: &mut Gui, state: &mut State, board: &mut Leaderboard) -> Transition {
-    let me = state.auth.as_ref().map(|a| a.user_id.clone());
+    let me = state.auth.as_ref().map(|a| a.user_id);
     let list = list(gui.stage.view());
-    poll(board, me.as_deref());
+    poll(board, me);
     let pages = ui::page_count(board.top.len(), list.per_page());
     board.pager.clamp(pages);
     if tick.back() {
@@ -109,7 +98,7 @@ fn draw_row(
     fonts: &mut Fonts,
     gui: &mut Gui,
     row: Rect,
-    e: &Entry,
+    e: &LeaderboardEntry,
     mine: bool,
     picture: Option<&Image>,
 ) {
@@ -142,7 +131,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, board: 
     let view = gui.stage.view();
     let list = list(view);
     let card = list.card;
-    let me = state.auth.as_ref().map(|a| a.user_id.as_str());
+    let me = state.auth.as_ref().map(|a| a.user_id);
     let loading = board.slot.is_some();
     let back = back_btn(view);
     let refresh_label = Label::busy_or(loading, "Rafraîchir");
@@ -176,9 +165,9 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, board: 
     } else {
         for (i, e) in board.pager.shown(&board.top, list.per_page()) {
             let picture = gui.images.get_opt(e.avatar_url.as_deref());
-            let mine = Some(e.user_id.as_str()) == me;
+            let mine = Some(e.user_id) == me;
             if widgets::row(ui, gui, ("rank", &e.user_id), list.row(i), i) {
-                chosen = Some((e.user_id.clone(), e.username.clone()));
+                chosen = Some((e.user_id, e.username.clone()));
             }
             draw_row(ui.draw, &mut ui.cx.fonts, gui, list.row(i), e, mine, picture.as_ref());
         }
@@ -199,9 +188,8 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, board: 
             .color(color);
     }
 
-    let me = me.map(str::to_owned);
     if let Some((user_id, username)) = chosen {
-        if Some(&user_id) == me.as_ref() {
+        if Some(user_id) == me {
             return crate::profile::enter_profile(state);
         }
         return crate::profile::enter_other_profile(state, user_id, username, None);

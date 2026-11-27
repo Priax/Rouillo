@@ -1,6 +1,8 @@
+use shared::api::{Account, AccountPatch, Profile};
+
 use crate::http::{self, Json};
 use crate::picker::{self, Picked};
-use crate::state::{ApiUserProfile, ProfileData, State};
+use crate::state::{ProfileData, State};
 use crate::theme;
 use crate::tick::Tick;
 use crate::ui::{widgets, Face, Gui, Rect, Status, Typeset, FILL};
@@ -68,20 +70,20 @@ pub struct EditForm {
     pub music: String,
     /// The field last typed in, which keeps the keyboard.
     pub focused: EditField,
-    pending: Option<Json<PatchResp>>,
+    pending: Option<Json<Account>>,
     pub status: Status,
     picking: Option<Picture>,
-    uploading: Option<Json<Pictures>>,
+    uploading: Option<Json<Account>>,
 }
 
 impl Default for EditForm {
     fn default() -> Self {
-        Self::open(&ApiUserProfile::default())
+        Self::open(&Profile::default())
     }
 }
 
 impl EditForm {
-    pub fn open(info: &ApiUserProfile) -> Self {
+    pub fn open(info: &Profile) -> Self {
         Self {
             bio: info.bio.clone().unwrap_or_default(),
             music: info.favorite_music.clone().unwrap_or_default(),
@@ -108,12 +110,8 @@ impl EditForm {
         field.max().saturating_sub(text.chars().count())
     }
 
-    fn body(&self) -> String {
-        serde_json::json!({
-            "bio": self.bio.trim(),
-            "favorite_music": self.music.trim(),
-        })
-        .to_string()
+    fn body(&self) -> AccountPatch {
+        AccountPatch { bio: Some(self.bio.trim().to_owned()), favorite_music: Some(self.music.trim().to_owned()) }
     }
 }
 
@@ -132,23 +130,11 @@ fn picture_buttons(cx: f32) -> [(Picture, bool, Rect); 4] {
     [(Picture::Avatar, true, a), (Picture::Avatar, false, b), (Picture::Banner, true, c), (Picture::Banner, false, d)]
 }
 
-fn picture_url(info: &ApiUserProfile, picture: Picture) -> Option<&str> {
+fn picture_url(info: &Profile, picture: Picture) -> Option<&str> {
     match picture {
         Picture::Avatar => info.avatar_url.as_deref(),
         Picture::Banner => info.banner_url.as_deref(),
     }
-}
-
-#[derive(serde::Deserialize)]
-struct Pictures {
-    avatar_url: Option<String>,
-    banner_url: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct PatchResp {
-    bio: Option<String>,
-    favorite_music: Option<String>,
 }
 
 fn poll_pictures(state: &mut State, p: &mut ProfileData) {
@@ -210,7 +196,7 @@ fn save(form: &mut EditForm, token: Option<String>) {
         return;
     }
 
-    let slot = http::patch_json(http::api_url("me"), form.body(), token);
+    let slot = http::patch_json(http::api_url("me"), &form.body(), token);
     form.pending = Some(slot.json());
     form.status.clear();
 }
@@ -314,17 +300,15 @@ mod tests {
     #[test]
     fn an_emptied_field_is_sent_empty_not_left_out() {
         let mut form = EditForm { bio: "  \n".to_owned(), music: " Tsu ".to_owned(), ..EditForm::default() };
-        let body: serde_json::Value = serde_json::from_str(&form.body()).expect("json");
-        assert_eq!(body["bio"], "");
-        assert_eq!(body["favorite_music"], "Tsu");
+        let body = form.body();
+        assert_eq!((body.bio.as_deref(), body.favorite_music.as_deref()), (Some(""), Some("Tsu")));
         form.music.clear();
-        let body: serde_json::Value = serde_json::from_str(&form.body()).expect("json");
-        assert_eq!(body["favorite_music"], "");
+        assert_eq!(form.body().favorite_music.as_deref(), Some(""));
     }
 
     #[test]
     fn opening_the_form_starts_from_the_saved_profile() {
-        let info = ApiUserProfile { bio: Some("salut".into()), ..ApiUserProfile::default() };
+        let info = Profile { bio: Some("salut".into()), ..Profile::default() };
         let form = EditForm::open(&info);
         assert_eq!((&*form.bio, &*form.music), ("salut", ""));
         assert_eq!(form.focused, EditField::Bio);

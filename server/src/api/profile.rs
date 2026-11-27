@@ -1,17 +1,11 @@
 use super::*;
 
-#[derive(Deserialize)]
-pub(super) struct PatchMeBody {
-    bio: Option<String>,
-    favorite_music: Option<String>,
-}
-
 pub(super) async fn upload(
     api: Api,
     user: db::User,
     kind: Kind,
     body: Result<Bytes, BytesRejection>,
-) -> Result<Json<UserProfile>, ApiError> {
+) -> Result<Json<Account>, ApiError> {
     let body = body.map_err(|e| {
         if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
             ApiError::ImageTooLarge
@@ -27,7 +21,7 @@ pub(super) async fn upload(
         ImageError::TooBig => ApiError::ImageTooLarge,
     })?;
     let user = db::set_image(&api.pool, user.id, kind, image).await.map_err(internal)?;
-    Ok(Json(UserProfile::from(user)))
+    Ok(Json(Account::from(user)))
 }
 
 pub(super) async fn handle_avatar_upload(
@@ -46,9 +40,9 @@ pub(super) async fn handle_banner_upload(
     upload(api, user, Kind::Banner, body).await
 }
 
-pub(super) async fn remove_image(api: &Api, user: &db::User, kind: Kind) -> Result<Json<UserProfile>, ApiError> {
+pub(super) async fn remove_image(api: &Api, user: &db::User, kind: Kind) -> Result<Json<Account>, ApiError> {
     let user = db::delete_image(&api.pool, user.id, kind).await.map_err(internal)?;
-    Ok(Json(UserProfile::from(user)))
+    Ok(Json(Account::from(user)))
 }
 
 pub(super) async fn handle_avatar_delete(
@@ -122,7 +116,7 @@ pub(super) async fn handle_banner_get(
 }
 
 pub(super) async fn handle_me(Authed(user): Authed) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(UserProfile::from(user)))
+    Ok(Json(Account::from(user)))
 }
 
 /// At most one blank line in a row.
@@ -153,7 +147,7 @@ pub(super) fn printable(text: &str, lines: bool) -> String {
 pub(super) async fn handle_patch_me(
     State(Api { pool, .. }): State<Api>,
     Authed(user): Authed,
-    JsonBody(mut body): JsonBody<PatchMeBody>,
+    JsonBody(mut body): JsonBody<AccountPatch>,
 ) -> Result<impl IntoResponse, ApiError> {
     body.bio = body.bio.map(|s| one_blank_line(&printable(&s, true)));
     body.favorite_music = body.favorite_music.map(|s| printable(&s, false));
@@ -166,7 +160,7 @@ pub(super) async fn handle_patch_me(
 
     let updated = db::update_profile(&pool, user.id, body.bio, body.favorite_music).await.map_err(internal)?;
 
-    Ok(Json(UserProfile::from(updated)))
+    Ok(Json(Account::from(updated)))
 }
 
 #[derive(Deserialize)]
@@ -204,19 +198,14 @@ pub(super) async fn handle_match_history(
     Ok(Json(rows))
 }
 
-#[derive(Deserialize)]
-pub(super) struct SoloBestBody {
-    score: i32,
-}
-
 /// Records a solo score: the account keeps its best, which it returns.
 pub(super) async fn handle_solo_best(
     State(Api { pool, .. }): State<Api>,
     Authed(user): Authed,
-    JsonBody(body): JsonBody<SoloBestBody>,
+    JsonBody(body): JsonBody<Score>,
 ) -> Result<impl IntoResponse, ApiError> {
     let best = db::raise_solo_best(&pool, user.id, body.score).await.map_err(internal)?;
-    Ok(Json(serde_json::json!({ "solo_best": best })))
+    Ok(Json(SoloBest { solo_best: best }))
 }
 
 #[cfg(test)]

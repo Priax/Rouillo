@@ -143,7 +143,7 @@ impl Net {
 enum Transport {
     Unknown,
     Asking { slot: crate::http::Request, since: f64 },
-    Known(Option<crate::wt::Offer>),
+    Known(Option<shared::api::Offer>),
 }
 
 struct Heartbeat {
@@ -297,11 +297,11 @@ impl Dialer {
     /// not answered whether it makes one. An answer that comes too late
     /// serves the next dial; a failed question is asked again on the next
     /// connection.
-    fn offer(&mut self, now: f64) -> Result<Option<crate::wt::Offer>, ()> {
+    fn offer(&mut self, now: f64) -> Result<Option<shared::api::Offer>, ()> {
         if let Transport::Asking { slot, since } = &self.transport {
             match crate::http::Answer::poll(slot) {
                 Some(Ok(resp)) if resp.ok => {
-                    self.transport = Transport::Known(crate::http::json::<Option<crate::wt::Offer>>(&resp).flatten());
+                    self.transport = Transport::Known(crate::http::json::<Option<shared::api::Offer>>(&resp).flatten());
                 }
                 Some(_) => {
                     self.transport = Transport::Unknown;

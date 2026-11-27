@@ -1,5 +1,6 @@
 #![warn(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap, clippy::cast_lossless)]
 
+pub mod api;
 mod board;
 mod codec;
 pub mod config;

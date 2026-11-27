@@ -167,12 +167,8 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
 }
 
 fn latest() -> Result<Option<Release>, String> {
-    #[derive(serde::Deserialize)]
-    struct Latest {
-        version: String,
-    }
     let body = get(&crate::http::api_url("version"), "application/json")?;
-    let Latest { version } = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+    let shared::api::Version { version } = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
     if !newer(&version, env!("CARGO_PKG_VERSION")) {
         return Ok(None);
     }

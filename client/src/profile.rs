@@ -1,15 +1,13 @@
 use aero::draw::Draw;
 use aero::geom::Color;
 use aero::image::Image;
+use shared::api::{Friend, FriendRequest, MatchEntry, Profile, Uuid};
 
 use crate::account::{self, AccountForm, Outcome};
 use crate::history::History;
 use crate::nav::Transition;
 use crate::profile_edit::{self, EditForm};
-use crate::state::{
-    ApiMatchEntry, ApiUserProfile, FriendEntry, FriendsData, FriendshipStatus, OtherProfileData, ProfileCore,
-    ProfileData, Screen, State,
-};
+use crate::state::{FriendsData, FriendshipStatus, OtherProfileData, ProfileCore, ProfileData, Screen, State};
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
 use crate::ui::{
@@ -49,7 +47,7 @@ enum ProfileLoad {
 fn poll_core_profile(core: &mut ProfileCore) -> Option<ProfileLoad> {
     match http::take(&mut core.profile_slot)? {
         Ok(resp) if resp.status == 200 => {
-            if let Some(info) = http::json::<ApiUserProfile>(&resp) {
+            if let Some(info) = http::json::<Profile>(&resp) {
                 core.info = info;
             }
             Some(ProfileLoad::Loaded)
@@ -59,12 +57,12 @@ fn poll_core_profile(core: &mut ProfileCore) -> Option<ProfileLoad> {
     }
 }
 
-fn load_core(user_id: String, username: String, elo: i32, token: Option<String>) -> ProfileCore {
-    let profile_slot = http::get_user(&user_id, token.clone());
+fn load_core(user_id: Uuid, username: String, elo: i32, token: Option<String>) -> ProfileCore {
+    let profile_slot = http::get_user(user_id, token.clone());
     ProfileCore {
-        history: History::load(user_id.clone(), token),
+        history: History::load(user_id, token),
         user_id,
-        info: ApiUserProfile { username, elo, ..ApiUserProfile::default() },
+        info: Profile { id: user_id, username, elo, ..Profile::default() },
         about_open: false,
         profile_slot: Some(profile_slot),
         replay_status: Status::Empty,
@@ -96,21 +94,21 @@ fn update_history(gui: &Gui, core: &mut ProfileCore) {
 
 /// What a click in the match list asks for.
 enum HistoryClick {
-    Replay(String, u8),
-    Favorite(String, bool),
-    Opponent(String, String),
+    Replay(Uuid, u8),
+    Favorite(Uuid, bool),
+    Opponent(Uuid, String),
 }
 
 fn act_on_history(state: &mut State, core: &mut ProfileCore, click: Option<HistoryClick>) -> Transition {
     match click {
         Some(HistoryClick::Replay(id, slot)) => {
             core.replay_status.clear();
-            crate::replay::open(state, &id, slot);
+            crate::replay::open(state, id, slot);
         }
         Some(HistoryClick::Favorite(id, on)) => {
             if let (Some(auth), None) = (state.auth.as_ref(), &core.favorite_slot) {
                 core.replay_status = Status::Empty;
-                core.favorite_slot = Some(crate::replay::set_favorite(&id, on, auth.token.clone()));
+                core.favorite_slot = Some(crate::replay::set_favorite(id, on, auth.token.clone()));
             }
         }
         Some(HistoryClick::Opponent(user_id, username)) => return enter_other_profile(state, user_id, username, None),
@@ -119,12 +117,7 @@ fn act_on_history(state: &mut State, core: &mut ProfileCore, click: Option<Histo
     Transition::Stay
 }
 
-fn friendship_with(
-    friends: &[FriendEntry],
-    sent: &[FriendEntry],
-    received: &[FriendEntry],
-    id: &str,
-) -> FriendshipStatus {
+fn friendship_with(friends: &[Friend], sent: &[Friend], received: &[Friend], id: Uuid) -> FriendshipStatus {
     if friends.iter().any(|e| e.user_id == id) {
         FriendshipStatus::Friends
     } else if sent.iter().any(|e| e.user_id == id) {
@@ -325,7 +318,7 @@ fn show_history_panel(
         card_message(ui.draw, fonts, card, "Aucun match pour l'instant.", pal.text_muted);
     } else {
         for (i, m) in core.history.entries.iter().enumerate().take(core.history.per_page) {
-            if let Some(c) = show_match_row(ui, gui, (history_row(card, i), i), m, (&core.user_id, own)) {
+            if let Some(c) = show_match_row(ui, gui, (history_row(card, i), i), m, (core.user_id, own)) {
                 click = Some(c);
             }
         }
@@ -375,8 +368,8 @@ fn show_match_row(
     ui: &mut aero::ui::Ui<'_>,
     gui: &mut Gui,
     (row, index): (Rect, usize),
-    m: &ApiMatchEntry,
-    (viewed_id, own): (&str, bool),
+    m: &MatchEntry,
+    (viewed_id, own): (Uuid, bool),
 ) -> Option<HistoryClick> {
     let me = m.me(viewed_id)?;
 
@@ -399,7 +392,7 @@ fn show_match_row(
         Some(opp) => format!("vs {}", opp.username.as_deref().unwrap_or("Invité")),
         None => format!("{} joueurs", m.players.len()),
     };
-    let opponent = opp.and_then(|o| Some((o.user_id.clone()?, o.username.clone()?))).filter(|_| own);
+    let opponent = opp.and_then(|o| Some((o.user_id?, o.username.clone()?))).filter(|_| own);
     let wide = row.w() >= WIDE_ROW;
     let star = if m.favorite { Icon::Star } else { Icon::StarOutline };
     let secs = m.duration_secs as u32;
@@ -428,10 +421,10 @@ fn show_match_row(
         click = opponent.map(|(user_id, username)| HistoryClick::Opponent(user_id, username));
     }
     if m.has_replay && widgets::button(ui, ("replay", &m.id), replay_zone(row), "Revoir", true) {
-        click = Some(HistoryClick::Replay(m.id.clone(), u8::try_from(me.slot).unwrap_or(1)));
+        click = Some(HistoryClick::Replay(m.id, u8::try_from(me.slot).unwrap_or(1)));
     }
     if own && (m.has_replay || m.favorite) && widgets::button(ui, ("favorite", &m.id), favorite_zone(row), star, true) {
-        click = Some(HistoryClick::Favorite(m.id.clone(), !m.favorite));
+        click = Some(HistoryClick::Favorite(m.id, !m.favorite));
     }
     click
 }
@@ -440,7 +433,7 @@ pub fn enter_profile(state: &State) -> Transition {
     let Some(auth) = &state.auth else {
         return Transition::Stay;
     };
-    let core = load_core(auth.user_id.clone(), auth.username.clone(), auth.elo, Some(auth.token.clone()));
+    let core = load_core(auth.user_id, auth.username.clone(), auth.elo, Some(auth.token.clone()));
 
     Transition::Push(Screen::Profile(Box::new(ProfileData { core, edit: None, account: None })))
 }
@@ -535,7 +528,7 @@ pub fn show_profile(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State,
 /// they are one.
 pub fn enter_other_profile(
     state: &State,
-    user_id: String,
+    user_id: Uuid,
     username: String,
     friends: Option<&FriendsData>,
 ) -> Transition {
@@ -543,7 +536,7 @@ pub fn enter_other_profile(
     let core = load_core(user_id, username, 0, token.clone());
 
     let (friendship, friendship_check_slot) = if let Some(f) = friends {
-        (friendship_with(&f.friends, &f.sent, &f.received, &core.user_id), None)
+        (friendship_with(&f.friends, &f.sent, &f.received, core.user_id), None)
     } else if token.is_some() {
         let slot = http::get(http::api_url("friends"), token);
         (FriendshipStatus::Unknown, Some(slot.json()))
@@ -563,7 +556,7 @@ pub fn enter_other_profile(
 
 fn poll_friendship_check(p: &mut OtherProfileData) {
     if let Some(Ok(data)) = http::take(&mut p.friendship_check_slot) {
-        p.friendship = friendship_with(&data.friends, &data.sent, &data.received, &p.core.user_id);
+        p.friendship = friendship_with(&data.friends, &data.sent, &data.received, p.core.user_id);
     }
 }
 
@@ -586,8 +579,7 @@ fn add_friend(state: &State, p: &mut OtherProfileData) {
     }
 
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let body = serde_json::json!({ "user_id": p.core.user_id }).to_string();
-    let slot = http::post_json(http::api_url("friends"), body, token);
+    let slot = http::post_json(http::api_url("friends"), &FriendRequest { user_id: p.core.user_id }, token);
     p.friend_slot = Some(slot.done());
     p.friend_status.clear();
 }

@@ -5038,6 +5038,10 @@ dependencies = [
  "rand 0.10.4",
  "rand_chacha 0.10.0",
  "serde",
+ "serde_json",
+ "sqlx",
+ "time",
+ "uuid",
 ]
 
 [[package]]

@@ -1,18 +1,6 @@
 use super::*;
 
 #[derive(Deserialize)]
-pub(super) struct SendFriendRequestBody {
-    user_id: Uuid,
-}
-
-#[derive(Serialize)]
-pub(super) struct FriendListResponse {
-    friends: Vec<db::FriendEntry>,
-    sent: Vec<db::FriendEntry>,
-    received: Vec<db::FriendEntry>,
-}
-
-#[derive(Deserialize)]
 pub(super) struct LeaderboardQuery {
     me: Option<Uuid>,
 }
@@ -42,7 +30,7 @@ pub(super) async fn handle_search_users(
 
     let q = query.q.as_deref().unwrap_or("").trim().to_owned();
     if q.len() < 2 {
-        return Ok(Json(Vec::<db::UserSearchEntry>::new()));
+        return Ok(Json(Vec::<Friend>::new()));
     }
 
     let results = db::search_users(&pool, &q, me.id).await.map_err(internal)?;
@@ -63,13 +51,13 @@ pub(super) async fn handle_list_friends(
         friend.playing = playing.contains(&friend.user_id);
     }
 
-    Ok(Json(FriendListResponse { friends: list.friends, sent: list.sent, received: list.received }))
+    Ok(Json(list))
 }
 
 pub(super) async fn handle_send_friend_request(
     State(Api { pool, cmd_tx, friend_limit: limit, .. }): State<Api>,
     Authed(me): Authed,
-    JsonBody(body): JsonBody<SendFriendRequestBody>,
+    JsonBody(body): JsonBody<FriendRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = me.id.to_string();
     if !rate_take(&limit, &key, MAX_FRIEND_REQS, FRIEND_WINDOW) {

@@ -1,6 +1,7 @@
 use aero::edit::TextField;
+use shared::api::{NewPassword, Password, Rename};
 
-use crate::http::{self, Json};
+use crate::http::{self, Done};
 use crate::state::MAX_PASSWORD_CHARS;
 use crate::theme;
 use crate::tick::Tick;
@@ -58,7 +59,7 @@ pub struct AccountForm {
     confirm: String,
     /// The field last typed in, which keeps the keyboard.
     focused: usize,
-    pending: Option<Json<serde_json::Value>>,
+    pending: Option<Done>,
     status: Status,
 }
 
@@ -135,25 +136,17 @@ impl AccountForm {
             return;
         }
 
-        let (path, body) = match self.page {
-            Page::Password => {
-                ("me/password", serde_json::json!({ "current": &*self.current, "new": &*self.new }).to_string())
+        let (current, new) = (self.current.to_string(), self.new.trim().to_owned());
+        let request = match self.page {
+            Page::Password => http::post_json(http::api_url("me/password"), &NewPassword { current, new }, token),
+            Page::Username => {
+                http::post_json(http::api_url("me/username"), &Rename { username: new, password: current }, token)
             }
-            Page::Username => (
-                "me/username",
-                serde_json::json!({ "username": self.new.trim(), "password": &*self.current }).to_string(),
-            ),
-            Page::LogoutAll => ("logout-all", String::new()),
-            Page::Delete => ("me/delete", serde_json::json!({ "password": &*self.current }).to_string()),
+            Page::LogoutAll => http::post_empty(http::api_url("logout-all"), token),
+            Page::Delete => http::post_json(http::api_url("me/delete"), &Password { password: current }, token),
             Page::Choose => return,
         };
-
-        let request = if body.is_empty() {
-            http::post_empty(http::api_url(path), token)
-        } else {
-            http::post_json(http::api_url(path), body, token)
-        };
-        self.pending = Some(request.json());
+        self.pending = Some(request.done());
         self.status.clear();
     }
 
@@ -163,9 +156,9 @@ impl AccountForm {
         };
 
         match result {
-            Ok(reply) => match self.page {
+            Ok(()) => match self.page {
                 Page::Username => {
-                    let name = reply["username"].as_str().map_or_else(|| self.new.trim().to_owned(), str::to_owned);
+                    let name = self.new.trim().to_owned();
                     self.show(Page::Choose);
                     self.status = Status::success("Pseudo changé.");
                     Outcome::Renamed(name)

@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use argon2::{password_hash, Argon2, PasswordHasher, PasswordVerifier};
+use shared::api::{Friend, FriendList, LeaderboardEntry, MatchEntry, MatchPlayer, Profile};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
@@ -370,28 +372,6 @@ pub async fn update_profile(
     .await
 }
 
-#[derive(sqlx::FromRow, serde::Serialize)]
-pub struct UserProfileRow {
-    pub id: Uuid,
-    pub username: String,
-    pub bio: Option<String>,
-    pub favorite_music: Option<String>,
-    pub avatar_url: Option<String>,
-    pub banner_url: Option<String>,
-    pub elo: i32,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    pub total_matches: i64,
-    pub wins: i64,
-    pub casual_matches: i64,
-    pub casual_wins: i64,
-    pub ranked_series: i64,
-    pub ranked_series_won: i64,
-    pub all_time_max_chain: i32,
-    pub total_nuisance_sent: i64,
-    pub total_all_clears: i64,
-}
-
 pub async fn user_exists(pool: &DbPool, user_id: Uuid) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
         .bind(user_id)
@@ -399,8 +379,8 @@ pub async fn user_exists(pool: &DbPool, user_id: Uuid) -> Result<bool, sqlx::Err
         .await
 }
 
-pub async fn get_user_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<UserProfileRow>, sqlx::Error> {
-    sqlx::query_as::<_, UserProfileRow>(
+pub async fn get_user_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<Profile>, sqlx::Error> {
+    sqlx::query_as::<_, Profile>(
         "SELECT u.id, u.username, u.bio, u.favorite_music, u.avatar_url, u.banner_url, u.elo, u.created_at,
                 COUNT(m.id)::bigint AS total_matches,
                 COUNT(m.id) FILTER (WHERE ms.won)::bigint AS wins,
@@ -425,19 +405,8 @@ pub async fn get_user_profile(pool: &DbPool, user_id: Uuid) -> Result<Option<Use
 
 pub const LEADERBOARD_SIZE: i64 = 100;
 
-#[derive(sqlx::FromRow, serde::Serialize)]
-pub struct LeaderboardRow {
-    pub rank: i64,
-    pub user_id: Uuid,
-    pub username: String,
-    pub elo: i32,
-    pub series: i64,
-    pub series_won: i64,
-    pub avatar_url: Option<String>,
-}
-
-pub async fn leaderboard(pool: &DbPool, me: Option<Uuid>) -> Result<Vec<LeaderboardRow>, sqlx::Error> {
-    sqlx::query_as::<_, LeaderboardRow>(
+pub async fn leaderboard(pool: &DbPool, me: Option<Uuid>) -> Result<Vec<LeaderboardEntry>, sqlx::Error> {
+    sqlx::query_as::<_, LeaderboardEntry>(
         "WITH players AS (
              SELECT u.id, u.username, u.elo, u.avatar_url,
                     COUNT(s.id) AS series,
@@ -459,34 +428,12 @@ pub async fn leaderboard(pool: &DbPool, me: Option<Uuid>) -> Result<Vec<Leaderbo
     .await
 }
 
-#[derive(serde::Serialize)]
-pub struct MatchRow {
-    pub id: Uuid,
-    #[serde(with = "time::serde::rfc3339")]
-    pub played_at: OffsetDateTime,
-    pub duration_secs: f64,
-    pub ranked: bool,
-    pub has_replay: bool,
-    pub favorite: bool,
-    pub players: Vec<MatchPlayer>,
-}
-
-#[derive(sqlx::FromRow, serde::Serialize)]
-pub struct MatchPlayer {
-    #[serde(skip)]
-    pub match_id: Uuid,
-    pub user_id: Option<Uuid>,
-    pub username: Option<String>,
-    pub slot: i16,
-    pub team: i16,
-    pub place: i16,
-    pub won: bool,
-    pub max_chain: i16,
-    pub total_chains: i16,
-    pub nuisance_sent: i32,
-    pub nuisance_received: i32,
-    pub all_clears: i16,
-    pub pieces_placed: i32,
+/// A player of a match, and which match: the history groups them by it.
+#[derive(sqlx::FromRow)]
+struct PlayerRow {
+    match_id: Uuid,
+    #[sqlx(flatten)]
+    player: MatchPlayer,
 }
 
 #[derive(sqlx::FromRow)]
@@ -504,23 +451,6 @@ pub enum FriendshipError {
     UserNotFound,
     SelfRequest,
     Db(sqlx::Error),
-}
-
-#[derive(sqlx::FromRow, serde::Serialize)]
-pub struct FriendEntry {
-    pub user_id: Uuid,
-    pub username: String,
-    pub elo: i32,
-    pub avatar_url: Option<String>,
-    /// Set from the game server, not the database: whether they are in a room.
-    #[sqlx(default)]
-    pub playing: bool,
-}
-
-pub struct FriendList {
-    pub friends: Vec<FriendEntry>,
-    pub sent: Vec<FriendEntry>,
-    pub received: Vec<FriendEntry>,
 }
 
 /// Sends a request, or accepts the one `target` already sent: true when the
@@ -569,18 +499,10 @@ pub async fn remove_friend(pool: &DbPool, me: Uuid, other: Uuid) -> Result<bool,
     Ok(r.rows_affected() > 0)
 }
 
-#[derive(sqlx::FromRow, serde::Serialize)]
-pub struct UserSearchEntry {
-    pub user_id: Uuid,
-    pub username: String,
-    pub elo: i32,
-    pub avatar_url: Option<String>,
-}
-
-pub async fn search_users(pool: &DbPool, query: &str, exclude_id: Uuid) -> Result<Vec<UserSearchEntry>, sqlx::Error> {
+pub async fn search_users(pool: &DbPool, query: &str, exclude_id: Uuid) -> Result<Vec<Friend>, sqlx::Error> {
     let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
     let pattern = format!("%{escaped}%");
-    sqlx::query_as::<_, UserSearchEntry>(
+    sqlx::query_as::<_, Friend>(
         "SELECT id AS user_id, username, elo, avatar_url FROM users \
          WHERE username ILIKE $1 AND id != $2 \
          ORDER BY elo DESC LIMIT 10",
@@ -592,7 +514,7 @@ pub async fn search_users(pool: &DbPool, query: &str, exclude_id: Uuid) -> Resul
 }
 
 pub async fn list_friends(pool: &DbPool, me: Uuid) -> Result<FriendList, sqlx::Error> {
-    let friends = sqlx::query_as::<_, FriendEntry>(
+    let friends = sqlx::query_as::<_, Friend>(
         "SELECT u.id AS user_id, u.username, u.elo, u.avatar_url
          FROM friendships f
          JOIN users u ON u.id = CASE WHEN f.user_id = $1 THEN f.friend_id ELSE f.user_id END
@@ -602,7 +524,7 @@ pub async fn list_friends(pool: &DbPool, me: Uuid) -> Result<FriendList, sqlx::E
     .fetch_all(pool)
     .await?;
 
-    let sent = sqlx::query_as::<_, FriendEntry>(
+    let sent = sqlx::query_as::<_, Friend>(
         "SELECT u.id AS user_id, u.username, u.elo, u.avatar_url
          FROM friendships f
          JOIN users u ON u.id = f.friend_id
@@ -612,7 +534,7 @@ pub async fn list_friends(pool: &DbPool, me: Uuid) -> Result<FriendList, sqlx::E
     .fetch_all(pool)
     .await?;
 
-    let received = sqlx::query_as::<_, FriendEntry>(
+    let received = sqlx::query_as::<_, Friend>(
         "SELECT u.id AS user_id, u.username, u.elo, u.avatar_url
          FROM friendships f
          JOIN users u ON u.id = f.user_id
@@ -655,7 +577,7 @@ pub async fn get_match_history(
     user_id: Uuid,
     limit: i64,
     offset: i64,
-) -> Result<Vec<MatchRow>, sqlx::Error> {
+) -> Result<Vec<MatchEntry>, sqlx::Error> {
     let heads = sqlx::query_as::<_, MatchHead>(
         "SELECT m.id, m.played_at, m.duration_secs, m.ranked, m.replay IS NOT NULL AS has_replay,
                 f.match_id IS NOT NULL AS favorite
@@ -671,7 +593,7 @@ pub async fn get_match_history(
     .fetch_all(pool)
     .await?;
     let ids: Vec<Uuid> = heads.iter().map(|h| h.id).collect();
-    let mut players = sqlx::query_as::<_, MatchPlayer>(
+    let rows = sqlx::query_as::<_, PlayerRow>(
         "SELECT ms.match_id, ms.user_id, u.username, ms.slot, ms.team, ms.place, ms.won,
                 ms.max_chain, ms.total_chains, ms.nuisance_sent, ms.nuisance_received,
                 ms.all_clears, ms.pieces_placed
@@ -683,20 +605,20 @@ pub async fn get_match_history(
     .bind(&ids)
     .fetch_all(pool)
     .await?;
+    let mut players: HashMap<Uuid, Vec<MatchPlayer>> = HashMap::new();
+    for row in rows {
+        players.entry(row.match_id).or_default().push(row.player);
+    }
     Ok(heads
         .into_iter()
-        .map(|h| {
-            let (mine, rest) = players.drain(..).partition(|p| p.match_id == h.id);
-            players = rest;
-            MatchRow {
-                id: h.id,
-                played_at: h.played_at,
-                duration_secs: h.duration_secs,
-                ranked: h.ranked,
-                has_replay: h.has_replay,
-                favorite: h.favorite,
-                players: mine,
-            }
+        .map(|h| MatchEntry {
+            players: players.remove(&h.id).unwrap_or_default(),
+            id: h.id,
+            played_at: h.played_at,
+            duration_secs: h.duration_secs,
+            ranked: h.ranked,
+            has_replay: h.has_replay,
+            favorite: h.favorite,
         })
         .collect())
 }

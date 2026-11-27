@@ -12,12 +12,18 @@ bitcode = "0.6"
 # messages of ~100 bytes the unsafe fast path buys nothing. `std` enables the
 # allocating block API used by `encode`/`decode`; the frame format is unused.
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+uuid = { version = "1", features = ["serde"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+# FromRow for the API's bodies the server reads from its database.
+sqlx = { version = "0.9", default-features = false, features = ["derive", "uuid", "time"], optional = true }
 
 [features]
+sqlx = ["dep:sqlx"]
 # Shortcuts into a board's state for tests in other crates: never in a build.
 test-support = []
 
 [dev-dependencies]
+serde_json = "1"
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]

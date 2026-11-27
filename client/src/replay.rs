@@ -40,12 +40,12 @@ impl KeepOffer {
     }
 }
 
-fn favorite_url(match_id: &str) -> String {
+fn favorite_url(match_id: impl std::fmt::Display) -> String {
     http::api_url(&format!("matches/{match_id}/favorite"))
 }
 
 /// Asks the server to keep the replay of a match, or to let it go.
-pub fn set_favorite(match_id: &str, on: bool, token: String) -> Done {
+pub fn set_favorite(match_id: impl std::fmt::Display, on: bool, token: String) -> Done {
     let request = if on {
         http::post_empty(favorite_url(match_id), Some(token))
     } else {
@@ -214,7 +214,7 @@ impl ReplayViewer {
 }
 
 /// Asks the server for a match's replay, to show `focus`'s board large.
-pub fn open(state: &mut State, match_id: &str, focus: u8) {
+pub fn open(state: &mut State, match_id: impl std::fmt::Display, focus: u8) {
     let url = http::api_url(&format!("matches/{match_id}/replay"));
     state.replay_loading = Some(Loading { slot: http::get(url, None), focus });
 }

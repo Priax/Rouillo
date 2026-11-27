@@ -116,13 +116,10 @@ pub fn network_error(e: &str) -> String {
 }
 
 pub fn error_message(resp: &ehttp::Response) -> String {
-    let body = serde_json::from_str::<serde_json::Value>(resp.text().unwrap_or_default()).ok();
-    let body = body.as_ref();
-    body.and_then(|v| v["code"].as_str())
-        .and_then(translate)
-        .map(str::to_owned)
-        .or_else(|| body.and_then(|v| v["error"].as_str()).map(str::to_owned))
-        .unwrap_or_else(|| format!("Erreur {}", resp.status))
+    let Some(refusal) = json::<shared::api::Refusal>(resp) else {
+        return format!("Erreur {}", resp.status);
+    };
+    translate(&refusal.code).map_or(refusal.error, str::to_owned)
 }
 
 fn translate(code: &str) -> Option<&'static str> {
@@ -189,13 +186,14 @@ fn push_header(req: &mut ehttp::Request, key: &str, value: String) {
     req.headers.headers.push((key.to_owned(), value));
 }
 
-fn json_body(url: String, method: ehttp::Method, body: String) -> ehttp::Request {
-    let mut req = ehttp::Request { method, body: body.into_bytes(), ..ehttp::Request::get(url) };
+fn json_body(url: String, method: ehttp::Method, body: &impl serde::Serialize) -> ehttp::Request {
+    let body = serde_json::to_vec(body).unwrap_or_default();
+    let mut req = ehttp::Request { method, body, ..ehttp::Request::get(url) };
     push_header(&mut req, "content-type", "application/json".to_owned());
     req
 }
 
-pub fn get_user(user_id: &str, token: Option<String>) -> Request {
+pub fn get_user(user_id: shared::api::Uuid, token: Option<String>) -> Request {
     get(api_url(&format!("users/{user_id}")), token)
 }
 
@@ -203,11 +201,11 @@ pub fn get(url: String, token: Option<String>) -> Request {
     Request::send(ehttp::Request::get(url), token)
 }
 
-pub fn post_json(url: String, body: String, token: Option<String>) -> Request {
+pub fn post_json(url: String, body: &impl serde::Serialize, token: Option<String>) -> Request {
     Request::send(json_body(url, ehttp::Method::POST, body), token)
 }
 
-pub fn patch_json(url: String, body: String, token: Option<String>) -> Request {
+pub fn patch_json(url: String, body: &impl serde::Serialize, token: Option<String>) -> Request {
     Request::send(json_body(url, ehttp::Method::PATCH, body), token)
 }
 

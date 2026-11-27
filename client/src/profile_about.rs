@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use aero::draw::Draw;
+use shared::api::Profile;
 
-use crate::state::ApiUserProfile;
 use crate::theme;
 use crate::ui::{widgets, Face, Fonts, Gui, Modal, Rect, Stage, Typeset};
 
@@ -51,7 +51,7 @@ fn clamp<'a>(fonts: &mut Fonts, text: &'a str, room: f32, max: usize) -> (Vec<Co
     (lines, cut)
 }
 
-pub fn summary<'a>(fonts: &mut Fonts, info: &'a ApiUserProfile, area: Rect, music_lines: usize) -> Summary<'a> {
+pub fn summary<'a>(fonts: &mut Fonts, info: &'a Profile, area: Rect, music_lines: usize) -> Summary<'a> {
     let (music, music_cut) = clamp(fonts, info.favorite_music.as_deref().unwrap_or_default(), area.w(), music_lines);
     let (bio, bio_cut) =
         clamp(fonts, info.bio.as_deref().unwrap_or_default(), area.w(), bio_room(area.h(), music.len()));
@@ -86,7 +86,7 @@ pub fn show_more_link(ui: &mut aero::ui::Ui<'_>, area: Rect) -> bool {
 }
 
 /// The whole bio and music over the profile. Returns whether it was dismissed.
-pub fn show_overlay(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &ApiUserProfile) -> bool {
+pub fn show_overlay(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &Profile) -> bool {
     let modal = Modal::new(gui.stage.view(), OVERLAY_W);
     let title = ui.cx.fonts.fit(Face::Display, &info.username, theme::size::HEADING, modal.card.w() - 120.0);
     let area = modal.body().below(LABEL_H);

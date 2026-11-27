@@ -1,10 +1,11 @@
 use aero::input::KeyCode;
+use shared::api::{Auth, Score, SoloBest};
 use shared::cpu::{Cpu, Difficulty, Style};
 use shared::{config, Board, GameState, IncomingGarbage, RoomSetting, RoomSettings, Targeting};
 
 use crate::draw::Hud;
 use crate::nav::Transition;
-use crate::state::{AuthInfo, GameSession, Input, Player, Rival, Screen, State};
+use crate::state::{GameSession, Input, Player, Rival, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{self, px, widgets, Face, Frame, Gui, Icon, Pill, Rect, Size, Typeset, View, FILL};
 use crate::{board_size, http, logic, rooms, theme};
@@ -28,7 +29,7 @@ pub struct Solo {
     pub sizing: bool,
     /// A guest's best lives on the device, an account's on the server.
     pub best: u32,
-    pub best_slot: Option<crate::http::Json<Best>>,
+    pub best_slot: Option<crate::http::Json<SoloBest>>,
 }
 
 impl Solo {
@@ -295,20 +296,15 @@ impl SoloGame {
 
 /// Sends a score to the account, which keeps its best. At sign-in this is the
 /// device's best, so a guest's record follows them into their account.
-fn send_best(solo: &mut Solo, auth: Option<&AuthInfo>, score: u32) {
+fn send_best(solo: &mut Solo, auth: Option<&Auth>, score: u32) {
     let Some(auth) = auth else { return };
 
-    let body = serde_json::json!({ "score": score }).to_string();
-    solo.best_slot = Some(http::post_json(http::api_url("me/solo-best"), body, Some(auth.token.clone())).json());
+    let body = Score { score: i32::try_from(score).unwrap_or(i32::MAX) };
+    solo.best_slot = Some(http::post_json(http::api_url("me/solo-best"), &body, Some(auth.token.clone())).json());
 }
 
 pub fn signed_in(state: &mut State) {
     send_best(&mut state.solo, state.auth.as_ref(), crate::state::load_best_score());
-}
-
-#[derive(serde::Deserialize)]
-pub struct Best {
-    solo_best: u32,
 }
 
 pub fn poll_best(solo: &mut Solo, signed_in: bool) {
@@ -321,7 +317,7 @@ pub fn poll_best(solo: &mut Solo, signed_in: bool) {
 
     match result {
         Ok(best) => {
-            solo.best = solo.best.max(best.solo_best);
+            solo.best = solo.best.max(u32::try_from(best.solo_best).unwrap_or(0));
             crate::state::clear_best_score();
         }
         // Kept on the device until the next sign-in sends it again.

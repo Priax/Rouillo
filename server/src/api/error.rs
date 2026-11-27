@@ -24,7 +24,7 @@ pub(super) enum ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let body = Json(serde_json::json!({ "error": self.message(), "code": self.code() }));
+        let body = Json(shared::api::Refusal { error: self.message().to_owned(), code: self.code().to_owned() });
         (self.status(), body).into_response()
     }
 }

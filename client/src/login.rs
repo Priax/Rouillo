@@ -1,8 +1,8 @@
+use shared::api::{Account, Auth, Credentials};
+
 use crate::connection::now_secs;
 use crate::nav::{Nav, Transition};
-use crate::state::{
-    ApiMeResponse, AuthField, AuthForm, AuthInfo, AuthMode, Screen, Startup, State, MAX_PASSWORD_CHARS,
-};
+use crate::state::{AuthField, AuthForm, AuthMode, Screen, Startup, State, MAX_PASSWORD_CHARS};
 use crate::ui::{self, widgets, Face, Gui, Rect, Status, Typeset, View, FILL};
 use crate::{http, theme};
 
@@ -55,13 +55,13 @@ fn submit(form: &mut AuthForm) {
         return;
     }
 
-    let body = serde_json::json!({ "username": username, "password": password }).to_string();
+    let body = Credentials { username, password };
     let path = match form.mode {
         AuthMode::Login => "login",
         AuthMode::Register => "register",
     };
 
-    form.pending = Some(http::post_json(http::api_url(path), body, None).json());
+    form.pending = Some(http::post_json(http::api_url(path), &body, None).json());
     form.status.clear();
 }
 
@@ -104,15 +104,10 @@ pub fn poll_startup_check(state: &mut State, nav: &mut Nav) {
     };
     match result {
         Ok(resp) if resp.status == 200 => {
-            let me = http::json::<ApiMeResponse>(&resp).filter(|_| waiting);
+            let me = http::json::<Account>(&resp).filter(|_| waiting);
             if let (Some(me), Some(token)) = (me, crate::state::load_stored_token()) {
-                state.auth = Some(AuthInfo {
-                    token,
-                    user_id: me.id,
-                    username: me.username,
-                    elo: me.elo,
-                    avatar_url: me.avatar_url,
-                });
+                state.auth =
+                    Some(Auth { token, user_id: me.id, username: me.username, elo: me.elo, avatar_url: me.avatar_url });
                 state.auth_form.status.clear();
                 nav.apply(Transition::To(Screen::Menu));
                 crate::solo::signed_in(state);

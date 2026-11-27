@@ -2,12 +2,13 @@ use aero::draw::Draw;
 use aero::geom::Color;
 use aero::image::Image;
 use aero::input::KeyCode;
+use shared::api::Profile;
 use shared::{config, ClientMessage};
 
 use crate::connection::{now_secs, Connection};
 use crate::http::{self, Json};
 use crate::nav::Transition;
-use crate::state::{ApiUserProfile, Room, Screen, State};
+use crate::state::{Room, Screen, State};
 use crate::theme::{self, Palette};
 use crate::tick::Tick;
 use crate::ui::{self, widgets, Face, Fonts, Gui, Persona, Pill, Rect, Typeset, View, FILL};
@@ -35,8 +36,8 @@ pub enum Search {
 pub struct RankedView {
     pub search: Search,
     cooldown_until: Option<f64>,
-    stats: Option<ApiUserProfile>,
-    stats_slot: Option<Json<ApiUserProfile>>,
+    stats: Option<Profile>,
+    stats_slot: Option<Json<Profile>>,
 }
 
 impl RankedView {
@@ -125,7 +126,7 @@ pub fn enter(state: &mut State) -> Transition {
     state.room = None;
     let ranked = &mut state.ranked;
     ranked.search = Search::Idle;
-    ranked.stats_slot = state.auth.as_ref().map(|auth| http::get_user(&auth.user_id, Some(auth.token.clone())).json());
+    ranked.stats_slot = state.auth.as_ref().map(|auth| http::get_user(auth.user_id, Some(auth.token.clone())).json());
 
     Transition::To(Screen::Ranked)
 }
@@ -451,8 +452,7 @@ mod tests {
     fn too_few_casual_games_block_the_search() {
         let mut view = RankedView::default();
         assert_eq!(view.casual_missing(), None, "unknown until the profile loads");
-        view.stats =
-            Some(ApiUserProfile { casual_matches: config::RANKED_MIN_CASUAL - 2, ..ApiUserProfile::default() });
+        view.stats = Some(Profile { casual_matches: config::RANKED_MIN_CASUAL - 2, ..Profile::default() });
         assert_eq!(view.casual_missing(), Some(2));
     }
 }

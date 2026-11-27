@@ -11,8 +11,11 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
+use serde::Deserialize;
+use shared::api::{
+    Account, AccountPatch, Auth, Credentials, Friend, FriendRequest, NewPassword, Password, Rename, Score, SoloBest,
+    Version,
+};
 use tokio::sync::mpsc;
 use tracing::error;
 use uuid::Uuid;
@@ -57,20 +60,6 @@ fn internal<E: std::fmt::Display>(e: E) -> ApiError {
 
 fn done() -> Json<serde_json::Value> {
     Json(serde_json::json!({}))
-}
-
-#[derive(Serialize)]
-struct UserProfile {
-    id: Uuid,
-    username: String,
-    bio: Option<String>,
-    favorite_music: Option<String>,
-    avatar_url: Option<String>,
-    banner_url: Option<String>,
-    elo: i32,
-    #[serde(with = "time::serde::rfc3339")]
-    created_at: OffsetDateTime,
-    solo_best: i32,
 }
 
 #[derive(Clone)]
@@ -128,7 +117,7 @@ impl FromRequestParts<Api> for Authed {
     }
 }
 
-impl From<db::User> for UserProfile {
+impl From<db::User> for Account {
     fn from(user: db::User) -> Self {
         Self {
             id: user.id,
@@ -192,7 +181,7 @@ pub fn routes(pool: DbPool, cmd_tx: mpsc::Sender<Command>) -> Router {
 /// The game version clients should run. The deploy waits for its signed
 /// binaries, so a client told about it can always download them.
 async fn handle_version() -> impl IntoResponse {
-    Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }))
+    Json(Version { version: env!("CARGO_PKG_VERSION").to_owned() })
 }
 
 #[cfg(test)]
@@ -223,8 +212,8 @@ pub(crate) mod tests {
             .unwrap();
         let api = routes(pool, mpsc::channel(8).0);
         let register = |from: &'static str, n: u32| {
-            let body = serde_json::json!({ "username": format!("user_{n}"), "password": "password123" });
-            let req = post_json("/api/register", Some("127.0.0.1:40000"), Some(from), body.to_string());
+            let body = credentials(&format!("user_{n}"), "password123");
+            let req = post_json("/api/register", Some("127.0.0.1:40000"), Some(from), body);
             api.clone().oneshot(req)
         };
         for n in 0..MAX_REGISTRATIONS_PER_IP {
@@ -242,13 +231,18 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn errors_carry_a_stable_code() {
         let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap();
-        let body = serde_json::json!({ "username": "a", "password": "password123" }).to_string();
+        let body = credentials("a", "password123");
         let res = routes(pool, mpsc::channel(8).0).oneshot(post_json("/api/register", None, None, body)).await.unwrap();
         assert_eq!(res.status(), 400);
         let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "bad_username");
         assert!(body["error"].is_string(), "old clients still read 'error'");
+    }
+
+    fn credentials(username: &str, password: &str) -> String {
+        let body = Credentials { username: username.to_owned(), password: password.to_owned() };
+        serde_json::to_string(&body).unwrap()
     }
 
     async fn post(path: &str, body: String) -> (u16, String) {
@@ -262,13 +256,13 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_username_that_cannot_exist_fails_without_a_lookup() {
-        let body = serde_json::json!({ "username": "x".repeat(5000), "password": "password123" }).to_string();
+        let body = credentials(&"x".repeat(5000), "password123");
         assert_eq!(post("/api/login", body).await, (401, "bad_credentials".to_owned()));
     }
 
     #[tokio::test]
     async fn an_oversized_body_is_an_invalid_request() {
-        let body = serde_json::json!({ "username": "alice", "password": "p".repeat(20_000) }).to_string();
+        let body = credentials("alice", &"p".repeat(20_000));
         assert_eq!(post("/api/login", body).await, (400, "invalid_body".to_owned()));
     }
 }

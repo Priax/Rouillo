@@ -72,7 +72,7 @@ fn on_opened(state: &mut State, nav: &Nav, recovered: bool) {
         state.net.conn.send(&ClientMessage::JoinRoom { id });
     }
     if let Some(user_id) = state.net.pending_watch.take() {
-        state.net.conn.send(&ClientMessage::WatchFriend { user_id });
+        state.net.conn.send(&ClientMessage::WatchFriend { user_id: user_id.to_string() });
     }
     if matches!(nav.current(), Screen::Ranked) && state.ranked.resume_search() {
         state.net.conn.send(&ClientMessage::JoinQueue);

@@ -3,16 +3,7 @@
 //! datagrams. The browser's own WebTransport is driven from a few lines of
 //! JavaScript; the native client uses quinn.
 
-use serde::Deserialize;
-
-/// Where the server takes WebTransport sessions, as `/api/transport` says.
-#[derive(Clone, Debug, Deserialize)]
-pub struct Offer {
-    pub url: String,
-    /// The SHA-256 of the server's certificate when it made one up.
-    #[serde(default)]
-    pub cert_hash: Option<Vec<u8>>,
-}
+use shared::api::Offer;
 
 pub enum Event {
     Opened,

@@ -1,3 +1,4 @@
+use shared::api::{Auth, Friend, FriendList, Profile, Uuid};
 use shared::{
     config, Board, GameState, IncomingGarbage, LobbyInfo, RoomId, RoomInfo, Rotation, Rules, StampedInput, Targeting,
 };
@@ -102,7 +103,7 @@ pub struct AuthForm {
     pub focused: AuthField,
     pub mode: AuthMode,
     pub status: Status,
-    pub pending: Option<Json<AuthInfo>>,
+    pub pending: Option<Json<Auth>>,
 }
 
 impl Default for AuthForm {
@@ -118,74 +119,18 @@ impl Default for AuthForm {
     }
 }
 
-#[derive(serde::Deserialize)]
-pub struct AuthInfo {
-    pub token: String,
-    pub user_id: String,
-    pub username: String,
-    pub elo: i32,
-    #[serde(default)]
-    pub avatar_url: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-pub struct ApiMeResponse {
-    pub id: String,
-    pub username: String,
-    pub elo: i32,
-    #[serde(default)]
-    pub avatar_url: Option<String>,
-}
-
-#[derive(serde::Deserialize, Default)]
-pub struct ApiUserProfile {
-    pub username: String,
-    #[serde(default)]
-    pub avatar_url: Option<String>,
-    #[serde(default)]
-    pub banner_url: Option<String>,
-    pub elo: i32,
-    pub bio: Option<String>,
-    pub favorite_music: Option<String>,
-    pub total_matches: i64,
-    pub casual_matches: i64,
-    pub casual_wins: i64,
-    pub ranked_series: i64,
-    pub ranked_series_won: i64,
-    pub all_time_max_chain: i32,
-    pub total_nuisance_sent: i64,
-}
-
-#[derive(serde::Deserialize, Clone)]
-pub struct FriendEntry {
-    pub user_id: String,
-    pub username: String,
-    pub elo: i32,
-    #[serde(default)]
-    pub avatar_url: Option<String>,
-    #[serde(default)]
-    pub playing: bool,
-}
-
-#[derive(serde::Deserialize)]
-pub struct ApiFriendsResponse {
-    pub friends: Vec<FriendEntry>,
-    pub sent: Vec<FriendEntry>,
-    pub received: Vec<FriendEntry>,
-}
-
 pub struct FriendsData {
-    pub friends: Vec<FriendEntry>,
-    pub sent: Vec<FriendEntry>,
-    pub received: Vec<FriendEntry>,
-    pub list_slot: Option<Json<ApiFriendsResponse>>,
+    pub friends: Vec<Friend>,
+    pub sent: Vec<Friend>,
+    pub received: Vec<Friend>,
+    pub list_slot: Option<Json<FriendList>>,
     pub search_input: String,
-    pub search_results: Vec<FriendEntry>,
-    pub search_slot: Option<Json<Vec<FriendEntry>>>,
+    pub search_results: Vec<Friend>,
+    pub search_slot: Option<Json<Vec<Friend>>>,
     pub search_status: Status,
     pub add_pending: Option<Done>,
     pub add_status: Status,
-    pub confirm_remove: Option<String>,
+    pub confirm_remove: Option<Uuid>,
     pub action_pending: Option<Done>,
     pub action_status: Status,
     pub pages: [crate::ui::Pager; 3],
@@ -202,60 +147,16 @@ pub enum FriendshipStatus {
 
 pub struct OtherProfileData {
     pub core: ProfileCore,
-    pub friendship_check_slot: Option<Json<ApiFriendsResponse>>,
+    pub friendship_check_slot: Option<Json<FriendList>>,
     pub load_failed: bool,
     pub friendship: FriendshipStatus,
     pub friend_slot: Option<Done>,
     pub friend_status: Status,
 }
 
-#[derive(serde::Deserialize)]
-pub struct ApiMatchPlayer {
-    pub user_id: Option<String>,
-    pub username: Option<String>,
-    #[serde(default)]
-    pub slot: i16,
-    pub place: i16,
-    pub won: bool,
-    pub max_chain: i16,
-    pub nuisance_sent: i32,
-}
-
-#[derive(serde::Deserialize)]
-pub struct ApiMatchEntry {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub ranked: bool,
-    #[serde(default)]
-    pub has_replay: bool,
-    #[serde(default)]
-    pub favorite: bool,
-    pub duration_secs: f64,
-    pub players: Vec<ApiMatchPlayer>,
-}
-
-impl ApiMatchEntry {
-    pub fn me(&self, user_id: &str) -> Option<&ApiMatchPlayer> {
-        self.players.iter().find(|p| p.user_id.as_deref() == Some(user_id))
-    }
-
-    /// The other player of a one against one.
-    pub fn opponent(&self, user_id: &str) -> Option<&ApiMatchPlayer> {
-        let [a, b] = self.players.as_slice() else {
-            return None;
-        };
-        Some(if a.user_id.as_deref() == Some(user_id) { b } else { a })
-    }
-
-    pub fn drawn(&self) -> bool {
-        self.players.iter().all(|p| !p.won)
-    }
-}
-
 pub struct ProfileCore {
-    pub user_id: String,
-    pub info: ApiUserProfile,
+    pub user_id: Uuid,
+    pub info: Profile,
     pub history: crate::history::History,
     pub about_open: bool,
     pub profile_slot: Option<Request>,
@@ -430,8 +331,8 @@ impl Room {
 #[derive(Default)]
 pub struct Invite {
     pub open: bool,
-    pub slot: Option<Json<ApiFriendsResponse>>,
-    pub friends: Vec<FriendEntry>,
+    pub slot: Option<Json<FriendList>>,
+    pub friends: Vec<Friend>,
     pub pager: crate::ui::Pager,
 }
 
@@ -733,7 +634,7 @@ pub struct Network {
     pub player_id: String,
     pub conn: Connection,
     pub pending_join: Option<RoomId>,
-    pub pending_watch: Option<String>,
+    pub pending_watch: Option<Uuid>,
     /// The time before which no background connection is tried.
     pub next_link_at: f64,
     /// Whether the server pushes the room list on this connection.
@@ -754,7 +655,7 @@ pub struct State {
     pub room_pager: crate::ui::Pager,
     pub text_input: String,
     pub notice: Status,
-    pub auth: Option<AuthInfo>,
+    pub auth: Option<Auth>,
     pub auth_form: AuthForm,
     pub startup: Startup,
     pub pending_invitation: Option<(String, RoomId, String)>,

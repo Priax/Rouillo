@@ -1,46 +1,12 @@
 use super::*;
 
-#[derive(Deserialize)]
-pub(super) struct RegisterBody {
-    username: String,
-    password: String,
-}
-
-#[derive(Deserialize)]
-pub(super) struct LoginBody {
-    username: String,
-    password: String,
-}
-
-#[derive(Deserialize)]
-pub(super) struct ChangePasswordBody {
-    current: String,
-    new: String,
-}
-
-#[derive(Deserialize)]
-pub(super) struct RenameBody {
-    username: String,
-    password: String,
-}
-
-#[derive(Deserialize)]
-pub(super) struct DeleteAccountBody {
-    password: String,
-}
-
-#[derive(Serialize)]
-pub(super) struct AuthResponse {
-    token: Uuid,
-    user_id: Uuid,
-    username: String,
-    elo: i32,
-    avatar_url: Option<String>,
-}
-
-impl AuthResponse {
-    fn new(user: db::User, token: Uuid) -> Self {
-        Self { token, user_id: user.id, username: user.username, elo: user.elo, avatar_url: user.avatar_url }
+fn auth(user: db::User, token: Uuid) -> Auth {
+    Auth {
+        token: token.to_string(),
+        user_id: user.id,
+        username: user.username,
+        elo: user.elo,
+        avatar_url: user.avatar_url,
     }
 }
 
@@ -52,7 +18,7 @@ pub(super) fn validate_password(p: &str) -> bool {
 pub(super) async fn handle_register(
     State(Api { pool, registrations, .. }): State<Api>,
     ClientAddr(client): ClientAddr,
-    JsonBody(body): JsonBody<RegisterBody>,
+    JsonBody(body): JsonBody<Credentials>,
 ) -> Result<impl IntoResponse, ApiError> {
     if !shared::valid_username(&body.username) {
         return Err(ApiError::BadUsername);
@@ -76,13 +42,13 @@ pub(super) async fn handle_register(
 
     let token = db::create_session(&pool, user.id).await.map_err(internal)?;
 
-    Ok((StatusCode::CREATED, Json(AuthResponse::new(user, token))))
+    Ok((StatusCode::CREATED, Json(auth(user, token))))
 }
 
 pub(super) async fn handle_login(
     State(Api { pool, login_limits: limits, .. }): State<Api>,
     ClientAddr(client): ClientAddr,
-    JsonBody(body): JsonBody<LoginBody>,
+    JsonBody(body): JsonBody<Credentials>,
 ) -> Result<impl IntoResponse, ApiError> {
     if !shared::valid_username(&body.username) {
         return Err(ApiError::BadCredentials);
@@ -107,7 +73,7 @@ pub(super) async fn handle_login(
 
     let token = db::create_session(&pool, user.id).await.map_err(internal)?;
 
-    Ok(Json(AuthResponse::new(user, token)))
+    Ok(Json(auth(user, token)))
 }
 
 pub(super) async fn handle_logout(
@@ -135,7 +101,7 @@ pub(super) async fn check_password(user: &db::User, password: String, checks: &P
 pub(super) async fn handle_change_password(
     State(Api { pool, password_checks: checks, cmd_tx, .. }): State<Api>,
     Session(user, token): Session,
-    JsonBody(body): JsonBody<ChangePasswordBody>,
+    JsonBody(body): JsonBody<NewPassword>,
 ) -> Result<impl IntoResponse, ApiError> {
     if !validate_password(&body.new) {
         return Err(ApiError::BadPassword);
@@ -151,7 +117,7 @@ pub(super) async fn handle_change_password(
 pub(super) async fn handle_rename(
     State(Api { pool, password_checks: checks, cmd_tx, .. }): State<Api>,
     Authed(user): Authed,
-    JsonBody(body): JsonBody<RenameBody>,
+    JsonBody(body): JsonBody<Rename>,
 ) -> Result<impl IntoResponse, ApiError> {
     if !shared::valid_username(&body.username) {
         return Err(ApiError::BadUsername);
@@ -165,7 +131,7 @@ pub(super) async fn handle_rename(
         Err(e) => return Err(internal(e)),
     };
     let _ = cmd_tx.send(Command::Rename { user_id: renamed.id, username: renamed.username.clone() }).await;
-    Ok(Json(UserProfile::from(renamed)))
+    Ok(Json(Account::from(renamed)))
 }
 
 pub(super) async fn handle_logout_all(
@@ -180,7 +146,7 @@ pub(super) async fn handle_logout_all(
 pub(super) async fn handle_delete_account(
     State(Api { pool, password_checks: checks, cmd_tx, .. }): State<Api>,
     Session(user, token): Session,
-    JsonBody(body): JsonBody<DeleteAccountBody>,
+    JsonBody(body): JsonBody<Password>,
 ) -> Result<impl IntoResponse, ApiError> {
     check_password(&user, body.password, &checks).await?;
     db::delete_user(&pool, user.id).await.map_err(internal)?;

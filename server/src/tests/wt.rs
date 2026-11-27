@@ -1,8 +1,9 @@
+use shared::api::Offer;
 use web_transport_quinn::{ClientBuilder, Session};
 
 use super::connection::commands_until;
 use super::*;
-use crate::wt::{Config, Offer};
+use crate::wt::Config;
 
 fn free_udp_port() -> u16 {
     std::net::UdpSocket::bind("127.0.0.1:0").and_then(|s| s.local_addr()).expect("a free port").port()

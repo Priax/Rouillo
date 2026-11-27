@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use aero::draw::Draw;
 use aero::image::Image;
+use shared::api::{Friend, FriendRequest, Uuid};
 
 use crate::images::Images;
 use crate::nav::Transition;
-use crate::state::{FriendEntry, FriendsData, Screen, State};
+use crate::state::{FriendsData, Screen, State};
 use crate::tick::Tick;
 use crate::ui::{
     self, divider, list_row, page_count, px, widgets, Face, Fonts, Frame, Gui, Label, Pager, Pill, Rect, Stage, Status,
@@ -68,7 +69,7 @@ fn pager_area(view: View, col: usize) -> Rect {
     card_list(column_card(view, col)).nth_row(rows_for(view), ROW_H, 0.0)
 }
 
-fn lists(f: &FriendsData) -> [&[FriendEntry]; 3] {
+fn lists(f: &FriendsData) -> [&[Friend]; 3] {
     [&f.friends, &f.received, &f.sent]
 }
 
@@ -195,20 +196,6 @@ fn refresh_list(state: &State, f: &mut FriendsData) {
     f.list_slot = Some(slot.json());
 }
 
-fn looks_like_uuid(s: &str) -> bool {
-    let b = s.as_bytes();
-    b.len() == 36
-        && b.iter().enumerate().all(
-            |(i, &c)| {
-                if [8, 13, 18, 23].contains(&i) {
-                    c == b'-'
-                } else {
-                    c.is_ascii_hexdigit()
-                }
-            },
-        )
-}
-
 fn search_query(f: &FriendsData) -> String {
     f.search_input.trim().to_owned()
 }
@@ -232,14 +219,13 @@ fn try_search(state: &State, f: &mut FriendsData) {
     f.search_results.clear();
 }
 
-fn send_add_request(state: &State, f: &mut FriendsData, user_id: &str) {
+fn send_add_request(state: &State, f: &mut FriendsData, user_id: Uuid) {
     if f.add_pending.is_some() {
         return;
     }
 
     let token = state.auth.as_ref().map(|a| a.token.clone());
-    let body = serde_json::json!({ "user_id": user_id }).to_string();
-    let slot = http::post_json(http::api_url("friends"), body, token);
+    let slot = http::post_json(http::api_url("friends"), &FriendRequest { user_id }, token);
     f.add_pending = Some(slot.done());
     f.add_status.clear();
 }
@@ -292,14 +278,15 @@ fn poll_action(state: &State, f: &mut FriendsData) {
     refresh_list(state, f);
 }
 
+#[derive(Clone, Copy)]
 enum FriendAction {
-    Watch(String),
-    StartRemove(String),
-    ConfirmRemove(String),
+    Watch(Uuid),
+    StartRemove(Uuid),
+    ConfirmRemove(Uuid),
     CancelRemove,
-    Accept(String),
-    Reject(String),
-    Cancel(String),
+    Accept(Uuid),
+    Reject(Uuid),
+    Cancel(Uuid),
 }
 
 /// What comes back, the search field and the keys; the clicks are in [`show_friends`].
@@ -323,8 +310,8 @@ pub fn update_friends(tick: &Tick, gui: &mut Gui, state: &mut State, f: &mut Fri
 /// Opens the profile of the id typed, or searches for the name.
 fn search(state: &State, f: &mut FriendsData) -> Transition {
     let q = search_query(f);
-    if looks_like_uuid(&q) {
-        return crate::profile::enter_other_profile(state, q, "...".to_owned(), Some(f));
+    if let Ok(id) = q.parse::<Uuid>() {
+        return crate::profile::enter_other_profile(state, id, "...".to_owned(), Some(f));
     }
     try_search(state, f);
     Transition::Stay
@@ -335,11 +322,11 @@ fn can_refresh(f: &FriendsData) -> bool {
 }
 
 /// Watches a friend's game: the server says where it is, or that there is none.
-fn watch(state: &mut State, user_id: String) -> Transition {
+fn watch(state: &mut State, user_id: Uuid) -> Transition {
     state.notice.clear();
 
     if state.net.conn.is_live() {
-        state.net.conn.send(&shared::ClientMessage::WatchFriend { user_id });
+        state.net.conn.send(&shared::ClientMessage::WatchFriend { user_id: user_id.to_string() });
     } else {
         state.net.pending_watch = Some(user_id);
         state.net.conn.connect(crate::connection::now_secs());
@@ -374,8 +361,8 @@ fn apply_action(state: &State, f: &mut FriendsData, action: FriendAction) {
 #[derive(Default)]
 struct Clicks {
     action: Option<FriendAction>,
-    profile: Option<(String, String)>,
-    add: Option<String>,
+    profile: Option<(Uuid, String)>,
+    add: Option<Uuid>,
 }
 
 pub fn show_friends(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, f: &mut FriendsData) -> Transition {
@@ -406,7 +393,7 @@ pub fn show_friends(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State,
         return crate::profile::enter_other_profile(state, user_id, username, Some(f));
     }
     if let Some(user_id) = clicks.add {
-        send_add_request(state, f, &user_id);
+        send_add_request(state, f, user_id);
     }
     match clicks.action {
         Some(FriendAction::Watch(user_id)) => watch(state, user_id),
@@ -478,10 +465,10 @@ fn show_search(
         rating.draw(ui.draw, &mut ui.cx.fonts, (row.x() + 260.0, mid));
         let befriended = f.friends.iter().any(|fr| fr.user_id == e.user_id);
         if !befriended && widgets::button(ui, ("add", &e.user_id), result_add_btn(view, i), "Ajouter", !adding) {
-            clicks.add = Some(e.user_id.clone());
+            clicks.add = Some(e.user_id);
         }
         if widgets::button(ui, ("profile", &e.user_id), result_view_btn(view, i), "Profil", true) {
-            clicks.profile = Some((e.user_id.clone(), e.username.clone()));
+            clicks.profile = Some((e.user_id, e.username.clone()));
         }
     }
 
@@ -536,13 +523,13 @@ fn show_lists(
             .color(pal.text_muted);
     } else {
         let busy = f.action_pending.is_some();
-        let confirm = f.confirm_remove.as_deref();
+        let confirm = f.confirm_remove;
         let friends = (&f.friends[..], &f.pages[0], pics);
         show_col(ui, gui, (view, 0), friends, (columns[0].1, clicks), |ui, entry, i| {
-            let id = &entry.user_id;
-            if confirm == Some(id.as_str()) {
+            let id = entry.user_id;
+            if confirm == Some(id) {
                 if widgets::button(ui, ("yes", id), confirm_yes_btn(view, i), "Oui", !busy) {
-                    return Some(FriendAction::ConfirmRemove(id.clone()));
+                    return Some(FriendAction::ConfirmRemove(id));
                 }
                 if widgets::button(ui, ("no", id), confirm_no_btn(view, i), "Non", true) {
                     return Some(FriendAction::CancelRemove);
@@ -551,29 +538,29 @@ fn show_lists(
             }
             let active = !busy && confirm.is_none();
             if entry.playing && widgets::button(ui, ("watch", id), watch_btn(view, i), "Regarder", confirm.is_none()) {
-                return Some(FriendAction::Watch(id.clone()));
+                return Some(FriendAction::Watch(id));
             }
             if widgets::button(ui, ("remove", id), remove_btn(view, 0, i), "Retirer", active) {
-                return Some(FriendAction::StartRemove(id.clone()));
+                return Some(FriendAction::StartRemove(id));
             }
             None
         });
         let received = (&f.received[..], &f.pages[1], pics);
         show_col(ui, gui, (view, 1), received, (columns[1].1, clicks), |ui, entry, i| {
-            let id = &entry.user_id;
+            let id = entry.user_id;
             if widgets::button(ui, ("accept", id), accept_btn(view, i), "Accepter", !busy) {
-                return Some(FriendAction::Accept(id.clone()));
+                return Some(FriendAction::Accept(id));
             }
             if widgets::button(ui, ("reject", id), reject_btn(view, i), "Refuser", !busy) {
-                return Some(FriendAction::Reject(id.clone()));
+                return Some(FriendAction::Reject(id));
             }
             None
         });
         let sent = (&f.sent[..], &f.pages[2], pics);
         show_col(ui, gui, (view, 2), sent, (columns[2].1, clicks), |ui, entry, i| {
-            let id = &entry.user_id;
+            let id = entry.user_id;
             widgets::button(ui, ("cancel", id), remove_btn(view, 2, i), "Annuler", !busy)
-                .then(|| FriendAction::Cancel(id.clone()))
+                .then_some(FriendAction::Cancel(id))
         });
         let FriendsData { friends, received, sent, pages, .. } = f;
         for (col, (list, pager)) in [&friends[..], received, sent].into_iter().zip(pages.iter_mut()).enumerate() {
@@ -599,9 +586,9 @@ fn show_col(
     ui: &mut aero::ui::Ui<'_>,
     gui: &mut Gui,
     (view, col): (View, usize),
-    (list, pager, pics): (&[FriendEntry], &Pager, &Pictures),
+    (list, pager, pics): (&[Friend], &Pager, &Pictures),
     (empty_msg, clicks): (&str, &mut Clicks),
-    mut buttons: impl FnMut(&mut aero::ui::Ui<'_>, &FriendEntry, usize) -> Option<FriendAction>,
+    mut buttons: impl FnMut(&mut aero::ui::Ui<'_>, &Friend, usize) -> Option<FriendAction>,
 ) {
     let pal = gui.stage.palette();
     if list.is_empty() {
@@ -622,7 +609,7 @@ fn show_col(
 
         list_row(ui.draw, &pal, row, i);
         if widgets::row(ui, gui, ("friend", col, &e.user_id), zone, i) {
-            clicks.profile = Some((e.user_id.clone(), e.username.clone()));
+            clicks.profile = Some((e.user_id, e.username.clone()));
         }
         let fonts = &mut ui.cx.fonts;
         let name = fonts.fit(Face::Text, &e.username, theme::size::BODY, zone.w() - 12.0 - AVATAR_ROOM);
