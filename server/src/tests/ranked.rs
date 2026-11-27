@@ -432,6 +432,16 @@ fn disconnecting_from_a_proposed_match_declines_it() {
 }
 
 #[test]
+fn a_match_whose_player_lost_their_token_goes_back_to_the_queue() {
+    let mut mgr = new_mgr();
+    let (mut rx1, _rx2) = found_pair(&mut mgr);
+    mgr.clients.get_mut(2).expect("setup: still connected").token = None;
+    accept_all(&mut mgr);
+    assert!(ranked_id(&mgr).is_none());
+    assert_first_requeued(&mgr, &mut rx1);
+}
+
+#[test]
 fn a_player_in_a_proposed_match_cannot_queue_again() {
     let mut mgr = new_mgr();
     let (_rx1, _rx2) = found_pair(&mut mgr);

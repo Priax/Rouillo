@@ -214,8 +214,8 @@ impl Manager {
         let pending = &mut self.ranked.pending[i];
         pending.accepted[side] = true;
         if pending.accepted == [true, true] {
-            let [a, b] = self.ranked.pending.swap_remove(i).entries;
-            self.start_series(&a, &b);
+            let pending = self.ranked.pending.swap_remove(i);
+            self.start_series(pending);
         }
     }
 
@@ -265,9 +265,13 @@ impl Manager {
         self.clients.deliver_msg(conn, &ServerMessage::QueueCooldown { secs });
     }
 
-    pub(super) fn start_series(&mut self, a: &QueueEntry, b: &QueueEntry) {
+    /// A player gone from under the match misses it: the other goes back to the queue.
+    fn start_series(&mut self, pending: PendingMatch) {
+        let [a, b] = &pending.entries;
         let tokens = (self.clients.token_of(a.conn).cloned(), self.clients.token_of(b.conn).cloned());
         let (Some(token_a), Some(token_b)) = tokens else {
+            let missed = [tokens.0.is_none(), tokens.1.is_none()];
+            self.cancel_match(pending, missed);
             return;
         };
         let names = [self.clients.display_name(a.conn), self.clients.display_name(b.conn)];
