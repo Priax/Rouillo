@@ -38,13 +38,14 @@ pub fn update_title(tick: &Tick, state: &mut State) -> Transition {
     Transition::To(if state.auth.is_none() && checking { Screen::Auth } else { Screen::Menu })
 }
 
-pub fn draw_title(draw: &mut Draw, fonts: &mut Fonts, gui: &mut Gui) {
+pub fn draw_title(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui) {
     let pal = gui.ui.palette();
     let (ww, wh) = gui.ui.view().size();
     let pulse = 0.6 + 0.4 * (gui.ui.time() * PULSE_SPEED).sin() as f32;
 
-    let mut canvas = gui.ui.screen_canvas(draw);
-    let draw = &mut *canvas;
+    let mut canvas = gui.ui.screen_canvas(ui);
+    let ui = &mut *canvas;
+    let (draw, fonts) = (&mut *ui.draw, &mut ui.cx.fonts);
     fonts
         .write(draw, Face::Display, "Rouillo")
         .center(ww / 2.0, wh / 2.0 - 60.0)

@@ -76,7 +76,7 @@ pub fn show_browser(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State)
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Rooms");
+    gui.ui.page_header(ui, "Rooms");
 
     ui::card(ui.draw, &pal, card);
     if state.rooms.is_empty() {
@@ -721,7 +721,7 @@ pub fn show_lobby(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    draw_lobby_header(ui.draw, &mut ui.cx.fonts, gui, &room.info);
+    draw_lobby_header(ui, gui, &room.info);
     let players = show_players(ui, gui, &room.info, room.players_first);
 
     lobby_panel(view).draw(
@@ -824,7 +824,7 @@ fn launch_bar(info: &LobbyInfo, maintenance: bool) -> (&'static str, Color, bool
     }
 }
 
-fn draw_lobby_header(draw: &mut Draw, fonts: &mut Fonts, gui: &mut Gui, info: &LobbyInfo) {
+fn draw_lobby_header(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, info: &LobbyInfo) {
     let pal = gui.ui.palette();
     let view = gui.ui.view();
     let mid = theme::HEADER_H / 2.0;
@@ -841,7 +841,8 @@ fn draw_lobby_header(draw: &mut Draw, fonts: &mut Fonts, gui: &mut Gui, info: &L
         pills.push(Pill::small(&watchers, pal.text_dim));
     }
 
-    gui.ui.header_band(draw, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    gui.ui.header_band(ui, Rect::at(0.0, 0.0, view.w, theme::HEADER_H));
+    let (draw, fonts) = (&mut *ui.draw, &mut ui.cx.fonts);
     let pills_start = ui::pills_ending_at(draw, fonts, &pills, view.w - 60.0, mid);
     let name = fonts.fit(Face::Display, &info.name, theme::size::TITLE, pills_start - 30.0 - 60.0);
     fonts.write(draw, Face::Display, &name).left(60.0, mid).size(theme::size::TITLE).color(pal.text);

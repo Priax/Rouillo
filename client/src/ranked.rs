@@ -270,7 +270,7 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Classé");
+    gui.ui.page_header(ui, "Classé");
     let mut pressed = None;
 
     if let Some((lobby, ranked)) = state.room.as_ref().and_then(|r| Some((&r.info, r.info.ranked.as_ref()?))) {
@@ -291,8 +291,8 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
     match &ranked.search {
         Search::Idle => pressed = paint_idle(ui, gui, state),
         Search::Searching { since } => {
-            let text = format!("Recherche d'un adversaire{}", gui.ui.waiting_dots());
-            gui.ui.next_second();
+            let text = format!("Recherche d'un adversaire{}", gui.ui.waiting_dots(ui.cx));
+            gui.ui.next_second(ui.cx);
             let waited = clock((now_secs() - since).max(0.0) as u64);
 
             line(ui.draw, &mut ui.cx.fonts, &text, cy - 40.0, theme::size::HEADING, pal.text);
@@ -306,7 +306,7 @@ fn paint(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option<Pres
             let left = (deadline - now_secs()).clamp(0.0, total);
             let bar = Rect::at(cx - 200.0, cy + 48.0, 400.0, 10.0);
             let urgency = if left < 3.0 { theme::DANGER } else { pal.accent };
-            gui.ui.keep_moving();
+            ui.cx.request_redraw();
 
             found(ui.draw, &mut ui.cx.fonts, opponent, *opponent_elo);
             ui.draw.rect(bar).radius(5.0).color(pal.surface);
@@ -389,7 +389,7 @@ fn paint_idle(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State) -> Option
             ("Rechercher une partie".to_string(), false)
         }
         (None, Some(left)) => {
-            gui.ui.next_second();
+            gui.ui.next_second(ui.cx);
             (format!("Disponible dans {}", clock(left)), false)
         }
         (None, None) => ("Rechercher une partie".to_string(), true),

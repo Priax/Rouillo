@@ -135,21 +135,21 @@ fn cover(draw: &mut Draw, picture: &Image, r: Rect) {
     draw.image(picture, r).crop(Rect::at((tw - sw) / 2.0, (th - sh) / 2.0, sw, sh));
 }
 
-fn draw_header(draw: &mut Draw, fonts: &mut Fonts, gui: &mut Gui, core: &ProfileCore) {
-    let ui = &mut gui.ui;
-    let pal = ui.palette();
-    let view = ui.view();
+fn draw_header(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, core: &ProfileCore) {
+    let pal = gui.ui.palette();
+    let view = gui.ui.view();
     let banner = gui.images.get_opt(core.info.banner_url.as_deref());
     let avatar = gui.images.get_opt(core.info.avatar_url.as_deref());
     let radius = 48.0;
     let (px, py) = (60.0 + radius, PROFILE_HEADER_H / 2.0);
     let who = ui::Persona { name: &core.info.username, glow: 0.0, picture: avatar.as_ref() };
     let text_x = px + radius + 28.0;
-    let name = fonts.fit(Face::Display, &core.info.username, theme::size::TITLE, view.w - text_x - 60.0);
     let elo = format!("ELO {}", core.info.elo);
     let rating = Pill { text: &elo, color: theme::GOLD, size: theme::size::BODY };
 
-    ui.header_band(draw, Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H));
+    gui.ui.header_band(ui, Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H));
+    let (draw, fonts) = (&mut *ui.draw, &mut ui.cx.fonts);
+    let name = fonts.fit(Face::Display, &core.info.username, theme::size::TITLE, view.w - text_x - 60.0);
     if let Some(banner) = banner {
         let r = Rect::at(0.0, 0.0, view.w, PROFILE_HEADER_H - 2.0);
         cover(draw, &banner, r);
@@ -495,7 +495,7 @@ pub fn show_profile(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State,
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    draw_header(ui.draw, &mut ui.cx.fonts, gui, &p.core);
+    draw_header(ui, gui, &p.core);
     if p.edit.is_some() {
         profile_edit::show(ui, gui, token, p);
         return Transition::Stay;
@@ -638,7 +638,7 @@ pub fn show_other_profile(
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    draw_header(ui.draw, &mut ui.cx.fonts, gui, &p.core);
+    draw_header(ui, gui, &p.core);
     let more = show_stats_panel(ui, gui, &p.core, p.load_failed);
     let click = show_history_panel(ui, gui, &mut p.core, false);
     let add = can_add && widgets::button(ui, "add", add_btn, label, !sending);

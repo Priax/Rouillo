@@ -358,6 +358,10 @@ fn update(cx: &mut Cx, root: &mut Root) {
     }
     let fade = if was_title { title::FADE } else { ui::TRANSITION };
     gui.ui.set_screen(nav.current().id(), nav.current().hue(), fade);
+    if gui.ui.transitioning() {
+        cx.request_redraw();
+    }
+    cx.request_update_in(IDLE_BEAT);
 }
 
 /// The invitation along the bottom, over the screen.
@@ -403,7 +407,7 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     let ui = &mut aero::ui::Ui::new(cx, draw);
     let mut transition = Transition::Stay;
     match nav.current_mut() {
-        Screen::Title => title::draw_title(ui.draw, &mut ui.cx.fonts, gui),
+        Screen::Title => title::draw_title(ui, gui),
         Screen::Auth => transition = login::show(ui, gui, state),
         Screen::Menu => transition = menu::show_menu(ui, gui, state, false),
         Screen::PlayMenu => transition = menu::show_menu(ui, gui, state, true),
@@ -452,7 +456,7 @@ fn draw_frame(cx: &mut Cx, draw: &mut Draw, root: &mut Root) {
     }
     draw_maintenance_banner(ui.draw, &mut ui.cx.fonts, gui, state, screen);
     draw_too_old_banner(ui.draw, &mut ui.cx.fonts, gui, state, screen);
-    draw_reconnect_banner(ui.draw, &mut ui.cx.fonts, gui, state, screen);
+    draw_reconnect_banner(ui, gui, state, screen);
 
     let view = gui.ui.view();
     // A game, and the screens that lead straight into one, need the phone
@@ -515,7 +519,7 @@ fn draw_warning_banner(draw: &mut Draw, ui: &mut ui::Ui, fonts: &mut ui::Fonts, 
         .color(theme::WARNING_TEXT);
 }
 
-fn draw_reconnect_banner(draw: &mut Draw, fonts: &mut ui::Fonts, gui: &mut Gui, state: &State, screen: &Screen) {
+fn draw_reconnect_banner(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State, screen: &Screen) {
     let Some((attempts, secs_left)) = state.net.conn.recovering(connection::now_secs()) else {
         return;
     };
@@ -524,10 +528,11 @@ fn draw_reconnect_banner(draw: &mut Draw, fonts: &mut ui::Fonts, gui: &mut Gui, 
     }
 
     let ww = gui.ui.view().w;
-    let dots = gui.ui.waiting_dots();
-    gui.ui.next_second();
+    let dots = gui.ui.waiting_dots(ui.cx);
+    gui.ui.next_second(ui.cx);
     let msg = format!("Reconnexion{dots} (tentative {attempts}, {secs_left:.0}s restantes)");
 
+    let (draw, fonts) = (&mut *ui.draw, &mut ui.cx.fonts);
     ui::banner(draw, Rect::at(0.0, 0.0, ww, 46.0), theme::WARNING_BANNER, theme::WARNING, ui::Edge::Bottom);
     fonts.write(draw, Face::Text, &msg).center(ww / 2.0, 22.0).size(theme::size::LABEL).color(theme::WARNING_TEXT);
 }
@@ -546,19 +551,8 @@ impl aero::App for Rouillo {
         update(cx, &mut self.0);
     }
 
-    /// A frame follows while something moves, or when something shown changes; otherwise a slow beat of updates
-    /// without drawing keeps the network's timers going.
     fn draw(&mut self, cx: &mut Cx, draw: &mut Draw) {
         draw_frame(cx, draw, &mut self.0);
-        let change_in = self.0.gui.ui.take_change_in();
-        if self.0.gui.ui.take_moving() {
-            cx.request_redraw();
-        } else {
-            if let Some(delay) = change_in {
-                cx.request_redraw_in(std::time::Duration::from_secs_f64(delay));
-            }
-            cx.request_update_in(IDLE_BEAT);
-        }
     }
 }
 

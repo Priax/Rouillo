@@ -42,6 +42,8 @@ pub fn cycle<T: Copy + PartialEq>(options: &[T], at: T, dir: i32) -> T {
     options[(i + dir.signum()).rem_euclid(options.len() as i32) as usize]
 }
 
+use aero::Cx;
+
 use crate::theme::{hue, Palette};
 
 const MAX_DT: f32 = 0.1;
@@ -76,12 +78,8 @@ pub struct Ui {
     /// Whether the gamepad steers: the mouse moving hands control back to it.
     pad: bool,
     pointer: Option<aero::math::Vec2>,
-    /// Something shown moves on its own: the next frame is wanted.
-    moving: bool,
     /// Seconds of the real clock: the caret blinks on it, frames or not.
     clock: f64,
-    /// In how many seconds something shown changes, such as the caret.
-    change_in: Option<f64>,
 }
 
 impl Default for Ui {
@@ -99,9 +97,7 @@ impl Default for Ui {
             palette: Palette::new(hue::PURPLE),
             pad: false,
             pointer: None,
-            moving: false,
             clock: 0.0,
-            change_in: None,
         }
     }
 }
@@ -114,7 +110,6 @@ impl Ui {
         self.view = view;
         let turn = (self.target_hue - self.from_hue + 540.0).rem_euclid(360.0) - 180.0;
         let progress = ease_out(transition_progress(self.time, self.entered_at, self.fade));
-        self.moving |= progress < 1.0;
         self.hue = (self.from_hue + turn * progress).rem_euclid(360.0);
         self.palette = Palette::new(self.hue);
     }
@@ -153,17 +148,13 @@ impl Ui {
         Look { palette: self.palette }
     }
 
-    pub fn keep_moving(&mut self) {
-        self.moving = true;
+    /// Whether a screen is still coming in.
+    pub fn transitioning(&self) -> bool {
+        self.transition() < 1.0
     }
 
-    /// Whether this frame showed anything that moves, and forgets it for the next.
-    pub fn take_moving(&mut self) -> bool {
-        std::mem::take(&mut self.moving)
-    }
-
-    pub fn waiting_dots(&mut self) -> String {
-        self.change_after(DOT_STEP - self.clock.rem_euclid(DOT_STEP));
+    pub fn waiting_dots(&self, cx: &mut Cx) -> String {
+        redraw_after(cx, DOT_STEP - self.clock.rem_euclid(DOT_STEP));
         ".".repeat(1 + (self.clock / DOT_STEP) as usize % 3)
     }
 
@@ -201,20 +192,15 @@ impl Ui {
         self.clock = now;
     }
 
-    /// Something shown changes in `delay` seconds without moving until then.
-    pub fn change_after(&mut self, delay: f64) {
-        self.change_in = Some(self.change_in.map_or(delay, |current| current.min(delay)));
-    }
-
     /// A clock shown in whole seconds of the real clock: the next frame comes when it ticks.
-    pub fn next_second(&mut self) {
-        self.change_after(1.0 - self.clock.rem_euclid(1.0));
+    pub fn next_second(&self, cx: &mut Cx) {
+        redraw_after(cx, 1.0 - self.clock.rem_euclid(1.0));
     }
+}
 
-    /// In how many seconds something shown next changes on its own, and forgets it for the next frame.
-    pub fn take_change_in(&mut self) -> Option<f64> {
-        self.change_in.take()
-    }
+/// Something shown changes in `delay` seconds without moving until then.
+pub fn redraw_after(cx: &mut Cx, delay: f64) {
+    cx.request_redraw_in(std::time::Duration::from_secs_f64(delay.max(0.0)));
 }
 
 fn transition_progress(time: f64, entered_at: f64, fade: f32) -> f32 {
@@ -230,21 +216,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frames_are_wanted_only_while_something_moves() {
+    fn a_new_screen_comes_in_then_settles() {
         let mut ui = Ui::default();
         let frame = |ui: &mut Ui| ui.begin_frame(1.0 / 60.0, View::default());
         ui.set_screen(0, hue::GREEN, TRANSITION);
         frame(&mut ui);
-        assert!(!ui.take_moving(), "a still screen wants no frame");
+        assert!(!ui.transitioning(), "the first screen is there at once");
         ui.set_screen(1, hue::PURPLE, TRANSITION);
-        frame(&mut ui);
-        assert!(ui.take_moving(), "a new screen slides in");
+        assert!(ui.transitioning(), "a new screen slides in");
         for _ in 0..60 {
             frame(&mut ui);
-            ui.take_moving();
         }
-        frame(&mut ui);
-        assert!(!ui.take_moving(), "and settles");
+        assert!(!ui.transitioning(), "and settles");
     }
 
     #[test]

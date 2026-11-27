@@ -348,7 +348,7 @@ fn winner(session: &GameSession, team: u8) -> String {
 
 /// Draws a game, and returns what was clicked for the update to come.
 pub fn draw_game(ui: &mut aero::ui::Ui<'_>, session: &GameSession, gui: &mut Gui, hud: Hud) -> GameClicks {
-    gui.ui.keep_moving();
+    ui.cx.request_redraw();
     let layout = GameLayout::new(gui.ui.view(), session);
     let pal = gui.ui.palette();
     let time = gui.ui.time() as f32;

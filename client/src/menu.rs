@@ -262,7 +262,7 @@ pub fn show_settings(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Paramètres");
+    gui.ui.page_header(ui, "Paramètres");
     panel.draw(ui.draw, &pal, &mut ui.cx.fonts, "Contrôles");
     let before = state.settings;
     for i in 0..Settings::COUNT {

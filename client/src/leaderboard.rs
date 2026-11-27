@@ -167,7 +167,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State, board: 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
     let mut chosen = None;
-    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Classement");
+    gui.ui.page_header(ui, "Classement");
     ui::card(ui.draw, &pal, card);
     if let Some(text) = empty {
         ui.cx

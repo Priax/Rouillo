@@ -240,7 +240,7 @@ pub fn show(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State, help: &mut 
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Comment jouer");
+    gui.ui.page_header(ui, "Comment jouer");
     ui::card(ui.draw, &pal, info);
     if widgets::tab(ui, controls_tab, "Contrôles", !help.rules) {
         help.rules = false;

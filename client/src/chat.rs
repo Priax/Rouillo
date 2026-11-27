@@ -1,13 +1,13 @@
 use std::collections::VecDeque;
 
-use aero::draw::Draw;
 use aero::geom::Color;
 use aero::ui::Sense;
 use shared::MAX_CHAT_CHARS;
 
 use crate::connection::now_secs;
 use crate::theme;
-use crate::ui::{widgets, Face, Fonts, Gui, Rect, Typeset, Ui};
+use crate::theme::Palette;
+use crate::ui::{widgets, Face, Gui, Rect, Typeset};
 
 const KEPT: usize = 50;
 const LINE_H: f32 = 20.0;
@@ -74,8 +74,7 @@ impl Chat {
         (!text.is_empty()).then_some(text)
     }
 
-    fn draw_lines(&self, draw: &mut Draw, ui: &mut Ui, fonts: &mut Fonts, area: Rect, fade: bool) {
-        let pal = ui.palette();
+    fn draw_lines(&self, ui: &mut aero::ui::Ui<'_>, pal: &Palette, area: Rect, fade: bool) {
         let now = now_secs();
 
         let mut y = area.y() + area.h() - INPUT_H - PAD - LINE_H / 2.0;
@@ -83,9 +82,9 @@ impl Chat {
             let alpha = if fade {
                 let left = FADE_AFTER + FADE_FOR - (now - line.at);
                 if left > FADE_FOR {
-                    ui.change_after(left - FADE_FOR);
+                    crate::ui::redraw_after(ui.cx, left - FADE_FOR);
                 } else if left > 0.0 {
-                    ui.keep_moving();
+                    ui.cx.request_redraw();
                 }
                 (left / FADE_FOR).clamp(0.0, 1.0) as f32
             } else {
@@ -95,14 +94,15 @@ impl Chat {
                 break;
             }
             let color = if line.spectator { pal.text_dim } else { pal.text };
-            let rows = fonts.wrap(Face::Text, &line.text, theme::size::SMALL, area.w() - 2.0 * PAD);
+            let rows = ui.cx.fonts.wrap(Face::Text, &line.text, theme::size::SMALL, area.w() - 2.0 * PAD);
 
             for row in rows.iter().rev() {
                 if y < area.y() + PAD {
                     return;
                 }
-                fonts
-                    .write(draw, Face::Text, row)
+                ui.cx
+                    .fonts
+                    .write(ui.draw, Face::Text, row)
                     .left(area.x() + PAD, y)
                     .size(theme::size::SMALL)
                     .color(color.with_alpha(alpha));
@@ -114,7 +114,7 @@ impl Chat {
     /// The lobby's chat: a card with the conversation and its field. Returns the message to send.
     pub fn show_card(&mut self, ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, area: Rect) -> Option<String> {
         crate::ui::card(ui.draw, &gui.ui.palette(), area);
-        self.draw_lines(ui.draw, &mut gui.ui, &mut ui.cx.fonts, area, false);
+        self.draw_lines(ui, &gui.ui.palette(), area, false);
         self.show_field(ui, gui, area, "Écrire un message...")
     }
 
@@ -132,7 +132,7 @@ impl Chat {
             if ui.is_focused(ui.id(FIELD)) {
                 ui.blur();
             }
-            self.draw_lines(ui.draw, &mut gui.ui, &mut ui.cx.fonts, area, true);
+            self.draw_lines(ui, &pal, area, true);
             if let Some(hint) = hint {
                 ui.cx
                     .fonts
@@ -148,7 +148,7 @@ impl Chat {
             return None;
         }
         ui.draw.rect(area).radius(theme::RADIUS).color(Color::BLACK.with_alpha(0.55));
-        self.draw_lines(ui.draw, &mut gui.ui, &mut ui.cx.fonts, area, false);
+        self.draw_lines(ui, &gui.ui.palette(), area, false);
         let said = self.show_field(ui, gui, area, "Entrée pour envoyer, Échap pour fermer");
         if said.is_some() {
             self.open = false;

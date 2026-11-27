@@ -486,7 +486,7 @@ pub fn show_setup(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Solo");
+    gui.ui.page_header(ui, "Solo");
     if state.solo.best > 0 {
         let pill = [Pill::small(&best, theme::GOLD)];
         ui::pills_ending_at(ui.draw, &mut ui.cx.fonts, &pill, view.w - 60.0, theme::HEADER_H / 2.0);

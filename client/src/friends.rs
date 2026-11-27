@@ -393,7 +393,7 @@ pub fn show_friends(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State,
 
     let mut canvas = gui.ui.screen_canvas(ui);
     let ui = &mut *canvas;
-    gui.ui.page_header(ui.draw, &mut ui.cx.fonts, "Amis");
+    gui.ui.page_header(ui, "Amis");
     let mut clicks = Clicks::default();
     let searched = show_search(ui, gui, f, (view, &pics), &mut clicks);
     show_lists(ui, gui, f, (view, &pics), &mut clicks);

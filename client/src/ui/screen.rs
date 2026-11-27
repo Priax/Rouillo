@@ -1,9 +1,8 @@
 use std::ops::{Deref, DerefMut};
 
-use aero::draw::Draw;
 use aero::math::{vec2, Affine2};
 
-use super::{Face, Fonts, Rect, Triangles, Typeset, Ui};
+use super::{Face, Rect, Triangles, Typeset, Ui};
 use crate::theme;
 
 /// How far a new screen slides in from, rightwards.
@@ -13,27 +12,27 @@ impl Ui {
     /// The canvas a screen draws on: its section's background with triangles
     /// drifting up through it, then the screen's own content, which fades and
     /// slides in while a transition runs. The backdrop stays put under it.
-    pub fn screen_canvas<'a, C: Canvas + ?Sized>(&mut self, canvas: &'a mut C) -> ScreenCanvas<'a, C> {
-        self.keep_moving();
+    pub fn screen_canvas<'a, 'u>(&self, ui: &'a mut aero::ui::Ui<'u>) -> ScreenCanvas<'a, 'u> {
+        ui.cx.request_redraw();
         let pal = self.palette();
         let view = self.view();
-        let draw = canvas.draw();
-        draw.background(pal.background);
+        ui.draw.background(pal.background);
         let backdrop =
             Triangles { seed: 0x5eed, size: 220.0, density: 0.35, speed: 0.015, color: pal.raised.with_alpha(0.35) };
-        backdrop.draw(draw, Rect::at(0.0, 0.0, view.w, view.h), self.time());
+        backdrop.draw(ui.draw, Rect::at(0.0, 0.0, view.w, view.h), self.time());
 
         let t = self.transition();
-        draw.push_alpha(t);
-        draw.push_transform(Affine2::from_translation(vec2((1.0 - t) * SLIDE, 0.0)));
-        ScreenCanvas(canvas)
+        ui.draw.push_alpha(t);
+        ui.draw.push_transform(Affine2::from_translation(vec2((1.0 - t) * SLIDE, 0.0)));
+        ScreenCanvas(ui)
     }
 
     /// The header band along the top of a page, with its title.
-    pub fn page_header(&mut self, draw: &mut Draw, fonts: &mut Fonts, title: &str) {
-        self.header_band(draw, Rect::at(0.0, 0.0, self.view().w, theme::HEADER_H));
-        fonts
-            .write(draw, Face::Display, title)
+    pub fn page_header(&self, ui: &mut aero::ui::Ui<'_>, title: &str) {
+        self.header_band(ui, Rect::at(0.0, 0.0, self.view().w, theme::HEADER_H));
+        ui.cx
+            .fonts
+            .write(ui.draw, Face::Display, title)
             .left(60.0, theme::HEADER_H / 2.0)
             .size(theme::size::TITLE)
             .color(self.palette().text);
@@ -41,9 +40,10 @@ impl Ui {
 
     /// A page header: a band in the section's colour with triangles rising
     /// through it and a line of accent along its foot.
-    pub fn header_band(&mut self, draw: &mut Draw, rect: Rect) {
-        self.keep_moving();
+    pub fn header_band(&self, ui: &mut aero::ui::Ui<'_>, rect: Rect) {
+        ui.cx.request_redraw();
         let pal = self.palette();
+        let draw = &mut *ui.draw;
         draw.rect(rect).color(pal.banner);
         let triangles = Triangles {
             seed: 0xba5d,
@@ -57,44 +57,26 @@ impl Ui {
     }
 }
 
-/// What a screen draws on: the frame itself, or Aero's interface over it.
-pub trait Canvas {
-    fn draw(&mut self) -> &mut Draw;
-}
-
-impl Canvas for Draw {
-    fn draw(&mut self) -> &mut Draw {
-        self
-    }
-}
-
-impl Canvas for aero::ui::Ui<'_> {
-    fn draw(&mut self) -> &mut Draw {
-        self.draw
-    }
-}
-
 /// The frame while a screen draws on it, as the transition fades and slides it.
-pub struct ScreenCanvas<'a, C: Canvas + ?Sized>(&'a mut C);
+pub struct ScreenCanvas<'a, 'u>(&'a mut aero::ui::Ui<'u>);
 
-impl<C: Canvas + ?Sized> Deref for ScreenCanvas<'_, C> {
-    type Target = C;
+impl<'u> Deref for ScreenCanvas<'_, 'u> {
+    type Target = aero::ui::Ui<'u>;
 
-    fn deref(&self) -> &C {
+    fn deref(&self) -> &Self::Target {
         self.0
     }
 }
 
-impl<C: Canvas + ?Sized> DerefMut for ScreenCanvas<'_, C> {
-    fn deref_mut(&mut self) -> &mut C {
+impl DerefMut for ScreenCanvas<'_, '_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         self.0
     }
 }
 
-impl<C: Canvas + ?Sized> Drop for ScreenCanvas<'_, C> {
+impl Drop for ScreenCanvas<'_, '_> {
     fn drop(&mut self) {
-        let draw = self.0.draw();
-        draw.pop_transform();
-        draw.pop_alpha();
+        self.0.draw.pop_transform();
+        self.0.draw.pop_alpha();
     }
 }
