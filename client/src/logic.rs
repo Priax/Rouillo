@@ -25,9 +25,7 @@ pub fn update_game(
         return false;
     }
 
-    let game_over = session.decided() || online.ended;
-    let paused = session.large.board.state() == GameState::Paused;
-    let menu = paused || game_over || session.opponent_disconnected || session.quit_menu;
+    let menu = shows_menu(session, online);
 
     let dt = tick.dt;
     if session.spectating() {
@@ -50,7 +48,7 @@ pub fn update_game(
         }
     }
 
-    if !game_over && !paused && !session.quit_menu {
+    if !halted(session, online) && !session.quit_menu {
         read_controls(input, session, settings, Some(conn), dt);
         step_simulation(session, dt);
     } else {
@@ -236,15 +234,23 @@ fn opponents(session: &GameSession) -> Vec<u8> {
     foes.map(|r| r.player.slot).collect()
 }
 
+/// Whether the board stands still: the game is over, or paused.
+fn halted(session: &GameSession, online: Online) -> bool {
+    session.decided() || online.ended || session.large.board.state() == GameState::Paused
+}
+
+/// Whether the game's screen shows its menu over the board.
+fn shows_menu(session: &GameSession, online: Online) -> bool {
+    halted(session, online) || session.opponent_disconnected || session.quit_menu
+}
+
 /// Answers what the game's screen was clicked for. Returns whether the player left the room.
 pub fn apply_clicks(clicks: GameClicks, session: &mut GameSession, conn: &mut Connection, online: Online) -> bool {
     if !conn.is_live() {
         return false;
     }
 
-    let game_over = session.decided() || online.ended;
-    let paused = session.large.board.state() == GameState::Paused;
-    let menu = paused || game_over || session.opponent_disconnected || session.quit_menu;
+    let menu = shows_menu(session, online);
     if menu || session.eliminated() {
         if clicks.leave {
             conn.send(&ClientMessage::LeaveRoom);

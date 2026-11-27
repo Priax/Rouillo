@@ -438,12 +438,12 @@ impl Setup {
 /// Draws the game and answers its clicks: leaving, playing again, aiming.
 pub fn show_game(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &State, game: &mut SoloGame) -> Transition {
     let clicks = crate::draw::draw_game(ui, &game.session, gui, game.hud(state.solo.best));
-    if (game.knocked_out() || game.over() || game.paused()) && clicks.leave {
+    if (game.knocked_out() || game.idle()) && clicks.leave {
         return Transition::To(Screen::SoloSetup);
     }
-    if (game.over() || game.paused()) && clicks.back {
+    if game.idle() && clicks.back {
         *game = SoloGame::new(game.settings.clone());
-    } else if !game.over() && !game.paused() && game.pilot.is_none() && !game.knocked_out() {
+    } else if !game.idle() && game.pilot.is_none() && !game.knocked_out() {
         logic::choose_target(&crate::controls::Frame::default(), clicks.click, &mut game.session);
     }
     Transition::Stay
