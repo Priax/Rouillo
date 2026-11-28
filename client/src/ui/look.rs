@@ -15,6 +15,7 @@ const TEXT_HEIGHT: f32 = 0.52;
 const TEXT_MIN: f32 = 12.0;
 const TEXT_PADDING: f32 = 24.0;
 const UNDERLINE: f32 = 3.0;
+const FIELD_BORDER: f32 = 2.0;
 
 /// How the game's widgets look: raised buttons that grow under the pointer, underlined tabs, links, in the colors of
 /// the screen shown.
@@ -103,6 +104,14 @@ impl Theme for Look {
         let color = if selected { pal.text } else { theme::mix(pal.text_muted, pal.text, visual.hover) };
         let center = vec2(cx, area.center().y - UNDERLINE);
         self.write(p, (Face::Display, text, theme::size::HEADING), center, color);
+    }
+
+    /// A text field's frame: the surface, outlined in the accent while it has the keyboard.
+    fn field(&self, p: &mut Painter<'_>, area: Area, focused: bool) {
+        let pal = &self.palette;
+        let border = if focused { pal.accent } else { pal.border };
+        p.draw.rect(area).radius(theme::RADIUS).color(pal.surface);
+        p.draw.rect(area).radius(theme::RADIUS).stroke(border, FIELD_BORDER);
     }
 
     /// The link colour and an underline when hovered; plain text when disabled.

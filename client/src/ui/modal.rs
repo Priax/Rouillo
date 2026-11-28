@@ -14,7 +14,7 @@ pub struct Modal {
 
 impl Modal {
     pub fn new(view: View, width: f32) -> Self {
-        Self { card: Rect::at(0.0, 0.0, view.w, view.h).inset([MARGIN, 0.0, MARGIN, 0.0]).max_width(width) }
+        Self { card: view.rect().inset([MARGIN, 0.0, MARGIN, 0.0]).max_width(width) }
     }
 
     pub(super) fn close(self) -> Rect {
@@ -28,7 +28,7 @@ impl Modal {
 
     /// The scrim over the screen, the card and its title.
     pub(super) fn paint(self, draw: &mut Draw, fonts: &mut Fonts, pal: &Palette, (view, title): (View, &str)) {
-        draw.rect(Rect::at(0.0, 0.0, view.w, view.h)).color(pal.scrim_strong);
+        draw.rect(view.rect()).color(pal.scrim_strong);
         card(draw, pal, self.card);
         fonts
             .write(draw, Face::Display, title)

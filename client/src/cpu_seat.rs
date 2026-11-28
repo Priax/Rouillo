@@ -28,7 +28,7 @@ pub enum Action {
 
 fn modal(view: View) -> Modal {
     let h = 70.0 + TILES as f32 * ui::TILE_H + REMOVE_H + 40.0;
-    Modal { card: Rect::at(0.0, 0.0, view.w, view.h).centered(CARD_W, h) }
+    Modal { card: view.rect().centered(CARD_W, h) }
 }
 
 fn tile(modal: Modal, i: usize) -> Rect {

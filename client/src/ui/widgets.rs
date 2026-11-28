@@ -151,7 +151,7 @@ pub fn modal<R>(
 ) -> (R, bool) {
     ui.modal(|ui| {
         let view = gui.stage.view();
-        let screen = Rect::at(0.0, 0.0, view.w, view.h);
+        let screen = view.rect();
         let beside = ui.interact(ui.id("modal scrim"), screen, Sense::CLICK).clicked;
         modal.paint(ui.draw, &mut ui.cx.fonts, &gui.stage.palette(), (view, title));
         ui.interact(ui.id("modal card"), modal.card, Sense::NONE);
@@ -174,7 +174,7 @@ pub const fn area_height(lines: usize) -> f32 {
     2.0 * FIELD_PADDING + lines as f32 * AREA_LINE_H
 }
 
-/// A field to type in, in the game's frame: `field` holds its options. `key` names it among the widgets.
+/// A field to type in, on the frame [`super::Look::field`] draws: `field` holds its options. `key` names it among the widgets.
 pub fn text_field(
     ui: &mut Ui<'_>,
     gui: &mut Gui,
@@ -184,10 +184,6 @@ pub fn text_field(
     text: &mut String,
 ) -> EditResponse {
     let pal = gui.stage.palette();
-    let border = if ui.is_focused(ui.id(key)) { pal.accent } else { pal.border };
-    ui.draw.rect(rect).radius(theme::RADIUS).color(pal.surface);
-    ui.draw.rect(rect).radius(theme::RADIUS).stroke(border, 2.0);
-
     let faces = super::faces();
     let (style, padding) = if field.multiline {
         let style = faces.style(Face::Text, AREA_TEXT);

@@ -740,7 +740,7 @@ pub fn show_lobby(ui: &mut aero::ui::Ui<'_>, gui: &mut Gui, state: &mut State) -
     let leave = widgets::menu_bar(ui, gui, lobby_leave(view), ("Quitter la room", theme::bar::RED), true);
 
     if let Some(n) = room.info.countdown {
-        ui.draw.rect(Rect::at(0.0, 0.0, view.w, view.h)).color(theme::SCRIM);
+        ui.draw.rect(view.rect()).color(theme::SCRIM);
         ui.cx
             .fonts
             .write(ui.draw, Face::Display, &n.to_string())

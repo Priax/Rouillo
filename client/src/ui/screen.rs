@@ -19,7 +19,7 @@ impl Stage {
         ui.draw.background(pal.background);
         let backdrop =
             Triangles { seed: 0x5eed, size: 220.0, density: 0.35, speed: 0.015, color: pal.raised.with_alpha(0.35) };
-        backdrop.draw(ui.draw, Rect::at(0.0, 0.0, view.w, view.h), self.time());
+        backdrop.draw(ui.draw, view.rect(), self.time());
 
         let t = self.transition();
         ui.draw.push_alpha(t);

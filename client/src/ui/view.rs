@@ -1,3 +1,4 @@
+use aero::geom::Rect;
 use aero::math::Vec2;
 use aero::{Reference, WindowInfo};
 
@@ -39,6 +40,11 @@ impl View {
 
     pub fn size(self) -> (f32, f32) {
         (self.w, self.h)
+    }
+
+    /// The whole view, from its top left corner.
+    pub fn rect(self) -> Rect {
+        Rect::at(0.0, 0.0, self.w, self.h)
     }
 }
 

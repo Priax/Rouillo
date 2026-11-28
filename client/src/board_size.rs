@@ -52,7 +52,7 @@ struct Layout {
 
 impl Layout {
     fn new(view: View) -> Self {
-        let screen = Rect::at(0.0, 0.0, view.w, view.h);
+        let screen = view.rect();
         let modal = Modal { card: screen.inset([40.0, 0.0, 40.0, 0.0]).max_width(CARD_W) };
         let plot = modal.body().inset([0.0, 0.0, FOOTER_H, 0.0]);
         let frame = FRAME_PAD / config::CELL_SIZE;

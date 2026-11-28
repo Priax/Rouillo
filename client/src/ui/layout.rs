@@ -20,7 +20,7 @@ const BODY_TOP: f32 = 30.0;
 
 impl Frame {
     pub fn of(view: super::View) -> Self {
-        let screen = Rect::at(0.0, 0.0, view.w, view.h);
+        let screen = view.rect();
         let header = screen.top_strip(theme::HEADER_H);
         let back = Rect::at(BACK_MARGIN, view.h - BACK_BOTTOM - BACK_H, BACK_W, BACK_H);
         let body =
