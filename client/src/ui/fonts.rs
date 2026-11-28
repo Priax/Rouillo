@@ -96,34 +96,14 @@ impl Typeset for Fonts {
     }
 
     fn wrap<'a>(&mut self, face: Face, text: &'a str, size: f32, max: f32) -> Vec<&'a str> {
-        let mut lines = Vec::new();
-        for mut rest in text.split('\n') {
-            loop {
-                let (line, after) = rest.split_at(line_end(self, face, rest, size, max));
-                lines.push(line);
-                rest = after;
-                if rest.is_empty() {
-                    break;
-                }
-            }
-        }
-        lines
+        let laid = self.layout_kept(text, &faces().style(face, size).max_width(max));
+        laid.lines().map(|line| text[line.bytes].trim_end_matches('\n')).collect()
     }
 }
 
 /// Where each cluster of `text` ends, and how wide the text is up to there.
 fn advances(fonts: &mut Fonts, face: Face, text: &str, size: f32) -> Vec<(usize, f32)> {
     fonts.laid(face, text, size).clusters().map(|c| (c.bytes.end, c.x + c.advance)).collect()
-}
-
-fn line_end(fonts: &mut Fonts, face: Face, text: &str, size: f32, max: f32) -> usize {
-    let first = text.chars().next().map_or(0, char::len_utf8);
-    let advances = advances(fonts, face, text, size);
-    let fits = advances.iter().take_while(|&&(_, w)| w <= max).last().map_or(first, |&(end, _)| end);
-    if fits == text.len() {
-        return fits;
-    }
-    text[..fits].rfind(' ').map_or(fits, |space| space + 1)
 }
 
 /// The em of a font whose ascent and descent span 1.
